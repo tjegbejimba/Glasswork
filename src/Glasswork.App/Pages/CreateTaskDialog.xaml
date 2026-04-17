@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="Glasswork.Pages.CreateTaskDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="New Task"
+    PrimaryButtonText="Create"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnCreate">
+
+    <StackPanel Spacing="16" MinWidth="400">
+        <TextBox x:Name="TitleBox" Header="Title" PlaceholderText="What needs to be done?" />
+
+        <ComboBox x:Name="PriorityBox" Header="Priority" SelectedIndex="1" HorizontalAlignment="Stretch">
+            <ComboBoxItem Tag="low" Content="Low" />
+            <ComboBoxItem Tag="medium" Content="Medium" />
+            <ComboBoxItem Tag="high" Content="High" />
+            <ComboBoxItem Tag="urgent" Content="Urgent" />
+        </ComboBox>
+
+        <CheckBox x:Name="AddToMyDayBox" Content="Add to My Day" />
+
+        <TextBox x:Name="NotesBox" Header="Notes (optional)" AcceptsReturn="True" Height="80"
+                 PlaceholderText="Additional context..." />
+    </StackPanel>
+</ContentDialog>

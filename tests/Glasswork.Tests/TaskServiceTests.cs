@@ -1,0 +1,93 @@
+using Glasswork.Core.Models;
+using Glasswork.Core.Services;
+
+namespace Glasswork.Tests;
+
+[TestClass]
+public class TaskServiceTests
+{
+    private string _tempDir = null!;
+    private VaultService _vault = null!;
+    private TaskService _taskService = null!;
+
+    [TestInitialize]
+    public void Setup()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), "glasswork-svc-" + Guid.NewGuid().ToString("N")[..8]);
+        _vault = new VaultService(_tempDir);
+        _taskService = new TaskService(_vault);
+    }
+
+    [TestCleanup]
+    public void Cleanup()
+    {
+        if (Directory.Exists(_tempDir))
+            Directory.Delete(_tempDir, recursive: true);
+    }
+
+    [TestMethod]
+    public void TransitionToDone_SetsCompletedAt()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "finish-me",
+            Title = "Finish me",
+            Status = GlassworkTask.Statuses.InProgress,
+        };
+        _vault.Save(task);
+
+        _taskService.SetStatus(task, GlassworkTask.Statuses.Done);
+
+        Assert.AreEqual(GlassworkTask.Statuses.Done, task.Status);
+        Assert.IsNotNull(task.CompletedAt);
+        Assert.AreEqual(DateTime.Today, task.CompletedAt.Value.Date);
+
+        // Verify persisted
+        var loaded = _vault.Load("finish-me")!;
+        Assert.AreEqual(GlassworkTask.Statuses.Done, loaded.Status);
+        Assert.IsNotNull(loaded.CompletedAt);
+    }
+
+    [TestMethod]
+    public void TransitionFromDone_ClearsCompletedAt()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "reopen-me",
+            Title = "Reopen me",
+            Status = GlassworkTask.Statuses.Done,
+            CompletedAt = DateTime.Today,
+        };
+        _vault.Save(task);
+
+        _taskService.SetStatus(task, GlassworkTask.Statuses.Todo);
+
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, task.Status);
+        Assert.IsNull(task.CompletedAt);
+    }
+
+    [TestMethod]
+    public void CreateTask_GeneratesIdAndSaves()
+    {
+        var task = _taskService.CreateTask("Set up dev certificate", priority: "high");
+
+        Assert.AreEqual("set-up-dev-certificate", task.Id);
+        Assert.AreEqual("Set up dev certificate", task.Title);
+        Assert.AreEqual("high", task.Priority);
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, task.Status);
+        Assert.IsTrue(_vault.Exists("set-up-dev-certificate"));
+    }
+
+    [TestMethod]
+    public void ToggleMyDay_AddsAndRemoves()
+    {
+        var task = new GlassworkTask { Id = "toggle-day", Title = "Toggle" };
+        _vault.Save(task);
+
+        _taskService.ToggleMyDay(task);
+        Assert.AreEqual(DateTime.Today, task.MyDay);
+
+        _taskService.ToggleMyDay(task);
+        Assert.IsNull(task.MyDay);
+    }
+}

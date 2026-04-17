@@ -41,11 +41,14 @@ public sealed partial class MainWindow : Window
         {
             switch (item.Tag)
             {
-                case "home":
-                    NavFrame.Navigate(typeof(HomePage));
+                case "myday":
+                    NavFrame.Navigate(typeof(MyDayPage));
                     break;
-                case "about":
-                    NavFrame.Navigate(typeof(AboutPage));
+                case "backlog":
+                    NavFrame.Navigate(typeof(BacklogPage));
+                    break;
+                case "worklog":
+                    NavFrame.Navigate(typeof(WorkLogPage));
                     break;
                 default:
                     throw new InvalidOperationException($"Unknown navigation item tag: {item.Tag}");
