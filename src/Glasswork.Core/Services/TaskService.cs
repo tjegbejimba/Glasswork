@@ -88,4 +88,25 @@ public class TaskService
             _vault.Save(task);
         }
     }
+
+    /// <summary>
+    /// Promote an inline subtask to a full task file with parent link.
+    /// Removes the subtask from the parent.
+    /// </summary>
+    public GlassworkTask PromoteSubtask(GlassworkTask parent, int subtaskIndex)
+    {
+        if (subtaskIndex < 0 || subtaskIndex >= parent.Subtasks.Count)
+            throw new ArgumentOutOfRangeException(nameof(subtaskIndex));
+
+        var subtask = parent.Subtasks[subtaskIndex];
+        var newTask = CreateTask(subtask.Text, parent: parent.Id);
+
+        if (subtask.IsCompleted)
+            SetStatus(newTask, GlassworkTask.Statuses.Done);
+
+        parent.Subtasks.RemoveAt(subtaskIndex);
+        _vault.Save(parent);
+
+        return newTask;
+    }
 }

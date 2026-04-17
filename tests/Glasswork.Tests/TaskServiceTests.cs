@@ -120,4 +120,28 @@ public class TaskServiceTests
         var loaded = _vault.Load("carry-me")!;
         Assert.AreEqual(DateTime.Today, loaded.MyDay);
     }
+
+    [TestMethod]
+    public void PromoteSubtask_CreatesNewTaskWithParentLink()
+    {
+        var parent = new GlassworkTask
+        {
+            Id = "parent-task",
+            Title = "Parent Task",
+            Subtasks = { new SubTask { Text = "Do the thing", IsCompleted = false } }
+        };
+        _vault.Save(parent);
+
+        var promoted = _taskService.PromoteSubtask(parent, 0);
+
+        // New task file exists with parent link
+        Assert.IsNotNull(promoted);
+        Assert.AreEqual("Do the thing", promoted.Title);
+        Assert.AreEqual("parent-task", promoted.Parent);
+        Assert.IsTrue(_vault.Exists(promoted.Id));
+
+        // Subtask removed from parent
+        var reloaded = _vault.Load("parent-task")!;
+        Assert.AreEqual(0, reloaded.Subtasks.Count);
+    }
 }
