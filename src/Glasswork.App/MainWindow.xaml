@@ -26,7 +26,7 @@
             IsPaneToggleButtonVisible="True"
             PaneToggleRequested="TitleBar_PaneToggleRequested">
             <TitleBar.IconSource>
-                <ImageIconSource ImageSource="Assets/AppIcon.ico" />
+                <ImageIconSource ImageSource="Assets/AppIcon.png" />
             </TitleBar.IconSource>
         </TitleBar>
 

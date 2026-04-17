@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -18,7 +19,10 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
-        AppWindow.SetIcon("Assets/AppIcon.ico");
+
+        // Use absolute path so the correct ICO is loaded in both debug and publish
+        var icoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
+        AppWindow.SetIcon(icoPath);
     }
 
     private void TitleBar_PaneToggleRequested(TitleBar sender, object args)
