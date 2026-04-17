@@ -71,17 +71,15 @@ public sealed partial class BacklogPage : Page
         }
     }
 
-    private async void ImportAdo_Click(object sender, RoutedEventArgs e)
+    private void TaskCheckbox_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new AdoImportDialog { XamlRoot = this.XamlRoot };
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && dialog.SelectedItem is { } ado)
+        if (sender is Microsoft.UI.Xaml.Controls.CheckBox cb && cb.DataContext is GlassworkTask task)
         {
-            var task = App.Tasks.CreateTask(ado.Title);
-            task.AdoLink = ado.Id;
-            task.AdoTitle = ado.Title;
-            App.Vault.Save(task);
-            ViewModel.Refresh();
+            var newStatus = cb.IsChecked == true
+                ? GlassworkTask.Statuses.Done
+                : GlassworkTask.Statuses.Todo;
+            ViewModel.SelectedTask = task;
+            ViewModel.SetStatusCommand.Execute(newStatus);
         }
     }
 }

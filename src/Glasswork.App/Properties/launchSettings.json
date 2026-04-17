@@ -1,10 +1,10 @@
 {
   "profiles": {
-    "Glasswork (Package)": {
-      "commandName": "MsixPackage"
-    },
-    "Glasswork (Unpackaged)": {
-      "commandName": "Project"
+    "Glasswork": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "GLASSWORK_GITHUB_TOKEN": ""
+      }
     }
   }
 }

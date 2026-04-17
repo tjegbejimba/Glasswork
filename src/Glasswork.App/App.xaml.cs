@@ -13,7 +13,7 @@ public partial class App : Application
     public static VaultService Vault { get; private set; } = null!;
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
-    public static AdoService? Ado { get; private set; }
+    public static FeedbackService? Feedback { get; private set; }
 
     public App()
     {
@@ -30,12 +30,10 @@ public partial class App : Application
         Tasks = new TaskService(Vault);
         Index = new IndexService(Vault);
 
-        // ADO service — configured via environment variables (optional)
-        var pat = Environment.GetEnvironmentVariable("GLASSWORK_ADO_PAT");
-        var org = Environment.GetEnvironmentVariable("GLASSWORK_ADO_ORG");
-        var proj = Environment.GetEnvironmentVariable("GLASSWORK_ADO_PROJECT");
-        if (!string.IsNullOrEmpty(pat) && !string.IsNullOrEmpty(org) && !string.IsNullOrEmpty(proj))
-            Ado = new AdoService(org, proj, pat);
+        // Feedback service — creates GitHub issues (optional)
+        var ghToken = Environment.GetEnvironmentVariable("GLASSWORK_GITHUB_TOKEN");
+        if (!string.IsNullOrEmpty(ghToken))
+            Feedback = new FeedbackService("tjegbejimba", "Glasswork", ghToken);
 
         _window = new MainWindow();
         _window.Activate();

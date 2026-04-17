@@ -56,6 +56,13 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem Content="Feedback" Tag="feedback">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xED15;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
             <Frame x:Name="NavFrame" />
         </NavigationView>
     </Grid>

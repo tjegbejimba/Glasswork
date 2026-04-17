@@ -50,9 +50,36 @@ public sealed partial class MainWindow : Window
                 case "worklog":
                     NavFrame.Navigate(typeof(WorkLogPage));
                     break;
+                case "feedback":
+                    ShowFeedbackDialog();
+                    // Deselect so it acts like a button, not a nav destination
+                    sender.SelectedItem = null;
+                    return;
                 default:
                     throw new InvalidOperationException($"Unknown navigation item tag: {item.Tag}");
             }
+        }
+    }
+
+    private async void ShowFeedbackDialog()
+    {
+        var dialog = new FeedbackDialog
+        {
+            XamlRoot = Content.XamlRoot
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && dialog.CreatedUrl is not null)
+        {
+            // Show success tip
+            var tip = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = "Feedback Submitted",
+                Content = $"Issue created: {dialog.CreatedUrl}",
+                CloseButtonText = "OK"
+            };
+            await tip.ShowAsync();
         }
     }
 }

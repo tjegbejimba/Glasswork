@@ -24,6 +24,14 @@ public sealed partial class MyDayPage : Page
         ViewModel.Refresh();
     }
 
+    private void TodayList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is GlassworkTask task)
+        {
+            Frame.Navigate(typeof(TaskDetailPage), task);
+        }
+    }
+
     private void CompleteTask_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: GlassworkTask task })

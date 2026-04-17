@@ -6,3 +6,5 @@ obj/
 AppPackages/
 BundleArtifacts/
 Properties/PublishProfiles/
+launchSettings.json
+.env

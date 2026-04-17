@@ -20,18 +20,32 @@
             Grid.Row="1"
             x:Name="TodayList"
             ItemsSource="{x:Bind ViewModel.TodayTasks}"
-            SelectionMode="None"
+            SelectionMode="Single"
+            IsItemClickEnabled="True"
+            ItemClick="TodayList_ItemClick"
             Margin="0,16,0,0">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0,2" />
+                </Style>
+            </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate>
-                    <Grid Padding="4,8" ColumnDefinitions="Auto,*,Auto">
-                        <CheckBox Grid.Column="0" VerticalAlignment="Center" Click="CompleteTask_Click" />
-                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="8,0,0,0">
-                            <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Priority}" FontSize="12" Opacity="0.6" />
+                    <Grid Padding="8,10" ColumnDefinitions="Auto,*,Auto">
+                        <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0"
+                                  Click="CompleteTask_Click" />
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Title}" FontSize="14" TextTrimming="CharacterEllipsis" />
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="{Binding Priority}" FontSize="12" Opacity="0.5" />
+                                <TextBlock Text="{Binding AdoTitle}" FontSize="12" Opacity="0.5" />
+                            </StackPanel>
                         </StackPanel>
                         <Button Grid.Column="2" Click="RemoveFromDay_Click"
                                 Background="Transparent" BorderThickness="0"
+                                Padding="6" VerticalAlignment="Center"
                                 ToolTipService.ToolTip="Remove from My Day">
                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="14" />
                         </Button>
@@ -48,15 +62,22 @@
 
         <!-- Suggestions list -->
         <ListView Grid.Row="3" ItemsSource="{x:Bind ViewModel.Suggestions}" SelectionMode="None" MaxHeight="200">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Padding" Value="0" />
+                </Style>
+            </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate>
-                    <Grid Padding="4,6" ColumnDefinitions="*,Auto">
+                    <Grid Padding="8,8" ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding Status}" FontSize="12" Opacity="0.6" />
+                            <TextBlock Text="{Binding Title}" FontSize="14" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Status}" FontSize="12" Opacity="0.5" />
                         </StackPanel>
                         <Button Grid.Column="1" Click="AddToDay_Click"
                                 Background="Transparent" BorderThickness="0"
+                                Padding="6" VerticalAlignment="Center"
                                 ToolTipService.ToolTip="Add to My Day">
                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE710;" FontSize="14" />
                         </Button>
