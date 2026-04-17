@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Glasswork (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Glasswork (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

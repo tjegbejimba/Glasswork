@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Glasswork.Core/Glasswork.Core.csproj" />
+  </Folder>
+  <Folder Name="/src/Glasswork.App/">
+    <Project Path="src/Glasswork.App/Glasswork.csproj">
+      <Platform Project="x86" />
+    </Project>
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Glasswork.Tests/Glasswork.Tests.csproj" />
+  </Folder>
+</Solution>
