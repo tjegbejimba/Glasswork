@@ -25,6 +25,7 @@
             </ComboBox>
 
             <Button Content="&#xE710;" FontFamily="Segoe Fluent Icons" Click="AddTask_Click" ToolTipService.ToolTip="New task" />
+            <Button Content="&#xE8B5;" FontFamily="Segoe Fluent Icons" Click="ImportAdo_Click" ToolTipService.ToolTip="Import from ADO" />
         </StackPanel>
 
         <!-- Task list -->

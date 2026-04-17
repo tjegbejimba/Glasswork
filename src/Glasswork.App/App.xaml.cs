@@ -13,6 +13,7 @@ public partial class App : Application
     public static VaultService Vault { get; private set; } = null!;
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
+    public static AdoService? Ado { get; private set; }
 
     public App()
     {
@@ -28,6 +29,13 @@ public partial class App : Application
         Vault = new VaultService(vaultPath);
         Tasks = new TaskService(Vault);
         Index = new IndexService(Vault);
+
+        // ADO service — configured via environment variables (optional)
+        var pat = Environment.GetEnvironmentVariable("GLASSWORK_ADO_PAT");
+        var org = Environment.GetEnvironmentVariable("GLASSWORK_ADO_ORG");
+        var proj = Environment.GetEnvironmentVariable("GLASSWORK_ADO_PROJECT");
+        if (!string.IsNullOrEmpty(pat) && !string.IsNullOrEmpty(org) && !string.IsNullOrEmpty(proj))
+            Ado = new AdoService(org, proj, pat);
 
         _window = new MainWindow();
         _window.Activate();

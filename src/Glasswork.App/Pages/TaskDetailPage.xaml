@@ -34,10 +34,13 @@
             <CalendarDatePicker x:Name="DueDatePicker" Header="Due date" DateChanged="DueDate_Changed" />
 
             <!-- ADO link -->
-            <TextBlock x:Name="AdoInfo" Visibility="Collapsed">
-                <Run Text="ADO: " />
-                <Run x:Name="AdoTitleRun" />
-            </TextBlock>
+            <StackPanel x:Name="AdoPanel" Visibility="Collapsed" Orientation="Horizontal" Spacing="8">
+                <TextBlock VerticalAlignment="Center">
+                    <Run Text="ADO: " />
+                    <Run x:Name="AdoTitleRun" />
+                </TextBlock>
+                <HyperlinkButton x:Name="AdoLinkButton" Content="Open in ADO" Click="OpenAdo_Click" />
+            </StackPanel>
 
             <!-- Subtasks -->
             <TextBlock Text="Subtasks" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,8,0,0" />

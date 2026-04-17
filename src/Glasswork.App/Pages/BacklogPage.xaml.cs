@@ -70,4 +70,18 @@ public sealed partial class BacklogPage : Page
             Frame.Navigate(typeof(TaskDetailPage), task);
         }
     }
+
+    private async void ImportAdo_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AdoImportDialog { XamlRoot = this.XamlRoot };
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && dialog.SelectedItem is { } ado)
+        {
+            var task = App.Tasks.CreateTask(ado.Title);
+            task.AdoLink = ado.Id;
+            task.AdoTitle = ado.Title;
+            App.Vault.Save(task);
+            ViewModel.Refresh();
+        }
+    }
 }

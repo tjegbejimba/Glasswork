@@ -44,7 +44,7 @@ public sealed partial class TaskDetailPage : Page
 
             if (task.AdoLink.HasValue)
             {
-                AdoInfo.Visibility = Visibility.Visible;
+                AdoPanel.Visibility = Visibility.Visible;
                 AdoTitleRun.Text = $"#{task.AdoLink} — {task.AdoTitle ?? "linked"}";
             }
 
@@ -96,6 +96,16 @@ public sealed partial class TaskDetailPage : Page
     {
         var uri = $"obsidian://open?vault=Wiki&file=todo%2F{Uri.EscapeDataString(Task.Id)}";
         Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+    }
+
+    private void OpenAdo_Click(object sender, RoutedEventArgs e)
+    {
+        if (Task.AdoLink.HasValue)
+        {
+            // TODO: make org/project configurable
+            var url = $"https://dev.azure.com/_workitems/edit/{Task.AdoLink.Value}";
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
     }
 
     private void Save() => App.Vault.Save(Task);
