@@ -62,4 +62,12 @@ public sealed partial class BacklogPage : Page
             ViewModel.SetStatusCommand.Execute(status);
         }
     }
+
+    private void TaskList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is GlassworkTask task)
+        {
+            Frame.Navigate(typeof(TaskDetailPage), task);
+        }
+    }
 }

@@ -90,4 +90,34 @@ public class TaskServiceTests
         _taskService.ToggleMyDay(task);
         Assert.IsNull(task.MyDay);
     }
+
+    [TestMethod]
+    public void GetCarryoverTasks_ReturnsYesterdaysIncompleteTasks()
+    {
+        var yesterday = DateTime.Today.AddDays(-1);
+        var task1 = new GlassworkTask { Id = "stale-1", Title = "Stale 1", MyDay = yesterday, Status = "todo" };
+        var task2 = new GlassworkTask { Id = "stale-2", Title = "Stale 2", MyDay = yesterday, Status = "done" };
+        var task3 = new GlassworkTask { Id = "today-1", Title = "Today 1", MyDay = DateTime.Today, Status = "todo" };
+        _vault.Save(task1);
+        _vault.Save(task2);
+        _vault.Save(task3);
+
+        var carryover = _taskService.GetCarryoverTasks();
+
+        Assert.AreEqual(1, carryover.Count);
+        Assert.AreEqual("stale-1", carryover[0].Id);
+    }
+
+    [TestMethod]
+    public void CarryAll_MovesStaleTasksToToday()
+    {
+        var yesterday = DateTime.Today.AddDays(-1);
+        var task = new GlassworkTask { Id = "carry-me", Title = "Carry", MyDay = yesterday, Status = "todo" };
+        _vault.Save(task);
+
+        _taskService.CarryAllToToday();
+
+        var loaded = _vault.Load("carry-me")!;
+        Assert.AreEqual(DateTime.Today, loaded.MyDay);
+    }
 }

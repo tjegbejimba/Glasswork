@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Glasswork.Core.Models;
 
 namespace Glasswork.Core.Services;
@@ -61,5 +63,29 @@ public class TaskService
     {
         task.MyDay = task.IsMyDay ? null : DateTime.Today;
         _vault.Save(task);
+    }
+
+    /// <summary>
+    /// Get incomplete tasks that were on My Day for a previous date (carryover candidates).
+    /// </summary>
+    public List<GlassworkTask> GetCarryoverTasks()
+    {
+        return _vault.LoadAll()
+            .Where(t => t.MyDay.HasValue
+                        && t.MyDay.Value.Date < DateTime.Today
+                        && t.Status != GlassworkTask.Statuses.Done)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Move all carryover tasks to today's My Day.
+    /// </summary>
+    public void CarryAllToToday()
+    {
+        foreach (var task in GetCarryoverTasks())
+        {
+            task.MyDay = DateTime.Today;
+            _vault.Save(task);
+        }
     }
 }
