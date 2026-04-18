@@ -75,5 +75,25 @@ Write-Host ""
 Write-Host "=== Publish Complete ===" -ForegroundColor Cyan
 Write-Host "Install dir: $InstallDir"
 Write-Host "Launch from: Start Menu, Desktop, or $exe"
+
+# 6. Install Copilot CLI skills (skills/ -> ~/.copilot/skills/)
+$skillsSrc = Join-Path $RepoRoot "skills"
+if (Test-Path $skillsSrc) {
+    $skillsDest = Join-Path $env:USERPROFILE ".copilot\skills"
+    Write-Host ""
+    Write-Host "Installing Copilot CLI skills to $skillsDest ..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force -Path $skillsDest | Out-Null
+
+    $skillDirs = Get-ChildItem -Path $skillsSrc -Directory
+    foreach ($skill in $skillDirs) {
+        $destSkillDir = Join-Path $skillsDest $skill.Name
+        if (Test-Path $destSkillDir) {
+            Remove-Item -Recurse -Force $destSkillDir
+        }
+        Copy-Item -Recurse -Force -Path $skill.FullName -Destination $destSkillDir
+        Write-Host "  [OK] $($skill.Name)" -ForegroundColor Green
+    }
+}
+
 Write-Host ""
 Write-Host "To update after code changes, run this script again." -ForegroundColor Yellow

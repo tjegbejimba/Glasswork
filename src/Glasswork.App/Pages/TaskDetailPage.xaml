@@ -67,6 +67,14 @@
                 <TextBlock x:Name="IdText" FontSize="12" />
             </StackPanel>
 
+            <!-- Agent invocation buttons (copy one-liner to clipboard, paste into Copilot CLI) -->
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                <Button x:Name="StartWorkButton" Content="Start work" Click="StartWork_Click" />
+                <Button x:Name="ResumeButton" Content="Resume" Click="Resume_Click" />
+                <Button x:Name="WrapUpButton" Content="Wrap up" Click="WrapUp_Click" />
+                <TextBlock x:Name="ClipboardHint" VerticalAlignment="Center" Opacity="0.6" FontSize="12" />
+            </StackPanel>
+
             <!-- Actions -->
             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,16,0,0">
                 <Button Content="Delete" Click="Delete_Click" />
