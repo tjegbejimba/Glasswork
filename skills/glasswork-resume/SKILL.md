@@ -9,53 +9,93 @@ You are picking a Glasswork task back up after a break. The user pasted a one-li
 
 The task lives at `wiki/todo/<task-id>.md` in the user's wiki vault (typically `C:\Users\toegbeji\Wiki\`).
 
+> Full design context lives in the PRD: `~/Wiki/wiki/decisions/glasswork-v2-prd.md` (see decisions **D4** routing, **D8** guardrails, **D9** notes format). Read it if anything below is ambiguous.
+
 ## Process
 
 1. **Read the task file** at `wiki/todo/<task-id>.md` end-to-end. Parse the YAML frontmatter and the body.
-2. **Find where work left off**: look at the `## Notes` section. The **last `###` dated entry tells you where the user left off.** That entry is the most recent ground truth — read it carefully.
-3. **Reload context** by reading any `[[wiki-link]]` references mentioned in recent notes (decisions, concepts, etc.) so you have the same mental model the user had last time.
-4. **Re-orient out loud**: in 2–4 sentences, summarise:
+2. **Find where work left off** — this is the most important step:
+   - Locate the `## Notes` section.
+   - Find the **last `### YYYY-MM-DD` dated entry** in that section. Everything under that header (until the next `###` or section break) is the most recent ground truth.
+   - **Start your turn by quoting that entry verbatim** so the user can verify you read it correctly. Example opener: *"Last entry under `### 2026-04-18`: 'Confirmed default 100 in appsettings.json with Atharva.' Picking up from there…"*
+3. **Reload supporting context** by reading any `[[wiki-link]]` references mentioned in that last entry (decisions, concepts, etc.) so you have the same mental model the user had when they stopped.
+4. **Re-orient out loud** in 2–4 sentences:
    - What this task is about.
-   - What was done last (per the most recent `###` note).
+   - What was done last (the quoted entry).
    - What looks like the obvious next step.
 5. **Ask the user** whether your read of "where we left off" matches theirs and what they want to tackle now. Don't dive into work until they confirm.
-6. **Append a resume entry to `## Notes`** when you actually start doing something:
-   ```markdown
-   ### <YYYY-MM-DD>
-   Resumed. <one-line summary of what we agreed to tackle next>.
-   ```
-   New entries go at the bottom. Date-only is fine unless there are already multiple entries today.
+6. **Append a resume entry** to `## Notes` when you actually start doing something (using the timestamped log format below). One line is fine: "Resumed. <what we agreed to tackle now>."
 
-## Scope notes (V2 Slice 1)
+## Notes log format (D9 — Option B, timestamped)
 
-- The current task format is **flat** — no nested subtasks yet. Just read what the file contains.
-- Don't rewrite the existing `## Notes` log — append only.
-- Don't touch the `## Related` section. A later slice owns that.
+All writes to `## Notes` follow this layout:
 
----
+```markdown
+## Notes
+
+### 2026-04-18
+Started work. Plan: read PartitionedBatchProcessor, then trace batch_size config.
+Confirmed default 100 in appsettings.json with Atharva.
+
+### 2026-04-19
+Resumed. Picking up the config trace from yesterday.
+```
+
+**Rules:**
+- One `### YYYY-MM-DD` header per day, not per entry. Before appending, **check whether today's header already exists** in `## Notes`. If it does, append your new lines under it. If not, add the header first, then your lines.
+- Date-only — no times.
+- Append at the **bottom** of the section. Never edit or rewrite older entries — append-only.
+- Use **targeted edits only** (append/insert under the right header). Never rewrite the whole task file.
+- The "where did we leave off?" pointer is **always the last `### YYYY-MM-DD` block** — this skill depends on that invariant.
+
+## Tiered context routing (D4)
+
+As you work, classify each new piece of context and write it to the right place. Routing is automatic — don't ask the user for permission to file knowledge correctly, just do it (and mention what you did).
+
+| Kind of thing | Goes to | Trigger |
+|---|---|---|
+| Quick observation, status update, what-you-just-did log | Inline `## Notes` in the task file | **Default** for anything ephemeral or task-specific |
+| A reasoned choice with rationale | `wiki/decisions/<slug>.md` | "We chose X over Y because…" — future-you needs to find it |
+| Reusable system understanding / mental model | `wiki/concepts/<slug>.md` | Knowledge that outlives this task and applies elsewhere |
+| Debugging story, outage analysis, postmortem | `wiki/incidents/<slug>.md` | Triage notes worth preserving for the next time it happens |
+| Person, team, or service interaction | `wiki/entities/<name>.md` | Conversation context worth remembering |
+| External link, article, doc that informed the work | `wiki/sources/<slug>.md` | A URL or reference the user might want to cite again |
+| Substantial completed effort | `wiki/accomplishments/<title>-<date>.md` | **Only on wrap-up.** Do not create from this skill. |
+
+When you create a new wiki page, drop a `[[wiki-link]]` to it inline in the relevant `## Notes` entry so the user can navigate back. Do **not** touch the `## Related` section — a later slice owns that maintenance.
 
 ## D8 Guardrails (apply to every action you take)
 
 These are **baked into this skill** and override any user request that conflicts.
 
-### ALLOWED freely
-- Read from any source: code, wiki vault, ADO, ICM, EngHub, EV2, the web.
-- Write to the wiki vault — the task's `## Notes` section, and other wiki pages (`decisions/`, `concepts/`, etc.) when the user asks.
-- **Suggest** task status changes, code changes, or next actions.
-
-### ALLOWED only with explicit confirmation
-- Set `status: done` on a task. (Always confirm — even when the user clearly said "done".)
-- Move a task file out of `wiki/todo/`.
-- Create a `wiki/accomplishments/` page.
-- Write source code. (You may **read** code freely; write only when the user explicitly says so.)
-- Run any command that mutates external state (git push, ADO comments, file deletes).
-
-### NEVER (hard rules — no override, even if the user asks)
-- **Do not send Teams messages, emails, or calendar invites.** Ever. No tool call, no draft, no "here's what to send" that you then offer to send. If the user wants to communicate with another human, they do it themselves.
-- Do not close or modify ADO work items beyond adding comments (and only with confirmation).
+### HARD NO — never, under any circumstances (no override, even if the user explicitly asks)
+- **Do not send Teams messages, emails, or calendar invites.** No tool call, no draft, no "here's what to send" that you then offer to send. If the user wants to communicate with another human, they do it themselves.
 - Do not approve or merge pull requests.
 - Do not delete files in the wiki vault.
+- Do not close ADO work items.
 - Do not modify these task frontmatter fields: `id`, `created`, `ado`.
-- Do not commit or push code without an explicit user instruction in this session.
 
-If a request would require breaking a NEVER rule, refuse and explain which guardrail blocked it.
+### CONFIRM — allowed only with explicit user confirmation in this session
+- Move, rename, or delete any wiki page.
+- Transition a task's `status` to `done`.
+- Complete a wrap-up (handled by the `glasswork-wrap-up` skill — don't shortcut into it from here).
+- Run any command that mutates external state (git push, ADO comments, file deletes on disk outside the wiki).
+- Write source code. (You may **read** code freely; write only when the user explicitly says so.)
+
+### ALLOWED — proceed without asking
+- Read from any source: code, wiki vault, ADO, ICM, EngHub, EV2, the web.
+- Append to the task's `## Notes` section (using the D9 format above).
+- Create new wiki pages under `decisions/`, `concepts/`, `incidents/`, `entities/`, `sources/` (per D4 routing).
+- Edit the task body / description.
+- Add subtasks to the `## Subtasks` section.
+- Set the task's `status` to `in_progress`.
+- **Suggest** task status changes, code changes, or next actions.
+
+If a request would require breaking a HARD NO rule, refuse and name which guardrail blocked it. If it falls under CONFIRM, ask once and wait.
+
+## Scope notes
+
+- The current task format is **flat** — no nested subtasks yet. Just read what the file contains.
+- Don't rewrite the existing `## Notes` log — append only.
+- Don't touch the `## Related` section. A later slice owns that.
+- All edits to the task file are **targeted** (append a line, insert a header, change one frontmatter field). Never rewrite the whole file.
