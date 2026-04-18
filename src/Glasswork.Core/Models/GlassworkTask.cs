@@ -53,4 +53,92 @@ public partial class SubTask : ObservableObject
 {
     [ObservableProperty] public partial string Text { get; set; } = string.Empty;
     [ObservableProperty] public partial bool IsCompleted { get; set; }
+
+    /// <summary>
+    /// Optional rich status from the `- status:` metadata field. Null if no status field is present.
+    /// Recognized values: "todo", "in_progress", "blocked", "done", "dropped".
+    /// When set, this is the source of truth (wins over the [x]/[ ] checkbox character).
+    /// </summary>
+    [ObservableProperty] public partial string? Status { get; set; }
+
+    /// <summary>
+    /// Other recognized metadata keys parsed from the `- key: value` block under the subtask
+    /// header (e.g. ado, completed, blocker, my_day). Excludes "status" which is first-class.
+    /// </summary>
+    [ObservableProperty] public partial Dictionary<string, string> Metadata { get; set; } = [];
+
+    /// <summary>
+    /// Prose notes (markdown) following the metadata block, before the next `### ` header.
+    /// </summary>
+    [ObservableProperty] public partial string Notes { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Effective doneness applying the conflict rule: if Status is set, it wins; otherwise
+    /// fall back to the IsCompleted character.
+    /// </summary>
+    public bool IsEffectivelyDone => Status switch
+    {
+        "done" or "dropped" => true,
+        null => IsCompleted,
+        _ => false,
+    };
+
+    // ===== UI helper properties (read by TaskDetailPage rich subtask templates) =====
+
+    public bool HasMetadata => Metadata.Count > 0;
+    public bool HasNotes => !string.IsNullOrWhiteSpace(Notes);
+
+    /// <summary>True when this subtask has any rich content beyond the plain checkbox.</summary>
+    public bool IsRich => Status is not null || HasMetadata || HasNotes;
+
+    /// <summary>Auto-expanded statuses (per D7).</summary>
+    public bool IsAutoExpanded => Status is "in_progress" or "blocked";
+
+    /// <summary>Rich subtask shown collapsed with a one-line preview.</summary>
+    public bool IsCollapsedRich => IsRich && !IsAutoExpanded && !IsEffectivelyDone;
+
+    /// <summary>Plain checkbox row (current slice 2 behavior).</summary>
+    public bool IsSimple => !IsRich && !IsEffectivelyDone;
+
+    /// <summary>Card form (auto-expanded or collapsed-rich) — distinct from the simple row.</summary>
+    public bool ShowAsCard => (IsAutoExpanded || IsCollapsedRich) && !IsEffectivelyDone;
+
+    public bool StatusPillVisible => Status is "in_progress" or "blocked" or "dropped";
+
+    public string StatusPillText => Status switch
+    {
+        "in_progress" => "in progress",
+        "blocked" => "blocked",
+        "dropped" => "dropped",
+        "done" => "done",
+        _ => string.Empty,
+    };
+
+    /// <summary>Hex color used as the pill background brush. UI converts this to a SolidColorBrush.</summary>
+    public string StatusPillColor => Status switch
+    {
+        "in_progress" => "#0F6CBD", // blue
+        "blocked" => "#C50F1F",     // red
+        "dropped" => "#8A8886",     // grey
+        _ => "#605E5C",
+    };
+
+    public bool BlockerVisible => Status == "blocked" && Metadata.ContainsKey("blocker");
+    public string BlockerText => Metadata.TryGetValue("blocker", out var v) ? v : string.Empty;
+
+    /// <summary>Single-line preview shown when this is a collapsed rich card.</summary>
+    public string NotesPreview
+    {
+        get
+        {
+            if (HasNotes)
+            {
+                var firstLine = Notes.Split('\n', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+                return firstLine.Length > 80 ? firstLine[..80] + "…" : firstLine;
+            }
+            // Fall back to a metadata summary if no prose notes
+            if (Metadata.TryGetValue("ado", out var ado)) return $"ADO #{ado}";
+            return string.Empty;
+        }
+    }
 }
