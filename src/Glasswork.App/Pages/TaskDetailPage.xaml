@@ -5,7 +5,13 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:Glasswork.Pages"
     mc:Ignorable="d">
+
+    <Page.Resources>
+        <local:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <local:HexToBrushConverter x:Key="HexToBrush" />
+    </Page.Resources>
 
     <ScrollViewer Padding="32">
         <StackPanel Spacing="16">
@@ -44,15 +50,118 @@
 
             <!-- Subtasks -->
             <TextBlock Text="Subtasks" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,8,0,0" />
-            <ListView x:Name="SubtaskList" SelectionMode="None">
-                <ListView.ItemTemplate>
+
+            <!-- Active subtasks: hybrid rendering -->
+            <ItemsControl x:Name="ActiveSubtaskList">
+                <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <CheckBox Content="{Binding Text}"
-                                  IsChecked="{Binding IsCompleted, Mode=TwoWay}"
-                                  Click="Subtask_Click" />
+                        <Grid Margin="0,2,0,2">
+                            <!-- Simple row: plain checkbox -->
+                            <CheckBox Content="{Binding Text}"
+                                      IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                      Click="Subtask_Click"
+                                      Visibility="{Binding IsSimple, Converter={StaticResource BoolToVis}}" />
+
+                            <!-- Card form: rich (auto-expanded or collapsed) -->
+                            <Border Visibility="{Binding ShowAsCard, Converter={StaticResource BoolToVis}}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,8"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                <StackPanel Spacing="6">
+                                    <!-- Header row: checkbox + title + status pill -->
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <CheckBox Content="{Binding Text}"
+                                                  IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                                  Click="Subtask_Click" />
+                                        <Border Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
+                                                CornerRadius="10"
+                                                Padding="8,2"
+                                                VerticalAlignment="Center"
+                                                Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
+                                            <TextBlock Text="{Binding StatusPillText}"
+                                                       Foreground="White"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold" />
+                                        </Border>
+                                    </StackPanel>
+
+                                    <!-- Blocker line (only when status: blocked) -->
+                                    <TextBlock Visibility="{Binding BlockerVisible, Converter={StaticResource BoolToVis}}"
+                                               Text="{Binding BlockerText}"
+                                               Foreground="#C50F1F"
+                                               FontSize="12"
+                                               TextWrapping="Wrap"
+                                               Margin="28,0,0,0" />
+
+                                    <!-- Auto-expanded body: full notes + metadata table -->
+                                    <StackPanel Visibility="{Binding IsAutoExpanded, Converter={StaticResource BoolToVis}}"
+                                                Spacing="4" Margin="28,0,0,0">
+                                        <TextBlock Text="{Binding Notes}"
+                                                   Visibility="{Binding HasNotes, Converter={StaticResource BoolToVis}}"
+                                                   TextWrapping="Wrap"
+                                                   FontSize="13" />
+                                        <ItemsControl ItemsSource="{Binding Metadata}"
+                                                      Visibility="{Binding HasMetadata, Converter={StaticResource BoolToVis}}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock FontSize="11" Opacity="0.7">
+                                                        <Run Text="{Binding Key}" />
+                                                        <Run Text=": " />
+                                                        <Run Text="{Binding Value}" />
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+
+                                    <!-- Collapsed-rich preview: one-line notes summary -->
+                                    <TextBlock Visibility="{Binding IsCollapsedRich, Converter={StaticResource BoolToVis}}"
+                                               Text="{Binding NotesPreview}"
+                                               TextWrapping="NoWrap"
+                                               TextTrimming="CharacterEllipsis"
+                                               Opacity="0.7"
+                                               FontSize="12"
+                                               Margin="28,0,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
                     </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Completed / dropped subtasks: collapsed under an expander -->
+            <Expander x:Name="CompletedExpander" HorizontalAlignment="Stretch"
+                      Visibility="Collapsed">
+                <Expander.Header>
+                    <TextBlock x:Name="CompletedHeader" Text="Completed (0)" />
+                </Expander.Header>
+                <ItemsControl x:Name="CompletedSubtaskList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2,0,2">
+                                <CheckBox IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                          Click="Subtask_Click">
+                                    <TextBlock Text="{Binding Text}"
+                                               TextDecorations="Strikethrough"
+                                               Opacity="0.6" />
+                                </CheckBox>
+                                <Border Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
+                                        CornerRadius="10"
+                                        Padding="8,2"
+                                        VerticalAlignment="Center"
+                                        Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
+                                    <TextBlock Text="{Binding StatusPillText}"
+                                               Foreground="White"
+                                               FontSize="11"
+                                               FontWeight="SemiBold" />
+                                </Border>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Expander>
 
             <!-- Notes -->
             <TextBox x:Name="NotesBox" Header="Notes" AcceptsReturn="True"

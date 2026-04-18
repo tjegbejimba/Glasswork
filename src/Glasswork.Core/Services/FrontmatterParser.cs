@@ -29,11 +29,20 @@ public partial class FrontmatterParser
     [GeneratedRegex(@"^---\s*\n(.*?)\n---\s*\n?(.*)", RegexOptions.Singleline)]
     private static partial Regex FrontmatterRegex();
 
-    [GeneratedRegex(@"^### \[([ xX])\] (.+?)\s*$", RegexOptions.Multiline)]
+    [GeneratedRegex(@"^### \[([ xX])\] (.+?)\s*$")]
     private static partial Regex SubtaskHeadingRegex();
 
     [GeneratedRegex(@"(?ms)^## Subtasks\s*$(.*?)(?=^## |\z)", RegexOptions.Multiline)]
     private static partial Regex SubtasksSectionRegex();
+
+    [GeneratedRegex(@"^- ([a-z_][a-z0-9_]*): (.*)$")]
+    private static partial Regex MetadataLineRegex();
+
+    /// <summary>
+    /// Recognized metadata keys, in the canonical serialization order.
+    /// "status" is handled as a first-class SubTask field; the rest live in Metadata.
+    /// </summary>
+    private static readonly string[] MetadataOrder = ["status", "ado", "completed", "blocker", "my_day"];
 
     /// <summary>
     /// Parse a markdown file's content into a GlassworkTask.
@@ -114,10 +123,42 @@ public partial class FrontmatterParser
         {
             sb.AppendLine("## Subtasks");
             sb.AppendLine();
-            foreach (var sub in task.Subtasks)
+            for (int i = 0; i < task.Subtasks.Count; i++)
             {
+                var sub = task.Subtasks[i];
                 var check = sub.IsCompleted ? "x" : " ";
                 sb.AppendLine($"### [{check}] {sub.Text}");
+
+                // Emit metadata in stable order: status first, then known keys, then any
+                // unknown keys alphabetically (preserved for round-trip safety).
+                var emittedKeys = new HashSet<string>(StringComparer.Ordinal);
+                if (!string.IsNullOrEmpty(sub.Status))
+                {
+                    sb.AppendLine($"- status: {sub.Status}");
+                    emittedKeys.Add("status");
+                }
+                foreach (var key in MetadataOrder)
+                {
+                    if (key == "status") continue;
+                    if (sub.Metadata.TryGetValue(key, out var val))
+                    {
+                        sb.AppendLine($"- {key}: {val}");
+                        emittedKeys.Add(key);
+                    }
+                }
+                foreach (var kvp in sub.Metadata.OrderBy(k => k.Key, StringComparer.Ordinal))
+                {
+                    if (emittedKeys.Contains(kvp.Key)) continue;
+                    sb.AppendLine($"- {kvp.Key}: {kvp.Value}");
+                }
+
+                // Notes (prose) block
+                if (!string.IsNullOrWhiteSpace(sub.Notes))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine(sub.Notes.TrimEnd());
+                }
+
                 sb.AppendLine();
             }
         }
@@ -134,14 +175,68 @@ public partial class FrontmatterParser
             return (subtasks, body.Trim());
 
         var sectionContent = sectionMatch.Groups[1].Value;
-        foreach (Match m in SubtaskHeadingRegex().Matches(sectionContent))
+        var lines = sectionContent.Split('\n');
+
+        SubTask? current = null;
+        var notesBuffer = new StringBuilder();
+        var inMetadataBlock = false;
+
+        void FinalizeCurrent()
         {
-            subtasks.Add(new SubTask
-            {
-                IsCompleted = m.Groups[1].Value.Trim().Equals("x", StringComparison.OrdinalIgnoreCase),
-                Text = m.Groups[2].Value.Trim(),
-            });
+            if (current is null) return;
+            current.Notes = notesBuffer.ToString().Trim();
+            subtasks.Add(current);
+            notesBuffer.Clear();
         }
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.TrimEnd('\r');
+            var headingMatch = SubtaskHeadingRegex().Match(line);
+            if (headingMatch.Success)
+            {
+                FinalizeCurrent();
+                current = new SubTask
+                {
+                    IsCompleted = headingMatch.Groups[1].Value.Trim().Equals("x", StringComparison.OrdinalIgnoreCase),
+                    Text = headingMatch.Groups[2].Value.Trim(),
+                };
+                inMetadataBlock = true;
+                continue;
+            }
+
+            if (current is null) continue;
+
+            if (inMetadataBlock)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    inMetadataBlock = false;
+                    continue;
+                }
+
+                var metaMatch = MetadataLineRegex().Match(line);
+                if (metaMatch.Success)
+                {
+                    var key = metaMatch.Groups[1].Value;
+                    var value = metaMatch.Groups[2].Value.Trim();
+                    if (key == "status")
+                        current.Status = value;
+                    else
+                        current.Metadata[key] = value;
+                    continue;
+                }
+
+                // Non-blank, non-metadata line ends the metadata block; treat as notes.
+                inMetadataBlock = false;
+                notesBuffer.AppendLine(line);
+                continue;
+            }
+
+            notesBuffer.AppendLine(line);
+        }
+
+        FinalizeCurrent();
 
         // Body is everything before the ## Subtasks heading.
         var cleanBody = body[..sectionMatch.Index].Trim();

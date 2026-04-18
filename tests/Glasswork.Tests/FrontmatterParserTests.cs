@@ -244,6 +244,214 @@ public class FrontmatterParserTests
     }
 
     [TestMethod]
+    public void Parse_SubtaskWithStatusMetadata_SetsStatusField()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            ---
+
+            ## Subtasks
+
+            ### [ ] Build private package
+            - status: in_progress
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.AreEqual("Build private package", task.Subtasks[0].Text);
+        Assert.AreEqual("in_progress", task.Subtasks[0].Status);
+    }
+
+    [TestMethod]
+    public void Parse_SubtaskWithMultipleMetadataKeys_PopulatesMetadataDict()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            ---
+
+            ## Subtasks
+
+            ### [ ] Multi-meta sub
+            - status: blocked
+            - ado: 12345
+            - blocker: waiting on review
+            - my_day: 2026-04-17
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(1, task.Subtasks.Count);
+        var sub = task.Subtasks[0];
+        Assert.AreEqual("blocked", sub.Status);
+        Assert.AreEqual("12345", sub.Metadata["ado"]);
+        Assert.AreEqual("waiting on review", sub.Metadata["blocker"]);
+        Assert.AreEqual("2026-04-17", sub.Metadata["my_day"]);
+    }
+
+    [TestMethod]
+    public void Parse_SubtaskWithProseAfterMetadata_CapturesNotes()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            ---
+
+            ## Subtasks
+
+            ### [ ] Build private package
+            - ado: 12346
+            - status: in_progress
+
+            Build #1234 running. ETA 30 min.
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.AreEqual("in_progress", task.Subtasks[0].Status);
+        Assert.AreEqual("12346", task.Subtasks[0].Metadata["ado"]);
+        Assert.AreEqual("Build #1234 running. ETA 30 min.", task.Subtasks[0].Notes);
+    }
+
+    [TestMethod]
+    public void Parse_MetadataBlockEndsAtNextHeader_NoNotes()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            ---
+
+            ## Subtasks
+
+            ### [ ] First
+            - status: in_progress
+            ### [ ] Second
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(2, task.Subtasks.Count);
+        Assert.AreEqual("in_progress", task.Subtasks[0].Status);
+        Assert.AreEqual(string.Empty, task.Subtasks[0].Notes);
+        Assert.IsNull(task.Subtasks[1].Status);
+    }
+
+    [TestMethod]
+    public void Parse_StatusFieldWinsOverCheckedCheckboxChar()
+    {
+        // Conflict: checkbox is [x] but status: in_progress.
+        // IsCompleted reflects the char (true). Status reflects the field (in_progress).
+        // Consumer rule: Status wins for "is this done?" checks via IsEffectivelyDone.
+        var markdown = """
+            ---
+            id: t
+            title: T
+            ---
+
+            ## Subtasks
+
+            ### [x] Conflicted item
+            - status: in_progress
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(1, task.Subtasks.Count);
+        var sub = task.Subtasks[0];
+        Assert.IsTrue(sub.IsCompleted, "IsCompleted comes from the [x] character");
+        Assert.AreEqual("in_progress", sub.Status, "Status field wins as source of truth");
+        Assert.IsFalse(sub.IsEffectivelyDone, "Effective doneness follows Status when set");
+    }
+
+    [TestMethod]
+    public void Parse_RichSubtask_RoundTripsThroughSerialize()
+    {
+        var markdown = """
+            ---
+            id: rich-rt
+            title: Rich round trip
+            ---
+
+            ## Subtasks
+
+            ### [ ] Build private package
+            - status: in_progress
+            - ado: 12346
+
+            Build #1234 running. ETA 30 min.
+
+            ### [ ] Plain follow-up
+            """;
+
+        var task = _parser.Parse(markdown);
+        Assert.AreEqual(2, task.Subtasks.Count);
+
+        // Modify the rich one's status
+        task.Subtasks[0].Status = "blocked";
+        task.Subtasks[0].Metadata["blocker"] = "waiting on signing cert";
+
+        var roundTripped = _parser.Parse(_parser.Serialize(task));
+
+        Assert.AreEqual(2, roundTripped.Subtasks.Count);
+        Assert.AreEqual("Build private package", roundTripped.Subtasks[0].Text);
+        Assert.AreEqual("blocked", roundTripped.Subtasks[0].Status);
+        Assert.AreEqual("12346", roundTripped.Subtasks[0].Metadata["ado"]);
+        Assert.AreEqual("waiting on signing cert", roundTripped.Subtasks[0].Metadata["blocker"]);
+        Assert.AreEqual("Build #1234 running. ETA 30 min.", roundTripped.Subtasks[0].Notes);
+
+        Assert.AreEqual("Plain follow-up", roundTripped.Subtasks[1].Text);
+        Assert.IsNull(roundTripped.Subtasks[1].Status);
+        Assert.AreEqual(0, roundTripped.Subtasks[1].Metadata.Count);
+        Assert.AreEqual(string.Empty, roundTripped.Subtasks[1].Notes);
+    }
+
+    [TestMethod]
+    public void Serialize_MetadataKeysEmittedInStableOrder()
+    {
+        // Insertion order is intentionally scrambled — the serializer should normalize.
+        var task = new GlassworkTask
+        {
+            Id = "stable-order",
+            Title = "Stable order",
+            Subtasks =
+            [
+                new SubTask
+                {
+                    Text = "Ordered",
+                    IsCompleted = false,
+                    Status = "blocked",
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["my_day"] = "2026-04-17",
+                        ["blocker"] = "waiting on signing cert",
+                        ["completed"] = "2026-04-16",
+                        ["ado"] = "999",
+                    },
+                },
+            ],
+        };
+
+        var markdown = _parser.Serialize(task);
+        var statusIdx = markdown.IndexOf("- status:", StringComparison.Ordinal);
+        var adoIdx = markdown.IndexOf("- ado:", StringComparison.Ordinal);
+        var completedIdx = markdown.IndexOf("- completed:", StringComparison.Ordinal);
+        var blockerIdx = markdown.IndexOf("- blocker:", StringComparison.Ordinal);
+        var myDayIdx = markdown.IndexOf("- my_day:", StringComparison.Ordinal);
+
+        Assert.IsTrue(statusIdx >= 0 && adoIdx > statusIdx, $"status should precede ado.\n{markdown}");
+        Assert.IsTrue(adoIdx < completedIdx, $"ado should precede completed.\n{markdown}");
+        Assert.IsTrue(completedIdx < blockerIdx, $"completed should precede blocker.\n{markdown}");
+        Assert.IsTrue(blockerIdx < myDayIdx, $"blocker should precede my_day.\n{markdown}");
+    }
+
+    [TestMethod]
     public void Parse_MinimalTask_UsesDefaults()
     {
         var markdown = """
