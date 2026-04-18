@@ -108,6 +108,23 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
+    private void StartWork_Click(object sender, RoutedEventArgs e)
+        => CopyInvocation(TaskInvocationFormatter.FormatStartWork(Task.Id));
+
+    private void Resume_Click(object sender, RoutedEventArgs e)
+        => CopyInvocation(TaskInvocationFormatter.FormatResume(Task.Id));
+
+    private void WrapUp_Click(object sender, RoutedEventArgs e)
+        => CopyInvocation(TaskInvocationFormatter.FormatWrapUp(Task.Id));
+
+    private void CopyInvocation(string line)
+    {
+        var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        pkg.SetText(line);
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+        ClipboardHint.Text = "Copied — paste into your Copilot CLI session.";
+    }
+
     private void Save() => App.Vault.Save(Task);
 
     private static void SetComboByTag(ComboBox combo, string tag)
