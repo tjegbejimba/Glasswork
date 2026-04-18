@@ -21,6 +21,19 @@ public sealed partial class BacklogPage : Page
     {
         base.OnNavigatedTo(e);
         ViewModel.Refresh();
+        App.TaskFileChangedExternally += OnFileChanged;
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        App.TaskFileChangedExternally -= OnFileChanged;
+    }
+
+    private void OnFileChanged(object? sender, string fileName)
+    {
+        // Watcher fires on thread-pool thread; marshal to UI thread before refresh.
+        DispatcherQueue.TryEnqueue(() => ViewModel.Refresh());
     }
 
     private void StatusFilter_Changed(object sender, SelectionChangedEventArgs e)

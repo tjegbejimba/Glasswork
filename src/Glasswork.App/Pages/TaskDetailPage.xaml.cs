@@ -26,6 +26,8 @@ public sealed partial class TaskDetailPage : Page
         {
             _isLoading = true;
             Task = task;
+            App.ActiveTask.ActiveTaskId = task.Id;
+            App.TaskFileChangedExternally += OnFileChangedExternally;
 
             // Set combo boxes to match task state
             SetComboByTag(StatusBox, task.Status);
@@ -50,6 +52,41 @@ public sealed partial class TaskDetailPage : Page
 
             _isLoading = false;
         }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        App.TaskFileChangedExternally -= OnFileChangedExternally;
+        App.ActiveTask.Clear();
+    }
+
+    private void OnFileChangedExternally(object? sender, string fileName)
+    {
+        if (!App.ActiveTask.IsActive(fileName)) return;
+        // Watcher fires on a thread-pool thread; show the banner on the UI thread.
+        DispatcherQueue.TryEnqueue(() => ReloadBanner.IsOpen = true);
+    }
+
+    private void Reload_Click(object sender, RoutedEventArgs e)
+    {
+        var fresh = App.Vault.Load(Task.Id);
+        if (fresh is not null)
+        {
+            // Re-navigate with the freshly-loaded task to reset all bound state.
+            ReloadBanner.IsOpen = false;
+            Frame.Navigate(typeof(TaskDetailPage), fresh);
+        }
+        else
+        {
+            ReloadBanner.IsOpen = false;
+        }
+    }
+
+    private void KeepMine_Click(object sender, RoutedEventArgs e)
+    {
+        // Dismiss only — the next Save() will overwrite the on-disk change.
+        ReloadBanner.IsOpen = false;
     }
 
     private void Field_LostFocus(object sender, RoutedEventArgs e)

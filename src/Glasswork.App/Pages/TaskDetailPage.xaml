@@ -10,6 +10,19 @@
     <ScrollViewer Padding="32">
         <StackPanel Spacing="16">
 
+            <!-- Reload banner: shown when the open file is changed externally -->
+            <InfoBar x:Name="ReloadBanner"
+                     IsOpen="False"
+                     IsClosable="False"
+                     Severity="Warning"
+                     Title="This file changed on disk"
+                     Message="Another tool (e.g. Obsidian or an agent) modified this task while you were editing it.">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+                    <Button Content="Reload" Click="Reload_Click" />
+                    <Button Content="Keep my version" Click="KeepMine_Click" />
+                </StackPanel>
+            </InfoBar>
+
             <!-- Title -->
             <TextBox x:Name="TitleBox" Header="Title" FontSize="18"
                      Text="{x:Bind Task.Title, Mode=TwoWay}"

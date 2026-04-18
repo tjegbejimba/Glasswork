@@ -53,6 +53,38 @@ public class FileWatcherServiceTests
     }
 
     [TestMethod]
+    public void DoesNotFire_ForFilesInSiblingDirectory()
+    {
+        // Sibling directory next to the watched dir
+        var siblingDir = _tempDir + "-sibling";
+        Directory.CreateDirectory(siblingDir);
+        try
+        {
+            using var watcher = new FileWatcherService(_tempDir);
+            string? changedFile = null;
+            var signal = new ManualResetEventSlim(false);
+
+            watcher.TaskFileChanged += (_, name) =>
+            {
+                changedFile = name;
+                signal.Set();
+            };
+
+            watcher.Start();
+            File.WriteAllText(Path.Combine(siblingDir, "outside-task.md"), "x");
+
+            Assert.IsFalse(signal.Wait(TimeSpan.FromSeconds(2)),
+                "Should NOT fire for files outside the watched vault directory");
+            Assert.IsNull(changedFile);
+        }
+        finally
+        {
+            if (Directory.Exists(siblingDir))
+                Directory.Delete(siblingDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void IgnoresUnderscorePrefixedFiles()
     {
         using var watcher = new FileWatcherService(_tempDir);
