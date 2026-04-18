@@ -22,6 +22,18 @@ public sealed partial class MyDayPage : Page
     {
         base.OnNavigatedTo(e);
         ViewModel.Refresh();
+        App.TaskFileChangedExternally += OnFileChanged;
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        App.TaskFileChangedExternally -= OnFileChanged;
+    }
+
+    private void OnFileChanged(object? sender, string fileName)
+    {
+        DispatcherQueue.TryEnqueue(() => ViewModel.Refresh());
     }
 
     private void TodayList_ItemClick(object sender, ItemClickEventArgs e)

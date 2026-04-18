@@ -19,6 +19,15 @@ public partial class App : Application
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
     public static FeedbackService? Feedback { get; private set; }
+    public static FileWatcherService? Watcher { get; private set; }
+    public static ActiveTaskTracker ActiveTask { get; } = new();
+    private static Debouncer? _indexDebouncer;
+
+    /// <summary>
+    /// Raised on a thread-pool thread when an external change to a task file is observed.
+    /// Subscribers must marshal to the dispatcher before touching UI.
+    /// </summary>
+    public static event EventHandler<string>? TaskFileChangedExternally;
 
     [DllImport("shell32.dll", SetLastError = true)]
     private static extern void SetCurrentProcessExplicitAppUserModelID(
@@ -54,7 +63,29 @@ public partial class App : Application
         if (!string.IsNullOrEmpty(ghToken))
             Feedback = new FeedbackService("tjegbejimba", "Glasswork", ghToken);
 
+        // File watcher: external (Obsidian / agent) edits to task files trigger
+        // a debounced index regeneration and notify any open page.
+        // FileSystemWatcher events fire on thread-pool threads — anything
+        // touching UI in a subscriber must marshal via DispatcherQueue.
+        _indexDebouncer = new Debouncer(TimeSpan.FromMilliseconds(500), () =>
+        {
+            try { Index.Refresh(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index refresh failed: {ex.Message}"); }
+        });
+
+        Watcher = new FileWatcherService(vaultPath);
+        Watcher.TaskFileChanged += OnTaskFileChanged;
+        Watcher.Start();
+
         _window = new MainWindow();
         _window.Activate();
+    }
+
+    private static void OnTaskFileChanged(object? sender, string fileName)
+    {
+        // Always coalesce index regen across rapid edits.
+        _indexDebouncer?.Trigger();
+        // Fan out to UI subscribers (BacklogPage / MyDayPage / TaskDetailPage).
+        TaskFileChangedExternally?.Invoke(sender, fileName);
     }
 }
