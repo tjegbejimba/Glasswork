@@ -109,4 +109,66 @@ public class VaultServiceTests
         var id = VaultService.GenerateId(longTitle);
         Assert.IsTrue(id.Length <= 60);
     }
+
+    [TestMethod]
+    public void UpdateSubtaskCheckbox_TogglesSingleCharacter_LeavesRestOfFileByteForByteUntouched()
+    {
+        var taskId = "targeted-edit";
+        var original =
+            "---\n" +
+            "id: targeted-edit\n" +
+            "title: Targeted edit task\n" +
+            "---\n" +
+            "\n" +
+            "Body line that must not change.\n" +
+            "\n" +
+            "## Subtasks\n" +
+            "\n" +
+            "### [ ] First sub\n" +
+            "### [ ] Second sub\n" +
+            "### [x] Third sub\n";
+
+        var path = Path.Combine(_tempDir, $"{taskId}.md");
+        File.WriteAllText(path, original);
+
+        _vault.UpdateSubtaskCheckbox(taskId, "Second sub", isCompleted: true);
+
+        var actual = File.ReadAllText(path);
+        var expected =
+            "---\n" +
+            "id: targeted-edit\n" +
+            "title: Targeted edit task\n" +
+            "---\n" +
+            "\n" +
+            "Body line that must not change.\n" +
+            "\n" +
+            "## Subtasks\n" +
+            "\n" +
+            "### [ ] First sub\n" +
+            "### [x] Second sub\n" +
+            "### [x] Third sub\n";
+
+        Assert.AreEqual(expected, actual);
+    }
+
+    [TestMethod]
+    public void UpdateSubtaskCheckbox_TitleNotFound_LeavesFileUnchanged()
+    {
+        var taskId = "no-such-sub";
+        var original =
+            "---\n" +
+            "id: no-such-sub\n" +
+            "title: T\n" +
+            "---\n" +
+            "\n" +
+            "## Subtasks\n" +
+            "\n" +
+            "### [ ] Only one\n";
+        var path = Path.Combine(_tempDir, $"{taskId}.md");
+        File.WriteAllText(path, original);
+
+        _vault.UpdateSubtaskCheckbox(taskId, "Missing title", isCompleted: true);
+
+        Assert.AreEqual(original, File.ReadAllText(path));
+    }
 }

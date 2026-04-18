@@ -66,6 +66,29 @@ public class VaultService
     }
 
     /// <summary>
+    /// Targeted edit: toggle a single subtask checkbox on disk by replacing only the
+    /// `### [ ]` / `### [x]` character on the matching line. The rest of the file is left
+    /// byte-for-byte untouched. No-op if the title is not found.
+    /// </summary>
+    public void UpdateSubtaskCheckbox(string taskId, string subtaskTitle, bool isCompleted)
+    {
+        var path = GetFilePath(taskId);
+        if (!File.Exists(path)) return;
+
+        var content = File.ReadAllText(path);
+        var newCheck = isCompleted ? "x" : " ";
+        var pattern = @"^### \[[ xX]\] " + System.Text.RegularExpressions.Regex.Escape(subtaskTitle) + @"\s*$";
+        var regex = new System.Text.RegularExpressions.Regex(pattern, System.Text.RegularExpressions.RegexOptions.Multiline);
+
+        var match = regex.Match(content);
+        if (!match.Success) return;
+
+        var updated = content[..match.Index] + $"### [{newCheck}] {subtaskTitle}" + content[(match.Index + match.Length)..];
+        if (updated != content)
+            File.WriteAllText(path, updated);
+    }
+
+    /// <summary>
     /// Save a task to disk. Creates or overwrites the file.
     /// </summary>
     public void Save(GlassworkTask task)

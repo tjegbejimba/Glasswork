@@ -84,7 +84,14 @@ public sealed partial class TaskDetailPage : Page
         Save();
     }
 
-    private void Subtask_Click(object sender, RoutedEventArgs e) => Save();
+    private void Subtask_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading) return;
+        if (sender is CheckBox cb && cb.DataContext is SubTask sub)
+        {
+            App.Vault.UpdateSubtaskCheckbox(Task.Id, sub.Text, cb.IsChecked == true);
+        }
+    }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
     {
