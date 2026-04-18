@@ -33,8 +33,10 @@ public class FrontmatterParserTests
 
             Some notes about this task.
 
-            - [x] Step one done
-            - [ ] Step two pending
+            ## Subtasks
+
+            ### [x] Step one done
+            ### [ ] Step two pending
             """;
 
         var task = _parser.Parse(markdown);
@@ -111,6 +113,134 @@ public class FrontmatterParserTests
         Assert.AreEqual(original.Subtasks.Count, parsed.Subtasks.Count);
         Assert.AreEqual(original.Subtasks[0].Text, parsed.Subtasks[0].Text);
         Assert.AreEqual(original.Subtasks[0].IsCompleted, parsed.Subtasks[0].IsCompleted);
+    }
+
+    [TestMethod]
+    public void Parse_SingleUncheckedH3Subtask_ReturnsOneIncompleteSubtask()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            ---
+
+            ## Subtasks
+
+            ### [ ] Plain title
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.AreEqual("Plain title", task.Subtasks[0].Text);
+        Assert.IsFalse(task.Subtasks[0].IsCompleted);
+    }
+
+    [TestMethod]
+    public void Parse_SingleCheckedH3Subtask_ReturnsCompletedSubtask()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            ---
+
+            ## Subtasks
+
+            ### [x] Done thing
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.AreEqual("Done thing", task.Subtasks[0].Text);
+        Assert.IsTrue(task.Subtasks[0].IsCompleted);
+    }
+
+    [TestMethod]
+    public void Parse_MultipleH3Subtasks_PreservesOrderAndStates()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            ---
+
+            Some prose body.
+
+            ## Subtasks
+
+            ### [ ] First
+            ### [x] Second
+            ### [ ] Third
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(3, task.Subtasks.Count);
+        Assert.AreEqual("First", task.Subtasks[0].Text);
+        Assert.IsFalse(task.Subtasks[0].IsCompleted);
+        Assert.AreEqual("Second", task.Subtasks[1].Text);
+        Assert.IsTrue(task.Subtasks[1].IsCompleted);
+        Assert.AreEqual("Third", task.Subtasks[2].Text);
+        Assert.IsFalse(task.Subtasks[2].IsCompleted);
+        Assert.AreEqual("Some prose body.", task.Body);
+    }
+
+    [TestMethod]
+    public void Parse_V1TaskWithoutSubtasksSection_ReturnsEmptySubtaskList()
+    {
+        var markdown = """
+            ---
+            id: legacy-v1
+            title: Legacy V1 task
+            status: todo
+            priority: medium
+            created: 2026-01-01
+            ---
+
+            Just a body of plain notes, no subtasks heading at all.
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual("legacy-v1", task.Id);
+        Assert.AreEqual(0, task.Subtasks.Count);
+        Assert.AreEqual("Just a body of plain notes, no subtasks heading at all.", task.Body);
+    }
+
+    [TestMethod]
+    public void Parse_ToggleSerialize_Reparse_PreservesSubtaskState()
+    {
+        var markdown = """
+            ---
+            id: round-trip-sub
+            title: Round trip
+            ---
+
+            ## Subtasks
+
+            ### [ ] Alpha
+            ### [ ] Beta
+            ### [x] Gamma
+            """;
+
+        var task = _parser.Parse(markdown);
+        Assert.AreEqual(3, task.Subtasks.Count);
+
+        // Toggle: complete Beta, uncomplete Gamma
+        task.Subtasks[1].IsCompleted = true;
+        task.Subtasks[2].IsCompleted = false;
+
+        var roundTripped = _parser.Parse(_parser.Serialize(task));
+
+        Assert.AreEqual(3, roundTripped.Subtasks.Count);
+        Assert.AreEqual("Alpha", roundTripped.Subtasks[0].Text);
+        Assert.IsFalse(roundTripped.Subtasks[0].IsCompleted);
+        Assert.AreEqual("Beta", roundTripped.Subtasks[1].Text);
+        Assert.IsTrue(roundTripped.Subtasks[1].IsCompleted);
+        Assert.AreEqual("Gamma", roundTripped.Subtasks[2].Text);
+        Assert.IsFalse(roundTripped.Subtasks[2].IsCompleted);
     }
 
     [TestMethod]

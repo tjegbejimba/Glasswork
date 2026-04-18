@@ -29,8 +29,11 @@ public partial class FrontmatterParser
     [GeneratedRegex(@"^---\s*\n(.*?)\n---\s*\n?(.*)", RegexOptions.Singleline)]
     private static partial Regex FrontmatterRegex();
 
-    [GeneratedRegex(@"^- \[([ xX])\] (.+)$", RegexOptions.Multiline)]
-    private static partial Regex CheckboxRegex();
+    [GeneratedRegex(@"^### \[([ xX])\] (.+?)\s*$", RegexOptions.Multiline)]
+    private static partial Regex SubtaskHeadingRegex();
+
+    [GeneratedRegex(@"(?ms)^## Subtasks\s*$(.*?)(?=^## |\z)", RegexOptions.Multiline)]
+    private static partial Regex SubtasksSectionRegex();
 
     /// <summary>
     /// Parse a markdown file's content into a GlassworkTask.
@@ -109,10 +112,13 @@ public partial class FrontmatterParser
 
         if (task.Subtasks.Count > 0)
         {
+            sb.AppendLine("## Subtasks");
+            sb.AppendLine();
             foreach (var sub in task.Subtasks)
             {
                 var check = sub.IsCompleted ? "x" : " ";
-                sb.AppendLine($"- [{check}] {sub.Text}");
+                sb.AppendLine($"### [{check}] {sub.Text}");
+                sb.AppendLine();
             }
         }
 
@@ -122,9 +128,13 @@ public partial class FrontmatterParser
     private static (List<SubTask> subtasks, string cleanBody) ParseSubtasks(string body)
     {
         var subtasks = new List<SubTask>();
-        var matches = CheckboxRegex().Matches(body);
+        var sectionMatch = SubtasksSectionRegex().Match(body);
 
-        foreach (Match m in matches)
+        if (!sectionMatch.Success)
+            return (subtasks, body.Trim());
+
+        var sectionContent = sectionMatch.Groups[1].Value;
+        foreach (Match m in SubtaskHeadingRegex().Matches(sectionContent))
         {
             subtasks.Add(new SubTask
             {
@@ -133,8 +143,8 @@ public partial class FrontmatterParser
             });
         }
 
-        // Remove checkbox lines from body to get clean prose
-        var cleanBody = CheckboxRegex().Replace(body, "").Trim();
+        // Body is everything before the ## Subtasks heading.
+        var cleanBody = body[..sectionMatch.Index].Trim();
         return (subtasks, cleanBody);
     }
 
