@@ -21,6 +21,7 @@ public partial class App : Application
     public static FeedbackService? Feedback { get; private set; }
     public static FileWatcherService? Watcher { get; private set; }
     public static ActiveTaskTracker ActiveTask { get; } = new();
+    public static SelfWriteCoordinator SelfWrites { get; } = new();
     private static Debouncer? _indexDebouncer;
 
     /// <summary>
@@ -54,7 +55,7 @@ public partial class App : Application
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Wiki", "wiki", "todo");
 
-        Vault = new VaultService(vaultPath);
+        Vault = new VaultService(vaultPath, SelfWrites);
         Tasks = new TaskService(Vault);
         Index = new IndexService(Vault);
 
@@ -73,7 +74,7 @@ public partial class App : Application
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index refresh failed: {ex.Message}"); }
         });
 
-        Watcher = new FileWatcherService(vaultPath);
+        Watcher = new FileWatcherService(vaultPath, SelfWrites);
         Watcher.TaskFileChanged += OnTaskFileChanged;
         Watcher.Start();
 
