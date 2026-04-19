@@ -21,7 +21,8 @@ public class TaskService
     /// <summary>
     /// Create a new task with auto-generated ID, save to vault.
     /// </summary>
-    public GlassworkTask CreateTask(string title, string priority = "medium", string? parent = null)
+    public GlassworkTask CreateTask(string title, string priority = "medium", string? parent = null,
+        int? adoLink = null, string? adoTitle = null)
     {
         var task = new GlassworkTask
         {
@@ -31,6 +32,8 @@ public class TaskService
             Priority = priority,
             Created = DateTime.Today,
             Parent = parent,
+            AdoLink = adoLink,
+            AdoTitle = adoTitle,
         };
 
         _vault.Save(task);

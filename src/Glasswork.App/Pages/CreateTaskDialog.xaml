@@ -21,6 +21,11 @@
 
         <CheckBox x:Name="AddToMyDayBox" Content="Add to My Day" />
 
+        <TextBox x:Name="AdoLinkBox" Header="ADO work item ID (optional)"
+                 PlaceholderText="e.g. 12345" InputScope="Number" />
+        <TextBox x:Name="AdoTitleBox" Header="ADO title (optional)"
+                 PlaceholderText="Short label shown on the task" />
+
         <TextBox x:Name="NotesBox" Header="Notes (optional)" AcceptsReturn="True" Height="80"
                  PlaceholderText="Additional context..." />
     </StackPanel>
