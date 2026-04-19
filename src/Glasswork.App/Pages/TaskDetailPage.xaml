@@ -164,6 +164,16 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
+            <!-- Add subtask: inline editor (Enter to commit, button as alternative) -->
+            <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                <TextBox x:Name="AddSubtaskBox" Grid.Column="0"
+                         PlaceholderText="Add subtask..."
+                         KeyDown="AddSubtaskBox_KeyDown" />
+                <Button x:Name="AddSubtaskButton" Grid.Column="1"
+                        Content="Add" Margin="8,0,0,0"
+                        Click="AddSubtask_Click" />
+            </Grid>
+
             <!-- Completed / dropped subtasks: collapsed under an expander -->
             <Expander x:Name="CompletedExpander" HorizontalAlignment="Stretch"
                       Visibility="Collapsed">

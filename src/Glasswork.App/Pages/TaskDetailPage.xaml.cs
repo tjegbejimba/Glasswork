@@ -183,6 +183,35 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
+    private void AddSubtaskBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Enter)
+        {
+            CommitNewSubtask();
+            e.Handled = true;
+        }
+    }
+
+    private void AddSubtask_Click(object sender, RoutedEventArgs e) => CommitNewSubtask();
+
+    private void CommitNewSubtask()
+    {
+        if (_isLoading) return;
+        var title = AddSubtaskBox.Text?.Trim();
+        if (string.IsNullOrEmpty(title)) return;
+
+        App.Vault.AddSubtask(Task.Id, title);
+        AddSubtaskBox.Text = string.Empty;
+
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null)
+        {
+            Task = reloaded;
+            BindSubtasks(reloaded.Subtasks);
+        }
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
+    }
+
     private void ToggleSubtaskMyDay_Click(object sender, RoutedEventArgs e)
     {
         if (_isLoading) return;
