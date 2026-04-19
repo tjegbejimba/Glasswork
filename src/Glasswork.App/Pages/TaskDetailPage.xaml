@@ -11,6 +11,7 @@
     <Page.Resources>
         <local:BoolToVisibilityConverter x:Key="BoolToVis" />
         <local:HexToBrushConverter x:Key="HexToBrush" />
+        <local:MyDayBrushConverter x:Key="MyDayBrush" />
     </Page.Resources>
 
     <ScrollViewer Padding="32">
@@ -69,11 +70,20 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
                         <Grid Margin="0,2,0,2">
-                            <!-- Simple row: plain checkbox -->
-                            <CheckBox Content="{Binding Text}"
-                                      IsChecked="{Binding IsCompleted, Mode=TwoWay}"
-                                      Click="Subtask_Click"
-                                      Visibility="{Binding IsSimple, Converter={StaticResource BoolToVis}}" />
+                            <!-- Simple row: plain checkbox + my-day toggle -->
+                            <Grid Visibility="{Binding IsSimple, Converter={StaticResource BoolToVis}}"
+                                  ColumnDefinitions="*,Auto">
+                                <CheckBox Grid.Column="0" Content="{Binding Text}"
+                                          IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                          Click="Subtask_Click" />
+                                <Button Grid.Column="1" Click="ToggleSubtaskMyDay_Click"
+                                        Background="Transparent" BorderThickness="0"
+                                        Padding="6" VerticalAlignment="Center"
+                                        ToolTipService.ToolTip="Toggle My Day for this subtask">
+                                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" FontSize="14"
+                                              Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
+                                </Button>
+                            </Grid>
 
                             <!-- Card form: rich (auto-expanded or collapsed) -->
                             <Border Visibility="{Binding ShowAsCard, Converter={StaticResource BoolToVis}}"
@@ -83,22 +93,31 @@
                                     Padding="10,8"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                 <StackPanel Spacing="6">
-                                    <!-- Header row: checkbox + title + status pill -->
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <CheckBox Content="{Binding Text}"
-                                                  IsChecked="{Binding IsCompleted, Mode=TwoWay}"
-                                                  Click="Subtask_Click" />
-                                        <Border Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
-                                                CornerRadius="10"
-                                                Padding="8,2"
-                                                VerticalAlignment="Center"
-                                                Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
-                                            <TextBlock Text="{Binding StatusPillText}"
-                                                       Foreground="White"
-                                                       FontSize="11"
-                                                       FontWeight="SemiBold" />
-                                        </Border>
-                                    </StackPanel>
+                                    <!-- Header row: checkbox + title + status pill + my-day toggle -->
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                                            <CheckBox Content="{Binding Text}"
+                                                      IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                                      Click="Subtask_Click" />
+                                            <Border Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
+                                                    CornerRadius="10"
+                                                    Padding="8,2"
+                                                    VerticalAlignment="Center"
+                                                    Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
+                                                <TextBlock Text="{Binding StatusPillText}"
+                                                           Foreground="White"
+                                                           FontSize="11"
+                                                           FontWeight="SemiBold" />
+                                            </Border>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Click="ToggleSubtaskMyDay_Click"
+                                                Background="Transparent" BorderThickness="0"
+                                                Padding="6" VerticalAlignment="Center"
+                                                ToolTipService.ToolTip="Toggle My Day for this subtask">
+                                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" FontSize="14"
+                                                      Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
+                                        </Button>
+                                    </Grid>
 
                                     <!-- Blocker line (only when status: blocked) -->
                                     <TextBlock Visibility="{Binding BlockerVisible, Converter={StaticResource BoolToVis}}"
