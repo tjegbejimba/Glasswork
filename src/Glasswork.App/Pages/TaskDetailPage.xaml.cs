@@ -23,6 +23,9 @@ public sealed partial class TaskDetailPage : Page
     public TaskDetailPage()
     {
         InitializeComponent();
+        // Always re-create this page on navigation so Reload (which re-navigates
+        // with a fresh GlassworkTask) cannot be deduped to the cached instance.
+        NavigationCacheMode = NavigationCacheMode.Disabled;
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -30,34 +33,44 @@ public sealed partial class TaskDetailPage : Page
         base.OnNavigatedTo(e);
         if (e.Parameter is GlassworkTask task)
         {
-            _isLoading = true;
-            Task = task;
-            App.ActiveTask.ActiveTaskId = task.Id;
             App.TaskFileChangedExternally += OnFileChangedExternally;
-
-            // Set combo boxes to match task state
-            SetComboByTag(StatusBox, task.Status);
-            SetComboByTag(PriorityBox, task.Priority);
-
-            if (task.Due.HasValue)
-                DueDatePicker.Date = new DateTimeOffset(task.Due.Value);
-
-            BindSubtasks(task.Subtasks);
-
-            CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
-            CompletedText.Text = task.CompletedAt.HasValue
-                ? $"Completed: {task.CompletedAt.Value:yyyy-MM-dd HH:mm}"
-                : "";
-            IdText.Text = $"ID: {task.Id}";
-
-            if (task.AdoLink.HasValue)
-            {
-                AdoPanel.Visibility = Visibility.Visible;
-                AdoTitleRun.Text = $"#{task.AdoLink} — {task.AdoTitle ?? "linked"}";
-            }
-
-            _isLoading = false;
+            ApplyTask(task);
         }
+    }
+
+    private void ApplyTask(GlassworkTask task)
+    {
+        _isLoading = true;
+        Task = task;
+        App.ActiveTask.ActiveTaskId = task.Id;
+
+        // Set combo boxes to match task state
+        SetComboByTag(StatusBox, task.Status);
+        SetComboByTag(PriorityBox, task.Priority);
+
+        DueDatePicker.Date = task.Due.HasValue
+            ? new DateTimeOffset(task.Due.Value)
+            : (DateTimeOffset?)null;
+
+        BindSubtasks(task.Subtasks);
+
+        CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
+        CompletedText.Text = task.CompletedAt.HasValue
+            ? $"Completed: {task.CompletedAt.Value:yyyy-MM-dd HH:mm}"
+            : "";
+        IdText.Text = $"ID: {task.Id}";
+
+        if (task.AdoLink.HasValue)
+        {
+            AdoPanel.Visibility = Visibility.Visible;
+            AdoTitleRun.Text = $"#{task.AdoLink} — {task.AdoTitle ?? "linked"}";
+        }
+        else
+        {
+            AdoPanel.Visibility = Visibility.Collapsed;
+        }
+
+        _isLoading = false;
     }
 
     private void BindSubtasks(IList<SubTask> subtasks)
@@ -96,16 +109,14 @@ public sealed partial class TaskDetailPage : Page
 
     private void Reload_Click(object sender, RoutedEventArgs e)
     {
+        ReloadBanner.IsOpen = false;
         var fresh = App.Vault.Load(Task.Id);
         if (fresh is not null)
         {
-            // Re-navigate with the freshly-loaded task to reset all bound state.
-            ReloadBanner.IsOpen = false;
-            Frame.Navigate(typeof(TaskDetailPage), fresh);
-        }
-        else
-        {
-            ReloadBanner.IsOpen = false;
+            // Re-bind in place. Frame.Navigate(typeof(TaskDetailPage), ...) is unreliable
+            // here because the frame may dedupe a navigation to the currently-displayed
+            // page type — leaving stale field state on screen.
+            ApplyTask(fresh);
         }
     }
 

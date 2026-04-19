@@ -152,6 +152,47 @@ public class VaultServiceTests
     }
 
     [TestMethod]
+    public void Save_RegistersWriteWithCoordinator()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));
+        var vault = new VaultService(_tempDir, coord);
+        var task = new GlassworkTask { Id = "self-write", Title = "X" };
+
+        vault.Save(task);
+
+        var path = Path.Combine(_tempDir, "self-write.md");
+        Assert.IsTrue(coord.IsSuppressed(path));
+    }
+
+    [TestMethod]
+    public void UpdateSubtaskCheckbox_RegistersWriteWithCoordinator()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));
+        var vault = new VaultService(_tempDir, coord);
+        var taskId = "sub-write";
+        var path = Path.Combine(_tempDir, $"{taskId}.md");
+        File.WriteAllText(path,
+            "---\nid: sub-write\ntitle: T\n---\n\n## Subtasks\n\n### [ ] One\n");
+
+        vault.UpdateSubtaskCheckbox(taskId, "One", isCompleted: true);
+
+        Assert.IsTrue(coord.IsSuppressed(path));
+    }
+
+    [TestMethod]
+    public void Delete_RegistersWriteWithCoordinator()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));
+        var vault = new VaultService(_tempDir, coord);
+        vault.Save(new GlassworkTask { Id = "to-del", Title = "x" });
+
+        vault.Delete("to-del");
+
+        var path = Path.Combine(_tempDir, "to-del.md");
+        Assert.IsTrue(coord.IsSuppressed(path));
+    }
+
+    [TestMethod]
     public void UpdateSubtaskCheckbox_TitleNotFound_LeavesFileUnchanged()
     {
         var taskId = "no-such-sub";

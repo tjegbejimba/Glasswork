@@ -85,6 +85,56 @@ public class FileWatcherServiceTests
     }
 
     [TestMethod]
+    public void DoesNotFire_WhenPathSuppressedByCoordinator_SelfWrite()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(2));
+        using var watcher = new FileWatcherService(_tempDir, coord);
+        string? changedFile = null;
+        var signal = new ManualResetEventSlim(false);
+
+        watcher.TaskFileChanged += (_, name) =>
+        {
+            changedFile = name;
+            signal.Set();
+        };
+
+        watcher.Start();
+
+        // Simulate VaultService registering its self-write BEFORE the disk write completes.
+        var path = Path.Combine(_tempDir, "self-task.md");
+        coord.RegisterWrite(path);
+        File.WriteAllText(path, "---\ntitle: Self\n---");
+
+        Assert.IsFalse(signal.Wait(TimeSpan.FromSeconds(2)),
+            "Watcher MUST suppress events whose paths are registered as recent self-writes.");
+        Assert.IsNull(changedFile);
+    }
+
+    [TestMethod]
+    public void Fires_WhenPathNotSuppressed_ExternalWrite()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(2));
+        using var watcher = new FileWatcherService(_tempDir, coord);
+        string? changedFile = null;
+        var signal = new ManualResetEventSlim(false);
+
+        watcher.TaskFileChanged += (_, name) =>
+        {
+            changedFile = name;
+            signal.Set();
+        };
+
+        watcher.Start();
+
+        // External write — coordinator was NEVER told about this path.
+        File.WriteAllText(Path.Combine(_tempDir, "external-task.md"), "---\ntitle: External\n---");
+
+        Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)),
+            "External writes (not registered with coordinator) MUST surface to subscribers.");
+        Assert.AreEqual("external-task.md", changedFile);
+    }
+
+    [TestMethod]
     public void IgnoresUnderscorePrefixedFiles()
     {
         using var watcher = new FileWatcherService(_tempDir);

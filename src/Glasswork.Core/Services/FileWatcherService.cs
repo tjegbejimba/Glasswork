@@ -12,12 +12,16 @@ public class FileWatcherService : IDisposable
 {
     private readonly FileSystemWatcher _watcher;
     private readonly string _vaultPath;
+    private readonly SelfWriteCoordinator? _selfWrites;
 
     public event EventHandler<string>? TaskFileChanged;
 
-    public FileWatcherService(string vaultPath)
+    public FileWatcherService(string vaultPath) : this(vaultPath, null) { }
+
+    public FileWatcherService(string vaultPath, SelfWriteCoordinator? selfWrites)
     {
         _vaultPath = vaultPath;
+        _selfWrites = selfWrites;
 
         if (!Directory.Exists(vaultPath))
             Directory.CreateDirectory(vaultPath);
@@ -47,6 +51,10 @@ public class FileWatcherService : IDisposable
         var fileName = Path.GetFileName(fullPath);
         // Skip index/schema files
         if (fileName.StartsWith("_")) return;
+
+        // Skip events caused by our own writes (e.g. VaultService.Save) — otherwise
+        // every Field_LostFocus → Save round-trips into a false-positive reload banner.
+        if (_selfWrites?.IsSuppressed(fullPath) == true) return;
 
         TaskFileChanged?.Invoke(this, fileName);
     }

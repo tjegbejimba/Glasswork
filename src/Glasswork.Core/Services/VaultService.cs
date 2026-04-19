@@ -14,10 +14,14 @@ public class VaultService
 {
     private readonly string _vaultPath;
     private readonly FrontmatterParser _parser = new();
+    private readonly SelfWriteCoordinator? _selfWrites;
 
-    public VaultService(string vaultPath)
+    public VaultService(string vaultPath) : this(vaultPath, null) { }
+
+    public VaultService(string vaultPath, SelfWriteCoordinator? selfWrites)
     {
         _vaultPath = vaultPath;
+        _selfWrites = selfWrites;
         Directory.CreateDirectory(_vaultPath);
     }
 
@@ -85,7 +89,10 @@ public class VaultService
 
         var updated = content[..match.Index] + $"### [{newCheck}] {subtaskTitle}" + content[(match.Index + match.Length)..];
         if (updated != content)
+        {
+            _selfWrites?.RegisterWrite(path);
             File.WriteAllText(path, updated);
+        }
     }
 
     /// <summary>
@@ -97,7 +104,9 @@ public class VaultService
             throw new ArgumentException("Task must have an ID before saving.");
 
         var content = _parser.Serialize(task);
-        File.WriteAllText(GetFilePath(task.Id), content);
+        var path = GetFilePath(task.Id);
+        _selfWrites?.RegisterWrite(path);
+        File.WriteAllText(path, content);
     }
 
     /// <summary>
@@ -108,6 +117,7 @@ public class VaultService
         var filePath = GetFilePath(taskId);
         if (!File.Exists(filePath)) return false;
 
+        _selfWrites?.RegisterWrite(filePath);
         File.Delete(filePath);
         return true;
     }
