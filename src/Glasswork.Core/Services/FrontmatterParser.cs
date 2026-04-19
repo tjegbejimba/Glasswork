@@ -80,6 +80,7 @@ public partial class FrontmatterParser
         var (subtasks, cleanBody) = ParseSubtasks(body);
         task.Subtasks = subtasks;
         task.Body = cleanBody;
+        task.IsV1Format = MigrationService.IsV1Format(content);
 
         return task;
     }

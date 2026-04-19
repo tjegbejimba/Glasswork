@@ -56,6 +56,8 @@ public sealed partial class TaskDetailPage : Page
                 AdoTitleRun.Text = $"#{task.AdoLink} — {task.AdoTitle ?? "linked"}";
             }
 
+            UpgradeV2Button.Visibility = task.IsV1Format ? Visibility.Visible : Visibility.Collapsed;
+
             _isLoading = false;
         }
     }
@@ -166,6 +168,17 @@ public sealed partial class TaskDetailPage : Page
     {
         var uri = $"obsidian://open?vault=Wiki&file=todo%2F{Uri.EscapeDataString(Task.Id)}";
         Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+    }
+
+    private void UpgradeV2_Click(object sender, RoutedEventArgs e)
+    {
+        // Run the in-place migration on disk, then re-navigate to load the V2 form.
+        App.Vault.MigrateToV2(Task.Id);
+        var fresh = App.Vault.Load(Task.Id);
+        if (fresh is not null)
+        {
+            Frame.Navigate(typeof(TaskDetailPage), fresh);
+        }
     }
 
     private void OpenAdo_Click(object sender, RoutedEventArgs e)

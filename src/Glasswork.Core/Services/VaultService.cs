@@ -101,6 +101,24 @@ public class VaultService
     }
 
     /// <summary>
+    /// In-place V1 → V2 migration of a task file. Reads the raw file, runs
+    /// <see cref="MigrationService.MigrateToV2"/>, and writes the result back.
+    /// Idempotent and lossless. Returns true if the file was changed on disk.
+    /// </summary>
+    public bool MigrateToV2(string taskId)
+    {
+        var path = GetFilePath(taskId);
+        if (!File.Exists(path)) return false;
+
+        var original = File.ReadAllText(path);
+        var migrated = new MigrationService().MigrateToV2(original);
+        if (migrated == original) return false;
+
+        File.WriteAllText(path, migrated);
+        return true;
+    }
+
+    /// <summary>
     /// Delete a task file by ID.
     /// </summary>
     public bool Delete(string taskId)

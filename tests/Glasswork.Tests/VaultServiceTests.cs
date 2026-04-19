@@ -171,4 +171,44 @@ public class VaultServiceTests
 
         Assert.AreEqual(original, File.ReadAllText(path));
     }
+
+    [TestMethod]
+    public void MigrateToV2_V1FileOnDisk_RewritesWithCanonicalSections()
+    {
+        const string taskId = "v1-on-disk";
+        var path = Path.Combine(_tempDir, $"{taskId}.md");
+        var v1 =
+            "---\n" +
+            "id: v1-on-disk\n" +
+            "title: V1 on disk\n" +
+            "---\n" +
+            "\n" +
+            "Plain V1 body.\n";
+        File.WriteAllText(path, v1);
+
+        var changed = _vault.MigrateToV2(taskId);
+
+        Assert.IsTrue(changed);
+        var after = File.ReadAllText(path);
+        Assert.IsTrue(after.Contains("Plain V1 body."));
+        Assert.IsTrue(after.Contains("## Subtasks"));
+        Assert.IsTrue(after.Contains("## Notes"));
+        Assert.IsTrue(after.Contains("## Related"));
+
+        // Idempotent on second invocation
+        var changedAgain = _vault.MigrateToV2(taskId);
+        Assert.IsFalse(changedAgain);
+        Assert.AreEqual(after, File.ReadAllText(path));
+
+        // Reload sees the file as V2 now
+        var loaded = _vault.Load(taskId);
+        Assert.IsNotNull(loaded);
+        Assert.IsFalse(loaded!.IsV1Format);
+    }
+
+    [TestMethod]
+    public void MigrateToV2_MissingFile_ReturnsFalse()
+    {
+        Assert.IsFalse(_vault.MigrateToV2("does-not-exist"));
+    }
 }

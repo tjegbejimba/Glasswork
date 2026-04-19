@@ -25,6 +25,13 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial List<string> Tags { get; set; } = [];
     [ObservableProperty] public partial List<SubTask> Subtasks { get; set; } = [];
 
+    /// <summary>
+    /// True when the source markdown file is in legacy V1 format (no `## Subtasks` header).
+    /// V1 tasks have a flat body and no rich subtasks; the UI offers an in-place upgrade.
+    /// Set by <see cref="FrontmatterParser"/> at parse time; not serialized.
+    /// </summary>
+    [ObservableProperty] public partial bool IsV1Format { get; set; }
+
     public static class Statuses
     {
         public const string Todo = "todo";
