@@ -83,4 +83,31 @@ public class IndexServiceTests
         var content = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
         Assert.IsTrue(content.Contains("No tasks picked for today yet"));
     }
+
+    [TestMethod]
+    public void Refresh_TaskMovedToDoneSubdir_NotListedInIndex()
+    {
+        // Wrap-up flow moves completed task files from wiki/todo/<id>.md to
+        // wiki/todo/done/<id>.md. The index should only reflect ACTIVE tasks
+        // (top-level vault). Files under done/ must not appear.
+        _vault.Save(new GlassworkTask { Id = "active-task", Title = "Active Task", Status = "todo" });
+        _vault.Save(new GlassworkTask { Id = "wrapped-task", Title = "Wrapped Task", Status = "done" });
+
+        _index.Refresh();
+        var before = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
+        Assert.IsTrue(before.Contains("Wrapped Task"), "Pre-move sanity: completed task should appear in Done (Recent).");
+
+        // Simulate the wrap-up move: relocate wrapped-task.md into done/ subfolder.
+        var doneDir = Path.Combine(_tempDir, "done");
+        Directory.CreateDirectory(doneDir);
+        File.Move(
+            Path.Combine(_tempDir, "wrapped-task.md"),
+            Path.Combine(doneDir, "wrapped-task.md"));
+
+        _index.Refresh();
+
+        var after = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
+        Assert.IsFalse(after.Contains("Wrapped Task"), "Tasks moved to done/ subfolder must not appear in _index.md.");
+        Assert.IsTrue(after.Contains("Active Task"), "Active task should still appear after the move.");
+    }
 }
