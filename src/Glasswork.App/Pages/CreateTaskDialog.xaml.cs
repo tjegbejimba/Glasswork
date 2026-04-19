@@ -26,7 +26,14 @@ public sealed partial class CreateTaskDialog : ContentDialog
         }
 
         var priority = (PriorityBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "medium";
-        var task = _taskService.CreateTask(title, priority);
+
+        int? adoLink = null;
+        var adoText = AdoLinkBox.Text?.Trim();
+        if (!string.IsNullOrEmpty(adoText) && int.TryParse(adoText, out var parsed) && parsed > 0)
+            adoLink = parsed;
+        var adoTitle = string.IsNullOrWhiteSpace(AdoTitleBox.Text) ? null : AdoTitleBox.Text.Trim();
+
+        var task = _taskService.CreateTask(title, priority, adoLink: adoLink, adoTitle: adoTitle);
 
         if (!string.IsNullOrWhiteSpace(NotesBox.Text))
         {

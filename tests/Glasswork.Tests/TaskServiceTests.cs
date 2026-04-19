@@ -79,6 +79,32 @@ public class TaskServiceTests
     }
 
     [TestMethod]
+    public void CreateTask_WithAdoLink_PersistsAdoFields()
+    {
+        var task = _taskService.CreateTask(
+            "Wire ADO link",
+            priority: "medium",
+            adoLink: 54321,
+            adoTitle: "Linked work item");
+
+        Assert.AreEqual(54321, task.AdoLink);
+        Assert.AreEqual("Linked work item", task.AdoTitle);
+
+        var loaded = _vault.Load(task.Id)!;
+        Assert.AreEqual(54321, loaded.AdoLink);
+        Assert.AreEqual("Linked work item", loaded.AdoTitle);
+    }
+
+    [TestMethod]
+    public void CreateTask_WithoutAdoLink_LeavesFieldsNull()
+    {
+        var task = _taskService.CreateTask("Plain task");
+
+        Assert.IsNull(task.AdoLink);
+        Assert.IsNull(task.AdoTitle);
+    }
+
+    [TestMethod]
     public void ToggleMyDay_AddsAndRemoves()
     {
         var task = new GlassworkTask { Id = "toggle-day", Title = "Toggle" };

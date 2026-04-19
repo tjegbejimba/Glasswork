@@ -71,12 +71,17 @@ public sealed partial class TaskDetailPage : Page
 
         if (task.AdoLink.HasValue)
         {
-            AdoPanel.Visibility = Visibility.Visible;
-            AdoTitleRun.Text = $"#{task.AdoLink} — {task.AdoTitle ?? "linked"}";
+            AdoLabel.Visibility = Visibility.Visible;
+            AdoLinkButton.Visibility = Visibility.Visible;
+            AdoTitleRun.Text = $"#{task.AdoLink} \u2014 {task.AdoTitle ?? "linked"}";
+            EditAdoButton.Content = "Edit ADO link";
         }
         else
         {
-            AdoPanel.Visibility = Visibility.Collapsed;
+            AdoLabel.Visibility = Visibility.Collapsed;
+            AdoLinkButton.Visibility = Visibility.Collapsed;
+            AdoTitleRun.Text = string.Empty;
+            EditAdoButton.Content = "Link ADO work item";
         }
 
         UpgradeV2Button.Visibility = task.IsV1Format ? Visibility.Visible : Visibility.Collapsed;
@@ -227,6 +232,53 @@ public sealed partial class TaskDetailPage : Page
             var url = $"https://dev.azure.com/_workitems/edit/{Task.AdoLink.Value}";
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
         }
+    }
+
+    private async void EditAdoLink_Click(object sender, RoutedEventArgs e)
+    {
+        var idBox = new TextBox
+        {
+            Header = "ADO work item ID (leave blank to clear)",
+            PlaceholderText = "e.g. 12345",
+            Text = Task.AdoLink?.ToString() ?? string.Empty,
+        };
+        var titleBox = new TextBox
+        {
+            Header = "ADO title (optional)",
+            PlaceholderText = "Short label shown on the task",
+            Text = Task.AdoTitle ?? string.Empty,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+        var panel = new StackPanel { MinWidth = 360 };
+        panel.Children.Add(idBox);
+        panel.Children.Add(titleBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Edit ADO link",
+            Content = panel,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        var raw = idBox.Text?.Trim() ?? string.Empty;
+        int? newId = null;
+        if (raw.Length > 0)
+        {
+            if (!int.TryParse(raw, out var parsed) || parsed <= 0) return;
+            newId = parsed;
+        }
+        var newTitle = string.IsNullOrWhiteSpace(titleBox.Text) ? null : titleBox.Text.Trim();
+
+        App.Vault.SetAdoLink(Task.Id, newId, newTitle);
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null) ApplyTask(reloaded);
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
     }
 
     private void StartWork_Click(object sender, RoutedEventArgs e)

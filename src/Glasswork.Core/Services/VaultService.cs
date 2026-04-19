@@ -158,6 +158,74 @@ public class VaultService
     }
 
     /// <summary>
+    /// Targeted edit: set or clear the <c>ado_link</c>/<c>ado_title</c> frontmatter keys without
+    /// rewriting any other frontmatter keys or the body. When <paramref name="adoId"/> is non-null,
+    /// inserts or replaces the <c>ado_link:</c> line (and <c>ado_title:</c> when supplied). When
+    /// <paramref name="adoId"/> is null, removes both lines if present. Preserves line endings
+    /// (\n vs \r\n) and the rest of the file byte-for-byte. No-op if the file does not exist.
+    /// </summary>
+    public void SetAdoLink(string taskId, int? adoId, string? adoTitle)
+    {
+        var path = GetFilePath(taskId);
+        if (!File.Exists(path)) return;
+
+        var content = File.ReadAllText(path);
+        var newline = content.Contains("\r\n") ? "\r\n" : "\n";
+
+        // Locate the frontmatter block: opening "---" line through the next "---" line.
+        var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+        if (lines.Count == 0 || lines[0] != "---") return;
+
+        int closeIdx = -1;
+        for (int i = 1; i < lines.Count; i++)
+        {
+            if (lines[i] == "---") { closeIdx = i; break; }
+        }
+        if (closeIdx < 0) return;
+
+        // Strip any existing ado_link/ado_title lines inside the frontmatter block,
+        // remembering where the first one was so we can re-insert at the same position.
+        var adoLinkPattern = new System.Text.RegularExpressions.Regex(@"^ado_link:\s.*$");
+        var adoTitlePattern = new System.Text.RegularExpressions.Regex(@"^ado_title:\s.*$");
+        var newFront = new List<string>(closeIdx - 1);
+        int insertPos = -1;
+        for (int i = 1; i < closeIdx; i++)
+        {
+            if (adoLinkPattern.IsMatch(lines[i]) || adoTitlePattern.IsMatch(lines[i]))
+            {
+                if (insertPos < 0) insertPos = newFront.Count;
+                continue;
+            }
+            newFront.Add(lines[i]);
+        }
+        if (insertPos < 0) insertPos = newFront.Count; // append at end if none existed
+
+        if (adoId.HasValue)
+        {
+            var inserted = new List<string> { $"ado_link: {adoId.Value}" };
+            if (!string.IsNullOrWhiteSpace(adoTitle))
+                inserted.Add($"ado_title: {adoTitle}");
+            newFront.InsertRange(insertPos, inserted);
+        }
+
+        // Rebuild: opening "---", new frontmatter lines, closing "---", everything after.
+        var rebuilt = new List<string> { "---" };
+        rebuilt.AddRange(newFront);
+        rebuilt.Add("---");
+        for (int i = closeIdx + 1; i < lines.Count; i++) rebuilt.Add(lines[i]);
+
+        var hadTrailingNewline = content.EndsWith('\n');
+        var output = string.Join(newline, rebuilt);
+        if (hadTrailingNewline && !output.EndsWith(newline))
+            output += newline;
+
+        if (output == content) return;
+
+        _selfWrites?.RegisterWrite(path);
+        File.WriteAllText(path, output);
+    }
+
+    /// <summary>
     /// Save a task to disk. Creates or overwrites the file.
     /// </summary>
     public void Save(GlassworkTask task)
