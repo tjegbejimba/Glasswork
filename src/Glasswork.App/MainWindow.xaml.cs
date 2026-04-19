@@ -72,18 +72,8 @@ public sealed partial class MainWindow : Window
             XamlRoot = Content.XamlRoot
         };
 
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && dialog.CreatedUrl is not null)
-        {
-            // Show success tip
-            var tip = new ContentDialog
-            {
-                XamlRoot = Content.XamlRoot,
-                Title = "Feedback Submitted",
-                Content = $"Issue created: {dialog.CreatedUrl}",
-                CloseButtonText = "OK"
-            };
-            await tip.ShowAsync();
-        }
+        // Dialog itself shows a "Copied — paste into Copilot CLI" InfoBar on submit;
+        // no follow-up tip is needed since issue creation now happens in the agent.
+        await dialog.ShowAsync();
     }
 }
