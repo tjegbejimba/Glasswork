@@ -18,7 +18,6 @@ public partial class App : Application
     public static VaultService Vault { get; private set; } = null!;
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
-    public static FeedbackService? Feedback { get; private set; }
     public static FileWatcherService? Watcher { get; private set; }
     public static ActiveTaskTracker ActiveTask { get; } = new();
     private static Debouncer? _indexDebouncer;
@@ -57,11 +56,6 @@ public partial class App : Application
         Vault = new VaultService(vaultPath);
         Tasks = new TaskService(Vault);
         Index = new IndexService(Vault);
-
-        // Feedback service — creates GitHub issues (optional)
-        var ghToken = Environment.GetEnvironmentVariable("GLASSWORK_GITHUB_TOKEN");
-        if (!string.IsNullOrEmpty(ghToken))
-            Feedback = new FeedbackService("tjegbejimba", "Glasswork", ghToken);
 
         // File watcher: external (Obsidian / agent) edits to task files trigger
         // a debounced index regeneration and notify any open page.
