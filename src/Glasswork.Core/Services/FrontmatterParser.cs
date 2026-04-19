@@ -35,6 +35,12 @@ public partial class FrontmatterParser
     [GeneratedRegex(@"(?ms)^## Subtasks\s*$(.*?)(?=^## |\z)", RegexOptions.Multiline)]
     private static partial Regex SubtasksSectionRegex();
 
+    [GeneratedRegex(@"(?ms)^## Related\s*$(.*?)(?=^## |\z)", RegexOptions.Multiline)]
+    private static partial Regex RelatedSectionRegex();
+
+    [GeneratedRegex(@"\[\[([^\]\|]+?)(?:\|([^\]]+))?\]\]")]
+    private static partial Regex WikiLinkRegex();
+
     [GeneratedRegex(@"^- ([a-z_][a-z0-9_]*): (.*)$")]
     private static partial Regex MetadataLineRegex();
 
@@ -80,6 +86,7 @@ public partial class FrontmatterParser
         var (subtasks, cleanBody) = ParseSubtasks(body);
         task.Subtasks = subtasks;
         task.Body = cleanBody;
+        task.RelatedLinks = ParseRelatedLinks(body);
         task.IsV1Format = MigrationService.IsV1Format(content);
 
         return task;
@@ -164,7 +171,42 @@ public partial class FrontmatterParser
             }
         }
 
+        if (task.RelatedLinks.Count > 0)
+        {
+            sb.AppendLine("## Related");
+            sb.AppendLine();
+            foreach (var link in task.RelatedLinks)
+            {
+                var inner = string.IsNullOrWhiteSpace(link.DisplayName)
+                    ? link.Slug
+                    : $"{link.Slug}|{link.DisplayName}";
+                sb.AppendLine($"- [[{inner}]]");
+            }
+            sb.AppendLine();
+        }
+
         return sb.ToString().TrimEnd() + "\n";
+    }
+
+    private static List<RelatedLink> ParseRelatedLinks(string body)
+    {
+        var links = new List<RelatedLink>();
+        var match = RelatedSectionRegex().Match(body);
+        if (!match.Success) return links;
+
+        var section = match.Groups[1].Value;
+        // Find every wiki-link occurrence; preserves order and tolerates bullets,
+        // bare lines, or multiple links per line. Per D10, this section is left
+        // intact in the body (Obsidian's graph view depends on it being on disk).
+        foreach (Match m in WikiLinkRegex().Matches(section))
+        {
+            var slug = m.Groups[1].Value.Trim();
+            if (slug.Length == 0) continue;
+            string? display = m.Groups[2].Success ? m.Groups[2].Value.Trim() : null;
+            if (string.IsNullOrWhiteSpace(display)) display = null;
+            links.Add(new RelatedLink { Slug = slug, DisplayName = display });
+        }
+        return links;
     }
 
     private static (List<SubTask> subtasks, string cleanBody) ParseSubtasks(string body)
