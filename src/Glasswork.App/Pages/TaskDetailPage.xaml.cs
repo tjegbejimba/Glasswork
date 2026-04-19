@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
@@ -62,6 +63,7 @@ public sealed partial class TaskDetailPage : Page
             : (DateTimeOffset?)null;
 
         BindSubtasks(task.Subtasks);
+        BindRelated(task.RelatedLinks);
 
         CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
         CompletedText.Text = task.CompletedAt.HasValue
@@ -108,6 +110,34 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
+
+    private void BindRelated(IList<RelatedLink> links)
+    {
+        if (links.Count == 0)
+        {
+            RelatedSection.Visibility = Visibility.Collapsed;
+            RelatedList.ItemsSource = null;
+            return;
+        }
+
+        // wiki root = parent of the todo/ vault directory (e.g. ~/Wiki/wiki/).
+        // Slugs in [[..]] are paths relative to this root.
+        var wikiRoot = Path.GetDirectoryName(App.Vault.VaultPath) ?? App.Vault.VaultPath;
+        var hydrated = new WikiLinkHydrator().Hydrate(links, wikiRoot);
+        RelatedList.ItemsSource = hydrated;
+        RelatedSection.Visibility = Visibility.Visible;
+    }
+
+    private void RelatedLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not HydratedRelatedLink link) return;
+        // Open in Obsidian. Vault is "Wiki"; the slug is already the file path
+        // (without .md) relative to the Obsidian vault root, matching the same
+        // scheme used by OpenObsidian_Click below.
+        var encoded = string.Join("/", link.Slug.Split('/').Select(Uri.EscapeDataString));
+        var uri = $"obsidian://open?vault=Wiki&file={encoded}";
+        Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+    }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {

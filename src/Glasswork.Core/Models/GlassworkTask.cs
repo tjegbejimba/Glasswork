@@ -24,6 +24,7 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial List<string> ContextLinks { get; set; } = [];
     [ObservableProperty] public partial List<string> Tags { get; set; } = [];
     [ObservableProperty] public partial List<SubTask> Subtasks { get; set; } = [];
+    [ObservableProperty] public partial List<RelatedLink> RelatedLinks { get; set; } = [];
 
     /// <summary>
     /// True when the source markdown file is in legacy V1 format (no `## Subtasks` header).
