@@ -158,6 +158,129 @@ public class VaultService
     }
 
     /// <summary>
+    /// Targeted edit: append a new <c>### [ ] {title}</c> subtask under the <c>## Subtasks</c>
+    /// section. Creates the section at end of file if missing. New subtask is placed at the
+    /// bottom of the active group — immediately before the first "completed" subtask
+    /// (header marked <c>[x]</c>, or whose metadata block sets <c>status: done</c> /
+    /// <c>status: dropped</c>). Preserves line endings, surrounding prose, and metadata
+    /// blocks of other subtasks. No-op when the title is whitespace or the file is missing.
+    /// </summary>
+    public void AddSubtask(string taskId, string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return;
+
+        var path = GetFilePath(taskId);
+        if (!File.Exists(path)) return;
+
+        var trimmed = title.Trim();
+        var content = File.ReadAllText(path);
+        var newline = content.Contains("\r\n") ? "\r\n" : "\n";
+        var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+        var hadTrailingNewline = content.EndsWith('\n');
+
+        var subtasksHeaderIdx = -1;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (lines[i].Trim() == "## Subtasks")
+            {
+                subtasksHeaderIdx = i;
+                break;
+            }
+        }
+
+        var headerPattern = new System.Text.RegularExpressions.Regex(@"^### \[([ xX])\] (.+?)\s*$");
+        var metaPattern = new System.Text.RegularExpressions.Regex(@"^- ([a-z_][a-z0-9_]*): (.*)$");
+        var newSubtaskLine = $"### [ ] {trimmed}";
+
+        if (subtasksHeaderIdx < 0)
+        {
+            // No section — append it (with a blank-line separator) at end of file.
+            // Strip trailing blanks first to avoid stacking blank lines.
+            while (lines.Count > 0 && string.IsNullOrEmpty(lines[^1])) lines.RemoveAt(lines.Count - 1);
+            lines.Add("");
+            lines.Add("## Subtasks");
+            lines.Add("");
+            lines.Add(newSubtaskLine);
+        }
+        else
+        {
+            // Find section bounds: from header to next `## ` heading or EOF.
+            int sectionEnd = lines.Count;
+            for (int i = subtasksHeaderIdx + 1; i < lines.Count; i++)
+            {
+                if (lines[i].StartsWith("## ") && !lines[i].StartsWith("### "))
+                {
+                    sectionEnd = i;
+                    break;
+                }
+            }
+
+            // Walk subtasks and find the first "completed" header within the section.
+            int insertAt = -1;
+            int lastActiveBlockEnd = -1; // last line index that belongs to an active subtask
+            int i2 = subtasksHeaderIdx + 1;
+            while (i2 < sectionEnd)
+            {
+                var hm = headerPattern.Match(lines[i2]);
+                if (!hm.Success) { i2++; continue; }
+
+                var checkChar = hm.Groups[1].Value;
+
+                // Walk this subtask's metadata block.
+                int blockEnd = i2;
+                string? statusValue = null;
+                for (int j = i2 + 1; j < sectionEnd; j++)
+                {
+                    var mm = metaPattern.Match(lines[j]);
+                    if (!mm.Success) break;
+                    blockEnd = j;
+                    if (mm.Groups[1].Value == "status") statusValue = mm.Groups[2].Value.Trim();
+                }
+
+                bool isDone = checkChar is "x" or "X"
+                    || statusValue is "done" or "dropped";
+
+                if (isDone)
+                {
+                    insertAt = i2;
+                    break;
+                }
+                lastActiveBlockEnd = blockEnd;
+                i2 = blockEnd + 1;
+            }
+
+            if (insertAt < 0)
+            {
+                // No completed subtask — insert after last active block, or after the section
+                // header (skipping any blank line) if there are no subtasks at all.
+                if (lastActiveBlockEnd >= 0)
+                {
+                    lines.Insert(lastActiveBlockEnd + 1, newSubtaskLine);
+                }
+                else
+                {
+                    // Empty section: insert after `## Subtasks` and its conventional blank line.
+                    int insertPoint = subtasksHeaderIdx + 1;
+                    if (insertPoint < lines.Count && string.IsNullOrEmpty(lines[insertPoint]))
+                        insertPoint++;
+                    lines.Insert(insertPoint, newSubtaskLine);
+                }
+            }
+            else
+            {
+                lines.Insert(insertAt, newSubtaskLine);
+            }
+        }
+
+        var rebuilt = string.Join(newline, lines);
+        if (hadTrailingNewline && !rebuilt.EndsWith(newline))
+            rebuilt += newline;
+
+        _selfWrites?.RegisterWrite(path);
+        File.WriteAllText(path, rebuilt);
+    }
+
+    /// <summary>
     /// Save a task to disk. Creates or overwrites the file.
     /// </summary>
     public void Save(GlassworkTask task)
