@@ -7,7 +7,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid Padding="32" RowDefinitions="Auto,*,Auto,Auto">
+    <Grid Padding="32" RowDefinitions="Auto,*,Auto,Auto,Auto">
 
         <!-- Header -->
         <StackPanel Grid.Row="0">
@@ -54,14 +54,53 @@
             </ListView.ItemTemplate>
         </ListView>
 
+        <!-- Flagged subtasks (parents not in My Day, but with at least one subtask flagged today) -->
+        <StackPanel x:Name="SubtaskGroupsSection" Grid.Row="2" Margin="0,16,0,0" Visibility="Collapsed">
+            <TextBlock Text="Flagged subtasks" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <ItemsControl ItemsSource="{x:Bind SubtaskGroups}" Margin="0,8,0,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="6"
+                                Padding="12,8" Margin="0,0,0,8">
+                            <StackPanel Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="{Binding ParentTitle}" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding OtherSubtasksLabel}" Opacity="0.55" />
+                                </StackPanel>
+                                <ItemsControl ItemsSource="{Binding Anchors}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ColumnDefinitions="*,Auto" Padding="8,4,0,4">
+                                                <HyperlinkButton Grid.Column="0" Content="{Binding DisplayText}"
+                                                                 Click="SubtaskAnchor_Click"
+                                                                 HorizontalAlignment="Left" Padding="0" />
+                                                <Button Grid.Column="1" Click="RemoveSubtaskFromDay_Click"
+                                                        Background="Transparent" BorderThickness="0"
+                                                        Padding="6" VerticalAlignment="Center"
+                                                        ToolTipService.ToolTip="Remove subtask from My Day">
+                                                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="12" />
+                                                </Button>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+
         <!-- Suggestions header -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" Margin="0,24,0,8">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="12" Margin="0,24,0,8">
             <TextBlock Text="Suggestions" Style="{StaticResource SubtitleTextBlockStyle}" />
             <Button Content="Carry all" Click="CarryAll_Click" />
         </StackPanel>
 
         <!-- Suggestions list -->
-        <ListView Grid.Row="3" ItemsSource="{x:Bind ViewModel.Suggestions}" SelectionMode="None" MaxHeight="200">
+        <ListView Grid.Row="4" ItemsSource="{x:Bind ViewModel.Suggestions}" SelectionMode="None" MaxHeight="200">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />

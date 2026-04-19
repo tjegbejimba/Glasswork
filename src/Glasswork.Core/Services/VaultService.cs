@@ -96,6 +96,68 @@ public class VaultService
     }
 
     /// <summary>
+    /// Targeted edit: set or clear a subtask's <c>my_day</c> metadata flag without rewriting
+    /// the rest of the file. When enabling, inserts <c>- my_day: true</c> at the end of the
+    /// subtask's metadata block (immediately after any existing <c>- key: value</c> lines under
+    /// the matching <c>### [ ]</c> header). When disabling, removes the existing line if present.
+    /// No-op if the title is not found or the flag is already in the desired state.
+    /// </summary>
+    public void SetSubtaskMyDay(string taskId, string subtaskTitle, bool isMyDay)
+    {
+        var path = GetFilePath(taskId);
+        if (!File.Exists(path)) return;
+
+        var content = File.ReadAllText(path);
+        // Detect the line ending used by the file so we don't mix \n and \r\n.
+        var newline = content.Contains("\r\n") ? "\r\n" : "\n";
+        var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+
+        var headerPattern = new System.Text.RegularExpressions.Regex(
+            @"^### \[[ xX]\] " + System.Text.RegularExpressions.Regex.Escape(subtaskTitle) + @"\s*$");
+        var metaLinePattern = new System.Text.RegularExpressions.Regex(@"^- ([a-z_][a-z0-9_]*): (.*)$");
+
+        int headerIdx = -1;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (headerPattern.IsMatch(lines[i]))
+            {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return;
+
+        // Walk metadata block following the header.
+        int metaEnd = headerIdx; // last index that is part of metadata (inclusive of header)
+        int existingMyDayIdx = -1;
+        for (int i = headerIdx + 1; i < lines.Count; i++)
+        {
+            var m = metaLinePattern.Match(lines[i]);
+            if (!m.Success) break;
+            metaEnd = i;
+            if (m.Groups[1].Value == "my_day") existingMyDayIdx = i;
+        }
+
+        if (isMyDay)
+        {
+            if (existingMyDayIdx >= 0) return; // already set, no-op
+            lines.Insert(metaEnd + 1, "- my_day: true");
+        }
+        else
+        {
+            if (existingMyDayIdx < 0) return; // not present, no-op
+            lines.RemoveAt(existingMyDayIdx);
+        }
+
+        // Preserve trailing newline state by checking the original content.
+        var hadTrailingNewline = content.EndsWith('\n');
+        var rebuilt = string.Join(newline, lines);
+        if (hadTrailingNewline && !rebuilt.EndsWith(newline))
+            rebuilt += newline;
+        File.WriteAllText(path, rebuilt);
+    }
+
+    /// <summary>
     /// Save a task to disk. Creates or overwrites the file.
     /// </summary>
     public void Save(GlassworkTask task)

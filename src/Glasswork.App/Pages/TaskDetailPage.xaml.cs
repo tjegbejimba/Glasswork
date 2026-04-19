@@ -31,6 +31,15 @@ public sealed partial class TaskDetailPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        if (e.Parameter is TaskDetailNavigation nav)
+        {
+            // Navigated from My Day's "flagged subtasks" section — display the parent task
+            // (FocusSubtaskTitle is currently informational; UI affordance for scrolling could
+            // be added later).
+            App.TaskFileChangedExternally += OnFileChangedExternally;
+            ApplyTask(nav.Task);
+            return;
+        }
         if (e.Parameter is GlassworkTask task)
         {
             App.TaskFileChangedExternally += OnFileChangedExternally;
@@ -169,6 +178,24 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
+    private void ToggleSubtaskMyDay_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading) return;
+        if (sender is FrameworkElement fe && fe.DataContext is SubTask sub)
+        {
+            var newValue = !sub.IsMyDay;
+            App.Vault.SetSubtaskMyDay(Task.Id, sub.Text, newValue);
+            // Reload the task from disk so subsequent UI binding reflects the change.
+            var reloaded = App.Vault.Load(Task.Id);
+            if (reloaded is not null)
+            {
+                Task = reloaded;
+                BindSubtasks(reloaded.Subtasks);
+            }
+            try { App.Index.Refresh(); } catch { /* best-effort */ }
+        }
+    }
+
     private void Delete_Click(object sender, RoutedEventArgs e)
     {
         App.Vault.Delete(Task.Id);
@@ -261,6 +288,29 @@ public sealed class HexToBrushConverter : IValueConverter
             return new SolidColorBrush(Color.FromArgb(0xFF, r, g, b));
         }
         return new SolidColorBrush(Colors.Gray);
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
+        => throw new NotImplementedException();
+}
+
+/// <summary>
+/// Bool → SolidColorBrush converter that highlights the My Day toggle when active.
+/// True returns the system accent brush; false returns a muted gray to indicate the
+/// toggle is available but inactive.
+/// </summary>
+public sealed class MyDayBrushConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language)
+    {
+        if (value is bool b && b)
+        {
+            // Active: prefer system accent if available, fall back to a fixed accent color.
+            if (Application.Current.Resources.TryGetValue("SystemAccentColor", out var accent) && accent is Color c)
+                return new SolidColorBrush(c);
+            return new SolidColorBrush(Color.FromArgb(0xFF, 0x00, 0x78, 0xD4));
+        }
+        return new SolidColorBrush(Color.FromArgb(0x80, 0x80, 0x80, 0x80));
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, string language)

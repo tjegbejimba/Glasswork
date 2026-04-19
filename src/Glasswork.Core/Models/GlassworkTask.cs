@@ -133,6 +133,27 @@ public partial class SubTask : ObservableObject
     public bool BlockerVisible => Status == "blocked" && Metadata.ContainsKey("blocker");
     public string BlockerText => Metadata.TryGetValue("blocker", out var v) ? v : string.Empty;
 
+    /// <summary>
+    /// True if this subtask is flagged for today's My Day view.
+    /// Accepts <c>my_day: true</c> or <c>my_day: &lt;today's date&gt;</c> (yyyy-MM-dd).
+    /// </summary>
+    public bool IsMyDay
+    {
+        get
+        {
+            if (!Metadata.TryGetValue("my_day", out var raw) || string.IsNullOrWhiteSpace(raw))
+                return false;
+            var v = raw.Trim();
+            if (v.Equals("true", StringComparison.OrdinalIgnoreCase)) return true;
+            if (DateTime.TryParseExact(v, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var d))
+                return d.Date == DateTime.Today;
+            if (DateTime.TryParse(v, out var fallback))
+                return fallback.Date == DateTime.Today;
+            return false;
+        }
+    }
+
     /// <summary>Single-line preview shown when this is a collapsed rich card.</summary>
     public string NotesPreview
     {
