@@ -180,6 +180,100 @@ public class VaultServiceTests
     }
 
     [TestMethod]
+    public void SetParent_AddsParentLineWhenNonePresent()
+    {
+        var taskId = "no-parent";
+        var original =
+            "---\n" +
+            "id: no-parent\n" +
+            "title: T\n" +
+            "---\n" +
+            "\n" +
+            "Body.\n";
+        var path = Path.Combine(_tempDir, $"{taskId}.md");
+        File.WriteAllText(path, original);
+
+        _vault.SetParent(taskId, "12345");
+
+        var actual = File.ReadAllText(path);
+        StringAssert.Contains(actual, "parent: 12345");
+        // Body untouched
+        StringAssert.Contains(actual, "Body.");
+    }
+
+    [TestMethod]
+    public void SetParent_ReplacesExistingParentLine()
+    {
+        var taskId = "has-parent";
+        var original =
+            "---\n" +
+            "id: has-parent\n" +
+            "title: T\n" +
+            "parent: 11111\n" +
+            "---\n" +
+            "\n" +
+            "Body.\n";
+        var path = Path.Combine(_tempDir, $"{taskId}.md");
+        File.WriteAllText(path, original);
+
+        _vault.SetParent(taskId, "22222");
+
+        var actual = File.ReadAllText(path);
+        StringAssert.Contains(actual, "parent: 22222");
+        Assert.IsFalse(actual.Contains("parent: 11111"), "old parent value must be gone");
+    }
+
+    [TestMethod]
+    public void SetParent_NullOrEmpty_RemovesParentLine()
+    {
+        var taskId = "clear-parent";
+        var original =
+            "---\n" +
+            "id: clear-parent\n" +
+            "title: T\n" +
+            "parent: 99999\n" +
+            "---\n" +
+            "\n" +
+            "Body.\n";
+        var path = Path.Combine(_tempDir, $"{taskId}.md");
+        File.WriteAllText(path, original);
+
+        _vault.SetParent(taskId, "");
+
+        var actual = File.ReadAllText(path);
+        Assert.IsFalse(actual.Contains("parent:"), "parent line must be removed");
+        StringAssert.Contains(actual, "Body.");
+    }
+
+    [TestMethod]
+    public void SetParent_AcceptsUrlAndFreeText()
+    {
+        var taskId = "url-parent";
+        var path = Path.Combine(_tempDir, $"{taskId}.md");
+        File.WriteAllText(path,
+            "---\nid: url-parent\ntitle: T\n---\n\nBody.\n");
+
+        _vault.SetParent(taskId, "https://dev.azure.com/org/proj/_workitems/edit/42");
+
+        var actual = File.ReadAllText(path);
+        StringAssert.Contains(actual, "parent: https://dev.azure.com/org/proj/_workitems/edit/42");
+    }
+
+    [TestMethod]
+    public void SetParent_RegistersWriteWithCoordinator()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));
+        var vault = new VaultService(_tempDir, coord);
+        var taskId = "parent-write";
+        var path = Path.Combine(_tempDir, $"{taskId}.md");
+        File.WriteAllText(path, "---\nid: parent-write\ntitle: T\n---\n\nBody.\n");
+
+        vault.SetParent(taskId, "777");
+
+        Assert.IsTrue(coord.IsSuppressed(path));
+    }
+
+    [TestMethod]
     public void Delete_RegistersWriteWithCoordinator()
     {
         var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));

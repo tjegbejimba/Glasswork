@@ -228,6 +228,65 @@ public class VaultService
     }
 
     /// <summary>
+    /// Targeted edit: set or clear the <c>parent</c> frontmatter key without rewriting any
+    /// other frontmatter keys or the body. Empty/whitespace value removes the line. Preserves
+    /// line endings and the rest of the file byte-for-byte. No-op if the file does not exist.
+    /// </summary>
+    public void SetParent(string taskId, string? parent)
+    {
+        var path = GetFilePath(taskId);
+        if (!File.Exists(path)) return;
+
+        var content = File.ReadAllText(path);
+        var newline = content.Contains("\r\n") ? "\r\n" : "\n";
+
+        var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+        if (lines.Count == 0 || lines[0] != "---") return;
+
+        int closeIdx = -1;
+        for (int i = 1; i < lines.Count; i++)
+        {
+            if (lines[i] == "---") { closeIdx = i; break; }
+        }
+        if (closeIdx < 0) return;
+
+        var parentPattern = new System.Text.RegularExpressions.Regex(@"^parent:\s.*$");
+        var newFront = new List<string>(closeIdx - 1);
+        int insertPos = -1;
+        for (int i = 1; i < closeIdx; i++)
+        {
+            if (parentPattern.IsMatch(lines[i]))
+            {
+                if (insertPos < 0) insertPos = newFront.Count;
+                continue;
+            }
+            newFront.Add(lines[i]);
+        }
+        if (insertPos < 0) insertPos = newFront.Count;
+
+        var trimmed = parent?.Trim();
+        if (!string.IsNullOrEmpty(trimmed))
+        {
+            newFront.Insert(insertPos, $"parent: {trimmed}");
+        }
+
+        var rebuilt = new List<string> { "---" };
+        rebuilt.AddRange(newFront);
+        rebuilt.Add("---");
+        for (int i = closeIdx + 1; i < lines.Count; i++) rebuilt.Add(lines[i]);
+
+        var hadTrailingNewline = content.EndsWith('\n');
+        var output = string.Join(newline, rebuilt);
+        if (hadTrailingNewline && !output.EndsWith(newline))
+            output += newline;
+
+        if (output == content) return;
+
+        _selfWrites?.RegisterWrite(path);
+        File.WriteAllText(path, output);
+    }
+
+    /// <summary>
     /// Targeted edit: append a new <c>### [ ] {title}</c> subtask under the <c>## Subtasks</c>
     /// section. Creates the section at end of file if missing. New subtask is placed at the
     /// bottom of the active group — immediately before the first "completed" subtask

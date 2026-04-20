@@ -63,6 +63,16 @@
                 <Button x:Name="EditAdoButton" Content="Edit ADO link" Click="EditAdoLink_Click" />
             </StackPanel>
 
+            <!-- Parent -->
+            <StackPanel x:Name="ParentPanel" Orientation="Horizontal" Spacing="8">
+                <TextBlock x:Name="ParentLabel" VerticalAlignment="Center">
+                    <Run Text="Parent: " />
+                    <Run x:Name="ParentTextRun" />
+                </TextBlock>
+                <HyperlinkButton x:Name="ParentLinkButton" Content="Open in ADO" Click="OpenParent_Click" />
+                <Button x:Name="EditParentButton" Content="Edit parent" Click="EditParent_Click" />
+            </StackPanel>
+
             <!-- Subtasks -->
             <TextBlock Text="Subtasks" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,8,0,0" />
 

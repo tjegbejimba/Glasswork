@@ -86,7 +86,30 @@ public sealed partial class TaskDetailPage : Page
             EditAdoButton.Content = "Link ADO work item";
         }
 
+        ApplyParent(task);
+
         _isLoading = false;
+    }
+
+    private void ApplyParent(GlassworkTask task)
+    {
+        var p = task.Parent?.Trim();
+        if (string.IsNullOrEmpty(p))
+        {
+            ParentLabel.Visibility = Visibility.Collapsed;
+            ParentLinkButton.Visibility = Visibility.Collapsed;
+            ParentTextRun.Text = string.Empty;
+            EditParentButton.Content = "Set parent";
+            return;
+        }
+
+        ParentLabel.Visibility = Visibility.Visible;
+        ParentTextRun.Text = p;
+        EditParentButton.Content = "Edit parent";
+
+        var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim();
+        var url = AdoLinkResolver.TryResolve(p, baseUrl);
+        ParentLinkButton.Visibility = url is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void BindSubtasks(IList<SubTask> subtasks)
@@ -361,6 +384,46 @@ public sealed partial class TaskDetailPage : Page
         var newTitle = string.IsNullOrWhiteSpace(titleBox.Text) ? null : titleBox.Text.Trim();
 
         App.Vault.SetAdoLink(Task.Id, newId, newTitle);
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null) ApplyTask(reloaded);
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
+    }
+
+    private void OpenParent_Click(object sender, RoutedEventArgs e)
+    {
+        var p = Task.Parent?.Trim();
+        if (string.IsNullOrEmpty(p)) return;
+        var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim();
+        var url = AdoLinkResolver.TryResolve(p, baseUrl);
+        if (url is null) return;
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    }
+
+    private async void EditParent_Click(object sender, RoutedEventArgs e)
+    {
+        var box = new TextBox
+        {
+            Header = "Parent (ADO ID, full URL, or free text — leave blank to clear)",
+            PlaceholderText = "e.g. 12345  or  https://dev.azure.com/org/proj/_workitems/edit/12345",
+            Text = Task.Parent ?? string.Empty,
+            MinWidth = 420,
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = "Edit parent",
+            Content = box,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        var trimmed = box.Text?.Trim();
+        App.Vault.SetParent(Task.Id, string.IsNullOrEmpty(trimmed) ? null : trimmed);
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
         try { App.Index.Refresh(); } catch { /* best-effort */ }
