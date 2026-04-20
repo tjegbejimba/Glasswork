@@ -112,4 +112,17 @@ public class TaskService
 
         return newTask;
     }
+
+    /// <summary>
+    /// Remove a subtask from its parent and persist the parent. Unlike <see cref="PromoteSubtask"/>,
+    /// this does not create a new top-level task — the subtask is gone for good.
+    /// </summary>
+    public void DeleteSubtask(GlassworkTask parent, int subtaskIndex)
+    {
+        if (subtaskIndex < 0 || subtaskIndex >= parent.Subtasks.Count)
+            throw new ArgumentOutOfRangeException(nameof(subtaskIndex));
+
+        parent.Subtasks.RemoveAt(subtaskIndex);
+        _vault.Save(parent);
+    }
 }

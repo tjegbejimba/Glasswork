@@ -258,4 +258,64 @@ public class MigrationServiceTests
     {
         Assert.ThrowsExactly<FormatException>(() => _migration.MigrateToV2("no frontmatter here"));
     }
+
+    // ===== V2-as-default and bulk migration =====
+
+    [TestMethod]
+    public void Serialize_NewEmptyTask_EmitsAllCanonicalSections()
+    {
+        var task = new Glasswork.Core.Models.GlassworkTask
+        {
+            Id = "fresh",
+            Title = "Fresh task",
+            Status = "todo",
+            Priority = "medium",
+            Created = new DateTime(2026, 1, 1),
+        };
+
+        var markdown = _parser.Serialize(task);
+
+        Assert.IsTrue(markdown.Contains("## Subtasks"), "## Subtasks must appear even when no subtasks");
+        Assert.IsTrue(markdown.Contains("## Notes"), "## Notes must appear even when body is empty");
+        Assert.IsTrue(markdown.Contains("## Related"), "## Related must appear even when no related links");
+    }
+
+    [TestMethod]
+    public void Serialize_NewEmptyTask_IsNotV1Format()
+    {
+        var task = new Glasswork.Core.Models.GlassworkTask
+        {
+            Id = "fresh",
+            Title = "Fresh task",
+            Status = "todo",
+            Priority = "medium",
+            Created = new DateTime(2026, 1, 1),
+        };
+
+        var markdown = _parser.Serialize(task);
+        Assert.IsFalse(MigrationService.IsV1Format(markdown), "newly-serialized tasks must be V2 from birth");
+        Assert.IsFalse(_parser.Parse(markdown).IsV1Format, "parsed task must not be flagged V1");
+    }
+
+    [TestMethod]
+    public void Serialize_CanonicalSections_AppearInOrder()
+    {
+        var task = new Glasswork.Core.Models.GlassworkTask
+        {
+            Id = "ordered",
+            Title = "Ordered",
+            Status = "todo",
+            Priority = "medium",
+            Created = new DateTime(2026, 1, 1),
+        };
+
+        var markdown = _parser.Serialize(task);
+        var subIdx = markdown.IndexOf("## Subtasks", StringComparison.Ordinal);
+        var notesIdx = markdown.IndexOf("## Notes", StringComparison.Ordinal);
+        var relIdx = markdown.IndexOf("## Related", StringComparison.Ordinal);
+
+        Assert.IsTrue(subIdx > 0, "Subtasks present");
+        Assert.IsTrue(notesIdx > subIdx, "Notes after Subtasks");
+        Assert.IsTrue(relIdx > notesIdx, "Related after Notes");
+    }
 }

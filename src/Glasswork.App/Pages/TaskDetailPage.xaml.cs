@@ -66,7 +66,7 @@ public sealed partial class TaskDetailPage : Page
         BindRelated(task.RelatedLinks);
 
         CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
-        CompletedText.Text = task.CompletedAt.HasValue
+        CompletedText.Text = task.Status == GlassworkTask.Statuses.Done && task.CompletedAt.HasValue
             ? $"Completed: {task.CompletedAt.Value:yyyy-MM-dd HH:mm}"
             : "";
         IdText.Text = $"ID: {task.Id}";
@@ -86,8 +86,6 @@ public sealed partial class TaskDetailPage : Page
             EditAdoButton.Content = "Link ADO work item";
         }
 
-        UpgradeV2Button.Visibility = task.IsV1Format ? Visibility.Visible : Visibility.Collapsed;
-
         _isLoading = false;
     }
 
@@ -96,7 +94,7 @@ public sealed partial class TaskDetailPage : Page
         var active = subtasks.Where(s => !s.IsEffectivelyDone).ToList();
         var completed = subtasks.Where(s => s.IsEffectivelyDone).ToList();
 
-        ActiveSubtaskList.ItemsSource = active;
+        ActiveSubtaskList.ItemsSource = new System.Collections.ObjectModel.ObservableCollection<SubTask>(active);
         CompletedSubtaskList.ItemsSource = completed;
 
         if (completed.Count > 0)
@@ -260,6 +258,46 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
+    private async void DeleteSubtask_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading) return;
+        if (sender is not FrameworkElement fe || fe.DataContext is not SubTask sub) return;
+
+        var dialog = new ContentDialog
+        {
+            Title = "Delete subtask?",
+            Content = $"\"{sub.Text}\" will be removed from this task. This cannot be undone.",
+            PrimaryButtonText = "Delete",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = this.XamlRoot,
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        var index = Task.Subtasks.IndexOf(sub);
+        if (index < 0) return;
+
+        try
+        {
+            App.Tasks.DeleteSubtask(Task, index);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"DeleteSubtask failed: {ex}");
+            return;
+        }
+
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null)
+        {
+            Task = reloaded;
+            BindSubtasks(reloaded.Subtasks);
+        }
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
+    }
+
     private void Delete_Click(object sender, RoutedEventArgs e)
     {
         App.Vault.Delete(Task.Id);
@@ -272,25 +310,13 @@ public sealed partial class TaskDetailPage : Page
         Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
     }
 
-    private void UpgradeV2_Click(object sender, RoutedEventArgs e)
-    {
-        // Run the in-place migration on disk, then re-navigate to load the V2 form.
-        App.Vault.MigrateToV2(Task.Id);
-        var fresh = App.Vault.Load(Task.Id);
-        if (fresh is not null)
-        {
-            Frame.Navigate(typeof(TaskDetailPage), fresh);
-        }
-    }
-
     private void OpenAdo_Click(object sender, RoutedEventArgs e)
     {
-        if (Task.AdoLink.HasValue)
-        {
-            // TODO: make org/project configurable
-            var url = $"https://dev.azure.com/_workitems/edit/{Task.AdoLink.Value}";
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-        }
+        if (!Task.AdoLink.HasValue) return;
+        var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrEmpty(baseUrl)) return;
+        var url = $"{baseUrl}/_workitems/edit/{Task.AdoLink.Value}";
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
 
     private async void EditAdoLink_Click(object sender, RoutedEventArgs e)
@@ -358,6 +384,253 @@ public sealed partial class TaskDetailPage : Page
     }
 
     private void Save() => App.Vault.Save(Task);
+
+    // ============================================================
+    // Subtask "..." menu, detail dialog, drag-reorder
+    // ============================================================
+
+    private void SubtaskMore_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not SubTask sub) return;
+
+        var menu = new MenuFlyout();
+
+        // Set status submenu
+        var statusItem = new MenuFlyoutSubItem { Text = "Set status" };
+        AddStatusOption(statusItem, sub, "todo", "To Do");
+        AddStatusOption(statusItem, sub, "in_progress", "In Progress");
+        AddStatusOption(statusItem, sub, "blocked", "Blocked");
+        AddStatusOption(statusItem, sub, "done", "Done");
+        AddStatusOption(statusItem, sub, "dropped", "Dropped");
+        menu.Items.Add(statusItem);
+
+        // Set due...
+        var dueItem = new MenuFlyoutItem { Text = "Set due date..." };
+        dueItem.Click += async (_, __) => await PromptSetDueAsync(sub);
+        menu.Items.Add(dueItem);
+
+        // Edit text...
+        var textItem = new MenuFlyoutItem { Text = "Edit text..." };
+        textItem.Click += async (_, __) => await PromptEditTextAsync(sub);
+        menu.Items.Add(textItem);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+
+        // Open detail
+        var detailItem = new MenuFlyoutItem { Text = "Open detail..." };
+        detailItem.Click += async (_, __) => await OpenSubtaskDetailAsync(sub);
+        menu.Items.Add(detailItem);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+
+        var deleteItem = new MenuFlyoutItem { Text = "Delete" };
+        deleteItem.Click += (_, __) => DeleteSubtask_Click(fe, new RoutedEventArgs());
+        menu.Items.Add(deleteItem);
+
+        menu.ShowAt(fe);
+    }
+
+    private void AddStatusOption(MenuFlyoutSubItem parent, SubTask sub, string status, string label)
+    {
+        var item = new MenuFlyoutItem { Text = label };
+        item.Click += (_, __) => ApplyStatusChange(sub, status);
+        parent.Items.Add(item);
+    }
+
+    private void ApplyStatusChange(SubTask sub, string newStatus)
+    {
+        var index = Task.Subtasks.IndexOf(sub);
+        if (index < 0) return;
+
+        var fresh = App.Vault.Load(Task.Id);
+        if (fresh is null || index >= fresh.Subtasks.Count) return;
+        var target = fresh.Subtasks[index];
+
+        // Status `todo` is represented as "no status field"; everything else writes a status.
+        target.Status = newStatus == "todo" ? null : newStatus;
+        // Sync checkbox char with effective doneness.
+        target.IsCompleted = newStatus is "done" or "dropped";
+        // Status leaves blocked → clear blocker reason.
+        if (newStatus != "blocked")
+            target.Metadata.Remove("blocker");
+
+        App.Vault.Save(fresh);
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null) ApplyTask(reloaded);
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
+    }
+
+    private async System.Threading.Tasks.Task PromptSetDueAsync(SubTask sub)
+    {
+        var picker = new CalendarDatePicker
+        {
+            Header = "Due date (clear to remove)",
+            Date = sub.Due.HasValue ? new DateTimeOffset(sub.Due.Value) : (DateTimeOffset?)null,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        var dialog = new ContentDialog
+        {
+            Title = "Set due date",
+            Content = picker,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        var index = Task.Subtasks.IndexOf(sub);
+        if (index < 0) return;
+        var fresh = App.Vault.Load(Task.Id);
+        if (fresh is null || index >= fresh.Subtasks.Count) return;
+        fresh.Subtasks[index].Due = picker.Date?.DateTime;
+        App.Vault.Save(fresh);
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null) ApplyTask(reloaded);
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
+    }
+
+    private async System.Threading.Tasks.Task PromptEditTextAsync(SubTask sub)
+    {
+        var box = new TextBox { Text = sub.Text, MinWidth = 360 };
+        var dialog = new ContentDialog
+        {
+            Title = "Edit subtask text",
+            Content = box,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        var newText = (box.Text ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(newText)) return;
+
+        var index = Task.Subtasks.IndexOf(sub);
+        if (index < 0) return;
+        var fresh = App.Vault.Load(Task.Id);
+        if (fresh is null || index >= fresh.Subtasks.Count) return;
+        fresh.Subtasks[index].Text = newText;
+        App.Vault.Save(fresh);
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null) ApplyTask(reloaded);
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
+    }
+
+    private async System.Threading.Tasks.Task OpenSubtaskDetailAsync(SubTask sub)
+    {
+        var dialog = new SubtaskDetailDialog(sub) { XamlRoot = this.XamlRoot };
+        var result = await dialog.ShowAsync();
+
+        var index = Task.Subtasks.IndexOf(sub);
+        if (index < 0) return;
+
+        if (dialog.Delete)
+        {
+            try { App.Tasks.DeleteSubtask(Task, index); }
+            catch (Exception ex) { Debug.WriteLine($"DeleteSubtask failed: {ex}"); return; }
+            var afterDel = App.Vault.Load(Task.Id);
+            if (afterDel is not null) ApplyTask(afterDel);
+            try { App.Index.Refresh(); } catch { /* best-effort */ }
+            return;
+        }
+
+        if (dialog.Promote)
+        {
+            try
+            {
+                var promoted = App.Tasks.PromoteSubtask(Task, index);
+                var refreshed = App.Vault.Load(Task.Id);
+                if (refreshed is not null) ApplyTask(refreshed);
+                try { App.Index.Refresh(); } catch { /* best-effort */ }
+                if (promoted is not null) Frame.Navigate(typeof(TaskDetailPage), promoted);
+            }
+            catch (Exception ex) { Debug.WriteLine($"PromoteSubtask failed: {ex}"); }
+            return;
+        }
+
+        if (result != ContentDialogResult.Primary) return;
+
+        // Apply edits via reload-mutate-Save.
+        var fresh = App.Vault.Load(Task.Id);
+        if (fresh is null || index >= fresh.Subtasks.Count) return;
+        var target = fresh.Subtasks[index];
+        var v = dialog.Result;
+
+        target.Text = v.Text;
+        target.Status = v.Status;
+        target.IsCompleted = v.IsCompleted;
+        target.Notes = v.Notes;
+        target.Due = v.Due;
+
+        if (v.AdoId.HasValue) target.Metadata["ado"] = v.AdoId.Value.ToString();
+        else target.Metadata.Remove("ado");
+
+        if (v.Status == "blocked" && !string.IsNullOrWhiteSpace(v.BlockerReason))
+            target.Metadata["blocker"] = v.BlockerReason!;
+        else
+            target.Metadata.Remove("blocker");
+
+        if (v.IsMyDay)
+            target.Metadata["my_day"] = DateTime.Today.ToString("yyyy-MM-dd");
+        else
+            target.Metadata.Remove("my_day");
+
+        App.Vault.Save(fresh);
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null) ApplyTask(reloaded);
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
+    }
+
+    private void ActiveSubtaskList_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
+    {
+        if (_isLoading) return;
+        if (sender.ItemsSource is not System.Collections.ObjectModel.ObservableCollection<SubTask> active) return;
+
+        // Rebuild Task.Subtasks as: active (in new order) + completed (preserving original relative order).
+        var completed = Task.Subtasks.Where(s => s.IsEffectivelyDone).ToList();
+        var newOrder = new List<SubTask>(active.Count + completed.Count);
+        newOrder.AddRange(active);
+        newOrder.AddRange(completed);
+
+        // Persist via repeated ReorderSubtask calls would be O(n^2); instead just save the whole task.
+        var fresh = App.Vault.Load(Task.Id);
+        if (fresh is null) return;
+        // Map the in-memory active order to indices in `fresh.Subtasks` by Text + Status (best-effort
+        // identity match — since duplicate titles are possible we walk and consume matches in order).
+        var freshActive = fresh.Subtasks.Where(s => !s.IsEffectivelyDone).ToList();
+        var freshCompleted = fresh.Subtasks.Where(s => s.IsEffectivelyDone).ToList();
+        if (freshActive.Count != active.Count)
+        {
+            // Disk diverged from UI between bind and drop; reload and abort the reorder.
+            ApplyTask(fresh);
+            return;
+        }
+
+        // Build a permutation of freshActive matching the new order. Walk active (UI order) and pop the
+        // first matching freshActive entry by reference-equivalent fields.
+        var pool = new List<SubTask>(freshActive);
+        var reorderedActive = new List<SubTask>(active.Count);
+        foreach (var ui in active)
+        {
+            var match = pool.FirstOrDefault(p => p.Text == ui.Text && p.Status == ui.Status);
+            if (match is null) { ApplyTask(fresh); return; }
+            pool.Remove(match);
+            reorderedActive.Add(match);
+        }
+
+        fresh.Subtasks.Clear();
+        foreach (var s in reorderedActive) fresh.Subtasks.Add(s);
+        foreach (var s in freshCompleted) fresh.Subtasks.Add(s);
+        App.Vault.Save(fresh);
+
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null) ApplyTask(reloaded);
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
+    }
 
     private static void SetComboByTag(ComboBox combo, string tag)
     {

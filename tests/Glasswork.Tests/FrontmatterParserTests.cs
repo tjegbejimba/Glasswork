@@ -452,6 +452,92 @@ public class FrontmatterParserTests
     }
 
     [TestMethod]
+    public void Parse_SubtaskWithDueMetadata_ExposesDueDate()
+    {
+        var markdown = """
+            ---
+            id: due-sub
+            title: Due sub
+            ---
+
+            ## Subtasks
+
+            ### [ ] Ship it
+            - status: in_progress
+            - due: 2026-05-01
+
+            ## Notes
+
+            ## Related
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(1, task.Subtasks.Count);
+        var sub = task.Subtasks[0];
+        Assert.AreEqual(new DateTime(2026, 5, 1), sub.Due);
+        Assert.AreEqual("2026-05-01", sub.Metadata["due"]);
+    }
+
+    [TestMethod]
+    public void Serialize_SubtaskWithDue_EmitsDueLineInCanonicalOrder()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "due-order",
+            Title = "Due order",
+            Subtasks =
+            [
+                new SubTask
+                {
+                    Text = "Ordered",
+                    Status = "blocked",
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["my_day"] = "2026-05-02",
+                        ["due"] = "2026-05-03",
+                        ["blocker"] = "waiting",
+                        ["ado"] = "42",
+                    },
+                },
+            ],
+        };
+
+        var markdown = _parser.Serialize(task);
+        var blockerIdx = markdown.IndexOf("- blocker:", StringComparison.Ordinal);
+        var dueIdx = markdown.IndexOf("- due:", StringComparison.Ordinal);
+        var myDayIdx = markdown.IndexOf("- my_day:", StringComparison.Ordinal);
+
+        Assert.IsTrue(blockerIdx > 0 && dueIdx > blockerIdx, $"due should follow blocker.\n{markdown}");
+        Assert.IsTrue(dueIdx < myDayIdx, $"due should precede my_day.\n{markdown}");
+    }
+
+    [TestMethod]
+    public void SubTask_DueSetter_WritesYyyyMmDdToMetadata()
+    {
+        var sub = new SubTask { Text = "x" };
+        sub.Due = new DateTime(2026, 6, 7);
+        Assert.AreEqual("2026-06-07", sub.Metadata["due"]);
+
+        sub.Due = null;
+        Assert.IsFalse(sub.Metadata.ContainsKey("due"));
+    }
+
+    [TestMethod]
+    public void RoundTrip_SubtaskDuePreserved()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "rt-due",
+            Title = "RT due",
+            Subtasks = [ new SubTask { Text = "A", Due = new DateTime(2027, 1, 15) } ],
+        };
+
+        var rt = _parser.Parse(_parser.Serialize(task));
+        Assert.AreEqual(new DateTime(2027, 1, 15), rt.Subtasks[0].Due);
+    }
+
+    [TestMethod]
     public void Parse_MinimalTask_UsesDefaults()
     {
         var markdown = """

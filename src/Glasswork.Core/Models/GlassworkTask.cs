@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace Glasswork.Core.Models;
@@ -11,7 +12,9 @@ public partial class GlassworkTask : ObservableObject
 {
     [ObservableProperty] public partial string Id { get; set; } = string.Empty;
     [ObservableProperty] public partial string Title { get; set; } = string.Empty;
-    [ObservableProperty] public partial string Status { get; set; } = "todo";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsDone))]
+    public partial string Status { get; set; } = "todo";
     [ObservableProperty] public partial string Priority { get; set; } = "medium";
     [ObservableProperty] public partial DateTime Created { get; set; } = DateTime.Today;
     [ObservableProperty] public partial DateTime? CompletedAt { get; set; }
@@ -52,6 +55,141 @@ public partial class GlassworkTask : ObservableObject
     /// Returns true if this task is marked for today's My Day view.
     /// </summary>
     public bool IsMyDay => MyDay.HasValue && MyDay.Value.Date == DateTime.Today;
+
+    /// <summary>
+    /// True iff <see cref="Status"/> equals <see cref="Statuses.Done"/>. Single source of truth
+    /// for checkbox visual state across all task-row templates. Notified automatically when
+    /// Status changes (see [NotifyPropertyChangedFor] on Status).
+    /// </summary>
+    public bool IsDone => Status == Statuses.Done;
+
+    // ===== Adaptive task row helpers (visual polish slice 3) =====
+    // "Active" = has rich content worth expanding into a card.
+    // "Quiet" = title only — no expand affordance.
+
+    public bool IsActive =>
+        Subtasks.Count > 0 ||
+        HasBlurb ||
+        HasBlocker;
+
+    public bool IsQuiet => !IsActive;
+
+    /// <summary>
+    /// Single-line preview shown in the task card. Source: first non-blank line of <see cref="Body"/>,
+    /// stripped of leading markdown noise (#, &gt;, list markers), truncated at 80 chars.
+    /// Future: a <c>summary:</c> frontmatter field will take precedence when present.
+    /// </summary>
+    public string BlurbPreview
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Body)) return string.Empty;
+            string? firstLine = null;
+            foreach (var raw in Body.Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0) continue;
+                firstLine = line;
+                break;
+            }
+            if (firstLine == null) return string.Empty;
+            // Strip leading markdown noise: heading hashes, blockquote, list markers.
+            var cleaned = firstLine.TrimStart('#', '>', '-', '*', ' ', '\t').Trim();
+            if (cleaned.Length == 0) return string.Empty;
+            return cleaned.Length > 80 ? cleaned[..80] + "…" : cleaned;
+        }
+    }
+
+    public bool HasBlurb => BlurbPreview.Length > 0;
+
+    public int TotalSubtaskCount => Subtasks.Count;
+    public int DoneSubtaskCount => Subtasks.Count(s => s.IsEffectivelyDone);
+    public double ProgressFraction =>
+        TotalSubtaskCount == 0 ? 0.0 : (double)DoneSubtaskCount / TotalSubtaskCount;
+    public string ProgressLabel => $"{DoneSubtaskCount} of {TotalSubtaskCount} done";
+
+    /// <summary>Use a per-subtask segmented bar when the count is small enough to render distinct segments.</summary>
+    public bool UseSegmentedBar => TotalSubtaskCount > 0 && TotalSubtaskCount <= 12;
+    /// <summary>Fall back to a continuous progress bar plus textual count when segments would be too thin.</summary>
+    public bool UseContinuousBar => TotalSubtaskCount >= 13;
+
+    public string CurrentStepText
+    {
+        get
+        {
+            var inProgress = Subtasks.FirstOrDefault(s => s.Status == "in_progress");
+            if (inProgress != null) return inProgress.Text;
+            var nextUp = Subtasks.FirstOrDefault(s => !s.IsEffectivelyDone);
+            return nextUp?.Text ?? string.Empty;
+        }
+    }
+    public bool HasCurrentStep => CurrentStepText.Length > 0;
+
+    public bool HasBlocker => Subtasks.Any(s => s.Status == "blocked" && s.Metadata.ContainsKey("blocker"));
+    public string FirstBlockerText
+    {
+        get
+        {
+            var s = Subtasks.FirstOrDefault(x => x.Status == "blocked" && x.Metadata.ContainsKey("blocker"));
+            return s?.Metadata["blocker"] ?? string.Empty;
+        }
+    }
+
+    public DueUrgency DueUrgency
+    {
+        get
+        {
+            if (!Due.HasValue) return DueUrgency.None;
+            var days = (Due.Value.Date - DateTime.Today).Days;
+            if (days < 0) return DueUrgency.Overdue;
+            if (days == 0) return DueUrgency.Today;
+            if (days <= 3) return DueUrgency.Soon;
+            return DueUrgency.Future;
+        }
+    }
+
+    public string DueChipText => DueUrgency switch
+    {
+        DueUrgency.None => string.Empty,
+        DueUrgency.Overdue => "Overdue",
+        DueUrgency.Today => "Today",
+        DueUrgency.Soon => Due!.Value.ToString("ddd"),
+        DueUrgency.Future => Due!.Value.ToString("MMM d"),
+        _ => string.Empty,
+    };
+
+    public bool HasDue => Due.HasValue;
+
+    public bool HasAdo => !string.IsNullOrWhiteSpace(AdoTitle);
+
+    /// <summary>True when the priority warrants a visible chip (high/urgent only — medium/low stay quiet).</summary>
+    public bool HasPriorityChip => Priority == Priorities.High || Priority == Priorities.Urgent;
+
+    /// <summary>
+    /// User-toggled override that hides the card details and renders the active task as a single-line row.
+    /// Persisted via <see cref="Glasswork.Core.Services.IUiStateService"/> at the page layer; this property
+    /// itself is transient (not serialized to the markdown file).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowCardDetails))]
+    public partial bool IsManuallyCollapsed { get; set; }
+
+    /// <summary>
+    /// True when a card layout should be rendered for this task in lists (active and not collapsed).
+    /// </summary>
+    public bool ShowCardDetails => IsActive && !IsManuallyCollapsed;
+}
+
+/// <summary>
+/// Urgency bucket for the due-date chip on the task card. Drives chip color in the UI.
+/// </summary>
+public enum DueUrgency
+{
+    None,
+    Overdue,
+    Today,
+    Soon,
+    Future,
 }
 
 /// <summary>
@@ -133,6 +271,39 @@ public partial class SubTask : ObservableObject
 
     public bool BlockerVisible => Status == "blocked" && Metadata.ContainsKey("blocker");
     public string BlockerText => Metadata.TryGetValue("blocker", out var v) ? v : string.Empty;
+
+    /// <summary>
+    /// Optional due date for this subtask. Backed by <c>Metadata["due"]</c> as <c>yyyy-MM-dd</c>.
+    /// Setter writes the canonical format (or removes the key when set to null).
+    /// </summary>
+    public DateTime? Due
+    {
+        get
+        {
+            if (!Metadata.TryGetValue("due", out var raw) || string.IsNullOrWhiteSpace(raw))
+                return null;
+            if (DateTime.TryParseExact(raw.Trim(), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var d))
+                return d;
+            return DateTime.TryParse(raw, out var fb) ? fb : null;
+        }
+        set
+        {
+            if (value is null)
+            {
+                if (Metadata.Remove("due"))
+                    OnPropertyChanged(nameof(Due));
+            }
+            else
+            {
+                Metadata["due"] = value.Value.ToString("yyyy-MM-dd");
+                OnPropertyChanged(nameof(Due));
+            }
+        }
+    }
+
+    public bool DueVisible => Due.HasValue;
+    public string DueChipText => Due.HasValue ? $"Due {Due.Value:yyyy-MM-dd}" : string.Empty;
 
     /// <summary>
     /// True if this subtask is flagged for today's My Day view.

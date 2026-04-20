@@ -48,7 +48,7 @@ public partial class FrontmatterParser
     /// Recognized metadata keys, in the canonical serialization order.
     /// "status" is handled as a first-class SubTask field; the rest live in Metadata.
     /// </summary>
-    private static readonly string[] MetadataOrder = ["status", "ado", "completed", "blocker", "my_day"];
+    private static readonly string[] MetadataOrder = ["status", "ado", "completed", "blocker", "due", "my_day"];
 
     /// <summary>
     /// Parse a markdown file's content into a GlassworkTask.
@@ -127,10 +127,14 @@ public partial class FrontmatterParser
             sb.AppendLine();
         }
 
+        // Always emit the canonical V2 sections (Subtasks, Notes, Related) — even when empty —
+        // so newly-created tasks are V2-shaped on disk from birth and never trip the
+        // "Upgrade to V2 format" affordance. Pre-existing V1 files are upgraded once at
+        // app startup via VaultService.MigrateAllToV2.
+        sb.AppendLine("## Subtasks");
+        sb.AppendLine();
         if (task.Subtasks.Count > 0)
         {
-            sb.AppendLine("## Subtasks");
-            sb.AppendLine();
             for (int i = 0; i < task.Subtasks.Count; i++)
             {
                 var sub = task.Subtasks[i];
@@ -171,9 +175,15 @@ public partial class FrontmatterParser
             }
         }
 
+        // Notes section: always emitted as part of V2 canonical structure. Currently
+        // Glasswork does not write structured Notes content from the UI, so the body
+        // remains empty unless an external tool (Obsidian, agent) populates it.
+        sb.AppendLine("## Notes");
+        sb.AppendLine();
+
+        sb.AppendLine("## Related");
         if (task.RelatedLinks.Count > 0)
         {
-            sb.AppendLine("## Related");
             sb.AppendLine();
             foreach (var link in task.RelatedLinks)
             {
@@ -182,6 +192,10 @@ public partial class FrontmatterParser
                     : $"{link.Slug}|{link.DisplayName}";
                 sb.AppendLine($"- [[{inner}]]");
             }
+            sb.AppendLine();
+        }
+        else
+        {
             sb.AppendLine();
         }
 

@@ -170,4 +170,62 @@ public class TaskServiceTests
         var reloaded = _vault.Load("parent-task")!;
         Assert.AreEqual(0, reloaded.Subtasks.Count);
     }
+
+    [TestMethod]
+    public void DeleteSubtask_RemovesAndPersists()
+    {
+        var parent = new GlassworkTask
+        {
+            Id = "parent-del",
+            Title = "Parent",
+            Subtasks =
+            {
+                new SubTask { Text = "keep me" },
+                new SubTask { Text = "delete me" },
+                new SubTask { Text = "also keep" },
+            }
+        };
+        _vault.Save(parent);
+
+        _taskService.DeleteSubtask(parent, 1);
+
+        Assert.AreEqual(2, parent.Subtasks.Count);
+        Assert.AreEqual("keep me", parent.Subtasks[0].Text);
+        Assert.AreEqual("also keep", parent.Subtasks[1].Text);
+
+        var reloaded = _vault.Load("parent-del")!;
+        Assert.AreEqual(2, reloaded.Subtasks.Count);
+        Assert.IsFalse(reloaded.Subtasks.Any(s => s.Text == "delete me"));
+    }
+
+    [TestMethod]
+    public void DeleteSubtask_OutOfRange_Throws()
+    {
+        var parent = new GlassworkTask { Id = "p", Title = "P" };
+        _vault.Save(parent);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => _taskService.DeleteSubtask(parent, 0));
+    }
+
+    [TestMethod]
+    public void IsDone_ReflectsStatusChanges()
+    {
+        var task = new GlassworkTask { Id = "t", Title = "T", Status = GlassworkTask.Statuses.Todo };
+        Assert.IsFalse(task.IsDone);
+
+        var notified = false;
+        task.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(GlassworkTask.IsDone)) notified = true;
+        };
+
+        task.Status = GlassworkTask.Statuses.Done;
+
+        Assert.IsTrue(task.IsDone);
+        Assert.IsTrue(notified, "Setting Status should raise PropertyChanged for IsDone");
+
+        notified = false;
+        task.Status = GlassworkTask.Statuses.Todo;
+        Assert.IsFalse(task.IsDone);
+        Assert.IsTrue(notified);
+    }
 }
