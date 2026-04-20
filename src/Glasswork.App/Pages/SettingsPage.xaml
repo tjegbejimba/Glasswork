@@ -8,10 +8,31 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid>
-        <TextBlock
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center"
-            Text="Settings" />
-    </Grid>
+    <ScrollViewer Padding="40,32,40,32">
+        <StackPanel Spacing="24" MaxWidth="720" HorizontalAlignment="Left">
+            <TextBlock
+                Text="Settings"
+                Style="{ThemeResource TitleTextBlockStyle}" />
+
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="Azure DevOps"
+                    Style="{ThemeResource SubtitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Base URL used to build links to ADO work items. Leave empty to disable ADO link buttons."
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBox
+                    x:Name="AdoBaseUrlBox"
+                    Header="Base URL"
+                    PlaceholderText="https://dev.azure.com/myorg/myproject"
+                    LostFocus="AdoBaseUrlBox_LostFocus" />
+                <TextBlock
+                    Text="Example: https://dev.azure.com/myorg/myproject — work item links become {baseUrl}/_workitems/edit/{id}"
+                    TextWrapping="Wrap"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
 </Page>
