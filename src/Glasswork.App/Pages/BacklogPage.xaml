@@ -114,10 +114,10 @@
             <Grid Padding="6,10,10,4" Background="Transparent"
                   Tapped="GroupHeader_Tapped"
                   ColumnDefinitions="Auto,*,Auto">
-                <FontIcon Grid.Column="0" FontFamily="Segoe Fluent Icons"
+                <FontIcon x:Name="GroupHeaderChevron" Grid.Column="0" FontFamily="Segoe Fluent Icons"
                           Glyph="{Binding IsCollapsed, Converter={StaticResource ChevronGlyph}}"
                           FontSize="11" Margin="0,0,8,0" Opacity="0.7" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="{Binding DisplayHeader}"
+                <TextBlock x:Name="GroupHeaderText" Grid.Column="1" Text="{Binding DisplayHeader}"
                            Style="{StaticResource SubtitleTextBlockStyle}" FontSize="14"
                            FontWeight="SemiBold" Opacity="0.85" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis"

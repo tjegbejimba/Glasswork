@@ -175,12 +175,12 @@ public sealed partial class BacklogPage : Page
     {
         if (sender is not FrameworkElement { DataContext: BacklogParentGroupHeader header }) return;
 
-        // Modifier interaction: Ctrl+tap on the header opens the parent's ADO URL when
-        // resolvable; plain tap falls through to the existing collapse toggle.
-        var ctrlState = Microsoft.UI.Input.InputKeyboardSource
-            .GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control);
-        var ctrlDown = ctrlState.HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
-        if (ctrlDown && !string.IsNullOrEmpty(header.AdoUrl))
+        // Plain tap on the header text opens the parent's ADO URL when resolvable.
+        // Chevron / count column (or any tap when no URL) toggles collapse instead.
+        var src = e.OriginalSource as FrameworkElement;
+        var tappedText = src?.Name == "GroupHeaderText";
+
+        if (tappedText && !string.IsNullOrEmpty(header.AdoUrl))
         {
             try
             {
