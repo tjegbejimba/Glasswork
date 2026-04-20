@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Glasswork.Core.Models;
 using Glasswork.ViewModels;
 using Microsoft.UI.Xaml;
@@ -14,13 +15,48 @@ public sealed partial class BacklogPage : Page
     public BacklogPage()
     {
         ViewModel = new BacklogViewModel(App.Vault, App.Tasks);
+        // Load persisted toggle (default true) BEFORE InitializeComponent so the
+        // x:Bind TwoWay binding to ToggleButton.IsChecked picks up the right value.
+        ViewModel.IsGrouped = App.UiState.Get<bool?>(App.BacklogGroupByParentKey) ?? true;
+        ViewModel.GroupCollapseStateProvider = LoadGroupCollapseState;
+        ViewModel.AdoBaseUrlProvider = () => App.UiState.Get<string>(App.AdoBaseUrlKey);
         InitializeComponent();
+        ViewModel.Rows.CollectionChanged += (_, _) => UpdateEmptyState();
+        // Persist toggle whenever the user flips it. Bind here (not in VM) so the
+        // VM stays UI-state-store-agnostic.
+        ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(BacklogViewModel.IsGrouped))
+            {
+                App.UiState.Set(App.BacklogGroupByParentKey, ViewModel.IsGrouped);
+                App.ScheduleUiStateSave();
+            }
+        };
+    }
+
+    private IReadOnlyDictionary<string, bool> LoadGroupCollapseState()
+    {
+        // The Backlog page only ever holds tens of parents at most, so a single
+        // dictionary read per Refresh is fine. Keys are the lowercased+trimmed parent
+        // strings produced by BacklogGrouper.
+        var dict = new Dictionary<string, bool>(StringComparer.Ordinal);
+        // We don't have a "list keys by prefix" API on IUiStateService; instead we'll
+        // rely on the ViewModel passing through whatever it sees. To keep this simple,
+        // build the snapshot from current vault contents.
+        foreach (var task in ViewModel.Tasks)
+        {
+            if (string.IsNullOrWhiteSpace(task.Parent)) continue;
+            var key = task.Parent!.Trim().ToLowerInvariant();
+            if (dict.ContainsKey(key)) continue;
+            dict[key] = App.UiState.Get<bool>($"{App.BacklogGroupCollapsedKeyPrefix}{key}");
+        }
+        return dict;
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        ViewModel.Refresh();
+        Refresh();
         App.TaskFileChangedExternally += OnFileChanged;
     }
 
@@ -33,8 +69,29 @@ public sealed partial class BacklogPage : Page
     private void OnFileChanged(object? sender, string fileName)
     {
         // Watcher fires on thread-pool thread; marshal to UI thread before refresh.
-        DispatcherQueue.TryEnqueue(() => ViewModel.Refresh());
+        DispatcherQueue.TryEnqueue(Refresh);
     }
+
+    private void Refresh()
+    {
+        // First populate Tasks (so LoadGroupCollapseState has parents to query),
+        // then re-run grouping. ViewModel.Refresh() does both atomically.
+        ViewModel.Refresh();
+        foreach (var t in ViewModel.Tasks)
+        {
+            t.IsManuallyCollapsed = App.UiState.Get<bool>($"{App.CollapsedTaskKeyPrefix}{t.Id}");
+        }
+        UpdateEmptyState();
+    }
+
+    private void UpdateEmptyState()
+    {
+        var hasContent = ViewModel.Tasks.Count > 0;
+        TaskList.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        EmptyStateView.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void EmptyState_NewTask(object sender, RoutedEventArgs e) => AddTask_Click(sender, e);
 
     private void StatusFilter_Changed(object sender, SelectionChangedEventArgs e)
     {
@@ -76,23 +133,76 @@ public sealed partial class BacklogPage : Page
         }
     }
 
-    private void TaskList_ItemClick(object sender, ItemClickEventArgs e)
+    private void OpenTask_Click(object sender, RoutedEventArgs e)
     {
-        if (e.ClickedItem is GlassworkTask task)
+        if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
             Frame.Navigate(typeof(TaskDetailPage), task);
         }
     }
 
+    private void TaskRow_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
+        if (task.IsActive)
+        {
+            task.IsManuallyCollapsed = !task.IsManuallyCollapsed;
+            App.UiState.Set($"{App.CollapsedTaskKeyPrefix}{task.Id}", task.IsManuallyCollapsed);
+            App.ScheduleUiStateSave();
+            e.Handled = true;
+        }
+        else
+        {
+            Frame.Navigate(typeof(TaskDetailPage), task);
+            e.Handled = true;
+        }
+    }
+
     private void TaskCheckbox_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Microsoft.UI.Xaml.Controls.CheckBox cb && cb.DataContext is GlassworkTask task)
+        if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
-            var newStatus = cb.IsChecked == true
-                ? GlassworkTask.Statuses.Done
-                : GlassworkTask.Statuses.Todo;
+            // Toggle based on current model state — Button has no IsChecked.
+            var newStatus = task.IsDone
+                ? GlassworkTask.Statuses.Todo
+                : GlassworkTask.Statuses.Done;
             ViewModel.SelectedTask = task;
             ViewModel.SetStatusCommand.Execute(newStatus);
         }
+    }
+
+    private void GroupHeader_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: BacklogParentGroupHeader header }) return;
+
+        // Modifier interaction: Ctrl+tap on the header opens the parent's ADO URL when
+        // resolvable; plain tap falls through to the existing collapse toggle.
+        var ctrlState = Microsoft.UI.Input.InputKeyboardSource
+            .GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control);
+        var ctrlDown = ctrlState.HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+        if (ctrlDown && !string.IsNullOrEmpty(header.AdoUrl))
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(header.AdoUrl)
+                {
+                    UseShellExecute = true
+                });
+            }
+            catch
+            {
+                // Swallow shell-execute failures; user gets no-op rather than a crash.
+            }
+            e.Handled = true;
+            return;
+        }
+
+        var key = $"{App.BacklogGroupCollapsedKeyPrefix}{header.Key}";
+        var newCollapsed = !header.IsCollapsed;
+        App.UiState.Set(key, newCollapsed);
+        App.ScheduleUiStateSave();
+        // Rebuild rows to reflect new collapse state.
+        ViewModel.Refresh();
+        e.Handled = true;
     }
 }
