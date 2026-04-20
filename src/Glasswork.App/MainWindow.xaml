@@ -16,6 +16,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <TitleBar
@@ -35,7 +36,8 @@
             Grid.Row="1"
             IsBackButtonVisible="Collapsed"
             IsPaneToggleButtonVisible="False"
-            SelectionChanged="NavView_SelectionChanged">
+            SelectionChanged="NavView_SelectionChanged"
+            ItemInvoked="NavView_ItemInvoked">
             <NavigationView.MenuItems>
                 <NavigationViewItem
                     Content="My Day"
@@ -63,7 +65,44 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
-            <Frame x:Name="NavFrame" />
+            <Frame x:Name="NavFrame">
+                <Frame.ContentTransitions>
+                    <TransitionCollection>
+                        <NavigationThemeTransition />
+                    </TransitionCollection>
+                </Frame.ContentTransitions>
+            </Frame>
         </NavigationView>
+
+        <!-- Footer status bar: vault path, task count, watcher state, last reload -->
+        <Border Grid.Row="2"
+                Background="{ThemeResource LayerFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="12,4">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="14">
+                <TextBlock Grid.Column="0" x:Name="StatusVaultText"
+                           FontSize="11" Opacity="0.7"
+                           TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" x:Name="StatusTaskCountText"
+                           FontSize="11" Opacity="0.7"
+                           VerticalAlignment="Center" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"
+                            VerticalAlignment="Center">
+                    <Ellipse x:Name="StatusWatcherDot" Width="8" Height="8"
+                             Fill="#107C10" />
+                    <TextBlock x:Name="StatusWatcherText" Text="watching"
+                               FontSize="11" Opacity="0.7"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock Grid.Column="3" x:Name="StatusLastReloadText"
+                           FontSize="11" Opacity="0.7"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="4" x:Name="StatusVersionText"
+                           FontSize="11" Opacity="0.55"
+                           VerticalAlignment="Center" />
+            </Grid>
+        </Border>
     </Grid>
 </Window>

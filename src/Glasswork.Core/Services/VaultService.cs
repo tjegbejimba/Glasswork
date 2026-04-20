@@ -154,6 +154,7 @@ public class VaultService
         var rebuilt = string.Join(newline, lines);
         if (hadTrailingNewline && !rebuilt.EndsWith(newline))
             rebuilt += newline;
+        _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, rebuilt);
     }
 
@@ -364,6 +365,26 @@ public class VaultService
     }
 
     /// <summary>
+    /// Move a subtask from one position to another within the parent task's full subtask list,
+    /// then re-serialize the file. No-op when indices are equal, out of range, or the task does
+    /// not exist. Indices refer to <see cref="GlassworkTask.Subtasks"/> as parsed (full list,
+    /// not a UI-filtered subset).
+    /// </summary>
+    public void ReorderSubtask(string taskId, int fromIndex, int toIndex)
+    {
+        if (fromIndex == toIndex) return;
+        var task = Load(taskId);
+        if (task is null) return;
+        if (fromIndex < 0 || fromIndex >= task.Subtasks.Count) return;
+        if (toIndex < 0 || toIndex >= task.Subtasks.Count) return;
+
+        var item = task.Subtasks[fromIndex];
+        task.Subtasks.RemoveAt(fromIndex);
+        task.Subtasks.Insert(toIndex, item);
+        Save(task);
+    }
+
+    /// <summary>
     /// In-place V1 → V2 migration of a task file. Reads the raw file, runs
     /// <see cref="MigrationService.MigrateToV2"/>, and writes the result back.
     /// Idempotent and lossless. Returns true if the file was changed on disk.
@@ -377,8 +398,40 @@ public class VaultService
         var migrated = new MigrationService().MigrateToV2(original);
         if (migrated == original) return false;
 
+        _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, migrated);
         return true;
+    }
+
+    /// <summary>
+    /// Bulk-migrate every V1 file in the vault to V2 in-place. Idempotent:
+    /// V2 files are skipped (zero-cost). Returns the number of files actually
+    /// rewritten on disk. Intended to run once at app startup so the user
+    /// never sees the per-task "Upgrade to V2" affordance.
+    /// </summary>
+    public int MigrateAllToV2()
+    {
+        if (!Directory.Exists(_vaultPath)) return 0;
+
+        var migrated = 0;
+        var migrator = new MigrationService();
+        foreach (var path in Directory.EnumerateFiles(_vaultPath, "*.md", SearchOption.TopDirectoryOnly))
+        {
+            string original;
+            try { original = File.ReadAllText(path); }
+            catch { continue; }
+
+            string migratedContent;
+            try { migratedContent = migrator.MigrateToV2(original); }
+            catch { continue; } // missing frontmatter etc — leave file untouched
+
+            if (migratedContent == original) continue;
+
+            _selfWrites?.RegisterWrite(path);
+            File.WriteAllText(path, migratedContent);
+            migrated++;
+        }
+        return migrated;
     }
 
     /// <summary>

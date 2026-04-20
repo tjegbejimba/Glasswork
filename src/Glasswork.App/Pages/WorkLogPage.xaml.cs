@@ -31,6 +31,9 @@ public sealed partial class WorkLogPage : Page
         _currentLog = _workLog.GenerateWeeklyLog(_currentWeekStart);
         LogContent.Text = _currentLog;
         WeekLabel.Text = $"Week of {_currentWeekStart:MMM d, yyyy}";
+        var isEmpty = string.IsNullOrWhiteSpace(_currentLog);
+        LogContent.Visibility = isEmpty ? Visibility.Collapsed : Visibility.Visible;
+        EmptyStateView.Visibility = isEmpty ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void PrevWeek_Click(object sender, RoutedEventArgs e)

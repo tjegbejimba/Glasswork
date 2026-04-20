@@ -252,4 +252,51 @@ public class VaultServiceTests
     {
         Assert.IsFalse(_vault.MigrateToV2("does-not-exist"));
     }
+
+    [TestMethod]
+    public void MigrateAllToV2_UpgradesEveryV1FileInVault_AndCountsThem()
+    {
+        // Two V1 files (no `## Subtasks` header)
+        File.WriteAllText(Path.Combine(_tempDir, "legacy-a.md"),
+            "---\nid: legacy-a\ntitle: Legacy A\n---\n\nBody A.\n");
+        File.WriteAllText(Path.Combine(_tempDir, "legacy-b.md"),
+            "---\nid: legacy-b\ntitle: Legacy B\n---\n\nBody B.\n");
+        // One V2 file (already has the header) — should be skipped
+        File.WriteAllText(Path.Combine(_tempDir, "modern.md"),
+            "---\nid: modern\ntitle: Modern\n---\n\n## Subtasks\n\n## Notes\n\n## Related\n");
+
+        var migrated = _vault.MigrateAllToV2();
+
+        Assert.AreEqual(2, migrated, "exactly the two V1 files should be migrated");
+
+        var a = _vault.Load("legacy-a");
+        var b = _vault.Load("legacy-b");
+        var m = _vault.Load("modern");
+        Assert.IsFalse(a!.IsV1Format, "legacy-a is now V2");
+        Assert.IsFalse(b!.IsV1Format, "legacy-b is now V2");
+        Assert.IsFalse(m!.IsV1Format, "modern is unchanged but still V2");
+    }
+
+    [TestMethod]
+    public void MigrateAllToV2_IsIdempotent_SecondRunReturnsZero()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "legacy.md"),
+            "---\nid: legacy\ntitle: Legacy\n---\n\nBody.\n");
+
+        Assert.AreEqual(1, _vault.MigrateAllToV2());
+        Assert.AreEqual(0, _vault.MigrateAllToV2(), "no files left to migrate after first pass");
+    }
+
+    [TestMethod]
+    public void MigrateAllToV2_SkipsFilesWithMissingFrontmatter()
+    {
+        // A file that the migrator would throw on — must not abort the whole batch.
+        File.WriteAllText(Path.Combine(_tempDir, "garbage.md"), "no frontmatter at all\n");
+        File.WriteAllText(Path.Combine(_tempDir, "legacy.md"),
+            "---\nid: legacy\ntitle: Legacy\n---\n\nBody.\n");
+
+        var migrated = _vault.MigrateAllToV2();
+
+        Assert.AreEqual(1, migrated, "garbage.md is skipped, legacy.md still migrates");
+    }
 }

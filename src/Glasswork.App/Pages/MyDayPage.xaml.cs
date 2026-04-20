@@ -24,7 +24,7 @@ public sealed partial class MyDayPage : Page
 
     public MyDayPage()
     {
-        ViewModel = new MyDayViewModel(App.Vault, App.Tasks);
+        ViewModel = new MyDayViewModel(App.Vault, App.Tasks, App.UiState);
         InitializeComponent();
     }
 
@@ -49,7 +49,32 @@ public sealed partial class MyDayPage : Page
     private void Refresh()
     {
         ViewModel.Refresh();
+        // Hydrate per-task manual-collapse state from UI state (persists across nav + restarts).
+        foreach (var t in ViewModel.TodayTasks)
+        {
+            t.IsManuallyCollapsed = App.UiState.Get<bool>($"{App.CollapsedTaskKeyPrefix}{t.Id}");
+        }
         RebuildSubtaskGroups();
+        UpdateEmptyState();
+    }
+
+    private void UpdateEmptyState()
+    {
+        var hasContent = ViewModel.TodayTasks.Count > 0 || SubtaskGroups.Count > 0;
+        TodayList.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        EmptyStateView.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
+        // Suggestions: slim by default, rich when My Day is empty.
+        SuggestionsList.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        RichSuggestionsList.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
+        // Recently completed: hidden when none.
+        var hasCompleted = ViewModel.RecentlyCompletedTasks.Count > 0;
+        RecentlyCompletedHeader.Visibility = hasCompleted ? Visibility.Visible : Visibility.Collapsed;
+        RecentlyCompletedList.Visibility = hasCompleted ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void EmptyState_OpenBacklog(object sender, RoutedEventArgs e)
+    {
+        Frame.Navigate(typeof(BacklogPage));
     }
 
     private void RebuildSubtaskGroups()
@@ -64,13 +89,33 @@ public sealed partial class MyDayPage : Page
         }
         SubtaskGroupsSection.Visibility = SubtaskGroups.Count > 0
             ? Visibility.Visible : Visibility.Collapsed;
+        UpdateEmptyState();
     }
 
-    private void TodayList_ItemClick(object sender, ItemClickEventArgs e)
+    private void OpenTask_Click(object sender, RoutedEventArgs e)
     {
-        if (e.ClickedItem is GlassworkTask task)
+        if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
             Frame.Navigate(typeof(TaskDetailPage), task);
+        }
+    }
+
+    private void TaskRow_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
+        if (task.IsActive)
+        {
+            // Toggle manual collapse and persist.
+            task.IsManuallyCollapsed = !task.IsManuallyCollapsed;
+            App.UiState.Set($"{App.CollapsedTaskKeyPrefix}{task.Id}", task.IsManuallyCollapsed);
+            App.ScheduleUiStateSave();
+            e.Handled = true;
+        }
+        else
+        {
+            // Quiet tasks have no card to expand — open detail instead.
+            Frame.Navigate(typeof(TaskDetailPage), task);
+            e.Handled = true;
         }
     }
 
@@ -79,6 +124,15 @@ public sealed partial class MyDayPage : Page
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
             ViewModel.CompleteTaskCommand.Execute(task);
+            RebuildSubtaskGroups();
+        }
+    }
+
+    private void UncompleteTask_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        {
+            ViewModel.UncompleteTaskCommand.Execute(task);
             RebuildSubtaskGroups();
         }
     }

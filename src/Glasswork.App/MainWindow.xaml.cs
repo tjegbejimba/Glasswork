@@ -23,6 +23,76 @@ public sealed partial class MainWindow : Window
         // Use absolute path so the correct ICO is loaded in both debug and publish
         var icoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
         AppWindow.SetIcon(icoPath);
+
+        // Land on My Day. The XAML IsSelected="True" sets the chrome state but does not
+        // reliably navigate the Frame on first launch — be explicit.
+        NavFrame.Navigate(typeof(MyDayPage));
+
+        // Status bar: vault path + task count + watcher dot + last-reload time.
+        InitStatusBar();
+
+        // Mouse XButton1 (back) / XButton2 (forward) → frame navigation.
+        // PointerPressed on the root content captures clicks anywhere in the window.
+        if (Content is FrameworkElement root)
+        {
+            root.PointerPressed += Root_PointerPressed;
+        }
+    }
+
+    private void Root_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        var props = e.GetCurrentPoint(null).Properties;
+        if (props.IsXButton1Pressed && NavFrame.CanGoBack)
+        {
+            NavFrame.GoBack();
+            e.Handled = true;
+        }
+        else if (props.IsXButton2Pressed && NavFrame.CanGoForward)
+        {
+            NavFrame.GoForward();
+            e.Handled = true;
+        }
+    }
+
+    private void InitStatusBar()
+    {
+        StatusVaultText.Text = App.Vault?.VaultPath ?? "(no vault)";
+        var ver = System.Reflection.Assembly.GetExecutingAssembly()
+            .GetName().Version;
+        StatusVersionText.Text = ver is null ? "v?" : $"v{ver.Major}.{ver.Minor}.{ver.Build}";
+        RefreshTaskCount();
+        StatusWatcherDot.Fill = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+            App.Watcher is not null
+                ? Windows.UI.Color.FromArgb(0xFF, 0x10, 0x7C, 0x10)   // green
+                : Windows.UI.Color.FromArgb(0xFF, 0xCA, 0x5C, 0x00)); // amber
+        StatusWatcherText.Text = App.Watcher is not null ? "watching" : "watcher off";
+        UpdateLastReload();
+        App.TaskFileChangedExternally += (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                RefreshTaskCount();
+                UpdateLastReload();
+            });
+        };
+    }
+
+    private void RefreshTaskCount()
+    {
+        try
+        {
+            var count = App.Vault?.LoadAll().Count ?? 0;
+            StatusTaskCountText.Text = count == 1 ? "1 task" : $"{count} tasks";
+        }
+        catch
+        {
+            StatusTaskCountText.Text = "—";
+        }
+    }
+
+    private void UpdateLastReload()
+    {
+        StatusLastReloadText.Text = $"updated {DateTime.Now:h:mm tt}";
     }
 
     private void TitleBar_PaneToggleRequested(TitleBar sender, object args)
@@ -37,32 +107,75 @@ public sealed partial class MainWindow : Window
 
     private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        if (args.IsSettingsSelected)
+        // Selection-driven nav still handles the "click a different section" case where
+        // SelectedItem actually changed. The ItemInvoked handler covers re-clicking the
+        // already-selected item (e.g. returning from Task Detail to Backlog).
+        NavigateFromSelection(args.IsSettingsSelected, args.SelectedItem as NavigationViewItem, sender);
+    }
+
+    private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
+    {
+        // ItemInvoked fires on every click — including clicks on the already-selected item.
+        // SelectionChanged covers the "selection actually changed" path; this covers the
+        // "user wants to go back to this section from a child page" path.
+        if (args.IsSettingsInvoked)
         {
-            NavFrame.Navigate(typeof(SettingsPage));
+            NavigateToTopLevel(typeof(SettingsPage));
+            return;
         }
-        else if (args.SelectedItem is NavigationViewItem item)
+        if (args.InvokedItemContainer is not NavigationViewItem item) return;
+
+        // Feedback opens a dialog and isn't a nav destination — let SelectionChanged
+        // handle the "deselect" side-effect; just trigger the dialog here once.
+        if ((item.Tag as string) == "feedback")
         {
-            switch (item.Tag)
-            {
-                case "myday":
-                    NavFrame.Navigate(typeof(MyDayPage));
-                    break;
-                case "backlog":
-                    NavFrame.Navigate(typeof(BacklogPage));
-                    break;
-                case "worklog":
-                    NavFrame.Navigate(typeof(WorkLogPage));
-                    break;
-                case "feedback":
-                    ShowFeedbackDialog();
-                    // Deselect so it acts like a button, not a nav destination
-                    sender.SelectedItem = null;
-                    return;
-                default:
-                    throw new InvalidOperationException($"Unknown navigation item tag: {item.Tag}");
-            }
+            ShowFeedbackDialog();
+            sender.SelectedItem = null;
+            return;
         }
+
+        // For real destinations: if SelectionChanged is going to fire (different item),
+        // let it do the work. If the invoked item is already selected, do the nav now.
+        if (ReferenceEquals(sender.SelectedItem, item))
+        {
+            NavigateFromSelection(false, item, sender);
+        }
+    }
+
+    private void NavigateFromSelection(bool isSettings, NavigationViewItem? item, NavigationView sender)
+    {
+        if (isSettings)
+        {
+            NavigateToTopLevel(typeof(SettingsPage));
+            return;
+        }
+        if (item is null) return;
+        switch (item.Tag)
+        {
+            case "myday":
+                NavigateToTopLevel(typeof(MyDayPage));
+                break;
+            case "backlog":
+                NavigateToTopLevel(typeof(BacklogPage));
+                break;
+            case "worklog":
+                NavigateToTopLevel(typeof(WorkLogPage));
+                break;
+            case "feedback":
+                ShowFeedbackDialog();
+                sender.SelectedItem = null;
+                return;
+            default:
+                throw new InvalidOperationException($"Unknown navigation item tag: {item.Tag}");
+        }
+    }
+
+    private void NavigateToTopLevel(Type pageType)
+    {
+        // Top-level nav represents an explicit user choice of section; flush the
+        // back stack so "back" doesn't keep cycling through old detail pages.
+        NavFrame.Navigate(pageType);
+        NavFrame.BackStack.Clear();
     }
 
     private async void ShowFeedbackDialog()
