@@ -91,27 +91,33 @@
                 <ListView.ItemTemplate>
                     <DataTemplate>
                         <Grid Margin="0,2,0,2">
-                            <!-- Simple row: plain checkbox + my-day toggle + "..." menu -->
-                            <Grid Visibility="{Binding IsSimple, Converter={StaticResource BoolToVis}}"
-                                  ColumnDefinitions="*,Auto,Auto">
-                                <CheckBox Grid.Column="0" Content="{Binding Text}"
-                                          IsChecked="{Binding IsCompleted, Mode=TwoWay}"
-                                          Style="{StaticResource CircleCheckBoxStyle}"
-                                          Click="Subtask_Click" />
-                                <Button Grid.Column="1" Click="ToggleSubtaskMyDay_Click"
-                                        Background="Transparent" BorderThickness="0"
-                                        Padding="6" VerticalAlignment="Center"
-                                        ToolTipService.ToolTip="Toggle My Day for this subtask">
-                                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" FontSize="14"
-                                              Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
-                                </Button>
-                                <Button Grid.Column="2" Click="SubtaskMore_Click"
-                                        Background="Transparent" BorderThickness="0"
-                                        Padding="6" VerticalAlignment="Center"
-                                        ToolTipService.ToolTip="More actions">
-                                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" Opacity="0.6" />
-                                </Button>
-                            </Grid>
+                            <!-- Simple row: plain checkbox + my-day toggle + "..." menu (in matching card chrome) -->
+                            <Border Visibility="{Binding IsSimple, Converter={StaticResource BoolToVis}}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Padding="10,8"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                <Grid ColumnDefinitions="*,Auto,Auto">
+                                    <CheckBox Grid.Column="0" Content="{Binding Text}"
+                                              IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                              Style="{StaticResource CircleCheckBoxStyle}"
+                                              Click="Subtask_Click" />
+                                    <Button Grid.Column="1" Click="ToggleSubtaskMyDay_Click"
+                                            Background="Transparent" BorderThickness="0"
+                                            Padding="6" VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="Toggle My Day for this subtask">
+                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" FontSize="14"
+                                                  Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
+                                    </Button>
+                                    <Button Grid.Column="2" Click="SubtaskMore_Click"
+                                            Background="Transparent" BorderThickness="0"
+                                            Padding="6" VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="More actions">
+                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" Opacity="0.6" />
+                                    </Button>
+                                </Grid>
+                            </Border>
 
                             <!-- Card form: rich (auto-expanded or collapsed) -->
                             <Border Visibility="{Binding ShowAsCard, Converter={StaticResource BoolToVis}}"
