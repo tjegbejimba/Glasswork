@@ -54,7 +54,7 @@ public class FrontmatterParserTests
         Assert.AreEqual("parent-task", task.Parent);
         CollectionAssert.AreEqual(new[] { "[[some-context]]" }, task.ContextLinks);
         CollectionAssert.AreEqual(new[] { "dev", "setup" }, task.Tags);
-        Assert.AreEqual("Some notes about this task.", task.Body);
+        Assert.AreEqual("Some notes about this task.", task.Description);
         Assert.AreEqual(2, task.Subtasks.Count);
         Assert.IsTrue(task.Subtasks[0].IsCompleted);
         Assert.AreEqual("Step one done", task.Subtasks[0].Text);
@@ -84,7 +84,7 @@ public class FrontmatterParserTests
             AdoLink = 999,
             AdoTitle = "ADO item title",
             Parent = "parent-id",
-            Body = "Some notes here.",
+            Description = "Some notes here.",
             ContextLinks = ["[[link-a]]", "[[link-b]]"],
             Tags = ["tag1"],
             Subtasks =
@@ -107,7 +107,7 @@ public class FrontmatterParserTests
         Assert.AreEqual(original.AdoLink, parsed.AdoLink);
         Assert.AreEqual(original.AdoTitle, parsed.AdoTitle);
         Assert.AreEqual(original.Parent, parsed.Parent);
-        Assert.AreEqual(original.Body, parsed.Body);
+        Assert.AreEqual(original.Description, parsed.Description);
         CollectionAssert.AreEqual(original.ContextLinks, parsed.ContextLinks);
         CollectionAssert.AreEqual(original.Tags, parsed.Tags);
         Assert.AreEqual(original.Subtasks.Count, parsed.Subtasks.Count);
@@ -184,7 +184,7 @@ public class FrontmatterParserTests
         Assert.IsTrue(task.Subtasks[1].IsCompleted);
         Assert.AreEqual("Third", task.Subtasks[2].Text);
         Assert.IsFalse(task.Subtasks[2].IsCompleted);
-        Assert.AreEqual("Some prose body.", task.Body);
+        Assert.AreEqual("Some prose body.", task.Description);
     }
 
     [TestMethod]
@@ -206,7 +206,7 @@ public class FrontmatterParserTests
 
         Assert.AreEqual("legacy-v1", task.Id);
         Assert.AreEqual(0, task.Subtasks.Count);
-        Assert.AreEqual("Just a body of plain notes, no subtasks heading at all.", task.Body);
+        Assert.AreEqual("Just a body of plain notes, no subtasks heading at all.", task.Description);
     }
 
     [TestMethod]
@@ -554,6 +554,113 @@ public class FrontmatterParserTests
         Assert.AreEqual("todo", task.Status);
         Assert.AreEqual("medium", task.Priority);
         Assert.AreEqual(0, task.Subtasks.Count);
-        Assert.AreEqual(string.Empty, task.Body);
+        Assert.AreEqual(string.Empty, task.Description);
+    }
+
+    // ---------- ## Notes section (Slice 0, ADR 0002) ----------
+
+    [TestMethod]
+    public void Parse_ExtractsNotesSection()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            created: 2026-04-17
+            ---
+
+            Description prose here.
+
+            ## Subtasks
+
+            ## Notes
+
+            Some scratch text.
+            More on a second line.
+
+            ## Related
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual("Some scratch text.\nMore on a second line.", task.Notes);
+        Assert.AreEqual("Description prose here.", task.Description);
+    }
+
+    [TestMethod]
+    public void Parse_EmptyNotesSection_ReturnsEmptyString()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            created: 2026-04-17
+            ---
+
+            Description.
+
+            ## Subtasks
+
+            ## Notes
+
+            ## Related
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(string.Empty, task.Notes);
+    }
+
+    [TestMethod]
+    public void Parse_MissingNotesSection_ReturnsEmptyString()
+    {
+        var markdown = """
+            ---
+            id: t
+            title: T
+            created: 2026-04-17
+            ---
+
+            Description only.
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(string.Empty, task.Notes);
+    }
+
+    [TestMethod]
+    public void Serialize_RoundTripsNotes()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "t",
+            Title = "T",
+            Created = new DateTime(2026, 4, 17),
+            Description = "Desc.",
+            Notes = "Remember to ask X about Y.",
+        };
+
+        var md = _parser.Serialize(task);
+        var parsed = _parser.Parse(md);
+
+        Assert.AreEqual("Remember to ask X about Y.", parsed.Notes);
+        Assert.AreEqual("Desc.", parsed.Description);
+    }
+
+    [TestMethod]
+    public void Serialize_EmptyNotes_StillEmitsNotesHeading()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "t",
+            Title = "T",
+            Created = new DateTime(2026, 4, 17),
+            Description = "Desc.",
+        };
+
+        var md = _parser.Serialize(task);
+
+        StringAssert.Contains(md, "## Notes");
     }
 }

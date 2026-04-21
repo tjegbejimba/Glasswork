@@ -8,7 +8,7 @@ public class GlassworkTaskAdaptiveRowTests
     // ---------- IsActive vs IsQuiet ----------
 
     [TestMethod]
-    public void IsQuiet_TitleOnly_NoSubtasksNoBodyNoBlocker()
+    public void IsQuiet_TitleOnly_NoSubtasksNoDescriptionNoBlocker()
     {
         var t = new GlassworkTask { Title = "Buy milk" };
         Assert.IsTrue(t.IsQuiet);
@@ -25,9 +25,9 @@ public class GlassworkTaskAdaptiveRowTests
     }
 
     [TestMethod]
-    public void IsActive_HasBlurbBody()
+    public void IsActive_HasBlurbDescription()
     {
-        var t = new GlassworkTask { Title = "Investigate", Body = "Some context for the work." };
+        var t = new GlassworkTask { Title = "Investigate", Description = "Some context for the work." };
         Assert.IsTrue(t.IsActive);
     }
 
@@ -42,19 +42,19 @@ public class GlassworkTaskAdaptiveRowTests
     // ---------- BlurbPreview ----------
 
     [TestMethod]
-    public void BlurbPreview_FirstNonBlankLineOfBody()
+    public void BlurbPreview_FirstNonBlankLineOfDescription()
     {
-        var t = new GlassworkTask { Body = "\n\n   First real line.\nSecond line." };
+        var t = new GlassworkTask { Description = "\n\n   First real line.\nSecond line." };
         Assert.AreEqual("First real line.", t.BlurbPreview);
     }
 
     [TestMethod]
     public void BlurbPreview_StripsLeadingMarkdownNoise()
     {
-        var t = new GlassworkTask { Body = "## Heading text" };
+        var t = new GlassworkTask { Description = "## Heading text" };
         Assert.AreEqual("Heading text", t.BlurbPreview);
 
-        var t2 = new GlassworkTask { Body = "> a quote line" };
+        var t2 = new GlassworkTask { Description = "> a quote line" };
         Assert.AreEqual("a quote line", t2.BlurbPreview);
     }
 
@@ -62,15 +62,15 @@ public class GlassworkTaskAdaptiveRowTests
     public void BlurbPreview_TruncatesAt80Chars()
     {
         var longLine = new string('a', 120);
-        var t = new GlassworkTask { Body = longLine };
+        var t = new GlassworkTask { Description = longLine };
         Assert.AreEqual(81, t.BlurbPreview.Length); // 80 + ellipsis
         StringAssert.EndsWith(t.BlurbPreview, "…");
     }
 
     [TestMethod]
-    public void BlurbPreview_EmptyForBlankBody()
+    public void BlurbPreview_EmptyForBlankDescription()
     {
-        var t = new GlassworkTask { Body = "" };
+        var t = new GlassworkTask { Description = "" };
         Assert.AreEqual(string.Empty, t.BlurbPreview);
         Assert.IsFalse(t.HasBlurb);
     }

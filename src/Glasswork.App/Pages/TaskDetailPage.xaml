@@ -256,10 +256,16 @@
                 </ItemsControl>
             </Expander>
 
+            <!-- Description -->
+            <TextBox x:Name="DescriptionBox" Header="Description" AcceptsReturn="True"
+                     MinHeight="120" TextWrapping="Wrap"
+                     Text="{x:Bind Task.Description, Mode=TwoWay}"
+                     LostFocus="Field_LostFocus" />
+
             <!-- Notes -->
             <TextBox x:Name="NotesBox" Header="Notes" AcceptsReturn="True"
-                     MinHeight="120" TextWrapping="Wrap"
-                     Text="{x:Bind Task.Body, Mode=TwoWay}"
+                     MinHeight="80" TextWrapping="Wrap"
+                     Text="{x:Bind Task.Notes, Mode=TwoWay}"
                      LostFocus="Field_LostFocus" />
 
             <!-- Metadata -->
