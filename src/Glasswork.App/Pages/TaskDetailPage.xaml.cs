@@ -685,6 +685,12 @@ public sealed partial class TaskDetailPage : Page
         try { App.Index.Refresh(); } catch { /* best-effort */ }
     }
 
+    private async void SubtaskText_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.DataContext is SubTask sub)
+            await OpenSubtaskDetailAsync(sub);
+    }
+
     private async System.Threading.Tasks.Task OpenSubtaskDetailAsync(SubTask sub)
     {
         var dialog = new SubtaskDetailDialog(sub) { XamlRoot = this.XamlRoot };
