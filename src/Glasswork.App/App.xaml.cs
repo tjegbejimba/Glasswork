@@ -55,6 +55,30 @@ public partial class App : Application
     public const string AdoBaseUrlKey = "ado.baseUrl";
 
     /// <summary>
+    /// UI state key for the app theme. Values: "system" (default), "light", "dark".
+    /// </summary>
+    public const string ThemeKey = "app.theme";
+
+    /// <summary>
+    /// Apply the persisted theme (or default System) to the given window's root content.
+    /// Safe to call whenever the user changes the setting; no-op if the window has no content yet.
+    /// </summary>
+    public static void ApplyTheme(Window window)
+    {
+        if (window?.Content is not FrameworkElement root) return;
+        var value = (UiState?.Get<string>(ThemeKey) ?? "system").ToLowerInvariant();
+        root.RequestedTheme = value switch
+        {
+            "light" => ElementTheme.Light,
+            "dark" => ElementTheme.Dark,
+            _ => ElementTheme.Default,
+        };
+    }
+
+    /// <summary>The active window, exposed so Settings can re-apply theme changes live.</summary>
+    public static Window? MainWindow => (Current as App)?._window;
+
+    /// <summary>
     /// Raised on a thread-pool thread when an external change to a task file is observed.
     /// Subscribers must marshal to the dispatcher before touching UI.
     /// </summary>
@@ -137,6 +161,7 @@ public partial class App : Application
         Watcher.Start();
 
         _window = new MainWindow();
+        ApplyTheme(_window);
         _window.Activate();
     }
 

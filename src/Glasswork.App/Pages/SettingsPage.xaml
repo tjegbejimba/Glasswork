@@ -16,6 +16,23 @@
 
             <StackPanel Spacing="8">
                 <TextBlock
+                    Text="Appearance"
+                    Style="{ThemeResource SubtitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Choose the app theme. System follows your Windows personalization setting."
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <ComboBox x:Name="ThemeComboBox"
+                          Header="Theme"
+                          SelectionChanged="ThemeComboBox_SelectionChanged">
+                    <ComboBoxItem Content="System" Tag="system" />
+                    <ComboBoxItem Content="Light" Tag="light" />
+                    <ComboBoxItem Content="Dark" Tag="dark" />
+                </ComboBox>
+            </StackPanel>
+
+            <StackPanel Spacing="8">
+                <TextBlock
                     Text="Azure DevOps"
                     Style="{ThemeResource SubtitleTextBlockStyle}" />
                 <TextBlock
