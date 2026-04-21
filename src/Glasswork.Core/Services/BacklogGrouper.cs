@@ -66,10 +66,13 @@ public static class BacklogGrouper
     {
         if (resolver is null) return rawDisplay;
         var title = resolver(rawDisplay);
-        if (string.IsNullOrWhiteSpace(title)) return rawDisplay;
-        // Numeric-only parents get a "#" prefix to read like an ADO work-item reference.
-        var prefix = IsAllDigits(rawDisplay) ? $"#{rawDisplay}" : rawDisplay;
-        return $"{prefix} — {title!.Trim()}";
+        // Best display label even when no title is available: collapse a full ADO
+        // URL down to "#{id}" so users don't see hideous group headers like
+        // "https://dev.azure.com/org/proj/_workitems/edit/12345".
+        var extractedId = AdoParentIdExtractor.TryExtractId(rawDisplay);
+        var baseLabel = extractedId.HasValue ? $"#{extractedId.Value}" : rawDisplay;
+        if (string.IsNullOrWhiteSpace(title)) return baseLabel;
+        return $"{baseLabel} — {title!.Trim()}";
     }
 
     private static bool IsAllDigits(string s)

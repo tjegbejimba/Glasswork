@@ -111,11 +111,9 @@ public partial class BacklogViewModel : ObservableObject
 
     private string? ResolveParentTitleFromCache(string parent)
     {
-        if (string.IsNullOrWhiteSpace(parent)) return null;
-        var trimmed = parent.Trim();
-        if (!IsAllDigits(trimmed)) return null;
-        if (!int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)) return null;
-        return _parentTitleCache.TryGetValue(id, out var title) ? title : null;
+        var id = AdoParentIdExtractor.TryExtractId(parent);
+        if (id is null) return null;
+        return _parentTitleCache.TryGetValue(id.Value, out var title) ? title : null;
     }
 
     private void KickOffParentTitleFetches(IReadOnlyList<GlassworkTask> ordered)
@@ -123,10 +121,9 @@ public partial class BacklogViewModel : ObservableObject
         if (AdoTitleFetcher is null) return;
 
         var ids = ordered
-            .Select(t => t.Parent?.Trim())
-            .Where(p => !string.IsNullOrEmpty(p) && IsAllDigits(p!))
-            .Select(p => int.Parse(p!, CultureInfo.InvariantCulture))
-            .Where(id => id > 0 && !_parentTitleCache.ContainsKey(id))
+            .Select(t => AdoParentIdExtractor.TryExtractId(t.Parent))
+            .Where(id => id.HasValue && !_parentTitleCache.ContainsKey(id.Value))
+            .Select(id => id!.Value)
             .Distinct()
             .ToList();
 
@@ -168,16 +165,6 @@ public partial class BacklogViewModel : ObservableObject
     /// group headers with the enriched titles.
     /// </summary>
     public event Action? ParentTitlesResolved;
-
-    private static bool IsAllDigits(string s)
-    {
-        if (string.IsNullOrEmpty(s)) return false;
-        for (int i = 0; i < s.Length; i++)
-        {
-            if (s[i] < '0' || s[i] > '9') return false;
-        }
-        return true;
-    }
 
     partial void OnIsGroupedChanged(bool value) => Refresh();
 

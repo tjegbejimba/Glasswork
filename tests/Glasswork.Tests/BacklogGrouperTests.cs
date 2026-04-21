@@ -257,8 +257,10 @@ public class BacklogGrouperTests
     }
 
     [TestMethod]
-    public void ParentTitleResolver_ReturnsNull_DisplayHeaderUnchanged()
+    public void ParentTitleResolver_ReturnsNull_DisplayHeaderNormalizedToHashId()
     {
+        // Even without an enriched title, numeric and URL-form parents are normalized
+        // to "#{id}" so headers don't show ugly raw URLs.
         Func<string, string?> resolver = _ => null;
 
         var rows = BacklogGrouper.Group(
@@ -266,7 +268,7 @@ public class BacklogGrouperTests
             parentTitleResolver: resolver);
 
         var header = rows.OfType<BacklogParentGroupHeader>().Single();
-        Assert.AreEqual("12345", header.DisplayHeader);
+        Assert.AreEqual("#12345", header.DisplayHeader);
     }
 
     [TestMethod]
@@ -279,7 +281,22 @@ public class BacklogGrouperTests
             parentTitleResolver: resolver);
 
         var header = rows.OfType<BacklogParentGroupHeader>().Single();
-        Assert.AreEqual("12345", header.DisplayHeader);
+        Assert.AreEqual("#12345", header.DisplayHeader);
+    }
+
+    [TestMethod]
+    public void ParentTitleResolver_UrlFormParent_NormalizedToHashId()
+    {
+        // URL-form parents (which the EditParent dialog accepts) are collapsed
+        // down to "#{id}" in the header to avoid showing the full URL.
+        Func<string, string?> resolver = _ => "Fix the thing";
+
+        var rows = BacklogGrouper.Group(
+            [Task("a", "https://dev.azure.com/org/proj/_workitems/edit/12345")],
+            parentTitleResolver: resolver);
+
+        var header = rows.OfType<BacklogParentGroupHeader>().Single();
+        Assert.AreEqual("#12345 — Fix the thing", header.DisplayHeader);
     }
 
     [TestMethod]

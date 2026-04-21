@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Glasswork.Core.Services;
@@ -17,6 +18,28 @@ public sealed class AzCliAdoWorkItemFetcher
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Resolves the path to <c>az.cmd</c> (Windows) or <c>az</c>. WinUI packaged apps
+    /// often launch without inheriting the user PATH that contains the Azure CLI shim,
+    /// so we try common MSI/winget install locations before falling back to PATH.
+    /// </summary>
+    private static string ResolveAzPath()
+    {
+        if (!OperatingSystem.IsWindows()) return "az";
+
+        var candidates = new[]
+        {
+            Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\Microsoft SDKs\Azure\CLI2\wbin\az.cmd"),
+            Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\Microsoft SDKs\Azure\CLI2\wbin\az.cmd"),
+            Environment.ExpandEnvironmentVariables(@"%LOCALAPPDATA%\Microsoft\WinGet\Links\az.cmd"),
+        };
+        foreach (var c in candidates)
+        {
+            try { if (File.Exists(c)) return c; } catch { }
+        }
+        return "az.cmd"; // PATH fallback
+    }
+
     public async Task<string?> TryFetchTitleAsync(int workItemId, string? baseUrl, CancellationToken ct = default)
     {
         if (workItemId <= 0) return null;
@@ -27,11 +50,9 @@ public sealed class AzCliAdoWorkItemFetcher
             return null;
         }
 
-        // Resolve az.cmd / az on PATH. WinGet/MSI installs put az.cmd in
-        // %ProgramFiles%\Microsoft SDKs\Azure\CLI2\wbin which is on PATH.
         var psi = new ProcessStartInfo
         {
-            FileName = OperatingSystem.IsWindows() ? "az.cmd" : "az",
+            FileName = ResolveAzPath(),
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
