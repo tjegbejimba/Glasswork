@@ -267,6 +267,13 @@ public sealed partial class TaskDetailPage : Page
         if (sender is CheckBox cb && cb.DataContext is SubTask sub)
         {
             App.Vault.UpdateSubtaskCheckbox(Task.Id, sub.Text, cb.IsChecked == true);
+            // Re-partition Active vs Completed on next frame so the toggled row
+            // moves to the right list without requiring navigation.
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                var refreshed = App.Vault.Load(Task.Id);
+                if (refreshed is not null) ApplyTask(refreshed);
+            });
         }
     }
 

@@ -256,10 +256,20 @@
                 <Expander.Header>
                     <TextBlock x:Name="CompletedHeader" Text="Completed (0)" />
                 </Expander.Header>
-                <ItemsControl x:Name="CompletedSubtaskList">
-                    <ItemsControl.ItemTemplate>
+                <ListView x:Name="CompletedSubtaskList"
+                         SelectionMode="None"
+                         HorizontalAlignment="Stretch"
+                         HorizontalContentAlignment="Stretch">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalAlignment" Value="Stretch" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="0" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
                         <DataTemplate>
-                            <Grid Margin="0,2,0,2" ColumnDefinitions="*,Auto">
+                            <Grid Margin="0,2,0,2" ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
                                 <Grid Grid.Column="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                                     <CheckBox Grid.Column="0"
                                               IsChecked="{Binding IsCompleted, Mode=TwoWay}"
@@ -299,8 +309,8 @@
                                 </Button>
                             </Grid>
                         </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                    </ListView.ItemTemplate>
+                </ListView>
             </Expander>
 
             <!-- Description -->
