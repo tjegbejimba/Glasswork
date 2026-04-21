@@ -224,4 +224,82 @@ public class BacklogGrouperTests
         var header = rows.OfType<BacklogParentGroupHeader>().Single();
         Assert.AreEqual("https://example.com/work/1", header.AdoUrl);
     }
+
+    // ─── parent title resolver ─────────────────────────────────────────────
+    // The resolver is an opt-in callback: given a raw parent string, returns
+    // the resolved work-item title or null. Used to render nicer headers like
+    // "#37226063 — Fix Redis pipeline" instead of bare IDs.
+
+    [TestMethod]
+    public void ParentTitleResolver_Numeric_EnrichesDisplayHeader()
+    {
+        Func<string, string?> resolver = p => p == "12345" ? "Fix Redis pipeline" : null;
+
+        var rows = BacklogGrouper.Group(
+            [Task("a", "12345")],
+            parentTitleResolver: resolver);
+
+        var header = rows.OfType<BacklogParentGroupHeader>().Single();
+        Assert.AreEqual("#12345 — Fix Redis pipeline", header.DisplayHeader);
+    }
+
+    [TestMethod]
+    public void ParentTitleResolver_NonNumeric_StillEnrichedAsSuffix()
+    {
+        Func<string, string?> resolver = p => "Resolved title";
+
+        var rows = BacklogGrouper.Group(
+            [Task("a", "PBI X")],
+            parentTitleResolver: resolver);
+
+        var header = rows.OfType<BacklogParentGroupHeader>().Single();
+        Assert.AreEqual("PBI X — Resolved title", header.DisplayHeader);
+    }
+
+    [TestMethod]
+    public void ParentTitleResolver_ReturnsNull_DisplayHeaderUnchanged()
+    {
+        Func<string, string?> resolver = _ => null;
+
+        var rows = BacklogGrouper.Group(
+            [Task("a", "12345")],
+            parentTitleResolver: resolver);
+
+        var header = rows.OfType<BacklogParentGroupHeader>().Single();
+        Assert.AreEqual("12345", header.DisplayHeader);
+    }
+
+    [TestMethod]
+    public void ParentTitleResolver_ReturnsWhitespace_TreatedAsNull()
+    {
+        Func<string, string?> resolver = _ => "   ";
+
+        var rows = BacklogGrouper.Group(
+            [Task("a", "12345")],
+            parentTitleResolver: resolver);
+
+        var header = rows.OfType<BacklogParentGroupHeader>().Single();
+        Assert.AreEqual("12345", header.DisplayHeader);
+    }
+
+    [TestMethod]
+    public void ParentTitleResolver_GroupingKeyUnchanged_ByEnrichment()
+    {
+        // Two tasks under the same numeric parent; resolver enriches the displayed
+        // header but the grouping key remains the lowered raw parent so collapse
+        // state and equality continue to work.
+        var collapseState = new Dictionary<string, bool> { ["12345"] = true };
+        Func<string, string?> resolver = _ => "Some title";
+
+        var rows = BacklogGrouper.Group(
+            [Task("a", "12345"), Task("b", "12345")],
+            collapseState: collapseState,
+            parentTitleResolver: resolver);
+
+        var header = rows.OfType<BacklogParentGroupHeader>().Single();
+        Assert.AreEqual("#12345 — Some title", header.DisplayHeader);
+        Assert.AreEqual("12345", header.Key);
+        Assert.IsTrue(header.IsCollapsed);
+        Assert.AreEqual(2, header.TotalCount);
+    }
 }

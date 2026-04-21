@@ -20,6 +20,16 @@ public sealed partial class BacklogPage : Page
         ViewModel.IsGrouped = App.UiState.Get<bool?>(App.BacklogGroupByParentKey) ?? true;
         ViewModel.GroupCollapseStateProvider = LoadGroupCollapseState;
         ViewModel.AdoBaseUrlProvider = () => App.UiState.Get<string>(App.AdoBaseUrlKey);
+        ViewModel.AdoTitleFetcher = (id, ct) =>
+        {
+            var baseUrl = App.UiState.Get<string>(App.AdoBaseUrlKey);
+            return App.AdoFetcher.TryFetchTitleAsync(id, baseUrl, ct);
+        };
+        ViewModel.ParentTitlesResolved += () =>
+        {
+            // Re-render group headers on the UI thread once background fetches resolve titles.
+            DispatcherQueue?.TryEnqueue(() => ViewModel.Refresh());
+        };
         InitializeComponent();
         ViewModel.Rows.CollectionChanged += (_, _) => UpdateEmptyState();
         // Persist toggle whenever the user flips it. Bind here (not in VM) so the

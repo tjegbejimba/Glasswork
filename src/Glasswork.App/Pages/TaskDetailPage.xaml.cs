@@ -352,14 +352,21 @@ public sealed partial class TaskDetailPage : Page
         };
         var titleBox = new TextBox
         {
-            Header = "ADO title (optional)",
+            Header = "ADO title (optional — auto-fetched if left blank)",
             PlaceholderText = "Short label shown on the task",
             Text = Task.AdoTitle ?? string.Empty,
             Margin = new Thickness(0, 12, 0, 0),
         };
+        var fetchStatus = new TextBlock
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            Visibility = Visibility.Collapsed,
+            Opacity = 0.7,
+        };
         var panel = new StackPanel { MinWidth = 360 };
         panel.Children.Add(idBox);
         panel.Children.Add(titleBox);
+        panel.Children.Add(fetchStatus);
 
         var dialog = new ContentDialog
         {
@@ -371,14 +378,50 @@ public sealed partial class TaskDetailPage : Page
             XamlRoot = this.XamlRoot,
         };
 
+        // Deferral pattern: when Save is clicked with an ID but no title, try to
+        // fetch the title from ADO before persisting. Failures are silent (we just
+        // save with whatever the user typed) so the dialog never gets stuck.
+        dialog.PrimaryButtonClick += async (s, args) =>
+        {
+            var raw = idBox.Text?.Trim() ?? string.Empty;
+            if (raw.Length == 0) return;
+            if (!int.TryParse(raw, out var parsed) || parsed <= 0) return;
+            if (!string.IsNullOrWhiteSpace(titleBox.Text)) return;
+
+            var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim();
+            if (baseUrl.Length == 0) return;
+
+            var deferral = args.GetDeferral();
+            idBox.IsEnabled = false;
+            titleBox.IsEnabled = false;
+            fetchStatus.Text = $"Fetching title for #{parsed}…";
+            fetchStatus.Visibility = Visibility.Visible;
+            try
+            {
+                var fetched = await App.AdoFetcher.TryFetchTitleAsync(parsed, baseUrl);
+                if (!string.IsNullOrEmpty(fetched))
+                {
+                    titleBox.Text = fetched;
+                }
+            }
+            catch { /* never block save */ }
+            finally
+            {
+                idBox.IsEnabled = true;
+                titleBox.IsEnabled = true;
+                fetchStatus.Visibility = Visibility.Collapsed;
+                deferral.Complete();
+            }
+        };
+
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
 
-        var raw = idBox.Text?.Trim() ?? string.Empty;
+        var rawFinal = idBox.Text?.Trim() ?? string.Empty;
         int? newId = null;
-        if (raw.Length > 0)
+        if (rawFinal.Length > 0)
         {
-            if (!int.TryParse(raw, out var parsed) || parsed <= 0) return;
+            if (!int.TryParse(rawFinal, out var parsed) || parsed <= 0) return;
             newId = parsed;
         }
         var newTitle = string.IsNullOrWhiteSpace(titleBox.Text) ? null : titleBox.Text.Trim();

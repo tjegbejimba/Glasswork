@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Glasswork.Core.Services;
+using Glasswork.Services;
 using Microsoft.UI.Xaml;
 
 namespace Glasswork;
@@ -28,6 +29,7 @@ public partial class App : Application
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
+    public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     private static Debouncer? _indexDebouncer;
     private static Debouncer? _uiStateDebouncer;
 

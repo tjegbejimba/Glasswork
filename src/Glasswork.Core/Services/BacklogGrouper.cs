@@ -23,7 +23,8 @@ public static class BacklogGrouper
     public static IReadOnlyList<object> Group(
         IEnumerable<GlassworkTask> tasks,
         IReadOnlyDictionary<string, bool>? collapseState = null,
-        string? adoBaseUrl = null)
+        string? adoBaseUrl = null,
+        System.Func<string, string?>? parentTitleResolver = null)
     {
         collapseState ??= new Dictionary<string, bool>();
         var input = tasks.ToList();
@@ -42,14 +43,15 @@ public static class BacklogGrouper
 
         foreach (var group in grouped)
         {
-            var displayLabel = group.First().Parent!.Trim();
+            var rawDisplay = group.First().Parent!.Trim();
+            var displayLabel = EnrichDisplay(rawDisplay, parentTitleResolver);
             var collapsed = collapseState.TryGetValue(group.Key, out var c) && c;
             var header = new BacklogParentGroupHeader(
                 displayHeader: displayLabel,
                 key: group.Key,
                 totalCount: group.Count(),
                 isCollapsed: collapsed,
-                adoUrl: AdoLinkResolver.TryResolve(displayLabel, adoBaseUrl));
+                adoUrl: AdoLinkResolver.TryResolve(rawDisplay, adoBaseUrl));
             rows.Add(header);
             if (!collapsed)
             {
@@ -58,5 +60,25 @@ public static class BacklogGrouper
         }
 
         return rows;
+    }
+
+    private static string EnrichDisplay(string rawDisplay, System.Func<string, string?>? resolver)
+    {
+        if (resolver is null) return rawDisplay;
+        var title = resolver(rawDisplay);
+        if (string.IsNullOrWhiteSpace(title)) return rawDisplay;
+        // Numeric-only parents get a "#" prefix to read like an ADO work-item reference.
+        var prefix = IsAllDigits(rawDisplay) ? $"#{rawDisplay}" : rawDisplay;
+        return $"{prefix} — {title!.Trim()}";
+    }
+
+    private static bool IsAllDigits(string s)
+    {
+        if (s.Length == 0) return false;
+        foreach (var c in s)
+        {
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
     }
 }
