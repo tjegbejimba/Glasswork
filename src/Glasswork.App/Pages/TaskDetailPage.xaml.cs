@@ -38,12 +38,14 @@ public sealed partial class TaskDetailPage : Page
             // (FocusSubtaskTitle is currently informational; UI affordance for scrolling could
             // be added later).
             App.TaskFileChangedExternally += OnFileChangedExternally;
+            App.ArtifactChangedExternally += OnArtifactChangedExternally;
             ApplyTask(nav.Task);
             return;
         }
         if (e.Parameter is GlassworkTask task)
         {
             App.TaskFileChangedExternally += OnFileChangedExternally;
+            App.ArtifactChangedExternally += OnArtifactChangedExternally;
             ApplyTask(task);
         }
     }
@@ -189,6 +191,7 @@ public sealed partial class TaskDetailPage : Page
     {
         base.OnNavigatedFrom(e);
         App.TaskFileChangedExternally -= OnFileChangedExternally;
+        App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.ActiveTask.Clear();
     }
 
@@ -197,6 +200,14 @@ public sealed partial class TaskDetailPage : Page
         if (!App.ActiveTask.IsActive(fileName)) return;
         // Watcher fires on a thread-pool thread; show the banner on the UI thread.
         DispatcherQueue.TryEnqueue(() => ReloadBanner.IsOpen = true);
+    }
+
+    private void OnArtifactChangedExternally(object? sender, ArtifactChangedEventArgs e)
+    {
+        // Refresh artifacts ONLY for the currently-displayed task. Never reload
+        // the task model — that would clobber unsaved Notes/Description edits.
+        if (!string.Equals(e.TaskId, Task?.Id, StringComparison.OrdinalIgnoreCase)) return;
+        DispatcherQueue.TryEnqueue(() => BindArtifacts(e.TaskId));
     }
 
     private void Reload_Click(object sender, RoutedEventArgs e)

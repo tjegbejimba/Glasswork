@@ -27,6 +27,7 @@ public partial class App : Application
     public static IndexService Index { get; private set; } = null!;
     public static IArtifactStore Artifacts { get; private set; } = null!;
     public static FileWatcherService? Watcher { get; private set; }
+    public static ArtifactWatcherService? ArtifactsWatcher { get; private set; }
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
@@ -86,6 +87,14 @@ public partial class App : Application
     /// Subscribers must marshal to the dispatcher before touching UI.
     /// </summary>
     public static event EventHandler<string>? TaskFileChangedExternally;
+
+    /// <summary>
+    /// Raised on a thread-pool thread when an artifact file under
+    /// <c>&lt;task&gt;.artifacts/</c> changes. Subscribers must marshal to the
+    /// dispatcher and refresh ONLY the artifacts list (never reload the task
+    /// model — that would discard unsaved Notes/Description edits).
+    /// </summary>
+    public static event EventHandler<ArtifactChangedEventArgs>? ArtifactChangedExternally;
 
     [DllImport("shell32.dll", SetLastError = true)]
     private static extern void SetCurrentProcessExplicitAppUserModelID(
@@ -166,6 +175,10 @@ public partial class App : Application
         Watcher = new FileWatcherService(vaultPath, SelfWrites);
         Watcher.TaskFileChanged += OnTaskFileChanged;
         Watcher.Start();
+
+        ArtifactsWatcher = new ArtifactWatcherService(vaultPath);
+        ArtifactsWatcher.ArtifactChanged += (s, e) => ArtifactChangedExternally?.Invoke(s, e);
+        ArtifactsWatcher.Start();
 
         _window = new MainWindow();
         ApplyTheme(_window);
