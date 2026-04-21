@@ -64,6 +64,7 @@ public sealed partial class TaskDetailPage : Page
 
         BindSubtasks(task.Subtasks);
         BindRelated(task.RelatedLinks);
+        BindArtifacts(task.Id);
 
         CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
         CompletedText.Text = task.Status == GlassworkTask.Statuses.Done && task.CompletedAt.HasValue
@@ -129,6 +130,30 @@ public sealed partial class TaskDetailPage : Page
         {
             CompletedExpander.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void BindArtifacts(string taskId)
+    {
+        IReadOnlyList<Artifact> artifacts;
+        try
+        {
+            artifacts = App.Artifacts.Load(taskId);
+        }
+        catch
+        {
+            // Artifact loading is best-effort — never block the task view.
+            artifacts = Array.Empty<Artifact>();
+        }
+
+        if (artifacts.Count == 0)
+        {
+            ArtifactsSection.Visibility = Visibility.Collapsed;
+            ArtifactsList.ItemsSource = null;
+            return;
+        }
+
+        ArtifactsSection.Visibility = Visibility.Visible;
+        ArtifactsList.ItemsSource = ArtifactRow.Project(artifacts, DateTime.UtcNow);
     }
 
 
