@@ -369,6 +369,29 @@ public sealed partial class TaskDetailPage : Page
         Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
     }
 
+    private void OpenArtifactInObsidian_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not string artifactPath) return;
+
+        // Obsidian vault root = parent of the todo/ folder. VaultPath ends with todo[/].
+        var todoDir = App.Vault.VaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var vaultRoot = Path.GetDirectoryName(todoDir);
+        if (string.IsNullOrEmpty(vaultRoot)) return;
+
+        var uri = ObsidianUriBuilder.ForArtifact(vaultRoot, "Wiki", artifactPath);
+        if (uri is null) return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            // Obsidian not installed or URI scheme unregistered — fail soft.
+            Debug.WriteLine($"Open in Obsidian failed: {ex.Message}");
+        }
+    }
+
     private void OpenAdo_Click(object sender, RoutedEventArgs e)
     {
         if (!Task.AdoLink.HasValue) return;
