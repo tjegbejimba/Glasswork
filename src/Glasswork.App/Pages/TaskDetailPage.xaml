@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:local="using:Glasswork.Pages"
+    xmlns:controls="using:Glasswork.Controls"
     mc:Ignorable="d">
 
     <Page.Resources>
@@ -256,11 +257,55 @@
                 </ItemsControl>
             </Expander>
 
+            <!-- Description -->
+            <TextBox x:Name="DescriptionBox" Header="Description" AcceptsReturn="True"
+                     MinHeight="120" TextWrapping="Wrap"
+                     Text="{x:Bind Task.Description, Mode=TwoWay}"
+                     LostFocus="Field_LostFocus" />
+
             <!-- Notes -->
             <TextBox x:Name="NotesBox" Header="Notes" AcceptsReturn="True"
-                     MinHeight="120" TextWrapping="Wrap"
-                     Text="{x:Bind Task.Body, Mode=TwoWay}"
+                     MinHeight="80" TextWrapping="Wrap"
+                     Text="{x:Bind Task.Notes, Mode=TwoWay}"
                      LostFocus="Field_LostFocus" />
+
+            <!-- Artifacts (slice 2 — agent-produced markdown work-products) -->
+            <StackPanel x:Name="ArtifactsSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
+                <TextBlock Text="Artifacts" Style="{StaticResource SubtitleTextBlockStyle}" />
+                <ItemsControl x:Name="ArtifactsList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Expander HorizontalAlignment="Stretch"
+                                      HorizontalContentAlignment="Stretch"
+                                      Margin="0,0,0,4"
+                                      IsExpanded="{Binding IsExpanded}">
+                                <Expander.Header>
+                                    <Grid HorizontalAlignment="Stretch">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding TimeBadge}" Opacity="0.6" FontSize="12" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <HyperlinkButton Grid.Column="1"
+                                                         Content="Open in Obsidian"
+                                                         Tag="{Binding Path}"
+                                                         Click="OpenArtifactInObsidian_Click"
+                                                         FontSize="12"
+                                                         Padding="8,2"
+                                                         VerticalAlignment="Center"
+                                                         Margin="8,0,8,0" />
+                                    </Grid>
+                                </Expander.Header>
+                                <RichTextBlock controls:MarkdownTextBlock.Source="{Binding Body}"
+                                               IsTextSelectionEnabled="True" />
+                            </Expander>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
 
             <!-- Metadata -->
             <StackPanel Spacing="4" Opacity="0.5" Margin="0,16,0,0">

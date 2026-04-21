@@ -37,7 +37,7 @@ public sealed partial class CreateTaskDialog : ContentDialog
 
         if (!string.IsNullOrWhiteSpace(NotesBox.Text))
         {
-            task.Body = NotesBox.Text;
+            task.Description = NotesBox.Text;
             App.Vault.Save(task);
         }
 

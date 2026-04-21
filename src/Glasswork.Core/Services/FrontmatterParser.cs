@@ -38,6 +38,9 @@ public partial class FrontmatterParser
     [GeneratedRegex(@"(?ms)^## Related\s*$(.*?)(?=^## |\z)", RegexOptions.Multiline)]
     private static partial Regex RelatedSectionRegex();
 
+    [GeneratedRegex(@"(?ms)^## Notes\s*$(.*?)(?=^## |\z)", RegexOptions.Multiline)]
+    private static partial Regex NotesSectionRegex();
+
     [GeneratedRegex(@"\[\[([^\]\|]+?)(?:\|([^\]]+))?\]\]")]
     private static partial Regex WikiLinkRegex();
 
@@ -82,11 +85,12 @@ public partial class FrontmatterParser
             Tags = frontmatter.Tags ?? [],
         };
 
-        // Parse subtasks from checkbox lines, separate from body prose
-        var (subtasks, cleanBody) = ParseSubtasks(body);
+        // Parse subtasks from checkbox lines, separate from description prose
+        var (subtasks, cleanDescription) = ParseSubtasks(body);
         task.Subtasks = subtasks;
-        task.Body = cleanBody;
+        task.Description = cleanDescription;
         task.RelatedLinks = ParseRelatedLinks(body);
+        task.Notes = ParseNotes(body);
         task.IsV1Format = MigrationService.IsV1Format(content);
 
         return task;
@@ -121,9 +125,9 @@ public partial class FrontmatterParser
         sb.AppendLine("---");
         sb.AppendLine();
 
-        if (!string.IsNullOrWhiteSpace(task.Body))
+        if (!string.IsNullOrWhiteSpace(task.Description))
         {
-            sb.AppendLine(task.Body);
+            sb.AppendLine(task.Description);
             sb.AppendLine();
         }
 
@@ -175,11 +179,16 @@ public partial class FrontmatterParser
             }
         }
 
-        // Notes section: always emitted as part of V2 canonical structure. Currently
-        // Glasswork does not write structured Notes content from the UI, so the body
-        // remains empty unless an external tool (Obsidian, agent) populates it.
+        // Notes section: emitted as part of V2 canonical structure. The heading is
+        // always present so files are V2-shaped on disk; when Notes content is
+        // non-empty (set from the UI or by an external tool), it follows the heading.
         sb.AppendLine("## Notes");
         sb.AppendLine();
+        if (!string.IsNullOrWhiteSpace(task.Notes))
+        {
+            sb.AppendLine(task.Notes.TrimEnd());
+            sb.AppendLine();
+        }
 
         sb.AppendLine("## Related");
         if (task.RelatedLinks.Count > 0)
@@ -221,6 +230,19 @@ public partial class FrontmatterParser
             links.Add(new RelatedLink { Slug = slug, DisplayName = display });
         }
         return links;
+    }
+
+    /// <summary>
+    /// Extracts the body of the `## Notes` section as freeform prose. Returns
+    /// empty string if the section is missing or empty. Operates on the full
+    /// post-frontmatter body so it sees `## Notes` even when `## Subtasks`
+    /// strips it out of the cleaned Description.
+    /// </summary>
+    private static string ParseNotes(string body)
+    {
+        var match = NotesSectionRegex().Match(body);
+        if (!match.Success) return string.Empty;
+        return match.Groups[1].Value.Replace("\r\n", "\n").Trim();
     }
 
     private static (List<SubTask> subtasks, string cleanBody) ParseSubtasks(string body)

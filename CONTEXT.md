@@ -38,6 +38,12 @@ The in-memory shape of a task and its subtasks. Pure C# in
   (`IsRich`, `ShowAsCard`, `IsEffectivelyDone`, etc.).
 - **Speaks to**: Vault Sync (deserialized from), Presentation (bound to).
 - **Does not own**: persistence, file paths, watch state.
+- **Three-tier task prose model** (see ADR 0002):
+  - `Task.Description` — stable framing prose, source of `Blurb`. Edited in-app.
+  - `Task.Notes` — free-form scratch, primarily human-written. Edited in-app.
+  - `Artifacts` — agent-produced markdown work-products in a sibling
+    `<taskId>.artifacts/` folder. **Read-only in the app**; rendered with a
+    custom Markdig-based block renderer (see ADR 0003).
 
 ### 3. Index
 

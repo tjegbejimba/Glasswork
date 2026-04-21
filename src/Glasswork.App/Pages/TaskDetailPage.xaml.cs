@@ -38,12 +38,14 @@ public sealed partial class TaskDetailPage : Page
             // (FocusSubtaskTitle is currently informational; UI affordance for scrolling could
             // be added later).
             App.TaskFileChangedExternally += OnFileChangedExternally;
+            App.ArtifactChangedExternally += OnArtifactChangedExternally;
             ApplyTask(nav.Task);
             return;
         }
         if (e.Parameter is GlassworkTask task)
         {
             App.TaskFileChangedExternally += OnFileChangedExternally;
+            App.ArtifactChangedExternally += OnArtifactChangedExternally;
             ApplyTask(task);
         }
     }
@@ -64,6 +66,7 @@ public sealed partial class TaskDetailPage : Page
 
         BindSubtasks(task.Subtasks);
         BindRelated(task.RelatedLinks);
+        BindArtifacts(task.Id);
 
         CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
         CompletedText.Text = task.Status == GlassworkTask.Statuses.Done && task.CompletedAt.HasValue
@@ -131,6 +134,30 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
+    private void BindArtifacts(string taskId)
+    {
+        IReadOnlyList<Artifact> artifacts;
+        try
+        {
+            artifacts = App.Artifacts.Load(taskId);
+        }
+        catch
+        {
+            // Artifact loading is best-effort — never block the task view.
+            artifacts = Array.Empty<Artifact>();
+        }
+
+        if (artifacts.Count == 0)
+        {
+            ArtifactsSection.Visibility = Visibility.Collapsed;
+            ArtifactsList.ItemsSource = null;
+            return;
+        }
+
+        ArtifactsSection.Visibility = Visibility.Visible;
+        ArtifactsList.ItemsSource = ArtifactRow.Project(artifacts, DateTime.UtcNow);
+    }
+
 
     private void BindRelated(IList<RelatedLink> links)
     {
@@ -164,6 +191,7 @@ public sealed partial class TaskDetailPage : Page
     {
         base.OnNavigatedFrom(e);
         App.TaskFileChangedExternally -= OnFileChangedExternally;
+        App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.ActiveTask.Clear();
     }
 
@@ -172,6 +200,14 @@ public sealed partial class TaskDetailPage : Page
         if (!App.ActiveTask.IsActive(fileName)) return;
         // Watcher fires on a thread-pool thread; show the banner on the UI thread.
         DispatcherQueue.TryEnqueue(() => ReloadBanner.IsOpen = true);
+    }
+
+    private void OnArtifactChangedExternally(object? sender, ArtifactChangedEventArgs e)
+    {
+        // Refresh artifacts ONLY for the currently-displayed task. Never reload
+        // the task model — that would clobber unsaved Notes/Description edits.
+        if (!string.Equals(e.TaskId, Task?.Id, StringComparison.OrdinalIgnoreCase)) return;
+        DispatcherQueue.TryEnqueue(() => BindArtifacts(e.TaskId));
     }
 
     private void Reload_Click(object sender, RoutedEventArgs e)
@@ -331,6 +367,29 @@ public sealed partial class TaskDetailPage : Page
     {
         var uri = $"obsidian://open?vault=Wiki&file=todo%2F{Uri.EscapeDataString(Task.Id)}";
         Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+    }
+
+    private void OpenArtifactInObsidian_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not string artifactPath) return;
+
+        // Obsidian vault root = parent of the todo/ folder. VaultPath ends with todo[/].
+        var todoDir = App.Vault.VaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var vaultRoot = Path.GetDirectoryName(todoDir);
+        if (string.IsNullOrEmpty(vaultRoot)) return;
+
+        var uri = ObsidianUriBuilder.ForArtifact(vaultRoot, "Wiki", artifactPath);
+        if (uri is null) return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            // Obsidian not installed or URI scheme unregistered — fail soft.
+            Debug.WriteLine($"Open in Obsidian failed: {ex.Message}");
+        }
     }
 
     private void OpenAdo_Click(object sender, RoutedEventArgs e)

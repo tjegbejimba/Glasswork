@@ -114,8 +114,8 @@ public class RelatedLinkParserTests
 
         var task = _parser.Parse(md);
 
-        Assert.IsTrue(task.Body.Contains("## Related"), "Related section should remain in Body.");
-        Assert.IsTrue(task.Body.Contains("[[decisions/foo]]"), "Related links should remain in Body.");
+        Assert.IsTrue(task.Description.Contains("## Related"), "Related section should remain in Description.");
+        Assert.IsTrue(task.Description.Contains("[[decisions/foo]]"), "Related links should remain in Description.");
     }
 
     [TestMethod]
@@ -139,7 +139,7 @@ public class RelatedLinkParserTests
             Id = "t",
             Title = "T",
             Created = new DateTime(2026, 4, 17),
-            Body = "Some prose.",
+            Description = "Some prose.",
             RelatedLinks =
             {
                 new RelatedLink { Slug = "decisions/foo" },

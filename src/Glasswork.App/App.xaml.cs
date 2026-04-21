@@ -25,7 +25,9 @@ public partial class App : Application
     public static VaultService Vault { get; private set; } = null!;
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
+    public static IArtifactStore Artifacts { get; private set; } = null!;
     public static FileWatcherService? Watcher { get; private set; }
+    public static ArtifactWatcherService? ArtifactsWatcher { get; private set; }
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
@@ -86,6 +88,14 @@ public partial class App : Application
     /// </summary>
     public static event EventHandler<string>? TaskFileChangedExternally;
 
+    /// <summary>
+    /// Raised on a thread-pool thread when an artifact file under
+    /// <c>&lt;task&gt;.artifacts/</c> changes. Subscribers must marshal to the
+    /// dispatcher and refresh ONLY the artifacts list (never reload the task
+    /// model — that would discard unsaved Notes/Description edits).
+    /// </summary>
+    public static event EventHandler<ArtifactChangedEventArgs>? ArtifactChangedExternally;
+
     [DllImport("shell32.dll", SetLastError = true)]
     private static extern void SetCurrentProcessExplicitAppUserModelID(
         [MarshalAs(UnmanagedType.LPWStr)] string appId);
@@ -114,6 +124,10 @@ public partial class App : Application
         Vault = new VaultService(vaultPath, SelfWrites);
         Tasks = new TaskService(Vault);
         Index = new IndexService(Vault);
+        // FileSystemArtifactStore wants the vault root (the folder containing wiki/todo/),
+        // not the todo folder itself.
+        var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
+        Artifacts = new FileSystemArtifactStore(vaultRoot);
 
         // One-shot V1 → V2 migration of any pre-existing files. Idempotent: V2 files
         // are skipped, so re-running on every launch is cheap. New files written by
@@ -161,6 +175,10 @@ public partial class App : Application
         Watcher = new FileWatcherService(vaultPath, SelfWrites);
         Watcher.TaskFileChanged += OnTaskFileChanged;
         Watcher.Start();
+
+        ArtifactsWatcher = new ArtifactWatcherService(vaultPath);
+        ArtifactsWatcher.ArtifactChanged += (s, e) => ArtifactChangedExternally?.Invoke(s, e);
+        ArtifactsWatcher.Start();
 
         _window = new MainWindow();
         ApplyTheme(_window);

@@ -23,7 +23,8 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial int? AdoLink { get; set; }
     [ObservableProperty] public partial string? AdoTitle { get; set; }
     [ObservableProperty] public partial string? Parent { get; set; }
-    [ObservableProperty] public partial string Body { get; set; } = string.Empty;
+    [ObservableProperty] public partial string Description { get; set; } = string.Empty;
+    [ObservableProperty] public partial string Notes { get; set; } = string.Empty;
     [ObservableProperty] public partial List<string> ContextLinks { get; set; } = [];
     [ObservableProperty] public partial List<string> Tags { get; set; } = [];
     [ObservableProperty] public partial List<SubTask> Subtasks { get; set; } = [];
@@ -75,7 +76,7 @@ public partial class GlassworkTask : ObservableObject
     public bool IsQuiet => !IsActive;
 
     /// <summary>
-    /// Single-line preview shown in the task card. Source: first non-blank line of <see cref="Body"/>,
+    /// Single-line preview shown in the task card. Source: first non-blank line of <see cref="Description"/>,
     /// stripped of leading markdown noise (#, &gt;, list markers), truncated at 80 chars.
     /// Future: a <c>summary:</c> frontmatter field will take precedence when present.
     /// </summary>
@@ -83,9 +84,9 @@ public partial class GlassworkTask : ObservableObject
     {
         get
         {
-            if (string.IsNullOrWhiteSpace(Body)) return string.Empty;
+            if (string.IsNullOrWhiteSpace(Description)) return string.Empty;
             string? firstLine = null;
-            foreach (var raw in Body.Split('\n'))
+            foreach (var raw in Description.Split('\n'))
             {
                 var line = raw.Trim();
                 if (line.Length == 0) continue;
