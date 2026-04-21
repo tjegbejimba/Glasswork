@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:local="using:Glasswork.Pages"
+    xmlns:controls="using:Glasswork.Controls"
     mc:Ignorable="d">
 
     <Page.Resources>
@@ -284,10 +285,8 @@
                                         <TextBlock Text="{Binding TimeBadge}" Opacity="0.6" FontSize="12" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </Expander.Header>
-                                <TextBlock Text="{Binding Body}"
-                                           TextWrapping="Wrap"
-                                           IsTextSelectionEnabled="True"
-                                           FontFamily="Consolas" />
+                                <RichTextBlock controls:MarkdownTextBlock.Source="{Binding Body}"
+                                               IsTextSelectionEnabled="True" />
                             </Expander>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
