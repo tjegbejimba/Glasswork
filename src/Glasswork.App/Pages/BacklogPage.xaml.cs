@@ -114,6 +114,7 @@ public sealed partial class BacklogPage : Page
     private async void AddTask_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new CreateTaskDialog(App.Tasks) { XamlRoot = this.XamlRoot };
+        dialog.WithAppTheme(this);
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary && dialog.CreatedTask is not null)
         {

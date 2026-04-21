@@ -331,6 +331,7 @@ public sealed partial class TaskDetailPage : Page
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = this.XamlRoot,
         };
+        dialog.WithAppTheme(this);
 
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
@@ -436,6 +437,7 @@ public sealed partial class TaskDetailPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
+        dialog.WithAppTheme(this);
 
         // Deferral pattern: when Save is clicked with an ID but no title, try to
         // fetch the title from ADO before persisting. Failures are silent (we just
@@ -520,6 +522,7 @@ public sealed partial class TaskDetailPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
+        dialog.WithAppTheme(this);
 
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
@@ -642,6 +645,7 @@ public sealed partial class TaskDetailPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
+        dialog.WithAppTheme(this);
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
 
@@ -668,6 +672,7 @@ public sealed partial class TaskDetailPage : Page
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = this.XamlRoot,
         };
+        dialog.WithAppTheme(this);
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
 
@@ -694,6 +699,7 @@ public sealed partial class TaskDetailPage : Page
     private async System.Threading.Tasks.Task OpenSubtaskDetailAsync(SubTask sub)
     {
         var dialog = new SubtaskDetailDialog(sub) { XamlRoot = this.XamlRoot };
+        dialog.WithAppTheme(this);
         var result = await dialog.ShowAsync();
 
         var index = Task.Subtasks.IndexOf(sub);
