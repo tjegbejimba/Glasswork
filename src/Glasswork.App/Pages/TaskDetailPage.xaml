@@ -259,25 +259,45 @@
                 <ItemsControl x:Name="CompletedSubtaskList">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2,0,2">
-                                <CheckBox IsChecked="{Binding IsCompleted, Mode=TwoWay}"
-                                          Style="{StaticResource CircleCheckBoxStyle}"
-                                          Click="Subtask_Click">
-                                    <TextBlock Text="{Binding Text}"
-                                               TextDecorations="Strikethrough"
-                                               Opacity="0.6" />
-                                </CheckBox>
-                                <Border Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
-                                        CornerRadius="10"
-                                        Padding="8,2"
-                                        VerticalAlignment="Center"
-                                        Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
-                                    <TextBlock Text="{Binding StatusPillText}"
-                                               Foreground="White"
-                                               FontSize="11"
-                                               FontWeight="SemiBold" />
-                                </Border>
-                            </StackPanel>
+                            <Grid Margin="0,2,0,2" ColumnDefinitions="*,Auto">
+                                <Grid Grid.Column="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                    <CheckBox Grid.Column="0"
+                                              IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                              Style="{StaticResource CircleCheckBoxStyle}"
+                                              Click="Subtask_Click"
+                                              VerticalAlignment="Center"
+                                              ToolTipService.ToolTip="Toggle done" />
+                                    <Button Grid.Column="1"
+                                            Background="Transparent" BorderThickness="0"
+                                            Padding="6,4,6,4"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Left"
+                                            VerticalAlignment="Center"
+                                            Click="SubtaskText_Click"
+                                            ToolTipService.ToolTip="Open subtask detail">
+                                        <TextBlock Text="{Binding Text}"
+                                                   TextDecorations="Strikethrough"
+                                                   Opacity="0.6"
+                                                   TextWrapping="Wrap" />
+                                    </Button>
+                                    <Border Grid.Column="2" Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
+                                            CornerRadius="10"
+                                            Padding="8,2"
+                                            VerticalAlignment="Center"
+                                            Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
+                                        <TextBlock Text="{Binding StatusPillText}"
+                                                   Foreground="White"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold" />
+                                    </Border>
+                                </Grid>
+                                <Button Grid.Column="1" Click="CompletedSubtaskMore_Click"
+                                        Background="Transparent" BorderThickness="0"
+                                        Padding="6" VerticalAlignment="Center"
+                                        ToolTipService.ToolTip="More actions">
+                                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" Opacity="0.6" />
+                                </Button>
+                            </Grid>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>

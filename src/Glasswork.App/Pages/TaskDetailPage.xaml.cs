@@ -598,6 +598,59 @@ public sealed partial class TaskDetailPage : Page
         menu.ShowAt(fe);
     }
 
+    // Completed row: reduced action set per ADR 0004.
+    // No "Set due" (done items don't get reschedule), no "My Day" toggle.
+    // "Set status" submenu only offers re-opening states (in_progress / blocked / dropped).
+    private void CompletedSubtaskMore_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not SubTask sub) return;
+
+        var menu = new MenuFlyout();
+
+        var statusItem = new MenuFlyoutSubItem { Text = "Set status" };
+        AddStatusOption(statusItem, sub, "in_progress", "In Progress");
+        AddStatusOption(statusItem, sub, "blocked", "Blocked");
+        AddStatusOption(statusItem, sub, "dropped", "Dropped");
+        menu.Items.Add(statusItem);
+
+        var textItem = new MenuFlyoutItem { Text = "Edit text..." };
+        textItem.Click += async (_, __) => await PromptEditTextAsync(sub);
+        menu.Items.Add(textItem);
+
+        var promoteItem = new MenuFlyoutItem { Text = "Promote to top-level task" };
+        promoteItem.Click += (_, __) => PromoteSubtask(sub);
+        menu.Items.Add(promoteItem);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+
+        var detailItem = new MenuFlyoutItem { Text = "Open detail..." };
+        detailItem.Click += async (_, __) => await OpenSubtaskDetailAsync(sub);
+        menu.Items.Add(detailItem);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+
+        var deleteItem = new MenuFlyoutItem { Text = "Delete" };
+        deleteItem.Click += (_, __) => DeleteSubtask_Click(fe, new RoutedEventArgs());
+        menu.Items.Add(deleteItem);
+
+        menu.ShowAt(fe);
+    }
+
+    private void PromoteSubtask(SubTask sub)
+    {
+        var index = Task.Subtasks.IndexOf(sub);
+        if (index < 0) return;
+        try
+        {
+            var promoted = App.Tasks.PromoteSubtask(Task, index);
+            var refreshed = App.Vault.Load(Task.Id);
+            if (refreshed is not null) ApplyTask(refreshed);
+            try { App.Index.Refresh(); } catch { /* best-effort */ }
+            if (promoted is not null) Frame.Navigate(typeof(TaskDetailPage), promoted);
+        }
+        catch (Exception ex) { Debug.WriteLine($"PromoteSubtask failed: {ex}"); }
+    }
+
     private void AddStatusOption(MenuFlyoutSubItem parent, SubTask sub, string status, string label)
     {
         var item = new MenuFlyoutItem { Text = label };
