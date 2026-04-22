@@ -67,6 +67,7 @@ public sealed partial class TaskDetailPage : Page
         BindSubtasks(task.Subtasks);
         BindRelated(task.RelatedLinks);
         BindArtifacts(task.Id);
+        BindBacklinks(task.Id);
 
         CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
         CompletedText.Text = task.Status == GlassworkTask.Statuses.Done && task.CompletedAt.HasValue
@@ -156,6 +157,58 @@ public sealed partial class TaskDetailPage : Page
 
         ArtifactsSection.Visibility = Visibility.Visible;
         ArtifactsList.ItemsSource = ArtifactRow.Project(artifacts, DateTime.UtcNow);
+    }
+
+
+    private void BindBacklinks(string taskId)
+    {
+        IReadOnlyList<Backlink> backlinks;
+        try
+        {
+            backlinks = App.BacklinkIndex?.GetBacklinks(taskId) ?? Array.Empty<Backlink>();
+        }
+        catch
+        {
+            // Backlink lookup is best-effort — never block the task view.
+            backlinks = Array.Empty<Backlink>();
+        }
+
+        if (backlinks.Count == 0)
+        {
+            BacklinksSection.Visibility = Visibility.Collapsed;
+            BacklinksList.ItemsSource = null;
+            return;
+        }
+
+        BacklinksSection.Visibility = Visibility.Visible;
+        BacklinksHeader.Text = $"Backlinks ({backlinks.Count})";
+        BacklinksList.ItemsSource = BacklinkRow.Project(backlinks);
+    }
+
+    private void Backlink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not BacklinkRow row) return;
+
+        var todoDir = App.Vault.VaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var vaultRoot = Path.GetDirectoryName(todoDir);
+        if (string.IsNullOrEmpty(vaultRoot)) return;
+
+        var uri = ObsidianUriBuilder.ForArtifact(vaultRoot, "Wiki", row.Path);
+        if (uri is null) return;
+
+        // Untrusted-link policy: only obsidian:// (and http(s)) are launched without
+        // confirmation. ObsidianUriBuilder always emits obsidian://, but check anyway
+        // so this code path stays aligned with the artifact renderer's policy.
+        if (ArtifactLinkPolicy.Decide(uri) != ArtifactLinkPolicy.Decision.Allow) return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Open backlink in Obsidian failed: {ex.Message}");
+        }
     }
 
 

@@ -28,6 +28,7 @@ public partial class App : Application
     public static IArtifactStore Artifacts { get; private set; } = null!;
     public static FileWatcherService? Watcher { get; private set; }
     public static ArtifactWatcherService? ArtifactsWatcher { get; private set; }
+    public static IBacklinkIndex BacklinkIndex { get; private set; } = null!;
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
@@ -128,6 +129,14 @@ public partial class App : Application
         // not the todo folder itself.
         var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
         Artifacts = new FileSystemArtifactStore(vaultRoot);
+
+        // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
+        // that mention a Glasswork task via [[stem]] / [[stem|alias]]. Built
+        // once at launch; B3 will add a watcher for incremental updates.
+        var backlinkIndex = new BacklinkIndex();
+        try { backlinkIndex.Build(vaultRoot); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Backlink index build failed: {ex.Message}"); }
+        BacklinkIndex = backlinkIndex;
 
         // One-shot V1 → V2 migration of any pre-existing files. Idempotent: V2 files
         // are skipped, so re-running on every launch is cheap. New files written by
