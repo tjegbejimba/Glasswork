@@ -76,7 +76,8 @@ As you work, classify each piece of context and write it to the right place. Rou
 
 | Kind of thing | Goes to | Trigger |
 |---|---|---|
-| Quick observation, status update, what-you-just-did log | Inline `## Notes` in the task file | **Default** for anything ephemeral or task-specific |
+| Quick observation, status update, what-you-just-did log | Inline `## Notes` in the task file | **Default** for anything ephemeral or task-specific. 1–5 lines per entry. |
+| **Standalone document the work produced** (investigation, plan, design, repro, dataset, query collection) | `<id>.artifacts/<name>.md` (artifact) | Multi-paragraph, self-contained, will be re-read end-to-end. Bigger than a `## Notes` entry. |
 | A reasoned choice with rationale | `wiki/decisions/<slug>.md` | "We chose X over Y because…" — future-you needs to find it |
 | Reusable system understanding / mental model | `wiki/concepts/<slug>.md` | Knowledge that outlives this task and applies elsewhere |
 | Debugging story, outage analysis, postmortem | `wiki/incidents/<slug>.md` | Triage notes worth preserving for the next time it happens |
@@ -84,7 +85,23 @@ As you work, classify each piece of context and write it to the right place. Rou
 | External link, article, doc that informed the work | `wiki/sources/<slug>.md` | A URL or reference the user might want to cite again |
 | Substantial completed effort | `wiki/accomplishments/<title>-<date>.md` | **Only on wrap-up.** Do not create from this skill. |
 
-When you create a new wiki page, drop a `[[wiki-link]]` to it inline in the relevant `## Notes` entry so the user can navigate back. Do **not** touch the `## Related` section — a later slice owns that maintenance.
+### Notes vs Artifacts
+
+The most common routing mistake is dumping investigations, plans, and design sketches into `## Notes` when they should be Artifacts.
+
+- **Notes** = a *log of what happened* — short, append-only, timestamped. "Found the bug in `X.cs`. Trying fix Y." 1–5 lines per entry.
+- **Artifacts** = a *standalone document* the work produced — multi-paragraph, self-contained, has its own title. Lives at `<id>.artifacts/<name>.md`.
+
+If you find yourself writing more than ~10 lines into a single `## Notes` entry, stop and ask: *"is this a log entry, or is it a document I'll want to re-read?"* If the latter, write it as an Artifact and link to it from the Notes entry.
+
+Examples:
+
+- ✅ Artifact: `triage-icm-626495494.md` — multi-section investigation, repro, root cause hypothesis
+- ✅ Artifact: `backlinks-watcher-design.md` — what we're building and why, before implementation
+- ✅ Artifact: `telemetry-sweep-queries.md` — collection of KQL queries with descriptions
+- ❌ Notes: "Triaged ICM 626495494, root cause is X (see `triage-icm-626495494` artifact)" — log entry pointing at the artifact
+
+When you create a new wiki page or artifact, drop a `[[wiki-link]]` (or artifact filename) inline in the relevant `## Notes` entry so the user can navigate back. Do **not** touch the `## Related` section — a later slice owns that maintenance.
 
 ## D8 Guardrails (apply to every action you take)
 
@@ -107,6 +124,7 @@ These are **baked into this skill** and override any user request that conflicts
 ### ALLOWED — proceed without asking
 - Read from any source: code, wiki vault, ADO, ICM, EngHub, EV2, the web.
 - Append to the task's `## Notes` section (using the D9 format above).
+- Create artifacts in `<id>.artifacts/<name>.md` for standalone documents (see "Notes vs Artifacts" above).
 - Create new wiki pages under `decisions/`, `concepts/`, `incidents/`, `entities/`, `sources/` (per D4 routing).
 - Edit the task body / description.
 - Add subtasks to the `## Subtasks` section.
