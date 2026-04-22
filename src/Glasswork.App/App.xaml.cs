@@ -29,6 +29,7 @@ public partial class App : Application
     public static FileWatcherService? Watcher { get; private set; }
     public static ArtifactWatcherService? ArtifactsWatcher { get; private set; }
     public static IBacklinkIndex BacklinkIndex { get; private set; } = null!;
+    public static BacklinksWatcher? BacklinksWatcher { get; private set; }
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
@@ -96,6 +97,16 @@ public partial class App : Application
     /// model — that would discard unsaved Notes/Description edits).
     /// </summary>
     public static event EventHandler<ArtifactChangedEventArgs>? ArtifactChangedExternally;
+
+    /// <summary>
+    /// Raised on a thread-pool thread when the backlink index changes
+    /// because a vault page outside <c>wiki/todo/</c> was created, edited,
+    /// renamed, or deleted. Subscribers should refresh their Backlinks
+    /// section ONLY when their current task id is in
+    /// <see cref="BacklinksChangedEventArgs.AffectedTaskIds"/>, and must
+    /// marshal to the dispatcher before touching UI.
+    /// </summary>
+    public static event EventHandler<BacklinksChangedEventArgs>? BacklinksChangedExternally;
 
     [DllImport("shell32.dll", SetLastError = true)]
     private static extern void SetCurrentProcessExplicitAppUserModelID(
@@ -188,6 +199,10 @@ public partial class App : Application
         ArtifactsWatcher = new ArtifactWatcherService(vaultPath);
         ArtifactsWatcher.ArtifactChanged += (s, e) => ArtifactChangedExternally?.Invoke(s, e);
         ArtifactsWatcher.Start();
+
+        BacklinksWatcher = new BacklinksWatcher(vaultRoot, BacklinkIndex);
+        BacklinksWatcher.BacklinksChanged += (s, e) => BacklinksChangedExternally?.Invoke(s, e);
+        BacklinksWatcher.Start();
 
         _window = new MainWindow();
         ApplyTheme(_window);

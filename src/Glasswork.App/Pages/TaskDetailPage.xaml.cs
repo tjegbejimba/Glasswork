@@ -39,6 +39,7 @@ public sealed partial class TaskDetailPage : Page
             // be added later).
             App.TaskFileChangedExternally += OnFileChangedExternally;
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
+            App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(nav.Task);
             return;
         }
@@ -46,6 +47,7 @@ public sealed partial class TaskDetailPage : Page
         {
             App.TaskFileChangedExternally += OnFileChangedExternally;
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
+            App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(task);
         }
     }
@@ -245,6 +247,7 @@ public sealed partial class TaskDetailPage : Page
         base.OnNavigatedFrom(e);
         App.TaskFileChangedExternally -= OnFileChangedExternally;
         App.ArtifactChangedExternally -= OnArtifactChangedExternally;
+        App.BacklinksChangedExternally -= OnBacklinksChangedExternally;
         App.ActiveTask.Clear();
     }
 
@@ -261,6 +264,17 @@ public sealed partial class TaskDetailPage : Page
         // the task model — that would clobber unsaved Notes/Description edits.
         if (!string.Equals(e.TaskId, Task?.Id, StringComparison.OrdinalIgnoreCase)) return;
         DispatcherQueue.TryEnqueue(() => BindArtifacts(e.TaskId));
+    }
+
+    private void OnBacklinksChangedExternally(object? sender, BacklinksChangedEventArgs e)
+    {
+        // Refresh the Backlinks section only when the current task is in the
+        // affected set. Never reload the task model — same Notes/Description
+        // protection rule as the artifact watcher.
+        var id = Task?.Id;
+        if (string.IsNullOrEmpty(id)) return;
+        if (!e.AffectedTaskIds.Contains(id, StringComparer.Ordinal)) return;
+        DispatcherQueue.TryEnqueue(() => BindBacklinks(id));
     }
 
     private void Reload_Click(object sender, RoutedEventArgs e)

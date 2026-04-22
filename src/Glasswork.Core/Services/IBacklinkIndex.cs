@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Glasswork.Core.Models;
 
 namespace Glasswork.Core.Services;
@@ -23,4 +24,27 @@ public interface IBacklinkIndex
     /// Returns an empty list when the task has no backlinks.
     /// </summary>
     IReadOnlyList<Backlink> GetBacklinks(string taskId);
+
+    /// <summary>
+    /// Re-parse a single file and update its contribution to the index.
+    /// Returns the set of task ids whose backlink list changed (union of the
+    /// previous and new contribution from this file). Files under
+    /// <c>wiki/todo/</c> or outside <paramref name="vaultRoot"/> are ignored
+    /// and return an empty set.
+    /// </summary>
+    IReadOnlyCollection<string> UpdateForFile(string vaultRoot, string filePath);
+
+    /// <summary>
+    /// Drop all entries originating from <paramref name="filePath"/>. Returns
+    /// the set of task ids whose backlink list changed. Idempotent.
+    /// </summary>
+    IReadOnlyCollection<string> RemoveForFile(string filePath);
+
+    /// <summary>
+    /// Reattribute entries from <paramref name="oldPath"/> to
+    /// <paramref name="newPath"/>. Implemented as Remove(old) + Update(new).
+    /// Returns the union of affected task ids.
+    /// </summary>
+    IReadOnlyCollection<string> Rename(string vaultRoot, string oldPath, string newPath);
 }
+
