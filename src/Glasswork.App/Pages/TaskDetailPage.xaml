@@ -252,6 +252,7 @@
 
             <!-- Completed / dropped subtasks: collapsed under an expander -->
             <Expander x:Name="CompletedExpander" HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Stretch"
                       Visibility="Collapsed">
                 <Expander.Header>
                     <TextBlock x:Name="CompletedHeader" Text="Completed (0)" />
