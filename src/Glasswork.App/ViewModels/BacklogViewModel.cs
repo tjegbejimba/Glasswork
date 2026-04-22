@@ -53,15 +53,17 @@ public partial class BacklogViewModel : ObservableObject
     // null = "tried, no title". Missing key = "not yet attempted".
     private readonly ConcurrentDictionary<int, string?> _parentTitleCache = new();
     private CancellationTokenSource? _parentFetchCts;
+    private readonly AdoParentTitleCacheStore? _parentTitleStore;
 
     [ObservableProperty] public partial string FilterStatus { get; set; } = "all";
     [ObservableProperty] public partial GlassworkTask? SelectedTask { get; set; }
     [ObservableProperty] public partial bool IsGrouped { get; set; } = true;
 
-    public BacklogViewModel(VaultService vault, TaskService taskService)
+    public BacklogViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
     {
         _vault = vault;
         _taskService = taskService;
+        _parentTitleStore = uiState is null ? null : new AdoParentTitleCacheStore(uiState);
     }
 
     [RelayCommand]
@@ -89,6 +91,10 @@ public partial class BacklogViewModel : ObservableObject
 
         if (IsGrouped)
         {
+            // Hydrate cache from persisted store before grouping so headers render
+            // resolved titles on the first frame instead of flashing the bare ID.
+            HydrateParentTitleCache(ordered);
+
             var collapseState = GroupCollapseStateProvider?.Invoke()
                                 ?? new Dictionary<string, bool>();
             var baseUrl = AdoBaseUrlProvider?.Invoke();
@@ -96,6 +102,9 @@ public partial class BacklogViewModel : ObservableObject
             {
                 Rows.Add(row);
             }
+
+            // GC stale entries no longer referenced by any task in the current set.
+            CompactParentTitleStore(ordered);
 
             // Kick off background fetches for any numeric parents we haven't resolved yet.
             KickOffParentTitleFetches(ordered);
@@ -107,6 +116,38 @@ public partial class BacklogViewModel : ObservableObject
                 Rows.Add(task);
             }
         }
+    }
+
+    private void HydrateParentTitleCache(IReadOnlyList<GlassworkTask> ordered)
+    {
+        if (_parentTitleStore is null) return;
+
+        var candidates = ordered
+            .Select(t => AdoParentIdExtractor.TryExtractId(t.Parent))
+            .Where(id => id.HasValue && !_parentTitleCache.ContainsKey(id!.Value))
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToList();
+        if (candidates.Count == 0) return;
+
+        foreach (var (id, title) in _parentTitleStore.LoadFresh(candidates))
+        {
+            _parentTitleCache[id] = title;
+        }
+    }
+
+    private void CompactParentTitleStore(IReadOnlyList<GlassworkTask> ordered)
+    {
+        if (_parentTitleStore is null) return;
+
+        var liveIds = ordered
+            .Select(t => AdoParentIdExtractor.TryExtractId(t.Parent))
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToList();
+        _parentTitleStore.Compact(liveIds);
+        _parentTitleStore.Save();
     }
 
     private string? ResolveParentTitleFromCache(string parent)
@@ -135,6 +176,7 @@ public partial class BacklogViewModel : ObservableObject
         var ct = _parentFetchCts.Token;
         var fetcher = AdoTitleFetcher;
 
+        var store = _parentTitleStore;
         _ = Task.Run(async () =>
         {
             var anyResolved = false;
@@ -145,7 +187,11 @@ public partial class BacklogViewModel : ObservableObject
                 {
                     var title = await fetcher(id, ct).ConfigureAwait(false);
                     _parentTitleCache[id] = title; // null caches the negative result
-                    if (!string.IsNullOrEmpty(title)) anyResolved = true;
+                    if (!string.IsNullOrEmpty(title))
+                    {
+                        anyResolved = true;
+                        store?.Set(id, title!);
+                    }
                 }
                 catch
                 {
@@ -154,6 +200,7 @@ public partial class BacklogViewModel : ObservableObject
             }
             if (anyResolved && !ct.IsCancellationRequested)
             {
+                store?.Save();
                 ParentTitlesResolved?.Invoke();
             }
         }, ct);

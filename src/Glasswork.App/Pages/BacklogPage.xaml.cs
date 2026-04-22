@@ -14,7 +14,7 @@ public sealed partial class BacklogPage : Page
 
     public BacklogPage()
     {
-        ViewModel = new BacklogViewModel(App.Vault, App.Tasks);
+        ViewModel = new BacklogViewModel(App.Vault, App.Tasks, App.UiState);
         // Load persisted toggle (default true) BEFORE InitializeComponent so the
         // x:Bind TwoWay binding to ToggleButton.IsChecked picks up the right value.
         ViewModel.IsGrouped = App.UiState.Get<bool?>(App.BacklogGroupByParentKey) ?? true;
