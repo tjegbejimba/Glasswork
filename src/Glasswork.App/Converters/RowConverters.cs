@@ -20,7 +20,7 @@ public sealed class SubtaskSegmentBrushConverter : IValueConverter
         if (value is not SubTask s) return Muted();
 
         if (s.Status == "dropped") return Brush(0x8A, 0x88, 0x86);
-        if (s.IsEffectivelyDone) return Accent();
+        if (s.IsEffectivelyDone) return Brush(0x16, 0xA3, 0x4A);
         if (s.Status == "in_progress") return AccentLight();
         if (s.Status == "blocked") return Brush(0xC5, 0x0F, 0x1F);
         return Muted();

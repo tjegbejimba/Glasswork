@@ -26,6 +26,32 @@ The task lives at `wiki/todo/<task-id>.md` in the user's wiki vault (typically `
 5. **Ask the user** whether your read of "where we left off" matches theirs and what they want to tackle now. Don't dive into work until they confirm.
 6. **Append a resume entry** to `## Notes` when you actually start doing something (using the timestamped log format below). One line is fine: "Resumed. <what we agreed to tackle now>."
 
+## Subtask status protocol
+
+Subtasks live under `## Subtasks` as `### [ ] Title` headers (or `### [x]` when done), with optional `- key: value` metadata lines beneath them. The `- status:` line is what the app uses to render the colored at-a-glance bar on My Day and Backlog rows. **Keep it accurate** — it's how future-you (and the user) sees what's in flight without opening every task.
+
+When you resume work on a specific subtask, set its status to `in_progress` by adding or updating the `- status: in_progress` line under that subtask's `### [ ]` header. If the line doesn't exist, insert it directly after the header. If a previously-`blocked` subtask is now unblocked, switch its status and remove the `- blocker:` line.
+
+When you hit a hard block (waiting on a person, a decision, an external system, a deploy), set the subtask to `blocked` and add a one-line `- blocker: <reason>` underneath. Drop the `blocker:` line when status leaves `blocked`.
+
+When the subtask is finished, flip the header from `### [ ]` to `### [x]`. The status field auto-clears to "done" — you don't need to write `- status: done`.
+
+**Don't churn.** Update only on real transitions (start work, hit block, finish). Don't toggle status on every tool call or partial step.
+
+```markdown
+## Subtasks
+
+### [ ] Trace batch_size config end-to-end
+- status: in_progress
+- my_day: true
+
+### [ ] Wait for Atharva to confirm default
+- status: blocked
+- blocker: Atharva OOO until Mon, asked in Teams DM
+
+### [x] Read PartitionedBatchProcessor
+```
+
 ## Notes log format (D9 — Option B, timestamped)
 
 All writes to `## Notes` follow this layout:
@@ -95,7 +121,7 @@ If a request would require breaking a HARD NO rule, refuse and name which guardr
 
 ## Scope notes
 
-- The current task format is **flat** — no nested subtasks yet. Just read what the file contains.
+- Subtasks live under `## Subtasks` as `### [ ] Title` blocks with optional `- key: value` metadata. Don't nest subtasks under subtasks — the format is one level deep.
 - Don't rewrite the existing `## Notes` log — append only.
 - Don't touch the `## Related` section. A later slice owns that.
 - All edits to the task file are **targeted** (append a line, insert a header, change one frontmatter field). Never rewrite the whole file.
