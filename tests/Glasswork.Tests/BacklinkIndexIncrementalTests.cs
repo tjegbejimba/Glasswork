@@ -271,4 +271,55 @@ public class BacklinksWatcherTests
         // Wait past the debounce window; expect NO event.
         Assert.IsFalse(signal.Wait(TimeSpan.FromMilliseconds(500)), "wiki/todo/ edits must not fire backlink events");
     }
+
+    [TestMethod]
+    public void Rename_ReattributesEntriesToNewPath()
+    {
+        SeedTask("TASK-R");
+        var oldPath = SeedWikiPage("concepts", "before.md", "[[TASK-R]]");
+
+        var idx = new BacklinkIndex();
+        idx.Build(_vault);
+        Assert.AreEqual(1, idx.GetBacklinks("TASK-R").Count);
+
+        using var w = new BacklinksWatcher(_vault, idx, TimeSpan.FromMilliseconds(100));
+        var signal = new ManualResetEventSlim(false);
+        w.BacklinksChanged += (_, _) => signal.Set();
+        w.Start();
+
+        var newPath = Path.Combine(Path.GetDirectoryName(oldPath)!, "after.md");
+        File.Move(oldPath, newPath);
+
+        Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "Rename should fire BacklinksChanged within 5s");
+        var entries = idx.GetBacklinks("TASK-R");
+        Assert.AreEqual(1, entries.Count, "Single entry preserved across rename");
+        Assert.IsTrue(
+            string.Equals(entries[0].LinkingPagePath, Path.GetFullPath(newPath), StringComparison.OrdinalIgnoreCase),
+            $"Entry path should be the new path; got '{entries[0].LinkingPagePath}'");
+    }
+
+    [TestMethod]
+    public void DebouncesBurstsIntoOneEvent()
+    {
+        SeedTask("TASK-B");
+        var path = SeedWikiPage("concepts", "burst.md", "seed");
+
+        var idx = new BacklinkIndex();
+        idx.Build(_vault);
+
+        using var w = new BacklinksWatcher(_vault, idx, TimeSpan.FromMilliseconds(150));
+        int count = 0;
+        w.BacklinksChanged += (_, _) => Interlocked.Increment(ref count);
+        w.Start();
+
+        for (int i = 0; i < 5; i++)
+        {
+            File.WriteAllText(path, $"[[TASK-B]] v{i}");
+            Thread.Sleep(20);
+        }
+
+        Thread.Sleep(800); // > quiet period
+        Assert.IsTrue(count >= 1, $"At least one event must fire (got {count})");
+        Assert.IsTrue(count <= 2, $"Burst must coalesce — got {count} events");
+    }
 }
