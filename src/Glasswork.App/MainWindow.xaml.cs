@@ -185,8 +185,8 @@ public sealed partial class MainWindow : Window
             XamlRoot = Content.XamlRoot
         };
 
-        // Dialog itself shows a "Copied — paste into Copilot CLI" InfoBar on submit;
-        // no follow-up tip is needed since issue creation now happens in the agent.
+        // Dialog files the issue directly via `gh issue create` and shows the result
+        // (filed URL, or actionable error — gh missing, not authenticated, etc.) inline.
         await dialog.ShowAsync();
     }
 }
