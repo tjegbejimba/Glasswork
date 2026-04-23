@@ -23,13 +23,21 @@ jobs:
     steps:
       - name: Assign Copilot
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Must be a PAT (or GitHub App token) — the default GITHUB_TOKEN cannot
+          # invoke replaceActorsForAssignable for the Copilot bot, so assignment
+          # silently fails and the @copilot mention in the comment alone does NOT
+          # start a coding-agent session. See issue #85 triage history.
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN }}
           ISSUE: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
-        # Best-effort: if the Copilot bot isn't assignable on this repo yet,
-        # we still post the triage comment below so a human can assign manually.
+        # Best-effort: if the token is missing or lacks permission, we still post
+        # the triage comment below so a human can assign manually.
         run: |
-          gh issue edit "$ISSUE" --repo "$REPO" --add-assignee Copilot || \
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::COPILOT_ASSIGN_TOKEN secret not set; skipping auto-assignment."
+            exit 0
+          fi
+          gh issue edit "$ISSUE" --repo "$REPO" --add-assignee copilot-swe-agent || \
             echo "::warning::Could not assign Copilot automatically; triage comment will still be posted."
 
       - name: Request triage
