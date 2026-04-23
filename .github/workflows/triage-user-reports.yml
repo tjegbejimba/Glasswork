@@ -1,0 +1,57 @@
+name: Auto-triage user reports
+
+# Fires when the 'user-report' label is applied to an issue (typically by the
+# in-app feedback dialog, which tags every issue it files). Assigns the Copilot
+# coding agent to investigate and posts a structured triage prompt.
+#
+# The prompt asks Copilot to investigate only — not to open a PR — because user
+# reports rarely come with enough context to safely implement. Triage results
+# land as a comment on the issue, with root cause, affected files, and ADR
+# links, so a human can decide whether to escalate to implementation.
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  request-triage:
+    if: github.event.label.name == 'user-report'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Assign Copilot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        # Best-effort: if the Copilot bot isn't assignable on this repo yet,
+        # we still post the triage comment below so a human can assign manually.
+        run: |
+          gh issue edit "$ISSUE" --repo "$REPO" --add-assignee Copilot || \
+            echo "::warning::Could not assign Copilot automatically; triage comment will still be posted."
+
+      - name: Request triage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$REPO" --body "$(cat <<'EOF'
+          @copilot This is a user-reported issue filed from the Glasswork feedback dialog.
+
+          **Please investigate only — do not open a PR.** Post your findings as a comment on this issue.
+
+          Triage checklist:
+          1. **Classify** — Bug, Feature Request, or General Feedback (the first line of the issue body tells you the user's category).
+          2. **Locate the subsystem** — use \`CONTEXT.md\` to map the report to a bounded context, then to concrete file(s).
+          3. **For bugs**: identify the most likely root cause with file/line references. Quote the relevant code.
+          4. **For feature requests**: identify where the feature would fit, any existing scaffolding, and whether it conflicts with an ADR.
+          5. **Check ADRs** in \`docs/adr/\` — note any that constrain this issue.
+          6. **Suggest labels** from: \`bug\`, \`feature\`, \`backlinks\`, \`markdown-rendering\`, \`artifacts\`, \`prd\`.
+          7. **Note reproduction steps** if the issue lacks them and you can infer a likely repro from the code.
+
+          See \`.github/copilot-instructions.md\` for full repo conventions. Do not attempt to build \`Glasswork.App\` — it is WinUI 3 and Windows-only; investigate statically. \`Glasswork.Core\` builds on Linux if you need to exercise domain logic.
+          EOF
+          )"

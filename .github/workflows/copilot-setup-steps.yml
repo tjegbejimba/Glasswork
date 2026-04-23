@@ -1,0 +1,42 @@
+name: "Copilot Setup Steps"
+
+# Runs before the Copilot cloud agent starts on any session in this repo.
+# Keep it minimal and fast — only install tools the agent cannot discover itself.
+#
+# Note: Glasswork.App is WinUI 3 (Windows-only) and cannot be built on Ubuntu.
+# The cloud agent uses this environment for static investigation of
+# Glasswork.Core and for running core-library tests; WinUI builds are not
+# attempted here.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore Glasswork.Core (cross-platform)
+        run: dotnet restore src/Glasswork.Core/Glasswork.Core.csproj
+
+      - name: Restore Glasswork.Tests (cross-platform)
+        # Tests project references Glasswork.Core only; builds on Linux.
+        run: dotnet restore tests/Glasswork.Tests/Glasswork.Tests.csproj
+        continue-on-error: true

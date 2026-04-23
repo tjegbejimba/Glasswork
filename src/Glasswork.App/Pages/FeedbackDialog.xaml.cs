@@ -72,9 +72,11 @@ public sealed partial class FeedbackDialog : ContentDialog
 
     private static IReadOnlyList<string> LabelsFor(string category) => category switch
     {
-        "Bug" => new[] { "bug" },
-        "Feature Request" => new[] { "feature" },
-        _ => Array.Empty<string>(),
+        // Every issue filed from the dialog gets 'user-report' so the
+        // auto-triage GitHub Action fires. Category-specific labels stack on top.
+        "Bug" => new[] { "user-report", "bug" },
+        "Feature Request" => new[] { "user-report", "feature" },
+        _ => new[] { "user-report" },
     };
 
     private static string BuildIssueBody(string category, string body)
