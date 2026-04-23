@@ -4,10 +4,12 @@ name: Auto-triage user reports
 # in-app feedback dialog, which tags every issue it files). Assigns the Copilot
 # coding agent to investigate and posts a structured triage prompt.
 #
-# The prompt asks Copilot to investigate only — not to open a PR — because user
-# reports rarely come with enough context to safely implement. Triage results
-# land as a comment on the issue, with root cause, affected files, and ADR
-# links, so a human can decide whether to escalate to implementation.
+# The prompt asks Copilot to flesh the issue out (root cause, ADR links, TDD
+# fix plan, acceptance criteria) but explicitly forbids opening a PR or pushing
+# a branch. The result lands as a single structured comment so a human can
+# review the plan before any code is written. Mirrors the local triage-issue
+# skill so issues filed from the feedback dialog reach the same shape as
+# issues triaged interactively.
 
 on:
   issues:
@@ -47,19 +49,70 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           gh issue comment "$ISSUE" --repo "$REPO" --body "$(cat <<'EOF'
-          @copilot This is a user-reported issue filed from the Glasswork feedback dialog.
+          @copilot This is a user-reported issue filed from the Glasswork in-app feedback dialog. Your job is to **flesh it out into a fully-actionable issue** so a human (or another agent) can pick it up and implement it without having to re-investigate.
 
-          **Please investigate only — do not open a PR.** Post your findings as a comment on this issue.
+          ## Hard constraints
 
-          Triage checklist:
-          1. **Classify** — Bug, Feature Request, or General Feedback (the first line of the issue body tells you the user's category).
-          2. **Locate the subsystem** — use \`CONTEXT.md\` to map the report to a bounded context, then to concrete file(s).
-          3. **For bugs**: identify the most likely root cause with file/line references. Quote the relevant code.
-          4. **For feature requests**: identify where the feature would fit, any existing scaffolding, and whether it conflicts with an ADR.
-          5. **Check ADRs** in \`docs/adr/\` — note any that constrain this issue.
-          6. **Suggest labels** from: \`bug\`, \`feature\`, \`backlinks\`, \`markdown-rendering\`, \`artifacts\`, \`prd\`.
-          7. **Note reproduction steps** if the issue lacks them and you can infer a likely repro from the code.
+          - **Do NOT open a pull request.** Do NOT push a branch. Do NOT modify any files in the repo. This is investigation only.
+          - **Do NOT edit the issue body** — the user's original report must stay intact. Post your triage as a **single comment** on this issue using the template below.
+          - Do NOT attempt to build \`Glasswork.App\` — it is WinUI 3 / Windows-only and will not build on the Linux runner. Investigate statically (read code, trace call sites, grep). \`Glasswork.Core\` builds on Linux if you need to exercise domain logic.
 
-          See \`.github/copilot-instructions.md\` for full repo conventions. Do not attempt to build \`Glasswork.App\` — it is WinUI 3 and Windows-only; investigate statically. \`Glasswork.Core\` builds on Linux if you need to exercise domain logic.
+          ## Process
+
+          1. **Classify** — Bug, Feature Request, or General Feedback. The first line of the issue body (\`**Bug**\`, \`**Feature Request**\`, \`**General Feedback**\`) is the user's stated category; confirm or correct it based on what the report actually describes.
+          2. **Read the canonical references first**, in this order:
+             - \`.github/copilot-instructions.md\` — repo conventions, hard rules, build constraints
+             - \`CONTEXT.md\` — bounded contexts and cross-cutting rules
+             - \`UBIQUITOUS_LANGUAGE.md\` — use these terms exactly
+             - Any ADRs in \`docs/adr/\` that touch the affected subsystem
+          3. **Locate the subsystem and concrete files** involved. Trace the code path end-to-end (entry point → service → vault/UI write).
+          4. **For bugs**: find the **root cause**, not just the symptom. Quote the offending code. Note related code (similar patterns elsewhere, existing tests, recent commits via \`git log\` on the affected files).
+          5. **For feature requests**: identify where it would fit, what scaffolding already exists, and whether any ADR constrains or conflicts with it.
+          6. **Design a TDD fix plan** as a numbered list of RED → GREEN vertical slices (one test + minimal code change per slice). See the template. Tests must assert on **observable behavior** (public APIs, UI state, file contents), not internal structure — so the plan survives refactors. Use MSTest (do not introduce other test frameworks).
+          7. **Suggest labels** from the existing set: \`bug\`, \`feature\`, \`backlinks\`, \`markdown-rendering\`, \`artifacts\`, \`prd\`.
+
+          ## Comment template
+
+          Post exactly one comment, structured like this:
+
+          \`\`\`markdown
+          ## Triage
+
+          **Classification:** Bug | Feature Request | General Feedback
+          **Subsystem:** <bounded context from CONTEXT.md>
+          **Suggested labels:** \`label1\`, \`label2\`
+
+          ## Problem
+
+          - **What happens** (actual behavior, restated clearly)
+          - **What should happen** (expected behavior)
+          - **Reproduction** (steps; infer from code if the user didn't give them)
+
+          ## Root Cause Analysis
+
+          Describe the code path involved, why it fails (or why the feature is missing), and any contributing factors. Reference modules and behaviors, not just file paths — the analysis should remain useful after a refactor. File/line references are fine as anchors but should not be the substance of the explanation.
+
+          ## Relevant ADRs
+
+          - \`docs/adr/NNNN-title.md\` — how it constrains this issue (or "none")
+
+          ## TDD Fix Plan
+
+          1. **RED:** Write a test that <describes expected behavior in user-visible terms>.
+             **GREEN:** <Minimal change to make it pass.>
+          2. **RED:** ...
+             **GREEN:** ...
+
+          **REFACTOR:** <any cleanup once all tests pass, or "none">
+
+          ## Acceptance Criteria
+
+          - [ ] <Behavior 1 verifiable from outside>
+          - [ ] <Behavior 2>
+          - [ ] All new tests pass
+          - [ ] Existing tests still pass
+          \`\`\`
+
+          For **General Feedback** that isn't actionable (a thank-you, a vague impression, etc.), skip the TDD plan and acceptance criteria — just classify, summarize, and suggest a label or that the issue be closed.
           EOF
           )"
