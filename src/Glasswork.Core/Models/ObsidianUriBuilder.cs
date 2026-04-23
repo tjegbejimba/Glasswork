@@ -73,16 +73,7 @@ public static class ObsidianUriBuilder
 
         var relative = fileFull.Substring(rootFull.Length + 1);
 
-        // Drop trailing .md (Obsidian appends it). Other extensions are passed through.
-        if (relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
-            relative = relative.Substring(0, relative.Length - 3);
-
-        var encodedSegments = relative
-            .Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(Uri.EscapeDataString);
-        var encodedPath = string.Join("/", encodedSegments);
-
-        return $"obsidian://open?vault={Uri.EscapeDataString(vaultName)}&file={encodedPath}";
+        return BuildUri(vaultName, relative);
     }
 
     private static string? BuildUri(string vaultName, string vaultRelativePath)

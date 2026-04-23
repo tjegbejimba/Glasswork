@@ -217,7 +217,11 @@ public sealed partial class TaskDetailPage : Page
     private async void RelatedLink_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement fe || fe.DataContext is not HydratedRelatedLink link) return;
-        await App.ObsidianLauncher.Open($"wiki/{link.Slug}");
+        var wikiRoot = Path.GetDirectoryName(App.Vault.VaultPath) ?? App.Vault.VaultPath;
+        var absolutePath = Path.Combine(wikiRoot, link.Slug.Replace('/', Path.DirectorySeparatorChar));
+        var vaultRelative = ToVaultRelativePath(absolutePath);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -424,7 +428,10 @@ public sealed partial class TaskDetailPage : Page
 
     private async void OpenObsidian_Click(object sender, RoutedEventArgs e)
     {
-        await App.ObsidianLauncher.Open($"wiki/todo/{Task.Id}");
+        var absolutePath = Path.Combine(App.Vault.VaultPath, $"{Task.Id}.md");
+        var vaultRelative = ToVaultRelativePath(absolutePath);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
     }
 
     private async void OpenArtifactInObsidian_Click(object sender, RoutedEventArgs e)
@@ -441,7 +448,7 @@ public sealed partial class TaskDetailPage : Page
 
         var todoDir = App.Vault.VaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var wikiRoot = Path.GetDirectoryName(todoDir);
-        var vaultRoot = wikiRoot is null ? null : Path.GetDirectoryName(wikiRoot);
+        var vaultRoot = Path.GetDirectoryName(wikiRoot);
         if (string.IsNullOrWhiteSpace(vaultRoot)) return null;
 
         try
