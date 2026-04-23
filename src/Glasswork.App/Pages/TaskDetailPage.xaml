@@ -356,8 +356,7 @@
                                                          Margin="8,0,8,0" />
                                     </Grid>
                                 </Expander.Header>
-                                <RichTextBlock controls:MarkdownTextBlock.Source="{Binding Body}"
-                                               IsTextSelectionEnabled="True" />
+                                <controls:VaultMarkdownView Markdown="{Binding Body}" />
                             </Expander>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
