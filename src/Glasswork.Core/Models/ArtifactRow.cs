@@ -19,13 +19,18 @@ public sealed record ArtifactRow(
     public string Path => Artifact.Path;
 
     /// <summary>
-    /// Projects an mtime-desc list of artifacts into rows. The first (newest)
-    /// row has <see cref="IsExpanded"/> true; the rest are collapsed.
+    /// Projects a time-ordered list of artifacts into rows. The newest
+    /// artifact row has <see cref="IsExpanded"/> true; the rest are collapsed.
     /// </summary>
     public static List<ArtifactRow> Project(IReadOnlyList<Artifact> artifacts, DateTime nowUtc)
     {
+        var newestIndex = artifacts
+            .Select((artifact, index) => new { artifact.ModifiedUtc, index })
+            .MaxBy(x => x.ModifiedUtc)?
+            .index ?? -1;
+
         return artifacts
-            .Select((a, i) => new ArtifactRow(a, IsExpanded: i == 0, TimeBadge: FormatRelative(nowUtc - a.ModifiedUtc)))
+            .Select((a, i) => new ArtifactRow(a, IsExpanded: i == newestIndex, TimeBadge: FormatRelative(nowUtc - a.ModifiedUtc)))
             .ToList();
     }
 

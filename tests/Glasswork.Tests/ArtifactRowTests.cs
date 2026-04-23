@@ -18,22 +18,22 @@ public class ArtifactRowTests
     }
 
     [TestMethod]
-    public void Project_FirstRow_IsExpandedByDefault()
+    public void Project_NewestRow_IsExpandedByDefault()
     {
         var now = new DateTime(2026, 4, 21, 12, 0, 0, DateTimeKind.Utc);
         var artifacts = new List<Artifact>
         {
-            MakeArtifact("newest", now.AddMinutes(-5)),
-            MakeArtifact("middle", now.AddHours(-2)),
             MakeArtifact("oldest", now.AddDays(-3)),
+            MakeArtifact("middle", now.AddHours(-2)),
+            MakeArtifact("newest", now.AddMinutes(-5)),
         };
 
         var rows = ArtifactRow.Project(artifacts, now);
 
         Assert.HasCount(3, rows);
-        Assert.IsTrue(rows[0].IsExpanded, "newest should auto-expand");
+        Assert.IsFalse(rows[0].IsExpanded);
         Assert.IsFalse(rows[1].IsExpanded);
-        Assert.IsFalse(rows[2].IsExpanded);
+        Assert.IsTrue(rows[2].IsExpanded, "newest should auto-expand");
     }
 
     [TestMethod]
