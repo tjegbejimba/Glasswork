@@ -64,6 +64,7 @@ public sealed partial class VaultMarkdownView : UserControl
     public VaultMarkdownView()
     {
         InitializeComponent();
+        ActualThemeChanged += (_, _) => Render(Markdown ?? string.Empty);
     }
 
     private static void OnMarkdownChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -289,8 +290,34 @@ public sealed partial class VaultMarkdownView : UserControl
         return max;
     }
 
-    private RichTextBlock BuildCodeBlock(CodeBlockNode code)
+    private FrameworkElement BuildCodeBlock(CodeBlockNode code)
     {
+        var lang = ExtractFirstToken(code.Language);
+        ColorCode.ILanguage? colorLang = string.IsNullOrEmpty(lang)
+            ? null
+            : ColorCode.Languages.FindById(lang);
+
+        if (colorLang is not null)
+        {
+            try
+            {
+                var styled = SelectableRtb();
+                styled.Margin = new Thickness(0, 4, 0, 4);
+                styled.FontFamily = new FontFamily("Consolas");
+                var styles = ActualTheme == ElementTheme.Dark
+                    ? ColorCode.Styling.StyleDictionary.DefaultDark
+                    : ColorCode.Styling.StyleDictionary.DefaultLight;
+                new ColorCode.RichTextBlockFormatter(styles)
+                    .FormatRichTextBlock(code.Text, colorLang, styled);
+                return styled;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"VaultMarkdownView: ColorCode threw for lang={lang}: {ex.Message}");
+                // fall through to plain shell
+            }
+        }
+
         var rtb = SelectableRtb();
         rtb.Margin = new Thickness(0, 4, 0, 4);
         rtb.FontFamily = new FontFamily("Consolas");
@@ -298,6 +325,14 @@ public sealed partial class VaultMarkdownView : UserControl
         p.Inlines.Add(new Run { Text = code.Text });
         rtb.Blocks.Add(p);
         return rtb;
+    }
+
+    private static string ExtractFirstToken(string? langInfo)
+    {
+        if (string.IsNullOrWhiteSpace(langInfo)) return string.Empty;
+        var trimmed = langInfo.Trim();
+        int sp = trimmed.IndexOfAny(new[] { ' ', '\t' });
+        return sp >= 0 ? trimmed.Substring(0, sp) : trimmed;
     }
 
     private void EmitQuote(QuoteBlockNode quote)
