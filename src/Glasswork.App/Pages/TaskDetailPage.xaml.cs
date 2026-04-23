@@ -446,8 +446,12 @@ public sealed partial class TaskDetailPage : Page
     {
         if (string.IsNullOrWhiteSpace(absolutePath)) return null;
 
+        // App.Vault.VaultPath is the todo folder (~/Wiki/wiki/todo). The Obsidian
+        // vault root sits two levels above (~/Wiki) so that vault-relative paths
+        // like "wiki/todo/TASK.md" resolve to the actual on-disk location and the
+        // generated obsidian:// URI is an exact path match (not a basename fallback).
         var todoDir = App.Vault.VaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var vaultRoot = Path.GetDirectoryName(todoDir);
+        var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(todoDir));
         if (string.IsNullOrWhiteSpace(vaultRoot)) return null;
 
         try

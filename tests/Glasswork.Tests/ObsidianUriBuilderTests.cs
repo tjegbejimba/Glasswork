@@ -84,10 +84,15 @@ public class ObsidianUriBuilderTests
     }
 
     [TestMethod]
-    public void ForVaultRelativePath_TaskFileUnderWikiTodo_StaysTodoRelative()
+    public void ForVaultRelativePath_TaskFileUnderWikiTodo_PreservesWikiSubfolder()
     {
-        var absoluteTaskPath = Path.Combine(Root, "todo", "TASK-1.md");
-        var uri = ObsidianUriBuilder.ForVaultRelativePath(Root, absoluteTaskPath);
-        Assert.AreEqual("obsidian://open?vault=wiki&file=todo/TASK-1", uri);
+        // In production the launcher is constructed with the actual Obsidian vault
+        // root (~/Wiki), and tasks live under wiki/todo/. The URI must include the
+        // wiki/ subfolder so Obsidian opens the file by exact path rather than
+        // falling back to basename matching (which is fragile across rename/conflict).
+        var realVaultRoot = OperatingSystem.IsWindows() ? @"C:\Users\me\Wiki" : "/home/me/Wiki";
+        var relative = Path.Combine("wiki", "todo", "TASK-1.md");
+        var uri = ObsidianUriBuilder.ForVaultRelativePath(realVaultRoot, relative);
+        Assert.AreEqual("obsidian://open?vault=Wiki&file=wiki/todo/TASK-1", uri);
     }
 }
