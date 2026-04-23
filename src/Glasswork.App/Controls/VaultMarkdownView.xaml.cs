@@ -43,6 +43,7 @@ public sealed partial class VaultMarkdownView : UserControl
 
     private VaultMarkdownParser _parser = new();
     private IWikiLinkResolver? _wikiLinkResolver;
+    private Panel _emitTarget = null!;
 
     /// <summary>
     /// Optional resolver that classifies <c>[[stem]]</c> wiki-links at parse time.
@@ -76,6 +77,7 @@ public sealed partial class VaultMarkdownView : UserControl
     private void Render(string markdown)
     {
         RootPanel.Children.Clear();
+        _emitTarget = RootPanel;
         if (string.IsNullOrEmpty(markdown)) return;
 
         IReadOnlyList<MarkdownBlock> blocks;
@@ -110,25 +112,28 @@ public sealed partial class VaultMarkdownView : UserControl
         switch (block)
         {
             case HeadingBlock h:
-                RootPanel.Children.Add(BuildHeading(h));
+                _emitTarget.Children.Add(BuildHeading(h));
                 break;
             case ParagraphBlock p:
-                RootPanel.Children.Add(BuildParagraph(p.Inlines));
+                _emitTarget.Children.Add(BuildParagraph(p.Inlines));
                 break;
             case ListBlock list:
                 EmitList(list);
                 break;
             case TableBlock table:
-                RootPanel.Children.Add(BuildTable(table));
+                _emitTarget.Children.Add(BuildTable(table));
                 break;
             case CodeBlockNode code:
-                RootPanel.Children.Add(BuildCodeBlock(code));
+                _emitTarget.Children.Add(BuildCodeBlock(code));
                 break;
             case QuoteBlockNode quote:
                 EmitQuote(quote);
                 break;
+            case CalloutBlock callout:
+                _emitTarget.Children.Add(BuildCallout(callout));
+                break;
             case ThematicBreakNode:
-                RootPanel.Children.Add(BuildSeparator());
+                _emitTarget.Children.Add(BuildSeparator());
                 break;
             case FallbackPlainTextNode fp:
                 EmitFallback(fp.Text);
@@ -190,7 +195,7 @@ public sealed partial class VaultMarkdownView : UserControl
             p.Inlines.Add(new Run { Text = bullet });
             AppendInlines(item.Inlines, p.Inlines);
             rtb.Blocks.Add(p);
-            RootPanel.Children.Add(rtb);
+            _emitTarget.Children.Add(rtb);
             index++;
         }
     }
@@ -307,7 +312,7 @@ public sealed partial class VaultMarkdownView : UserControl
                 var p = new Paragraph();
                 AppendInlines(qp.Inlines, p.Inlines);
                 rtb.Blocks.Add(p);
-                RootPanel.Children.Add(rtb);
+                _emitTarget.Children.Add(rtb);
             }
             else
             {
@@ -446,6 +451,72 @@ public sealed partial class VaultMarkdownView : UserControl
                 };
         }
     }
+
+    private FrameworkElement BuildCallout(CalloutBlock callout)
+    {
+        var (accent, tint, glyph, defaultTitle) = CalloutChrome(callout.Type);
+
+        var headerPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Margin = new Thickness(0, 0, 0, 4),
+        };
+        headerPanel.Children.Add(new TextBlock
+        {
+            Text = glyph,
+            FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"),
+            Foreground = new SolidColorBrush(accent),
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        headerPanel.Children.Add(new TextBlock
+        {
+            Text = callout.Title ?? defaultTitle,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(accent),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        var bodyPanel = new StackPanel { Spacing = 4 };
+        // Recurse via a temporary RootPanel swap — EmitBlock writes into
+        // RootPanel.Children, so capture/restore around the callout body.
+        var savedRoot = _emitTarget;
+        _emitTarget = bodyPanel;
+        try
+        {
+            foreach (var child in callout.Body) EmitBlock(child);
+        }
+        finally
+        {
+            _emitTarget = savedRoot;
+        }
+
+        var outer = new StackPanel();
+        outer.Children.Add(headerPanel);
+        outer.Children.Add(bodyPanel);
+
+        return new Border
+        {
+            BorderBrush = new SolidColorBrush(accent),
+            BorderThickness = new Thickness(3, 0, 0, 0),
+            Background = new SolidColorBrush(tint) { Opacity = 0.15 },
+            Padding = new Thickness(12, 8, 12, 8),
+            CornerRadius = new CornerRadius(0, 4, 4, 0),
+            Margin = new Thickness(0, 4, 0, 4),
+            Child = outer,
+        };
+    }
+
+    private static (Windows.UI.Color accent, Windows.UI.Color tint, string glyph, string defaultTitle)
+        CalloutChrome(CalloutType type) => type switch
+        {
+            CalloutType.Note      => (Microsoft.UI.Colors.SteelBlue, Microsoft.UI.Colors.SteelBlue, "\uE946", "Note"),
+            CalloutType.Warning   => (Microsoft.UI.Colors.DarkOrange, Microsoft.UI.Colors.Orange, "\uE7BA", "Warning"),
+            CalloutType.Tip       => (Microsoft.UI.Colors.SeaGreen, Microsoft.UI.Colors.MediumSeaGreen, "\uEA80", "Tip"),
+            CalloutType.Important => (Microsoft.UI.Colors.Crimson, Microsoft.UI.Colors.Crimson, "\uE814", "Important"),
+            _                     => (Microsoft.UI.Colors.Gray, Microsoft.UI.Colors.Gray, "\uE946", "Note"),
+        };
 
     private static RichTextBlock SelectableRtb() => new() { IsTextSelectionEnabled = true };
 

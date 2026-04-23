@@ -53,7 +53,27 @@ public enum TableAlignment
 }
 
 /// <summary>
-/// Emitted by <see cref="VaultMarkdownParser"/> when parsing throws. The
+/// Obsidian-style callout (M5). The first line of a blockquote of the form
+/// <c>[!type] optional title</c> is consumed as the marker; <see cref="Body"/>
+/// holds the recursive remainder. Only the four v1 types are represented;
+/// unknown types are downgraded to a plain <see cref="QuoteBlockNode"/> at
+/// parse time (the marker is still stripped).
+/// </summary>
+public sealed record CalloutBlock(
+    CalloutType Type,
+    string? Title,
+    IReadOnlyList<MarkdownBlock> Body) : MarkdownBlock;
+
+public enum CalloutType
+{
+    Note,
+    Warning,
+    Tip,
+    Important,
+}
+
+/// <summary>
+/// Emitted by <see cref="VaultMarkdownParser"/> when parsing throws.The
 /// renderer presents this as a monospace block with a "(render failed)"
 /// caption.
 /// </summary>

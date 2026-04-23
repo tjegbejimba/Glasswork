@@ -285,6 +285,98 @@ public class VaultMarkdownParserTests
         Assert.IsNull(list.Items[2].IsChecked);
     }
 
+    // ---- M5 callouts ---------------------------------------------------
+
+    [TestMethod]
+    public void Callout_Note_ProducesCalloutBlockWithDefaultTitle()
+    {
+        var md = "> [!note]\n> Body line";
+        var callout = (CalloutBlock)NewParser().Parse(md)[0];
+        Assert.AreEqual(CalloutType.Note, callout.Type);
+        Assert.IsNull(callout.Title);
+        Assert.AreEqual(1, callout.Body.Count);
+        var p = (ParagraphBlock)callout.Body[0];
+        Assert.AreEqual("Body line", ((TextSpan)p.Inlines[0]).Text);
+    }
+
+    [TestMethod]
+    public void Callout_AllFourTypes_AreRecognized()
+    {
+        var cases = new[]
+        {
+            ("note", CalloutType.Note),
+            ("warning", CalloutType.Warning),
+            ("tip", CalloutType.Tip),
+            ("important", CalloutType.Important),
+        };
+        foreach (var (raw, expected) in cases)
+        {
+            var c = (CalloutBlock)NewParser().Parse($"> [!{raw}]\n> body")[0];
+            Assert.AreEqual(expected, c.Type, $"type for [!{raw}]");
+        }
+    }
+
+    [TestMethod]
+    public void Callout_TypeIsCaseInsensitive()
+    {
+        var c = (CalloutBlock)NewParser().Parse("> [!WARNING]\n> body")[0];
+        Assert.AreEqual(CalloutType.Warning, c.Type);
+    }
+
+    [TestMethod]
+    public void Callout_ExplicitTitle_OverridesDefault()
+    {
+        var c = (CalloutBlock)NewParser().Parse("> [!tip] Custom title here\n> body")[0];
+        Assert.AreEqual("Custom title here", c.Title);
+    }
+
+    [TestMethod]
+    public void Callout_FoldSuffix_IsStrippedFromTitle()
+    {
+        var collapsed = (CalloutBlock)NewParser().Parse("> [!note]- folded title\n> body")[0];
+        Assert.AreEqual("folded title", collapsed.Title);
+        var expandable = (CalloutBlock)NewParser().Parse("> [!note]+ open title\n> body")[0];
+        Assert.AreEqual("open title", expandable.Title);
+    }
+
+    [TestMethod]
+    public void Callout_UnknownType_DowngradesToBlockquoteWithMarkerStripped()
+    {
+        var blocks = NewParser().Parse("> [!foo] bar\n> body");
+        Assert.IsInstanceOfType(blocks[0], typeof(QuoteBlockNode));
+        var quote = (QuoteBlockNode)blocks[0];
+        var p = (ParagraphBlock)quote.Children[0];
+        // Marker is stripped; body remains.
+        var text = string.Concat(p.Inlines.OfType<TextSpan>().Select(t => t.Text));
+        Assert.IsFalse(text.Contains("[!foo]"), $"marker leaked: '{text}'");
+        Assert.IsTrue(text.Contains("body"), $"body missing: '{text}'");
+    }
+
+    [TestMethod]
+    public void Callout_MalformedFirstLine_RemainsPlainBlockquote()
+    {
+        // Missing "!" → not a callout.
+        var blocks = NewParser().Parse("> [note] body\n> more");
+        Assert.IsInstanceOfType(blocks[0], typeof(QuoteBlockNode));
+    }
+
+    [TestMethod]
+    public void Callout_NestedBlocks_RenderViaRecursion()
+    {
+        var md = string.Join('\n',
+            "> [!warning] Heads up",
+            "> First paragraph.",
+            ">",
+            "> - item one",
+            "> - item two");
+        var c = (CalloutBlock)NewParser().Parse(md)[0];
+        Assert.AreEqual(CalloutType.Warning, c.Type);
+        Assert.AreEqual("Heads up", c.Title);
+        Assert.AreEqual(2, c.Body.Count);
+        Assert.IsInstanceOfType(c.Body[0], typeof(ParagraphBlock));
+        Assert.IsInstanceOfType(c.Body[1], typeof(ListBlock));
+    }
+
     [TestMethod]
     public void TaskList_DoesNotLeakCheckboxIntoInlines()
     {

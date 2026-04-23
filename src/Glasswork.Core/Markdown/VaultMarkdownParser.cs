@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using Markdig;
 using Markdig.Extensions.EmphasisExtras;
 using Markdig.Extensions.Tables;
@@ -93,9 +94,143 @@ public sealed class VaultMarkdownParser
         FencedCodeBlock fenced => new CodeBlockNode(JoinLines(fenced), NullIfEmpty(fenced.Info)),
         Markdig.Syntax.CodeBlock code => new CodeBlockNode(JoinLines(code), null),
         ThematicBreakBlock => new ThematicBreakNode(),
-        QuoteBlock quote => new QuoteBlockNode(ConvertChildren(quote)),
+        QuoteBlock quote => ConvertQuote(quote),
         _ => null,
     };
+
+    // First line of a blockquote: "[!type]" + optional fold suffix + optional title.
+    private static readonly Regex CalloutMarkerRegex = new(
+        @"^\s*\[!(?<type>\w+)\](?<suffix>[-+]?)(?:\s+(?<title>.*))?$",
+        RegexOptions.Compiled);
+
+    private MarkdownBlock ConvertQuote(QuoteBlock quote)
+    {
+        Markdig.Syntax.ParagraphBlock? firstPara = null;
+        foreach (var c in quote)
+        {
+            firstPara = c as Markdig.Syntax.ParagraphBlock;
+            break;
+        }
+        if (firstPara is null)
+        {
+            return new QuoteBlockNode(ConvertChildren(quote));
+        }
+
+        // Markdig parses "[!note]" as link-bracket delimiters (LinkDelimiterInline),
+        // not LiteralInline, so walk the entire inline tree to recover the raw text
+        // of the first paragraph. Soft/hard line breaks become "\n".
+        var firstParaText = ExtractTextWithSoftBreaks(firstPara.Inline);
+        int newlineIdx = firstParaText.IndexOf('\n');
+        string firstLine = newlineIdx >= 0 ? firstParaText.Substring(0, newlineIdx) : firstParaText;
+        string remainder = newlineIdx >= 0 ? firstParaText.Substring(newlineIdx + 1) : string.Empty;
+
+        var match = CalloutMarkerRegex.Match(firstLine);
+        if (!match.Success)
+        {
+            return new QuoteBlockNode(ConvertChildren(quote));
+        }
+
+        var typeStr = match.Groups["type"].Value;
+        var rawTitle = match.Groups["title"].Success ? match.Groups["title"].Value : null;
+        var title = string.IsNullOrWhiteSpace(rawTitle) ? null : rawTitle.Trim();
+
+        var bodyBlocks = new List<MarkdownBlock>();
+        if (remainder.Length > 0)
+        {
+            // Re-parse the remainder of the first paragraph through the full pipeline
+            // so inline formatting (bold/italic/code/wiki-links) is preserved.
+            try
+            {
+                var subDoc = _parse(remainder);
+                foreach (var sb in subDoc)
+                {
+                    var conv = ConvertBlock(sb);
+                    if (conv is not null) bodyBlocks.Add(conv);
+                }
+            }
+            catch
+            {
+                bodyBlocks.Add(new ParagraphBlock(new InlineSpan[] { new TextSpan(remainder) }));
+            }
+        }
+
+        bool seenFirst = false;
+        foreach (var child in quote)
+        {
+            if (!seenFirst) { seenFirst = true; continue; }
+            var converted = ConvertBlock(child);
+            if (converted is not null) bodyBlocks.Add(converted);
+        }
+
+        if (TryParseCalloutType(typeStr, out var calloutType))
+        {
+            return new CalloutBlock(calloutType, title, bodyBlocks);
+        }
+        return new QuoteBlockNode(bodyBlocks);
+    }
+
+    private static string ExtractTextWithSoftBreaks(ContainerInline? container)
+    {
+        if (container is null) return string.Empty;
+        var sb = new System.Text.StringBuilder();
+        Walk(container, sb);
+        return sb.ToString();
+
+        static void Walk(ContainerInline c, System.Text.StringBuilder sb)
+        {
+            foreach (var ch in c)
+            {
+                switch (ch)
+                {
+                    case LiteralInline lit: sb.Append(lit.Content.ToString()); break;
+                    case LineBreakInline: sb.Append('\n'); break;
+                    case CodeInline code: sb.Append('`'); sb.Append(code.Content); sb.Append('`'); break;
+                    case ContainerInline ci: Walk(ci, sb); break;
+                }
+            }
+        }
+    }
+
+    private static bool TryParseCalloutType(string raw, out CalloutType type)
+    {
+        switch (raw.ToLowerInvariant())
+        {
+            case "note": type = CalloutType.Note; return true;
+            case "warning": type = CalloutType.Warning; return true;
+            case "tip": type = CalloutType.Tip; return true;
+            case "important": type = CalloutType.Important; return true;
+            default: type = default; return false;
+        }
+    }
+
+    private ParagraphBlock? ConvertParagraphSkipping(Markdig.Syntax.ParagraphBlock para, int skip)
+    {
+        if (para.Inline is null) return null;
+        var spans = new List<InlineSpan>();
+        var literalBuffer = new System.Text.StringBuilder();
+        int i = 0;
+        foreach (var child in para.Inline)
+        {
+            if (i < skip) { i++; continue; }
+            if (child is LiteralInline lit)
+            {
+                literalBuffer.Append(lit.Content.ToString());
+            }
+            else if (child is Markdig.Extensions.Tables.PipeTableDelimiterInline d)
+            {
+                literalBuffer.Append('|');
+                FlattenInto(d, spans, literalBuffer);
+            }
+            else
+            {
+                FlushLiteralBuffer(literalBuffer, spans);
+                ConvertNonLiteralInto(child, spans);
+            }
+            i++;
+        }
+        FlushLiteralBuffer(literalBuffer, spans);
+        return spans.Count == 0 ? null : new ParagraphBlock(spans);
+    }
 
     private TableBlock ConvertTable(Markdig.Extensions.Tables.Table table)
     {
