@@ -32,6 +32,7 @@ public sealed partial class TaskDetailPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        App.ObsidianLauncher.NotInstalled += OnObsidianNotInstalled;
         if (e.Parameter is TaskDetailNavigation nav)
         {
             // Navigated from My Day's "flagged subtasks" section — display the parent task
@@ -187,30 +188,12 @@ public sealed partial class TaskDetailPage : Page
         BacklinksList.ItemsSource = BacklinkRow.Project(backlinks);
     }
 
-    private void Backlink_Click(object sender, RoutedEventArgs e)
+    private async void Backlink_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement fe || fe.DataContext is not BacklinkRow row) return;
-
-        var todoDir = App.Vault.VaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var vaultRoot = Path.GetDirectoryName(todoDir);
-        if (string.IsNullOrEmpty(vaultRoot)) return;
-
-        var uri = ObsidianUriBuilder.ForArtifact(vaultRoot, "Wiki", row.Path);
-        if (uri is null) return;
-
-        // Untrusted-link policy: only obsidian:// (and http(s)) are launched without
-        // confirmation. ObsidianUriBuilder always emits obsidian://, but check anyway
-        // so this code path stays aligned with the artifact renderer's policy.
-        if (ArtifactLinkPolicy.Decide(uri) != ArtifactLinkPolicy.Decision.Allow) return;
-
-        try
-        {
-            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Open backlink in Obsidian failed: {ex.Message}");
-        }
+        var vaultRelative = ToVaultRelativePath(row.Path);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
     }
 
 
@@ -231,15 +214,14 @@ public sealed partial class TaskDetailPage : Page
         RelatedSection.Visibility = Visibility.Visible;
     }
 
-    private void RelatedLink_Click(object sender, RoutedEventArgs e)
+    private async void RelatedLink_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement fe || fe.DataContext is not HydratedRelatedLink link) return;
-        // Open in Obsidian. Vault is "Wiki"; the slug is already the file path
-        // (without .md) relative to the Obsidian vault root, matching the same
-        // scheme used by OpenObsidian_Click below.
-        var encoded = string.Join("/", link.Slug.Split('/').Select(Uri.EscapeDataString));
-        var uri = $"obsidian://open?vault=Wiki&file={encoded}";
-        Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        var wikiRoot = Path.GetDirectoryName(App.Vault.VaultPath) ?? App.Vault.VaultPath;
+        var absolutePath = Path.Combine(wikiRoot, link.Slug.Replace('/', Path.DirectorySeparatorChar));
+        var vaultRelative = ToVaultRelativePath(absolutePath);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -248,7 +230,13 @@ public sealed partial class TaskDetailPage : Page
         App.TaskFileChangedExternally -= OnFileChangedExternally;
         App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.BacklinksChangedExternally -= OnBacklinksChangedExternally;
+        App.ObsidianLauncher.NotInstalled -= OnObsidianNotInstalled;
         App.ActiveTask.Clear();
+    }
+
+    private void OnObsidianNotInstalled(object? sender, EventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() => ObsidianInstallBanner.IsOpen = true);
     }
 
     private void OnFileChangedExternally(object? sender, string fileName)
@@ -438,32 +426,41 @@ public sealed partial class TaskDetailPage : Page
         if (Frame.CanGoBack) Frame.GoBack();
     }
 
-    private void OpenObsidian_Click(object sender, RoutedEventArgs e)
+    private async void OpenObsidian_Click(object sender, RoutedEventArgs e)
     {
-        var uri = $"obsidian://open?vault=Wiki&file=todo%2F{Uri.EscapeDataString(Task.Id)}";
-        Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        var absolutePath = Path.Combine(App.Vault.VaultPath, $"{Task.Id}.md");
+        var vaultRelative = ToVaultRelativePath(absolutePath);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
     }
 
-    private void OpenArtifactInObsidian_Click(object sender, RoutedEventArgs e)
+    private async void OpenArtifactInObsidian_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement fe || fe.Tag is not string artifactPath) return;
+        var vaultRelative = ToVaultRelativePath(artifactPath);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
+    }
 
-        // Obsidian vault root = parent of the todo/ folder. VaultPath ends with todo[/].
+    private static string? ToVaultRelativePath(string absolutePath)
+    {
+        if (string.IsNullOrWhiteSpace(absolutePath)) return null;
+
+        // App.Vault.VaultPath is the todo folder (~/Wiki/wiki/todo). The Obsidian
+        // vault root sits two levels above (~/Wiki) so that vault-relative paths
+        // like "wiki/todo/TASK.md" resolve to the actual on-disk location and the
+        // generated obsidian:// URI is an exact path match (not a basename fallback).
         var todoDir = App.Vault.VaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var vaultRoot = Path.GetDirectoryName(todoDir);
-        if (string.IsNullOrEmpty(vaultRoot)) return;
-
-        var uri = ObsidianUriBuilder.ForArtifact(vaultRoot, "Wiki", artifactPath);
-        if (uri is null) return;
+        var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(todoDir));
+        if (string.IsNullOrWhiteSpace(vaultRoot)) return null;
 
         try
         {
-            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+            return Path.GetRelativePath(vaultRoot, absolutePath);
         }
-        catch (Exception ex)
+        catch
         {
-            // Obsidian not installed or URI scheme unregistered — fail soft.
-            Debug.WriteLine($"Open in Obsidian failed: {ex.Message}");
+            return null;
         }
     }
 

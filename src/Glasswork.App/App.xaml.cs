@@ -33,6 +33,7 @@ public partial class App : Application
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
+    public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     private static Debouncer? _indexDebouncer;
     private static Debouncer? _uiStateDebouncer;
@@ -137,9 +138,12 @@ public partial class App : Application
         Tasks = new TaskService(Vault);
         Index = new IndexService(Vault);
         // FileSystemArtifactStore wants the vault root (the folder containing wiki/todo/),
-        // not the todo folder itself.
+        // not the todo folder itself. This same path is the root the user has registered
+        // with Obsidian, so the launcher uses it too. (Glasswork currently assumes the
+        // Obsidian vault root == ~/Wiki; making this configurable is tracked separately.)
         var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
         Artifacts = new FileSystemArtifactStore(vaultRoot);
+        ObsidianLauncher = new ObsidianLauncher(vaultRoot);
 
         // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
         // that mention a Glasswork task via [[stem]] / [[stem|alias]]. Built

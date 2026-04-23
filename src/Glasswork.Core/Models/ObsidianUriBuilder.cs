@@ -16,6 +16,36 @@ namespace Glasswork.Core.Models;
 public static class ObsidianUriBuilder
 {
     /// <summary>
+    /// Build a URI that opens a vault-relative markdown path in Obsidian.
+    /// The vault name is derived from the leaf folder name of <paramref name="vaultRoot"/>.
+    /// </summary>
+    public static string? ForVaultRelativePath(string vaultRoot, string vaultRelativePath)
+    {
+        if (string.IsNullOrWhiteSpace(vaultRoot)) return null;
+        if (string.IsNullOrWhiteSpace(vaultRelativePath)) return null;
+
+        string rootFull;
+        string fileFull;
+        try
+        {
+            rootFull = Path.GetFullPath(vaultRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            fileFull = Path.GetFullPath(Path.Combine(rootFull, vaultRelativePath));
+        }
+        catch
+        {
+            return null;
+        }
+
+        var relative = Path.GetRelativePath(rootFull, fileFull);
+        if (relative == "." || IsOutsideRoot(relative)) return null;
+
+        var vaultName = Path.GetFileName(rootFull);
+        if (string.IsNullOrWhiteSpace(vaultName)) return null;
+
+        return BuildUri(vaultName, relative);
+    }
+
+    /// <summary>
     /// Build a URI that opens the given absolute artifact path in Obsidian.
     /// </summary>
     /// <param name="vaultRoot">Absolute path to the Obsidian vault root
@@ -43,6 +73,13 @@ public static class ObsidianUriBuilder
 
         var relative = fileFull.Substring(rootFull.Length + 1);
 
+        return BuildUri(vaultName, relative);
+    }
+
+    private static string? BuildUri(string vaultName, string vaultRelativePath)
+    {
+        var relative = vaultRelativePath;
+
         // Drop trailing .md (Obsidian appends it). Other extensions are passed through.
         if (relative.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
             relative = relative.Substring(0, relative.Length - 3);
@@ -51,7 +88,15 @@ public static class ObsidianUriBuilder
             .Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(Uri.EscapeDataString);
         var encodedPath = string.Join("/", encodedSegments);
+        if (string.IsNullOrEmpty(encodedPath)) return null;
 
         return $"obsidian://open?vault={Uri.EscapeDataString(vaultName)}&file={encodedPath}";
+    }
+
+    private static bool IsOutsideRoot(string relativePath)
+    {
+        return string.Equals(relativePath, "..", StringComparison.Ordinal) ||
+               relativePath.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+               relativePath.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
     }
 }
