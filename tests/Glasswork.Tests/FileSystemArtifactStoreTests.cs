@@ -68,7 +68,7 @@ public class FileSystemArtifactStoreTests
     }
 
     [TestMethod]
-    public void Load_OrdersByModifiedTimeDescending()
+    public void Load_OrdersByModifiedTimeAscending()
     {
         var folder = ArtifactsFolder("my-task");
         var oldPath = Path.Combine(folder, "old.md");
@@ -85,9 +85,9 @@ public class FileSystemArtifactStoreTests
         var result = new FileSystemArtifactStore(_vaultRoot).Load("my-task");
 
         Assert.HasCount(3, result);
-        Assert.AreEqual("new", result[0].Title);
+        Assert.AreEqual("old", result[0].Title);
         Assert.AreEqual("mid", result[1].Title);
-        Assert.AreEqual("old", result[2].Title);
+        Assert.AreEqual("new", result[2].Title);
     }
 
     [TestMethod]

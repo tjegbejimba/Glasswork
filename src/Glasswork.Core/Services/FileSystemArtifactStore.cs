@@ -34,7 +34,7 @@ public sealed class FileSystemArtifactStore : IArtifactStore
         }
 
         return artifacts
-            .OrderByDescending(a => a.ModifiedUtc)
+            .OrderBy(a => a.ModifiedUtc)
             .ToList();
     }
 }
