@@ -37,7 +37,9 @@ this content, it does not own it.
   Linux runners. For cloud-agent triage, investigate statically (read code,
   trace call sites); do not attempt `dotnet build` on this project in cloud.
 - **Tests** — MSTest. Command: `dotnet test tests/Glasswork.Tests/`. Do not
-  add xUnit/NUnit or other test frameworks.
+  add xUnit/NUnit or other test frameworks. **When implementing a feature
+  or fix, follow [`.github/skills/tdd.md`](skills/tdd.md)** — vertical-slice
+  red-green-refactor, not horizontal slices.
 - **.NET SDK** — 10.x. Preinstalled in cloud agent via
   `.github/workflows/copilot-setup-steps.yml`.
 
