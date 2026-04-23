@@ -1,7 +1,9 @@
 # ADR 0003: Render artifact markdown with Markdig + a custom WinUI block renderer
 
-**Status**: Accepted
+**Status**: Superseded in part by [ADR 0006](./0006-vault-markdown-rendering.md)
 **Context slice**: Artifacts feature (PRD `wiki/decisions/glasswork-artifacts-prd.md` §7, §12); resolves issue #48
+
+> **Supersession note**: ADR 0006 retains this ADR's renderer choice (Markdig + multi-element WinUI) and its safety policy (allowlist, blocked images, malformed-input fallback), but renames the type `MarkdownArtifactView` → `VaultMarkdownView`, expands the scope to Notes, and replaces the block-to-element mapping table (§"Decision") with the v1 feature set in ADR 0006 §2. New work should refer to ADR 0006.
 
 ## Context
 

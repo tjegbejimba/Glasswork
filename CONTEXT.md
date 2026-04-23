@@ -40,10 +40,18 @@ The in-memory shape of a task and its subtasks. Pure C# in
 - **Does not own**: persistence, file paths, watch state.
 - **Three-tier task prose model** (see ADR 0002):
   - `Task.Description` — stable framing prose, source of `Blurb`. Edited in-app.
-  - `Task.Notes` — free-form scratch, primarily human-written. Edited in-app.
+  - `Task.Notes` — free-form scratch. Written by both humans and agents
+    (agent-writable since #71). Edited in-app via an explicit read/edit
+    toggle; rendered via `VaultMarkdownView` in read mode.
   - `Artifacts` — agent-produced markdown work-products in a sibling
-    `<taskId>.artifacts/` folder. **Read-only in the app**; rendered with a
-    custom Markdig-based block renderer (see ADR 0003).
+    `<taskId>.artifacts/` folder. **Read-only in the app**; rendered via
+    `VaultMarkdownView`.
+- **Markdown rendering** (see ADR 0006, supersedes parts of ADR 0003):
+  every rendered-markdown surface in the app (Artifacts, Notes read mode)
+  goes through a single `VaultMarkdownView` UserControl in
+  `Glasswork.App.Controls`. One renderer, one safety policy
+  (`ArtifactLinkPolicy`), one wiki-link routing contract. All rendered
+  content is treated as **untrusted** — agents produce it.
 
 ### 3. Index
 
