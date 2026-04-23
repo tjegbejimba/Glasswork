@@ -6,6 +6,7 @@ namespace Glasswork.Tests;
 public class ObsidianUriBuilderTests
 {
     private static string Root => OperatingSystem.IsWindows() ? @"C:\Users\me\Wiki\wiki" : "/home/me/Wiki/wiki";
+    private static string VaultRootWithSpace => OperatingSystem.IsWindows() ? @"C:\Users\me\My Wiki" : "/home/me/My Wiki";
     private static string Sep => Path.DirectorySeparatorChar.ToString();
 
     [TestMethod]
@@ -64,5 +65,21 @@ public class ObsidianUriBuilderTests
         var path = Path.Combine(Root, "p.md");
         var uri = ObsidianUriBuilder.ForArtifact(Root, "My Vault", path);
         StringAssert.Contains(uri ?? "", "vault=My%20Vault");
+    }
+
+    [TestMethod]
+    public void ForVaultRelativePath_DerivesVaultName_AndEncodesCommonInputs()
+    {
+        var relative = $".{Sep}wiki{Sep}todo{Sep}Nested Folder{Sep}設計.md";
+        var uri = ObsidianUriBuilder.ForVaultRelativePath(VaultRootWithSpace, relative);
+        Assert.AreEqual(
+            "obsidian://open?vault=My%20Wiki&file=wiki/todo/Nested%20Folder/%E8%A8%AD%E8%A8%88",
+            uri);
+    }
+
+    [TestMethod]
+    public void ForVaultRelativePath_ReturnsNull_WhenPathEscapesVault()
+    {
+        Assert.IsNull(ObsidianUriBuilder.ForVaultRelativePath(VaultRootWithSpace, $"..{Sep}outside.md"));
     }
 }

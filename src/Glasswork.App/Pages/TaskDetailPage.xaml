@@ -31,6 +31,13 @@
                 </StackPanel>
             </InfoBar>
 
+            <InfoBar x:Name="ObsidianInstallBanner"
+                     IsOpen="False"
+                     IsClosable="True"
+                     Severity="Informational"
+                     Title="Obsidian couldn't be opened"
+                     Message="Install Obsidian or register the obsidian:// protocol to enable Open in Obsidian." />
+
             <!-- Title -->
             <TextBox x:Name="TitleBox" Header="Title" FontSize="18"
                      Text="{x:Bind Task.Title, Mode=TwoWay}"

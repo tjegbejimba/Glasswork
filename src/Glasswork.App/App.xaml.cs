@@ -33,6 +33,7 @@ public partial class App : Application
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
+    public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     private static Debouncer? _indexDebouncer;
     private static Debouncer? _uiStateDebouncer;
@@ -140,6 +141,7 @@ public partial class App : Application
         // not the todo folder itself.
         var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
         Artifacts = new FileSystemArtifactStore(vaultRoot);
+        ObsidianLauncher = new ObsidianLauncher(vaultRoot);
 
         // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
         // that mention a Glasswork task via [[stem]] / [[stem|alias]]. Built
