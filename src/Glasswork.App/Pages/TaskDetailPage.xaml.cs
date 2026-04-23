@@ -60,6 +60,10 @@ public sealed partial class TaskDetailPage : Page
     {
         _isLoading = true;
         Task = task;
+        // Refresh compiled x:Bind expressions (Title, Description, Notes use TwoWay bindings
+        // that captured the previous Task object at initialization; Update() re-roots them on
+        // the new task so the UI reflects the agent's changes and subsequent saves are correct).
+        Bindings.Update();
         App.ActiveTask.ActiveTaskId = task.Id;
 
         // Set combo boxes to match task state
