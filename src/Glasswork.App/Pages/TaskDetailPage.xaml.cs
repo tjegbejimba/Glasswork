@@ -447,8 +447,7 @@ public sealed partial class TaskDetailPage : Page
         if (string.IsNullOrWhiteSpace(absolutePath)) return null;
 
         var todoDir = App.Vault.VaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var wikiRoot = Path.GetDirectoryName(todoDir);
-        var vaultRoot = Path.GetDirectoryName(wikiRoot);
+        var vaultRoot = Path.GetDirectoryName(todoDir);
         if (string.IsNullOrWhiteSpace(vaultRoot)) return null;
 
         try

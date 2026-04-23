@@ -82,4 +82,12 @@ public class ObsidianUriBuilderTests
     {
         Assert.IsNull(ObsidianUriBuilder.ForVaultRelativePath(VaultRootWithSpace, $"..{Sep}outside.md"));
     }
+
+    [TestMethod]
+    public void ForVaultRelativePath_TaskFileUnderWikiTodo_StaysTodoRelative()
+    {
+        var absoluteTaskPath = Path.Combine(Root, "todo", "TASK-1.md");
+        var uri = ObsidianUriBuilder.ForVaultRelativePath(Root, absoluteTaskPath);
+        Assert.AreEqual("obsidian://open?vault=wiki&file=todo/TASK-1", uri);
+    }
 }

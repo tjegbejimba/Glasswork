@@ -137,11 +137,12 @@ public partial class App : Application
         Vault = new VaultService(vaultPath, SelfWrites);
         Tasks = new TaskService(Vault);
         Index = new IndexService(Vault);
+        var obsidianVaultRoot = Path.GetDirectoryName(vaultPath)!;
         // FileSystemArtifactStore wants the vault root (the folder containing wiki/todo/),
         // not the todo folder itself.
         var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
         Artifacts = new FileSystemArtifactStore(vaultRoot);
-        ObsidianLauncher = new ObsidianLauncher(vaultRoot);
+        ObsidianLauncher = new ObsidianLauncher(obsidianVaultRoot);
 
         // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
         // that mention a Glasswork task via [[stem]] / [[stem|alias]]. Built
