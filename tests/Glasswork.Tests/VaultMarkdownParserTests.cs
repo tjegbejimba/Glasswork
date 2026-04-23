@@ -142,4 +142,85 @@ public class VaultMarkdownParserTests
         Assert.AreEqual("csharp", code.Language);
         Assert.AreEqual("var x = 1;", code.Text);
     }
+
+    // ---- M3 #74: wiki-links ----
+
+    private static IReadOnlyList<InlineSpan> ParaInlines(IReadOnlyList<MarkdownBlock> blocks) =>
+        ((ParagraphBlock)blocks[0]).Inlines;
+
+    private sealed class StubResolver(System.Func<string, WikiLinkResolution> map) : IWikiLinkResolver
+    {
+        public WikiLinkResolution Resolve(string stem) => map(stem);
+    }
+
+    [TestMethod]
+    public void WikiLink_BareStem_NoResolver_IsUnresolved()
+    {
+        var inlines = ParaInlines(NewParser().Parse("[[foo]]"));
+        Assert.AreEqual(1, inlines.Count);
+        var link = (WikiLinkSpan)inlines[0];
+        Assert.AreEqual("foo", link.Stem);
+        Assert.IsNull(link.Display);
+        Assert.IsInstanceOfType(link.Resolution, typeof(WikiLinkResolution.Unresolved));
+    }
+
+    [TestMethod]
+    public void WikiLink_WithDisplay_PreservesDisplayText()
+    {
+        var inlines = ParaInlines(NewParser().Parse("[[foo|click here]]"));
+        var link = (WikiLinkSpan)inlines[0];
+        Assert.AreEqual("foo", link.Stem);
+        Assert.AreEqual("click here", link.Display);
+    }
+
+    [TestMethod]
+    public void WikiLink_MixedWithText_ProducesTextThenLinkThenText()
+    {
+        var inlines = ParaInlines(NewParser().Parse("see [[foo]] for context"));
+        Assert.AreEqual(3, inlines.Count);
+        Assert.AreEqual("see ", ((TextSpan)inlines[0]).Text);
+        Assert.AreEqual("foo", ((WikiLinkSpan)inlines[1]).Stem);
+        Assert.AreEqual(" for context", ((TextSpan)inlines[2]).Text);
+    }
+
+    [TestMethod]
+    public void WikiLink_MultipleInOneParagraph_EachResolvedIndependently()
+    {
+        var resolver = new StubResolver(s => s switch
+        {
+            "TASK-1" => new WikiLinkResolution.Task("TASK-1"),
+            "concept" => new WikiLinkResolution.VaultPage("wiki/concepts/concept.md"),
+            _ => WikiLinkResolution.Unresolved.Instance,
+        });
+        var parser = new VaultMarkdownParser(resolver);
+        var inlines = ParaInlines(parser.Parse("[[TASK-1]] and [[concept]] and [[gone]]"));
+        Assert.IsInstanceOfType(((WikiLinkSpan)inlines[0]).Resolution, typeof(WikiLinkResolution.Task));
+        Assert.IsInstanceOfType(((WikiLinkSpan)inlines[2]).Resolution, typeof(WikiLinkResolution.VaultPage));
+        Assert.IsInstanceOfType(((WikiLinkSpan)inlines[4]).Resolution, typeof(WikiLinkResolution.Unresolved));
+    }
+
+    [TestMethod]
+    public void WikiLink_EmptyStem_LeftAsLiteralText()
+    {
+        var inlines = ParaInlines(NewParser().Parse("[[ ]]"));
+        Assert.AreEqual(1, inlines.Count);
+        Assert.IsInstanceOfType(inlines[0], typeof(TextSpan));
+    }
+
+    [TestMethod]
+    public void WikiLink_InsideEmphasis_StillParsedAsWikiLink()
+    {
+        var inlines = ParaInlines(NewParser().Parse("*[[foo]]*"));
+        var italic = (ItalicSpan)inlines[0];
+        Assert.AreEqual(1, italic.Inlines.Count);
+        Assert.IsInstanceOfType(italic.Inlines[0], typeof(WikiLinkSpan));
+    }
+
+    [TestMethod]
+    public void WikiLink_InsideInlineCode_NotParsed()
+    {
+        var inlines = ParaInlines(NewParser().Parse("see `[[foo]]` literal"));
+        var code = (CodeSpan)inlines[1];
+        Assert.AreEqual("[[foo]]", code.Text);
+    }
 }

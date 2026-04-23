@@ -41,7 +41,24 @@ public sealed partial class VaultMarkdownView : UserControl
 
     public event EventHandler<LinkClickedEventArgs>? LinkClicked;
 
-    private readonly VaultMarkdownParser _parser = new();
+    private VaultMarkdownParser _parser = new();
+    private IWikiLinkResolver? _wikiLinkResolver;
+
+    /// <summary>
+    /// Optional resolver that classifies <c>[[stem]]</c> wiki-links at parse time.
+    /// Setting this rebuilds the internal parser and re-renders any current markdown.
+    /// </summary>
+    public IWikiLinkResolver? WikiLinkResolver
+    {
+        get => _wikiLinkResolver;
+        set
+        {
+            if (ReferenceEquals(_wikiLinkResolver, value)) return;
+            _wikiLinkResolver = value;
+            _parser = new VaultMarkdownParser(value);
+            Render(Markdown ?? string.Empty);
+        }
+    }
 
     public VaultMarkdownView()
     {
@@ -265,6 +282,9 @@ public sealed partial class VaultMarkdownView : UserControl
                         Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
                     });
                     break;
+                case WikiLinkSpan wiki:
+                    sink.Add(BuildWikiLink(wiki));
+                    break;
                 case HardLineBreakSpan:
                     sink.Add(new LineBreak());
                     break;
@@ -296,6 +316,31 @@ public sealed partial class VaultMarkdownView : UserControl
         };
     }
 
+    private XamlInline BuildWikiLink(WikiLinkSpan wiki)
+    {
+        var label = string.IsNullOrEmpty(wiki.Display) ? wiki.Stem : wiki.Display!;
+
+        switch (wiki.Resolution)
+        {
+            case WikiLinkResolution.Task:
+            case WikiLinkResolution.VaultPage:
+            {
+                var hl = new Hyperlink();
+                hl.Inlines.Add(new Run { Text = label });
+                hl.Click += (s, e) => LinkClicked?.Invoke(
+                    this, new LinkClickedEventArgs(wiki.Stem, wiki.Display, wiki.Resolution));
+                return hl;
+            }
+            default:
+                return new Run
+                {
+                    Text = label,
+                    FontStyle = FontStyle.Italic,
+                    Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+                };
+        }
+    }
+
     private static RichTextBlock SelectableRtb() => new() { IsTextSelectionEnabled = true };
 
     private static string ExtractText(IReadOnlyList<InlineSpan> spans)
@@ -310,6 +355,7 @@ public sealed partial class VaultMarkdownView : UserControl
                 case BoldSpan b: sb.Append(ExtractText(b.Inlines)); break;
                 case ItalicSpan i: sb.Append(ExtractText(i.Inlines)); break;
                 case LinkSpan l: sb.Append(ExtractText(l.Inlines)); break;
+                case WikiLinkSpan w: sb.Append(string.IsNullOrEmpty(w.Display) ? w.Stem : w.Display); break;
                 case SoftLineBreakSpan: sb.Append(' '); break;
             }
         }

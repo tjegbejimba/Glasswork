@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using Glasswork.Core.Markdown;
 using Glasswork.Core.Models;
 
 namespace Glasswork.Core.Services;
@@ -15,8 +16,9 @@ namespace Glasswork.Core.Services;
 public sealed partial class BacklinkIndex : IBacklinkIndex
 {
     // Matches [[stem]] and [[stem|display]]. Case-sensitive by default,
-    // matching Obsidian's resolution. Mirrors FrontmatterParser.WikiLinkRegex.
-    [GeneratedRegex(@"\[\[([^\]\|]+?)(?:\|([^\]]+))?\]\]")]
+    // matching Obsidian's resolution. Pattern is shared with FrontmatterParser
+    // and the markdown renderer via WikiLinkParser.Pattern.
+    [GeneratedRegex(WikiLinkParser.Pattern)]
     private static partial Regex WikiLinkRegex();
 
     private readonly object _lock = new();

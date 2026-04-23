@@ -32,3 +32,10 @@ public sealed record ImagePlaceholderSpan(string Alt) : InlineSpan;
 public sealed record HardLineBreakSpan : InlineSpan;
 
 public sealed record SoftLineBreakSpan : InlineSpan;
+
+/// <summary>
+/// Obsidian wiki-link <c>[[Stem]]</c> or <c>[[Stem|Display]]</c>. Resolution
+/// is decided at parse time by an injected <see cref="IWikiLinkResolver"/>
+/// and cached here so the renderer/click handler never re-resolves.
+/// </summary>
+public sealed record WikiLinkSpan(string Stem, string? Display, WikiLinkResolution Resolution) : InlineSpan;

@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using Glasswork.Controls;
+using Glasswork.Core.Markdown;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
+using Glasswork.Services;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -461,6 +464,68 @@ public sealed partial class TaskDetailPage : Page
         catch
         {
             return null;
+        }
+    }
+
+    private static (string VaultRoot, string TodoRelative)? GetVaultLayout()
+    {
+        var todoDir = App.Vault.VaultPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(todoDir));
+        if (string.IsNullOrWhiteSpace(vaultRoot)) return null;
+        try
+        {
+            var rel = Path.GetRelativePath(vaultRoot, todoDir).Replace(Path.DirectorySeparatorChar, '/');
+            return (vaultRoot, rel);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IWikiLinkResolver? BuildWikiLinkResolver()
+    {
+        var layout = GetVaultLayout();
+        if (layout is null) return null;
+        return new WikiLinkResolver(layout.Value.VaultRoot, layout.Value.TodoRelative);
+    }
+
+    private void OnArtifactMarkdownLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not VaultMarkdownView view) return;
+        view.WikiLinkResolver ??= BuildWikiLinkResolver();
+        view.LinkClicked -= OnArtifactLinkClicked;
+        view.LinkClicked += OnArtifactLinkClicked;
+    }
+
+    private void OnArtifactMarkdownUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not VaultMarkdownView view) return;
+        view.LinkClicked -= OnArtifactLinkClicked;
+    }
+
+    private async void OnArtifactLinkClicked(object? sender, LinkClickedEventArgs e)
+    {
+        switch (e.Resolution)
+        {
+            case WikiLinkResolution.Task task:
+            {
+                var loaded = App.Vault.Load(task.TaskId);
+                if (loaded is null) return;
+                Frame?.Navigate(typeof(TaskDetailPage), loaded);
+                return;
+            }
+            case WikiLinkResolution.VaultPage page:
+                await App.ObsidianLauncher.Open(page.VaultRelativePath);
+                return;
+            case WikiLinkResolution.Unresolved:
+                return;
+        }
+
+        if (e.Kind == LinkKind.Url && Uri.TryCreate(e.Href, UriKind.Absolute, out var uri))
+        {
+            try { await Windows.System.Launcher.LaunchUriAsync(uri); }
+            catch (Exception ex) { Debug.WriteLine($"Launch failed: {ex.Message}"); }
         }
     }
 

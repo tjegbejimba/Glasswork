@@ -41,7 +41,7 @@ public partial class FrontmatterParser
     [GeneratedRegex(@"(?ms)^## Notes\s*$(.*?)(?=^## |\z)", RegexOptions.Multiline)]
     private static partial Regex NotesSectionRegex();
 
-    [GeneratedRegex(@"\[\[([^\]\|]+?)(?:\|([^\]]+))?\]\]")]
+    [GeneratedRegex(Markdown.WikiLinkParser.Pattern)]
     private static partial Regex WikiLinkRegex();
 
     [GeneratedRegex(@"^- ([a-z_][a-z0-9_]*): (.*)$")]

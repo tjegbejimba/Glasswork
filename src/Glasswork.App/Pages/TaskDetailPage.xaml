@@ -363,7 +363,9 @@
                                                          Margin="8,0,8,0" />
                                     </Grid>
                                 </Expander.Header>
-                                <controls:VaultMarkdownView Markdown="{Binding Body}" />
+                                <controls:VaultMarkdownView Markdown="{Binding Body}"
+                                                            Loaded="OnArtifactMarkdownLoaded"
+                                                            Unloaded="OnArtifactMarkdownUnloaded" />
                             </Expander>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
