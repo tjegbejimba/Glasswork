@@ -34,6 +34,12 @@ public sealed record HardLineBreakSpan : InlineSpan;
 public sealed record SoftLineBreakSpan : InlineSpan;
 
 /// <summary>
+/// GFM strikethrough <c>~~text~~</c>. Rendered as a <c>Run</c> with
+/// <c>TextDecorations.Strikethrough</c>.
+/// </summary>
+public sealed record StrikethroughSpan(IReadOnlyList<InlineSpan> Inlines) : InlineSpan;
+
+/// <summary>
 /// Obsidian wiki-link <c>[[Stem]]</c> or <c>[[Stem|Display]]</c>. Resolution
 /// is decided at parse time by an injected <see cref="IWikiLinkResolver"/>
 /// and cached here so the renderer/click handler never re-resolves.

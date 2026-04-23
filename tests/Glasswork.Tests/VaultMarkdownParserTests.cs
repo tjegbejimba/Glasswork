@@ -223,4 +223,96 @@ public class VaultMarkdownParserTests
         var code = (CodeSpan)inlines[1];
         Assert.AreEqual("[[foo]]", code.Text);
     }
+
+    // ============================================================
+    // M4 #75 — GFM tables, task lists, strikethrough
+    // ============================================================
+
+    [TestMethod]
+    public void Table_PipeSyntax_ProducesTableBlockWithHeaderAndBody()
+    {
+        var md = string.Join('\n',
+            "| A | B |",
+            "|---|---|",
+            "| 1 | 2 |",
+            "| 3 | 4 |");
+        var blocks = NewParser().Parse(md);
+        Assert.AreEqual(1, blocks.Count);
+        var table = (TableBlock)blocks[0];
+        Assert.AreEqual(2, table.Columns.Count);
+        Assert.AreEqual(2, table.Header.Cells.Count);
+        Assert.AreEqual("A", ((TextSpan)table.Header.Cells[0].Inlines[0]).Text);
+        Assert.AreEqual(2, table.Body.Count);
+        Assert.AreEqual("3", ((TextSpan)table.Body[1].Cells[0].Inlines[0]).Text);
+    }
+
+    [TestMethod]
+    public void Table_AlignmentMarkers_AreCaptured()
+    {
+        var md = string.Join('\n',
+            "| L | C | R |",
+            "|:--|:-:|--:|",
+            "| 1 | 2 | 3 |");
+        var table = (TableBlock)NewParser().Parse(md)[0];
+        Assert.AreEqual(TableAlignment.Left, table.Columns[0].Alignment);
+        Assert.AreEqual(TableAlignment.Center, table.Columns[1].Alignment);
+        Assert.AreEqual(TableAlignment.Right, table.Columns[2].Alignment);
+    }
+
+    [TestMethod]
+    public void Table_CellInlinesAreParsed_BoldAndCode()
+    {
+        var md = string.Join('\n',
+            "| Name | Status |",
+            "|------|--------|",
+            "| **bold** | `code` |");
+        var table = (TableBlock)NewParser().Parse(md)[0];
+        Assert.IsInstanceOfType(table.Body[0].Cells[0].Inlines[0], typeof(BoldSpan));
+        Assert.IsInstanceOfType(table.Body[0].Cells[1].Inlines[0], typeof(CodeSpan));
+    }
+
+    [TestMethod]
+    public void TaskList_UncheckedAndCheckedItems_CarryIsChecked()
+    {
+        var md = string.Join('\n',
+            "- [ ] todo one",
+            "- [x] done two",
+            "- normal item");
+        var list = (ListBlock)NewParser().Parse(md)[0];
+        Assert.AreEqual(3, list.Items.Count);
+        Assert.AreEqual(false, list.Items[0].IsChecked);
+        Assert.AreEqual(true, list.Items[1].IsChecked);
+        Assert.IsNull(list.Items[2].IsChecked);
+    }
+
+    [TestMethod]
+    public void TaskList_DoesNotLeakCheckboxIntoInlines()
+    {
+        var list = (ListBlock)NewParser().Parse("- [x] hello")[0];
+        // No stray "[x]" or TaskList span should appear; first inline is the
+        // post-checkbox text.
+        var first = list.Items[0].Inlines[0];
+        Assert.IsInstanceOfType(first, typeof(TextSpan));
+        StringAssert.Contains(((TextSpan)first).Text, "hello");
+    }
+
+    [TestMethod]
+    public void Strikethrough_DoubleTilde_ProducesStrikethroughSpan()
+    {
+        var inlines = ParaInlines(NewParser().Parse("text ~~struck~~ end"));
+        Assert.IsInstanceOfType(inlines[1], typeof(StrikethroughSpan));
+        var s = (StrikethroughSpan)inlines[1];
+        Assert.AreEqual("struck", ((TextSpan)s.Inlines[0]).Text);
+    }
+
+    [TestMethod]
+    public void Strikethrough_SingleTilde_NotStruck()
+    {
+        var inlines = ParaInlines(NewParser().Parse("text ~not struck~ end"));
+        // Single tilde is not GFM strikethrough — should remain literal text.
+        foreach (var s in inlines)
+        {
+            Assert.IsNotInstanceOfType(s, typeof(StrikethroughSpan));
+        }
+    }
 }

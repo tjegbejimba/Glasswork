@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using Markdig;
+using Markdig.Extensions.EmphasisExtras;
+using Markdig.Extensions.Tables;
+using Markdig.Extensions.TaskLists;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 using MarkdigBlock = Markdig.Syntax.Block;
@@ -19,6 +22,9 @@ public sealed class VaultMarkdownParser
 {
     private static readonly MarkdownPipeline DefaultPipeline = new MarkdownPipelineBuilder()
         .UseAutoLinks()
+        .UsePipeTables()
+        .UseTaskLists()
+        .UseEmphasisExtras(EmphasisExtraOptions.Strikethrough)
         .Build();
 
     private readonly Func<string, MarkdigDocument> _parse;
@@ -81,6 +87,7 @@ public sealed class VaultMarkdownParser
     private MarkdownBlock? ConvertBlock(MarkdigBlock node) => node switch
     {
         Markdig.Syntax.HeadingBlock h => new HeadingBlock(h.Level, ConvertInlines(h.Inline)),
+        Markdig.Extensions.Tables.Table table => ConvertTable(table),
         Markdig.Syntax.ParagraphBlock p => new ParagraphBlock(ConvertInlines(p.Inline)),
         Markdig.Syntax.ListBlock list => ConvertList(list),
         FencedCodeBlock fenced => new CodeBlockNode(JoinLines(fenced), NullIfEmpty(fenced.Info)),
@@ -90,6 +97,70 @@ public sealed class VaultMarkdownParser
         _ => null,
     };
 
+    private TableBlock ConvertTable(Markdig.Extensions.Tables.Table table)
+    {
+        TableRow header = new(Array.Empty<TableCell>());
+        var body = new List<TableRow>();
+        foreach (var rowBlock in table)
+        {
+            if (rowBlock is not Markdig.Extensions.Tables.TableRow row) continue;
+            var cells = new List<TableCell>();
+            foreach (var cellBlock in row)
+            {
+                if (cellBlock is not Markdig.Extensions.Tables.TableCell cell) continue;
+                cells.Add(new TableCell(ExtractCellInlines(cell)));
+            }
+            var converted = new TableRow(cells);
+            if (row.IsHeader) header = converted;
+            else body.Add(converted);
+        }
+
+        // Defensive: if Markdig produced no header row, use first body row.
+        if (header.Cells.Count == 0 && body.Count > 0)
+        {
+            header = body[0];
+            body = body.GetRange(1, body.Count - 1);
+        }
+
+        // Markdig's pipe-table extension can emit a phantom trailing column
+        // for the closing "|". Trim ColumnDefinitions to the actual cell count
+        // so renderers don't lay out an empty extra column.
+        int actualCount = header.Cells.Count;
+        foreach (var r in body) if (r.Cells.Count > actualCount) actualCount = r.Cells.Count;
+
+        var columns = new List<TableColumn>();
+        for (int i = 0; i < actualCount; i++)
+        {
+            var align = i < table.ColumnDefinitions.Count
+                ? MapAlignment(table.ColumnDefinitions[i].Alignment)
+                : TableAlignment.Default;
+            columns.Add(new TableColumn(align));
+        }
+
+        return new TableBlock(columns, header, body);
+    }
+
+    private IReadOnlyList<InlineSpan> ExtractCellInlines(Markdig.Extensions.Tables.TableCell cell)
+    {
+        var inlines = new List<InlineSpan>();
+        foreach (var child in cell)
+        {
+            if (child is Markdig.Syntax.ParagraphBlock cp)
+            {
+                foreach (var span in ConvertInlines(cp.Inline)) inlines.Add(span);
+            }
+        }
+        return inlines;
+    }
+
+    private static TableAlignment MapAlignment(Markdig.Extensions.Tables.TableColumnAlign? align) => align switch
+    {
+        Markdig.Extensions.Tables.TableColumnAlign.Left => TableAlignment.Left,
+        Markdig.Extensions.Tables.TableColumnAlign.Center => TableAlignment.Center,
+        Markdig.Extensions.Tables.TableColumnAlign.Right => TableAlignment.Right,
+        _ => TableAlignment.Default,
+    };
+
     private ListBlock ConvertList(Markdig.Syntax.ListBlock list)
     {
         var items = new List<ListItemBlock>();
@@ -97,17 +168,28 @@ public sealed class VaultMarkdownParser
         {
             if (item is not Markdig.Syntax.ListItemBlock li) continue;
             var inlines = new List<InlineSpan>();
+            bool? isChecked = null;
             foreach (var child in li)
             {
                 if (child is Markdig.Syntax.ParagraphBlock cp)
                 {
+                    if (cp.Inline is not null)
+                    {
+                        foreach (var raw in cp.Inline)
+                        {
+                            if (raw is Markdig.Extensions.TaskLists.TaskList tl)
+                            {
+                                isChecked = tl.Checked;
+                            }
+                        }
+                    }
                     foreach (var span in ConvertInlines(cp.Inline))
                     {
                         inlines.Add(span);
                     }
                 }
             }
-            items.Add(new ListItemBlock(inlines));
+            items.Add(new ListItemBlock(inlines, isChecked));
         }
         return new ListBlock(list.IsOrdered, items);
     }
@@ -131,6 +213,16 @@ public sealed class VaultMarkdownParser
         if (container is null) return Array.Empty<InlineSpan>();
         var spans = new List<InlineSpan>();
         var literalBuffer = new System.Text.StringBuilder();
+        FlattenInto(container, spans, literalBuffer);
+        FlushLiteralBuffer(literalBuffer, spans);
+        return spans;
+    }
+
+    private void FlattenInto(
+        ContainerInline container,
+        List<InlineSpan> spans,
+        System.Text.StringBuilder literalBuffer)
+    {
         foreach (var inline in container)
         {
             if (inline is LiteralInline lit)
@@ -138,11 +230,20 @@ public sealed class VaultMarkdownParser
                 literalBuffer.Append(lit.Content.ToString());
                 continue;
             }
+            // Markdig's pipe-tables extension wraps the rest of a paragraph's
+            // inlines under a PipeTableDelimiterInline (a ContainerInline)
+            // when it sees a stray "|" outside of a table row. That breaks
+            // wiki-link parsing for "[[stem|display]]". Treat it as a literal
+            // pipe and recurse so the buffer keeps assembling.
+            if (inline is Markdig.Extensions.Tables.PipeTableDelimiterInline delim)
+            {
+                literalBuffer.Append('|');
+                FlattenInto(delim, spans, literalBuffer);
+                continue;
+            }
             FlushLiteralBuffer(literalBuffer, spans);
             ConvertNonLiteralInto(inline, spans);
         }
-        FlushLiteralBuffer(literalBuffer, spans);
-        return spans;
     }
 
     private void FlushLiteralBuffer(System.Text.StringBuilder buffer, List<InlineSpan> sink)
@@ -156,6 +257,9 @@ public sealed class VaultMarkdownParser
     {
         switch (inline)
         {
+            case EmphasisInline em when em.DelimiterChar == '~':
+                sink.Add(new StrikethroughSpan(ConvertInlines(em)));
+                return;
             case EmphasisInline em:
                 sink.Add(em.DelimiterCount >= 2
                     ? new BoldSpan(ConvertInlines(em))
@@ -179,6 +283,10 @@ public sealed class VaultMarkdownParser
                 return;
             case LineBreakInline:
                 sink.Add(new SoftLineBreakSpan());
+                return;
+            case Markdig.Extensions.TaskLists.TaskList:
+                // Captured at the list-item level; suppress to avoid leaking
+                // a stray "[x]" into the rendered inline stream.
                 return;
             case ContainerInline c:
                 sink.Add(new TextSpan(ExtractText(c)));

@@ -15,13 +15,42 @@ public sealed record ParagraphBlock(IReadOnlyList<InlineSpan> Inlines) : Markdow
 
 public sealed record ListBlock(bool Ordered, IReadOnlyList<ListItemBlock> Items) : MarkdownBlock;
 
-public sealed record ListItemBlock(IReadOnlyList<InlineSpan> Inlines) : MarkdownBlock;
+/// <summary>
+/// A list item. <see cref="IsChecked"/> is null for normal list items;
+/// non-null for GFM task-list items (<c>[ ]</c> = false, <c>[x]</c> = true).
+/// </summary>
+public sealed record ListItemBlock(IReadOnlyList<InlineSpan> Inlines, bool? IsChecked = null) : MarkdownBlock;
 
 public sealed record CodeBlockNode(string Text, string? Language) : MarkdownBlock;
 
 public sealed record QuoteBlockNode(IReadOnlyList<MarkdownBlock> Children) : MarkdownBlock;
 
 public sealed record ThematicBreakNode : MarkdownBlock;
+
+/// <summary>
+/// GFM table. <see cref="Header"/> may be empty if the source had no header
+/// (Markdig's pipe-table extension always produces one, but defensive code is
+/// cheap). Column count == <see cref="Columns"/>.Count and each row's cell
+/// count matches.
+/// </summary>
+public sealed record TableBlock(
+    IReadOnlyList<TableColumn> Columns,
+    TableRow Header,
+    IReadOnlyList<TableRow> Body) : MarkdownBlock;
+
+public sealed record TableColumn(TableAlignment Alignment);
+
+public sealed record TableRow(IReadOnlyList<TableCell> Cells);
+
+public sealed record TableCell(IReadOnlyList<InlineSpan> Inlines);
+
+public enum TableAlignment
+{
+    Default,
+    Left,
+    Center,
+    Right,
+}
 
 /// <summary>
 /// Emitted by <see cref="VaultMarkdownParser"/> when parsing throws. The
