@@ -101,10 +101,22 @@ function Get-IssueAssignees {
 
 function Get-CopilotPrForIssue {
     param([int]$Number)
+
+    # Primary: ask the issue which PRs are linked to close it. GitHub tracks
+    # this even when the PR body forgets `Closes #N` (the dev panel link, the
+    # auto-link from the assignment workflow, etc.).
+    $r0 = Invoke-Gh -GhArgs @('issue', 'view', "$Number", '--repo', $Repo, '--json', 'closedByPullRequestsReferences', '-q', '[.closedByPullRequestsReferences[].number] | join(",")')
+    $linkedNumbers = @()
+    if ($r0.ExitCode -eq 0) {
+        $raw = ($r0.Output | Out-String).Trim()
+        if ($raw) { $linkedNumbers = $raw.Split(',') | ForEach-Object { [int]$_ } }
+    }
+
     $r = Invoke-Gh -GhArgs @('pr', 'list', '--repo', $Repo, '--author', 'app/copilot-swe-agent', '--state', 'open', '--json', 'number,title,body,isDraft,headRefName')
     if ($r.ExitCode -ne 0) { return $null }
     $prs = ($r.Output | Out-String) | ConvertFrom-Json
     foreach ($pr in $prs) {
+        if ($linkedNumbers -contains $pr.number) { return $pr }
         if ($pr.body -match "(?im)\b(close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#$Number\b") { return $pr }
         if ($pr.title -match "(?<![\d])$Number\b" -and $pr.title -match '#') { return $pr }
         if ($pr.headRefName -match "(?<![\d])$Number(?![\d])") { return $pr }
@@ -246,8 +258,27 @@ try {
                 Write-Log "PR #$($pr.number) found for issue #$($m.Issue) (draft=$($pr.isDraft))"
 
                 if ($pr.isDraft) {
-                    # Auto-mark ready if no commits in the last 30 minutes
-                    # (Copilot agents finish work but often forget to mark ready).
+                    # Strongest signal: Copilot has requested review from the repo
+                    # owner. That's the agent's explicit "I'm done" — promote
+                    # to ready immediately, no waiting.
+                    $reviewers = (Invoke-Gh -GhArgs @('pr', 'view', "$($pr.number)", '--repo', $Repo, '--json', 'reviewRequests', '-q', '[.reviewRequests[].login] | join(",")')).Output | Out-String
+                    $reviewers = $reviewers.Trim()
+                    if ($reviewers -match '(?i)\btjegbejimba\b') {
+                        Write-Log "  draft has review requested from tjegbejimba — marking ready"
+                        $r = Invoke-Gh -GhArgs @('pr', 'ready', "$($pr.number)", '--repo', $Repo)
+                        if ($r.ExitCode -eq 0) {
+                            $pr.isDraft = $false
+                            Write-Log "  marked ready — will test on this iteration"
+                        } else {
+                            Write-Log "  failed to mark ready: $($r.Output)" 'WARN'
+                            continue
+                        }
+                    }
+                }
+
+                if ($pr.isDraft) {
+                    # Fallback: auto-mark ready if no commits in the last 30 min
+                    # (agent finished but forgot both to mark ready and to request review).
                     $lastCommitIso = (Invoke-Gh -GhArgs @('pr', 'view', "$($pr.number)", '--repo', $Repo, '--json', 'commits', '-q', '[.commits[].committedDate, .commits[].authoredDate] | map(select(. != null)) | sort | last')).Output | Out-String
                     $lastCommitIso = $lastCommitIso.Trim()
                     if ($lastCommitIso) {
