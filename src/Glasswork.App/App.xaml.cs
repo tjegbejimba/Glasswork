@@ -31,7 +31,7 @@ public partial class App : Application
     public static IBacklinkIndex BacklinkIndex { get; private set; } = null!;
     public static BacklinksWatcher? BacklinksWatcher { get; private set; }
     public static ActiveTaskTracker ActiveTask { get; } = new();
-    public static SelfWriteCoordinator SelfWrites { get; } = new();
+    public static SelfWriteCoordinator SelfWrites { get; private set; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
     public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
@@ -134,6 +134,7 @@ public partial class App : Application
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Wiki", "wiki", "todo");
 
+        SelfWrites = new SelfWriteCoordinator(vaultPath);
         Vault = new VaultService(vaultPath, SelfWrites);
         Tasks = new TaskService(Vault);
         Index = new IndexService(Vault);
