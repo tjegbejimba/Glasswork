@@ -125,6 +125,54 @@ public class FeedbackBodyFormatterTests
     }
 
     [TestMethod]
+    public void Build_EscapesPipesInCellValues()
+    {
+        // Auto-triage and humans both read the table; an unescaped pipe would split the
+        // cell and corrupt every following row.
+        var body = FeedbackBodyFormatter.Build("Bug", "x",
+            SampleContext(activeTaskId: "task-foo|bar|baz"));
+
+        StringAssert.Contains(body, "task-foo\\|bar\\|baz");
+        Assert.IsFalse(body.Contains("task-foo|bar"),
+            "Raw unescaped pipe leaked into table cell.");
+    }
+
+    [TestMethod]
+    public void Build_CollapsesNewlinesInCellValues()
+    {
+        // A literal newline in a cell breaks the GFM table; the formatter must flatten them.
+        var body = FeedbackBodyFormatter.Build("Bug", "x",
+            SampleContext(osDescription: "Line one\r\nLine two\nLine three"));
+
+        StringAssert.Contains(body, "Line one  Line two Line three");
+        // No raw \n inside the OS row — find the row and check it's a single line.
+        var osLineStart = body.IndexOf("| OS |", StringComparison.Ordinal);
+        var osLineEnd = body.IndexOf('\n', osLineStart);
+        var osRow = body.Substring(osLineStart, osLineEnd - osLineStart);
+        Assert.IsFalse(osRow.Contains('\r') || osRow.Contains('\n'),
+            $"OS row still contains raw newlines: '{osRow}'");
+    }
+
+    [TestMethod]
+    public void Build_NormalizesNonUtcTimestampToUtc()
+    {
+        // 10:30:15 in -07:00 == 17:30:15 UTC. The Captured row must reflect UTC, not local.
+        var ctx = new FeedbackContext(
+            PageName: "MyDayPage",
+            ActiveTaskId: "task-x",
+            AppVersion: "1.0.0",
+            OsDescription: "Windows",
+            RuntimeVersion: ".NET 10",
+            CapturedAtUtc: new DateTimeOffset(2026, 4, 24, 10, 30, 15, TimeSpan.FromHours(-7)));
+
+        var body = FeedbackBodyFormatter.Build("Bug", "x", ctx);
+
+        StringAssert.Contains(body, "2026-04-24T17:30:15Z");
+        Assert.IsFalse(body.Contains("2026-04-24T10:30:15Z"),
+            "Timestamp was not converted to UTC before rendering.");
+    }
+
+    [TestMethod]
     public void Build_HeaderAppearsBeforeContextBeforeUserBody()
     {
         var body = FeedbackBodyFormatter.Build("Bug", "USER_BODY_MARKER", SampleContext());

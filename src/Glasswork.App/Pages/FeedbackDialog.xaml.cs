@@ -52,7 +52,8 @@ public sealed partial class FeedbackDialog : ContentDialog
             StatusBar.Severity = InfoBarSeverity.Informational;
             StatusBar.IsOpen = true;
 
-            var issueBody = FeedbackBodyFormatter.Build(category, body, _context);
+            var includeContext = IncludeContextBox.IsChecked == true;
+            var issueBody = FeedbackBodyFormatter.Build(category, body, includeContext ? _context : null);
             var result = await _filer.TryFileIssueAsync(title, issueBody, labels);
 
             if (result.Succeeded)
