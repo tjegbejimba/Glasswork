@@ -100,6 +100,11 @@ no domain logic — composes the other contexts into screens.
 - **Self-write tracking** — `SelfWriteTracker` suppresses watcher echoes
   from our own writes. Any new code that writes the vault must register
   with it, or watcher events will fire spuriously.
+- **Virtual My Day promotion** — a task can be "in My Day today" without
+  `task.MyDay` being set. Sources: task due-date, flagged subtask, or
+  subtask due-date. Computed by `MyDayViewModel`; the vault is never
+  written to reflect the promotion. Dismiss-for-today is the only
+  per-day override and lives in `IUiStateService`. See ADR 0008.
 
 ## Out of scope (for this design slice)
 
