@@ -7,7 +7,11 @@
       <Platform Project="x86" />
     </Project>
   </Folder>
+  <Folder Name="/src/Glasswork.Mcp/">
+    <Project Path="src/Glasswork.Mcp/Glasswork.Mcp.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Glasswork.Tests/Glasswork.Tests.csproj" />
+    <Project Path="tests/Glasswork.Mcp.Tests/Glasswork.Mcp.Tests.csproj" />
   </Folder>
 </Solution>
