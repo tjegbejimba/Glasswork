@@ -61,6 +61,7 @@ $SteeringBody = @'
 - `dotnet build` succeeds for `src/Glasswork.Core/Glasswork.Core.csproj` (and `src/Glasswork.Mcp/Glasswork.Mcp.csproj` if it exists).
 - `dotnet test` passes for `tests/Glasswork.Tests/` (and `tests/Glasswork.Mcp.Tests/` if it exists).
 - **PR body MUST include `Closes #<issue>` so the watchdog can match the PR to the issue.**
+- **When all work is committed, mark the PR ready for review (it should not stay as draft).** Use `gh pr ready` or the GitHub UI. The watchdog will not test or merge draft PRs.
 - PR description summarizes the change in 2-3 sentences and lists the AC items satisfied.
 '@
 
@@ -244,8 +245,37 @@ try {
                 Write-Log "PR #$($pr.number) found for issue #$($m.Issue) (draft=$($pr.isDraft))"
 
                 if ($pr.isDraft) {
-                    Write-Log "  PR #$($pr.number) is still draft — Copilot not done yet, skipping"
-                    continue
+                    # Auto-mark ready if no commits in the last 30 minutes
+                    # (Copilot agents finish work but often forget to mark ready).
+                    $lastCommitIso = (Invoke-Gh -GhArgs @('pr', 'view', "$($pr.number)", '--repo', $Repo, '--json', 'commits', '-q', '[.commits[].committedDate, .commits[].authoredDate] | map(select(. != null)) | sort | last')).Output | Out-String
+                    $lastCommitIso = $lastCommitIso.Trim()
+                    if ($lastCommitIso) {
+                        try {
+                            $lastCommit = [datetimeoffset]::Parse($lastCommitIso)
+                            $ageMin = ([datetimeoffset]::UtcNow - $lastCommit).TotalMinutes
+                            Write-Log "  draft last commit $([math]::Round($ageMin)) min ago"
+                            if ($ageMin -gt 30) {
+                                Write-Log "  draft is stale (>30 min since last commit) — marking ready"
+                                $r = Invoke-Gh -GhArgs @('pr', 'ready', "$($pr.number)", '--repo', $Repo)
+                                if ($r.ExitCode -eq 0) {
+                                    $pr.isDraft = $false
+                                    Write-Log "  marked ready — will test on this iteration"
+                                } else {
+                                    Write-Log "  failed to mark ready: $($r.Output)" 'WARN'
+                                    continue
+                                }
+                            } else {
+                                Write-Log "  draft is fresh — agent likely still working, skipping"
+                                continue
+                            }
+                        } catch {
+                            Write-Log "  could not parse last commit date '$lastCommitIso' — skipping" 'WARN'
+                            continue
+                        }
+                    } else {
+                        Write-Log "  draft has no commits yet — skipping"
+                        continue
+                    }
                 }
 
                 if (-not (Get-PrChecksOk -Number $pr.number)) { continue }
