@@ -22,6 +22,7 @@ builder.Services
 
 // Make the resolved vault path available to tool implementations via DI.
 builder.Services.AddSingleton(new Glasswork.Mcp.VaultContext(vaultPath));
+builder.Services.AddSingleton<Glasswork.Mcp.McpLogger>();
 builder.Services.AddTransient<Glasswork.Mcp.Tools.GlassworkTools>();
 
 await builder.Build().RunAsync();

@@ -160,7 +160,73 @@ Results are sorted by created date ascending, then by ID for stability.
 
 ---
 
-## Architecture notes
+## Profiling and structured logging
+
+Every MCP tool call emits one structured JSON line (JSONL) to **stderr**. An optional file sink and per-phase trace are available via environment variables.
+
+### Environment variables
+
+| Variable | Value | Effect |
+|---|---|---|
+| `GLASSWORK_MCP_LOG` | `1` | Also write each log line to `<vault>/.glasswork/mcp.log`. The file is capped at ~1 MB; when the cap is exceeded the oldest half of entries is automatically pruned. |
+| `GLASSWORK_MCP_TRACE` | `1` | Adds a `phases` object to each log line with per-phase wall-clock times (glob, yaml_parse, filter, sort, write). Off by default — zero overhead in normal use. |
+
+### JSONL log-line shape
+
+**Default (Layer 1 — always emitted to stderr):**
+
+```json
+{"ts":"2024-06-01T12:34:56.789Z","tool":"list_tasks","duration_ms":47,"result":"ok","task_count":3}
+```
+
+Fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `ts` | ISO-8601 UTC string | Timestamp of the log line |
+| `tool` | string | Tool name (`add_task`, `list_tasks`, …) |
+| `duration_ms` | number | Total wall-clock time in milliseconds |
+| `result` | string | Outcome: `ok` \| `error` \| `conflict` \| `not_found` |
+| `task_count` | number | *(list_tasks only)* Number of tasks returned after filtering |
+
+**With `GLASSWORK_MCP_TRACE=1` (Layer 2 — adds `phases`):**
+
+```json
+{"ts":"2024-06-01T12:34:56.789Z","tool":"list_tasks","duration_ms":47,"result":"ok","task_count":3,"phases":{"glob":12,"yaml_parse":31,"filter":1,"sort":3}}
+```
+
+Phases instrumented in v1:
+
+| Phase | Tools | Description |
+|---|---|---|
+| `glob` | `list_tasks` | Directory scan for `*.md` files |
+| `yaml_parse` | `list_tasks` | Reading and parsing each file's YAML frontmatter |
+| `filter` | `list_tasks` | Applying status / parent_task_id filters |
+| `sort` | `list_tasks` | Sorting results by created date and ID |
+| `write` | `add_task` | Writing the new task file to disk |
+
+### Enabling the file sink (PowerShell)
+
+```powershell
+$env:GLASSWORK_MCP_LOG = "1"
+$env:GLASSWORK_MCP_TRACE = "1"
+glasswork-mcp
+```
+
+### Parsing the log — p50 / p95 latency (PowerShell)
+
+```powershell
+$log = "$env:USERPROFILE\vault\.glasswork\mcp.log"   # adjust to your vault path
+$rows = Get-Content $log | ForEach-Object { $_ | ConvertFrom-Json }
+$ms = ($rows | Where-Object tool -eq 'list_tasks' | Select-Object -ExpandProperty duration_ms) | Sort-Object
+$p50 = $ms[[int]($ms.Count * 0.50)]
+$p95 = $ms[[int]($ms.Count * 0.95)]
+"p50=${p50}ms  p95=${p95}ms"
+```
+
+---
+
+
 
 - **Stdio transport only** — no network listener, no authentication.
 - **Vault is the only writable surface** — the server cannot read or write files outside the vault root.
