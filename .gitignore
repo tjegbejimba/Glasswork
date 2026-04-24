@@ -8,3 +8,8 @@ BundleArtifacts/
 Properties/PublishProfiles/
 launchSettings.json
 .env
+
+# Local watchdog state
+.mcp-watchdog.log
+.mcp-watchdog.lock
+
