@@ -9,20 +9,21 @@ using ModelContextProtocol.Server;
 namespace Glasswork.Mcp.Tools;
 
 /// <summary>
-/// MCP tool implementations for add_task and list_tasks (M2).
+/// MCP tool implementations for add_task, list_tasks, get_task, and add_artifact (M2/M3).
 /// See ADR 0007 §3 for the tool surface design.
 /// </summary>
 [McpServerToolType]
 public sealed class GlassworkTools
 {
     private readonly VaultService _vault;
+    private readonly SelfWriteCoordinator _selfWrites;
     private readonly string _vaultPath;
 
     public GlassworkTools(VaultContext vaultContext)
     {
         _vaultPath = vaultContext.VaultPath;
-        var selfWrites = new SelfWriteCoordinator(_vaultPath);
-        _vault = new VaultService(_vaultPath, selfWrites);
+        _selfWrites = new SelfWriteCoordinator(_vaultPath);
+        _vault = new VaultService(_vaultPath, _selfWrites);
     }
 
     [McpServerTool(Name = "add_task")]
@@ -83,6 +84,84 @@ public sealed class GlassworkTools
         return JsonSerializer.Serialize(new ListTasksResult(tasks));
     }
 
+    [McpServerTool(Name = "get_task")]
+    [Description("Return full task content (frontmatter + Description + Notes + artifact filenames). Re-reads from disk on every call.")]
+    public string GetTask(
+        [Description("Task ID to look up.")] string task_id)
+    {
+        var safeId = SanitizeId(task_id);
+        if (safeId is null)
+            return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+
+        var task = _vault.Load(safeId);
+        if (task is null)
+            return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+
+        var artifactFolder = Path.Combine(_vaultPath, safeId + ".artifacts");
+        var artifacts = new List<ArtifactInfo>();
+        if (Directory.Exists(artifactFolder))
+        {
+            foreach (var file in Directory.EnumerateFiles(artifactFolder, "*.md", SearchOption.TopDirectoryOnly))
+            {
+                var filename = Path.GetFileName(file);
+                var vaultRelative = Path.Combine(safeId + ".artifacts", filename);
+                artifacts.Add(new ArtifactInfo(filename, vaultRelative));
+            }
+            artifacts.Sort((a, b) => string.Compare(a.Filename, b.Filename, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var result = new GetTaskResult(
+            Id: task.Id,
+            Title: task.Title,
+            Status: MapToExternalStatus(task.Status),
+            ParentId: task.Parent,
+            Description: task.Description,
+            Notes: task.Notes,
+            Artifacts: artifacts);
+
+        return JsonSerializer.Serialize(result);
+    }
+
+    [McpServerTool(Name = "add_artifact")]
+    [Description("Create a markdown artifact file in the task's artifact folder. Artifacts are agent-produced work products (plans, designs, logs). Fails with 'conflict' if the file already exists.")]
+    public string AddArtifact(
+        [Description("Task ID that owns the artifact.")] string task_id,
+        [Description("Filename for the artifact, must end in .md (e.g. 'plan.md'). Simple filenames only — no path separators.")] string filename,
+        [Description("Markdown content to write into the artifact file.")] string content)
+    {
+        var safeId = SanitizeId(task_id);
+        if (safeId is null || !_vault.Exists(safeId))
+            return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+
+        if (!filename.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            return JsonSerializer.Serialize(new ErrorResult("invalid_filename", "Filename must end in '.md'."));
+
+        var artifactFolder = Path.Combine(_vaultPath, safeId + ".artifacts");
+
+        // Path-traversal guard: ensure the resolved artifact path stays inside the artifact folder.
+        string resolvedPath;
+        try
+        {
+            resolvedPath = VaultPathGuard.EnsurePathInVault(artifactFolder, filename);
+        }
+        catch (ArgumentException)
+        {
+            return JsonSerializer.Serialize(new ErrorResult("path_traversal",
+                $"Filename '{filename}' is not allowed. Use a simple filename without path separators or '..'."));
+        }
+
+        if (File.Exists(resolvedPath))
+            return JsonSerializer.Serialize(new ErrorResult("conflict",
+                $"Artifact '{filename}' already exists for task '{safeId}'."));
+
+        Directory.CreateDirectory(artifactFolder);
+        _selfWrites.RegisterWrite(resolvedPath);
+        File.WriteAllText(resolvedPath, content);
+
+        var vaultRelative = Path.Combine(safeId + ".artifacts", Path.GetFileName(resolvedPath));
+        return JsonSerializer.Serialize(new AddArtifactResult(Path: vaultRelative));
+    }
+
     private static string MapToInternalStatus(string? status) => status switch
     {
         "todo" or null => GlassworkTask.Statuses.Todo,
@@ -121,4 +200,24 @@ public sealed class GlassworkTools
 
     private sealed record ListTasksResult(
         [property: JsonPropertyName("tasks")] List<TaskSummary> Tasks);
+
+    private sealed record ArtifactInfo(
+        [property: JsonPropertyName("filename")] string Filename,
+        [property: JsonPropertyName("path")] string Path);
+
+    private sealed record GetTaskResult(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("parent_id")] string? ParentId,
+        [property: JsonPropertyName("description")] string Description,
+        [property: JsonPropertyName("notes")] string Notes,
+        [property: JsonPropertyName("artifacts")] List<ArtifactInfo> Artifacts);
+
+    private sealed record AddArtifactResult(
+        [property: JsonPropertyName("path")] string Path);
+
+    private sealed record ErrorResult(
+        [property: JsonPropertyName("error")] string Error,
+        [property: JsonPropertyName("message")] string Message);
 }
