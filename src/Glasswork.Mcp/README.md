@@ -2,7 +2,7 @@
 
 `glasswork-mcp` is a standalone [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI agents typed read/write access to a [Glasswork](https://github.com/tjegbejimba/Glasswork) task vault. It communicates over stdio and requires no running Glasswork app instance.
 
-> **v0.2.0 — M2**: `add_task` and `list_tasks` are implemented. See [Tool reference](#tool-reference) for schemas.
+> **v0.3.0 — M3**: `get_task` and `add_artifact` are now implemented. See [Tool reference](#tool-reference) for schemas.
 
 ---
 
@@ -104,8 +104,8 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 |---|---|---|
 | `add_task` | v0.2.0 | Create a new task file |
 | `list_tasks` | v0.2.0 | List task summaries |
-| `get_task` | M3 | Return full task content |
-| `add_artifact` | M3 | Create a task artifact file |
+| `get_task` | v0.3.0 | Return full task content |
+| `add_artifact` | v0.3.0 | Create a task artifact file |
 
 ### `add_task`
 
@@ -157,6 +157,81 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 ```
 
 Results are sorted by created date ascending, then by ID for stability.
+
+---
+
+### `get_task`
+
+**Input**
+
+```json
+{
+  "task_id": "string (required) — task ID to look up"
+}
+```
+
+**Output (success)**
+
+```json
+{
+  "id": "string",
+  "title": "string",
+  "status": "\"todo\" | \"doing\" | \"done\"",
+  "parent_id": "string | null",
+  "description": "string — full Description body (ADR 0002)",
+  "notes": "string — full Notes body (ADR 0002)",
+  "artifacts": [
+    {
+      "filename": "string — e.g. plan.md",
+      "path": "string — vault-relative path, e.g. task-id.artifacts/plan.md"
+    }
+  ]
+}
+```
+
+**Output (not found)**
+
+```json
+{
+  "error": "not_found",
+  "message": "string"
+}
+```
+
+Re-reads the vault and artifact folder on every call (no cache). The `artifacts` array lists filenames and vault-relative paths but does not include artifact body content.
+
+---
+
+### `add_artifact`
+
+**Input**
+
+```json
+{
+  "task_id": "string (required) — owning task ID",
+  "filename": "string (required) — must end in .md, no path separators",
+  "content": "string (required) — full markdown content"
+}
+```
+
+**Output (success)**
+
+```json
+{
+  "path": "string — vault-relative path to the created file, e.g. task-id.artifacts/plan.md"
+}
+```
+
+**Output (errors)**
+
+| `error` value | When |
+|---|---|
+| `not_found` | The task ID does not exist in the vault |
+| `invalid_filename` | `filename` does not end in `.md` |
+| `path_traversal` | `filename` contains `..`, is absolute, or resolves outside the artifact folder |
+| `conflict` | A file with that name already exists — `add_artifact` is create-only in v1 |
+
+Artifacts are stored under `<vault>/<task-id>.artifacts/<filename>`. The write is registered with `SelfWriteCoordinator` so the running Glasswork app does not raise a spurious "external change" banner.
 
 ---
 
@@ -226,7 +301,7 @@ $p95 = $ms[[int]($ms.Count * 0.95)]
 
 ---
 
-
+## Architecture notes
 
 - **Stdio transport only** — no network listener, no authentication.
 - **Vault is the only writable surface** — the server cannot read or write files outside the vault root.
