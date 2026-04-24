@@ -44,6 +44,7 @@ $Milestones = @(
     @{ Issue = 88; DependsOn = @(87,89); TestProjects = @('tests\Glasswork.Tests\Glasswork.Tests.csproj', 'tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj') }
     @{ Issue = 90; DependsOn = @(88);    TestProjects = @('tests\Glasswork.Tests\Glasswork.Tests.csproj', 'tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj') }
     @{ Issue = 91; DependsOn = @(88);    TestProjects = @('tests\Glasswork.Tests\Glasswork.Tests.csproj', 'tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj') }
+    @{ Issue = 96; DependsOn = @();      TestProjects = @('tests\Glasswork.Tests\Glasswork.Tests.csproj') }
 )
 
 $SteeringBody = @'
