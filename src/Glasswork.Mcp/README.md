@@ -2,7 +2,7 @@
 
 `glasswork-mcp` is a standalone [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI agents typed read/write access to a [Glasswork](https://github.com/tjegbejimba/Glasswork) task vault. It communicates over stdio and requires no running Glasswork app instance.
 
-> **v0.1.0 — M1 scaffold**: The server starts, advertises zero tools, and responds to the MCP `initialize` handshake. Tool implementations (`add_task`, `list_tasks`, etc.) land in M2/M3.
+> **v0.2.0 — M2**: `add_task` and `list_tasks` are implemented. See [Tool reference](#tool-reference) for schemas.
 
 ---
 
@@ -102,13 +102,61 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 
 | Tool | Status | Description |
 |---|---|---|
-| _(none)_ | v0.1.0 | M1 scaffold — no tools yet |
-| `add_task` | M2 | Create a new task file |
-| `list_tasks` | M2 | List task summaries |
+| `add_task` | v0.2.0 | Create a new task file |
+| `list_tasks` | v0.2.0 | List task summaries |
 | `get_task` | M3 | Return full task content |
 | `add_artifact` | M3 | Create a task artifact file |
 
-Tool input/output JSON shapes will be documented here as tools are added.
+### `add_task`
+
+**Input**
+
+```json
+{
+  "title": "string (required)",
+  "description": "string (optional) — becomes the Description body section",
+  "parent_task_id": "string (optional) — ID of the parent task",
+  "status": "\"todo\" | \"doing\" | \"done\" (optional, defaults to todo)"
+}
+```
+
+**Output**
+
+```json
+{
+  "task_id": "string — the generated task ID (slug from title)",
+  "path": "string — absolute path to the created task file"
+}
+```
+
+### `list_tasks`
+
+**Input**
+
+```json
+{
+  "status": "\"todo\" | \"doing\" | \"done\" (optional)",
+  "parent_task_id": "string (optional)"
+}
+```
+
+**Output**
+
+```json
+{
+  "tasks": [
+    {
+      "id": "string",
+      "title": "string",
+      "status": "\"todo\" | \"doing\" | \"done\"",
+      "parent_id": "string | null",
+      "path": "string — absolute path to the task file"
+    }
+  ]
+}
+```
+
+Results are sorted by created date ascending, then by ID for stability.
 
 ---
 
