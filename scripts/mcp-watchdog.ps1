@@ -86,11 +86,22 @@ function Write-Log {
 
 function Invoke-Gh {
     param([string[]]$GhArgs)
-    # Redirect stderr to null — gh writes a TTY spinner there that corrupts
-    # JSON parsing if merged into stdout.
-    $output = & gh @GhArgs 2>$null
-    $code = $LASTEXITCODE
-    return [pscustomobject]@{ Output = $output; ExitCode = $code }
+    # gh writes a TTY spinner to stderr that corrupts JSON if merged into stdout, but on
+    # error we DO want the stderr message. Redirect stderr to a temp file and read it back
+    # only when the command failed.
+    $errFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $output = & gh @GhArgs 2>$errFile
+        $code = $LASTEXITCODE
+        if ($code -ne 0) {
+            $stderr = (Get-Content $errFile -Raw -ErrorAction SilentlyContinue) ?? ''
+            $combined = (@($output) + @($stderr) | Where-Object { $_ }) -join "`n"
+            return [pscustomobject]@{ Output = $combined; ExitCode = $code }
+        }
+        return [pscustomobject]@{ Output = $output; ExitCode = $code }
+    } finally {
+        Remove-Item $errFile -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-IssueState {
@@ -320,6 +331,21 @@ try {
                 }
 
                 if (-not (Get-PrChecksOk -Number $pr.number)) { continue }
+
+                # If the PR conflicts with main, no point in running tests or attempting merge.
+                # Cloud agent will see review comments and rebase; we'll pick it back up next iteration.
+                $stateRes = Invoke-Gh -GhArgs @('pr', 'view', "$($pr.number)", '--repo', $Repo, '--json', 'mergeable,mergeStateStatus')
+                if ($stateRes.ExitCode -eq 0) {
+                    try {
+                        $state = $stateRes.Output | ConvertFrom-Json
+                        if ($state.mergeable -eq 'CONFLICTING' -or $state.mergeStateStatus -eq 'DIRTY') {
+                            Write-Log "  PR #$($pr.number) has merge conflicts (mergeable=$($state.mergeable), state=$($state.mergeStateStatus)) — skipping until rebased"
+                            continue
+                        }
+                    } catch {
+                        Write-Log "  could not parse merge state — proceeding anyway" 'WARN'
+                    }
+                }
 
                 $passed = Test-PrLocally -Pr $pr -TestProjects $m.TestProjects
                 if ($passed) {
