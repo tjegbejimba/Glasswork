@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -18,12 +19,14 @@ public sealed class GlassworkTools
     private readonly VaultService _vault;
     private readonly SelfWriteCoordinator _selfWrites;
     private readonly string _vaultPath;
+    private readonly McpLogger? _logger;
 
-    public GlassworkTools(VaultContext vaultContext)
+    public GlassworkTools(VaultContext vaultContext, McpLogger? logger = null)
     {
         _vaultPath = vaultContext.VaultPath;
         _selfWrites = new SelfWriteCoordinator(_vaultPath);
         _vault = new VaultService(_vaultPath, _selfWrites);
+        _logger = logger;
     }
 
     [McpServerTool(Name = "add_task")]
@@ -34,30 +37,41 @@ public sealed class GlassworkTools
         [Description("Optional parent task ID.")] string? parent_task_id = null,
         [Description("Task status: todo, doing, or done. Defaults to todo.")] string? status = null)
     {
-        var internalStatus = MapToInternalStatus(status);
-        var safeParent = SanitizeId(parent_task_id);
-
-        var baseId = VaultService.GenerateId(title);
-        var id = baseId;
-        int counter = 1;
-        while (_vault.Exists(id))
-            id = $"{baseId}-{counter++}";
-
-        var task = new GlassworkTask
+        using var scope = _logger?.BeginCall("add_task");
+        try
         {
-            Id = id,
-            Title = title,
-            Status = internalStatus,
-            Priority = GlassworkTask.Priorities.Medium,
-            Created = DateTime.Today,
-            Parent = safeParent,
-            Description = description ?? string.Empty,
-        };
+            var internalStatus = MapToInternalStatus(status);
+            var safeParent = SanitizeId(parent_task_id);
 
-        _vault.Save(task);
+            var baseId = VaultService.GenerateId(title);
+            var id = baseId;
+            int counter = 1;
+            while (_vault.Exists(id))
+                id = $"{baseId}-{counter++}";
 
-        var path = Path.Combine(_vaultPath, $"{id}.md");
-        return JsonSerializer.Serialize(new AddTaskResult(TaskId: id, Path: path));
+            var task = new GlassworkTask
+            {
+                Id = id,
+                Title = title,
+                Status = internalStatus,
+                Priority = GlassworkTask.Priorities.Medium,
+                Created = DateTime.Today,
+                Parent = safeParent,
+                Description = description ?? string.Empty,
+            };
+
+            var writeSw = Stopwatch.StartNew();
+            _vault.Save(task);
+            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+
+            var path = Path.Combine(_vaultPath, $"{id}.md");
+            return JsonSerializer.Serialize(new AddTaskResult(TaskId: id, Path: path));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
     }
 
     [McpServerTool(Name = "list_tasks")]
@@ -66,22 +80,68 @@ public sealed class GlassworkTools
         [Description("Filter by status: todo, doing, or done.")] string? status = null,
         [Description("Filter by parent task ID.")] string? parent_task_id = null)
     {
-        var internalStatus = status is null ? null : MapToInternalStatus(status);
+        using var scope = _logger?.BeginCall("list_tasks");
+        try
+        {
+            var internalStatus = status is null ? null : MapToInternalStatus(status);
 
-        var tasks = _vault.LoadAll()
-            .Where(t => internalStatus is null || t.Status == internalStatus)
-            .Where(t => parent_task_id is null || t.Parent == parent_task_id)
-            .OrderBy(t => t.Created)
-            .ThenBy(t => t.Id)
-            .Select(t => new TaskSummary(
-                Id: t.Id,
-                Title: t.Title,
-                Status: MapToExternalStatus(t.Status),
-                ParentId: t.Parent,
-                Path: Path.Combine(_vaultPath, $"{t.Id}.md")))
-            .ToList();
+            List<GlassworkTask> all;
+            if (scope is { IsTracing: true })
+            {
+                // Phase: glob — enumerate markdown files in the vault root.
+                var globSw = Stopwatch.StartNew();
+                var files = Directory.GetFiles(_vaultPath, "*.md")
+                    .Where(f => !Path.GetFileName(f).StartsWith('_'))
+                    .ToArray();
+                scope.RecordPhase("glob", globSw.ElapsedMilliseconds);
 
-        return JsonSerializer.Serialize(new ListTasksResult(tasks));
+                // Phase: yaml_parse — read and parse each file individually.
+                var parseSw = Stopwatch.StartNew();
+                var parsed = new List<GlassworkTask>(files.Length);
+                foreach (var file in files)
+                {
+                    var id = Path.GetFileNameWithoutExtension(file);
+                    var task = _vault.Load(id);
+                    if (task != null) parsed.Add(task);
+                }
+                all = parsed;
+                scope.RecordPhase("yaml_parse", parseSw.ElapsedMilliseconds);
+            }
+            else
+            {
+                all = _vault.LoadAll();
+            }
+
+            // Phase: filter
+            var filterSw = Stopwatch.StartNew();
+            var filtered = all
+                .Where(t => internalStatus is null || t.Status == internalStatus)
+                .Where(t => parent_task_id is null || t.Parent == parent_task_id)
+                .ToList();
+            scope?.RecordPhase("filter", filterSw.ElapsedMilliseconds);
+
+            // Phase: sort
+            var sortSw = Stopwatch.StartNew();
+            var tasks = filtered
+                .OrderBy(t => t.Created)
+                .ThenBy(t => t.Id)
+                .Select(t => new TaskSummary(
+                    Id: t.Id,
+                    Title: t.Title,
+                    Status: MapToExternalStatus(t.Status),
+                    ParentId: t.Parent,
+                    Path: Path.Combine(_vaultPath, $"{t.Id}.md")))
+                .ToList();
+            scope?.RecordPhase("sort", sortSw.ElapsedMilliseconds);
+
+            scope?.SetCount("task_count", tasks.Count);
+            return JsonSerializer.Serialize(new ListTasksResult(tasks));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
     }
 
     [McpServerTool(Name = "get_task")]

@@ -21,6 +21,10 @@
         <TextBox x:Name="BodyBox" Header="Details" PlaceholderText="Describe the issue or idea..."
                  AcceptsReturn="True" TextWrapping="Wrap" Height="120" />
 
+        <CheckBox x:Name="IncludeContextBox" IsChecked="True"
+                  Content="Include page, active task, app version, OS, and runtime"
+                  ToolTipService.ToolTip="When checked, attaches a context table with the current page, active task ID, app version, OS, and runtime to the issue body. Uncheck if your task ID contains anything you'd rather not publish." />
+
         <InfoBar x:Name="StatusBar" IsOpen="False" />
     </StackPanel>
 </ContentDialog>
