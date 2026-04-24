@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Glasswork.Core.Feedback;
 using Glasswork.Services;
 using Microsoft.UI.Xaml.Controls;
 
@@ -8,14 +9,20 @@ namespace Glasswork.Pages;
 public sealed partial class FeedbackDialog : ContentDialog
 {
     private readonly GhCliIssueFiler _filer;
+    private readonly FeedbackContext? _context;
 
-    public FeedbackDialog() : this(new GhCliIssueFiler())
+    public FeedbackDialog() : this(new GhCliIssueFiler(), context: null)
     {
     }
 
-    internal FeedbackDialog(GhCliIssueFiler filer)
+    public FeedbackDialog(FeedbackContext? context) : this(new GhCliIssueFiler(), context)
+    {
+    }
+
+    internal FeedbackDialog(GhCliIssueFiler filer, FeedbackContext? context)
     {
         _filer = filer;
+        _context = context;
         InitializeComponent();
     }
 
@@ -45,7 +52,7 @@ public sealed partial class FeedbackDialog : ContentDialog
             StatusBar.Severity = InfoBarSeverity.Informational;
             StatusBar.IsOpen = true;
 
-            var issueBody = BuildIssueBody(category, body);
+            var issueBody = FeedbackBodyFormatter.Build(category, body, _context);
             var result = await _filer.TryFileIssueAsync(title, issueBody, labels);
 
             if (result.Succeeded)
@@ -79,11 +86,4 @@ public sealed partial class FeedbackDialog : ContentDialog
         _ => new[] { "user-report" },
     };
 
-    private static string BuildIssueBody(string category, string body)
-    {
-        // Tag provenance so triage can tell real bugs from feature requests without
-        // re-reading the title, and preserve the user's body verbatim below.
-        var header = $"_Filed from Glasswork feedback dialog — category: **{category}**_";
-        return string.IsNullOrEmpty(body) ? header : $"{header}\n\n{body}";
-    }
 }

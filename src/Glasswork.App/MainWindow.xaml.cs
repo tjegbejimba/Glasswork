@@ -1,8 +1,11 @@
 using System;
 using System.IO;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Glasswork.Core.Feedback;
 using Glasswork.Pages;
 
 // To learn more about WinUI, the WinUI project structure,
@@ -180,7 +183,7 @@ public sealed partial class MainWindow : Window
 
     private async void ShowFeedbackDialog()
     {
-        var dialog = new FeedbackDialog
+        var dialog = new FeedbackDialog(CaptureFeedbackContext())
         {
             XamlRoot = Content.XamlRoot
         };
@@ -188,5 +191,44 @@ public sealed partial class MainWindow : Window
         // Dialog files the issue directly via `gh issue create` and shows the result
         // (filed URL, or actionable error — gh missing, not authenticated, etc.) inline.
         await dialog.ShowAsync();
+    }
+
+    private FeedbackContext CaptureFeedbackContext()
+    {
+        // Page name is just the type name (e.g. "MyDayPage"); the full namespace is noise
+        // in a triage table.
+        string? pageName = null;
+        try
+        {
+            pageName = NavFrame.CurrentSourcePageType?.Name;
+        }
+        catch
+        {
+            // Defensive: never let context capture fail the feedback flow.
+        }
+
+        return new FeedbackContext(
+            PageName: pageName,
+            ActiveTaskId: App.ActiveTask.ActiveTaskId,
+            AppVersion: ResolveAppVersion(),
+            OsDescription: RuntimeInformation.OSDescription,
+            RuntimeVersion: RuntimeInformation.FrameworkDescription,
+            CapturedAtUtc: DateTimeOffset.UtcNow);
+    }
+
+    private static string ResolveAppVersion()
+    {
+        try
+        {
+            var asm = Assembly.GetExecutingAssembly();
+            // InformationalVersion includes any +commit suffix; fall back to assembly version.
+            var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrWhiteSpace(info)) return info;
+            return asm.GetName().Version?.ToString() ?? "unknown";
+        }
+        catch
+        {
+            return "unknown";
+        }
     }
 }
