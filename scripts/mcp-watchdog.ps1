@@ -75,29 +75,31 @@ function Write-Log {
 }
 
 function Invoke-Gh {
-    param([string[]]$Args)
-    $output = & gh @Args 2>&1
+    param([string[]]$GhArgs)
+    # Redirect stderr to null — gh writes a TTY spinner there that corrupts
+    # JSON parsing if merged into stdout.
+    $output = & gh @GhArgs 2>$null
     $code = $LASTEXITCODE
     return [pscustomobject]@{ Output = $output; ExitCode = $code }
 }
 
 function Get-IssueState {
     param([int]$Number)
-    $r = Invoke-Gh -Args @('issue', 'view', "$Number", '--repo', $Repo, '--json', 'state', '-q', '.state')
+    $r = Invoke-Gh -GhArgs @('issue', 'view', "$Number", '--repo', $Repo, '--json', 'state', '-q', '.state')
     if ($r.ExitCode -ne 0) { return $null }
     return ($r.Output | Out-String).Trim()
 }
 
 function Get-IssueAssignees {
     param([int]$Number)
-    $r = Invoke-Gh -Args @('issue', 'view', "$Number", '--repo', $Repo, '--json', 'assignees', '-q', '[.assignees[].login] | join(",")')
+    $r = Invoke-Gh -GhArgs @('issue', 'view', "$Number", '--repo', $Repo, '--json', 'assignees', '-q', '[.assignees[].login] | join(",")')
     if ($r.ExitCode -ne 0) { return '' }
     return ($r.Output | Out-String).Trim()
 }
 
 function Get-CopilotPrForIssue {
     param([int]$Number)
-    $r = Invoke-Gh -Args @('pr', 'list', '--repo', $Repo, '--author', 'app/copilot-swe-agent', '--state', 'open', '--json', 'number,title,body,isDraft,headRefName')
+    $r = Invoke-Gh -GhArgs @('pr', 'list', '--repo', $Repo, '--author', 'app/copilot-swe-agent', '--state', 'open', '--json', 'number,title,body,isDraft,headRefName')
     if ($r.ExitCode -ne 0) { return $null }
     $prs = ($r.Output | Out-String) | ConvertFrom-Json
     foreach ($pr in $prs) {
@@ -110,7 +112,7 @@ function Get-CopilotPrForIssue {
 
 function Get-PrChecksOk {
     param([int]$Number)
-    $r = Invoke-Gh -Args @('pr', 'checks', "$Number", '--repo', $Repo, '--json', 'name,state,conclusion')
+    $r = Invoke-Gh -GhArgs @('pr', 'checks', "$Number", '--repo', $Repo, '--json', 'name,state,conclusion')
     if ($r.ExitCode -ne 0) {
         # No checks present is OK
         return $true
@@ -179,14 +181,14 @@ function Merge-Pr {
     param($Pr, [int]$IssueNumber)
     if ($Pr.isDraft) {
         Write-Log "  PR #$($Pr.number) is draft — marking ready"
-        $r = Invoke-Gh -Args @('pr', 'ready', "$($Pr.number)", '--repo', $Repo)
+        $r = Invoke-Gh -GhArgs @('pr', 'ready', "$($Pr.number)", '--repo', $Repo)
         if ($r.ExitCode -ne 0) {
             Write-Log "  failed to mark ready: $($r.Output)" 'ERROR'
             return $false
         }
     }
     Write-Log "  squash-merging PR #$($Pr.number) (closes #$IssueNumber)"
-    $r = Invoke-Gh -Args @('pr', 'merge', "$($Pr.number)", '--repo', $Repo, '--squash', '--delete-branch')
+    $r = Invoke-Gh -GhArgs @('pr', 'merge', "$($Pr.number)", '--repo', $Repo, '--squash', '--delete-branch')
     if ($r.ExitCode -ne 0) {
         Write-Log "  merge failed: $($r.Output)" 'ERROR'
         return $false
@@ -201,12 +203,12 @@ function Merge-Pr {
 function Add-CopilotAssignee {
     param([int]$Number)
     Write-Log "assigning Copilot to #$Number"
-    $r = Invoke-Gh -Args @('issue', 'edit', "$Number", '--repo', $Repo, '--add-assignee', 'copilot-swe-agent')
+    $r = Invoke-Gh -GhArgs @('issue', 'edit', "$Number", '--repo', $Repo, '--add-assignee', 'copilot-swe-agent')
     if ($r.ExitCode -ne 0) {
         Write-Log "  assign failed: $($r.Output)" 'ERROR'
         return
     }
-    $r2 = Invoke-Gh -Args @('issue', 'comment', "$Number", '--repo', $Repo, '--body', $SteeringBody)
+    $r2 = Invoke-Gh -GhArgs @('issue', 'comment', "$Number", '--repo', $Repo, '--body', $SteeringBody)
     if ($r2.ExitCode -ne 0) {
         Write-Log "  steering comment failed: $($r2.Output)" 'WARN'
     }
@@ -241,6 +243,11 @@ try {
 
                 Write-Log "PR #$($pr.number) found for issue #$($m.Issue) (draft=$($pr.isDraft))"
 
+                if ($pr.isDraft) {
+                    Write-Log "  PR #$($pr.number) is still draft — Copilot not done yet, skipping"
+                    continue
+                }
+
                 if (-not (Get-PrChecksOk -Number $pr.number)) { continue }
 
                 $passed = Test-PrLocally -Pr $pr -TestProjects $m.TestProjects
@@ -249,7 +256,7 @@ try {
                 } else {
                     Write-Log "leaving PR #$($pr.number) for human review (tests failed)" 'WARN'
                     $note = "Watchdog ran ``dotnet test`` locally and saw failures. Leaving for human review. See ``.mcp-watchdog.log`` on tjegbejimba's machine."
-                    Invoke-Gh -Args @('pr', 'comment', "$($pr.number)", '--repo', $Repo, '--body', $note) | Out-Null
+                    Invoke-Gh -GhArgs @('pr', 'comment', "$($pr.number)", '--repo', $Repo, '--body', $note) | Out-Null
                     # Skip subsequent iterations for this issue by treating it as needing humans
                     # (we re-check assignees, so removing Copilot would stop further auto-action;
                     #  for safety we just continue and let the human decide).
