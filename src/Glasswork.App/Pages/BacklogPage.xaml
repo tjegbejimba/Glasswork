@@ -61,6 +61,8 @@
                                 <MenuFlyoutItem Text="Mark To Do" Click="SetTodo_Click" />
                                 <MenuFlyoutItem Text="Mark In Progress" Click="SetInProgress_Click" />
                                 <MenuFlyoutItem Text="Mark Done" Click="SetDone_Click" />
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem Text="Open in Obsidian" Click="OpenTaskInObsidian_Click" />
                             </MenuFlyout>
                         </Button.Flyout>
                     </Button>
@@ -113,6 +115,7 @@
         <DataTemplate x:Key="BacklogGroupHeaderTemplate">
             <Grid Padding="6,10,10,4" Background="Transparent"
                   Tapped="GroupHeader_Tapped"
+                  ContextRequested="GroupHeader_ContextRequested"
                   ColumnDefinitions="Auto,*,Auto">
                 <FontIcon x:Name="GroupHeaderChevron" Grid.Column="0" FontFamily="Segoe Fluent Icons"
                           Glyph="{Binding IsCollapsed, Converter={StaticResource ChevronGlyph}}"
@@ -169,6 +172,9 @@
             ItemTemplateSelector="{StaticResource BacklogRowSelector}"
             SelectionMode="None"
             IsItemClickEnabled="False">
+            <ListView.KeyboardAccelerators>
+                <KeyboardAccelerator Key="O" Modifiers="Control,Shift" Invoked="OpenInObsidian_Accelerator" />
+            </ListView.KeyboardAccelerators>
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
