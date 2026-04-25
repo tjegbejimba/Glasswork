@@ -379,25 +379,6 @@
                 </Grid>
 
                 <Grid x:Name="NotesContent">
-                    <VisualStateManager.VisualStateGroups>
-                        <VisualStateGroup x:Name="NotesModeStates">
-                            <VisualState x:Name="ReadState">
-                                <VisualState.Setters>
-                                    <Setter Target="NotesReadView.Visibility" Value="Visible" />
-                                    <Setter Target="NotesBox.Visibility" Value="Collapsed" />
-                                    <Setter Target="NotesEmptyHint.Visibility" Value="Collapsed" />
-                                </VisualState.Setters>
-                            </VisualState>
-                            <VisualState x:Name="EditState">
-                                <VisualState.Setters>
-                                    <Setter Target="NotesReadView.Visibility" Value="Collapsed" />
-                                    <Setter Target="NotesBox.Visibility" Value="Visible" />
-                                    <Setter Target="NotesEmptyHint.Visibility" Value="Collapsed" />
-                                </VisualState.Setters>
-                            </VisualState>
-                        </VisualStateGroup>
-                    </VisualStateManager.VisualStateGroups>
-
                     <controls:VaultMarkdownView x:Name="NotesReadView"
                                                 Loaded="OnNotesMarkdownLoaded"
                                                 Unloaded="OnNotesMarkdownUnloaded" />
