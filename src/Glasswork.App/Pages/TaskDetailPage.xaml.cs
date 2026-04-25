@@ -117,10 +117,16 @@ public sealed partial class TaskDetailPage : Page
 
     private void ApplyNotesMode(NotesEditMode mode)
     {
+        // Bypass VisualStateManager: the VisualStateGroups in XAML are attached
+        // to the inner NotesContent grid, not to a child of `this` (the Page),
+        // so VisualStateManager.GoToState(this, ...) silently no-ops. Direct
+        // visibility writes on the two named children are simpler and reliable.
+        // See issue #108.
         if (mode == NotesEditMode.Read)
         {
             NotesReadView.Markdown = Task.Notes ?? string.Empty;
-            VisualStateManager.GoToState(this, "ReadState", false);
+            NotesReadView.Visibility = Visibility.Visible;
+            NotesBox.Visibility = Visibility.Collapsed;
             var hasContent = !string.IsNullOrWhiteSpace(Task.Notes);
             NotesEmptyHint.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
             NotesEditIcon.Glyph = "\uE70F";
@@ -128,7 +134,8 @@ public sealed partial class TaskDetailPage : Page
         }
         else
         {
-            VisualStateManager.GoToState(this, "EditState", false);
+            NotesReadView.Visibility = Visibility.Collapsed;
+            NotesBox.Visibility = Visibility.Visible;
             NotesEmptyHint.Visibility = Visibility.Collapsed;
             NotesEditIcon.Glyph = "\uE73E";
             ToolTipService.SetToolTip(NotesEditButton, "Done (Ctrl+E)");
