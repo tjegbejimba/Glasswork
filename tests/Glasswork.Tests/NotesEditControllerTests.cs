@@ -139,4 +139,170 @@ public class NotesEditControllerTests
         c.UpdateBuffer(null);
         Assert.AreEqual(string.Empty, c.Buffer);
     }
+
+    // ─── M8: External-change classification (close agent-write loss) ─────────
+
+    [TestMethod]
+    public void Classify_ReadMode_DiskUnchanged_Ignore()
+    {
+        var c = new NotesEditController("v1");
+        Assert.AreEqual(NotesExternalChangeAction.Ignore, c.ClassifyExternalChange("v1"));
+    }
+
+    [TestMethod]
+    public void Classify_ReadMode_DiskChanged_SilentRefresh()
+    {
+        var c = new NotesEditController("v1");
+        Assert.AreEqual(NotesExternalChangeAction.SilentRefresh, c.ClassifyExternalChange("v2"));
+    }
+
+    [TestMethod]
+    public void Classify_EditMode_NoTyping_DiskChanged_SilentRefresh()
+    {
+        var c = new NotesEditController("v1");
+        c.EnterEdit();
+        // buffer == baseline (user hasn't typed anything yet)
+        Assert.AreEqual(NotesExternalChangeAction.SilentRefresh, c.ClassifyExternalChange("v2"));
+    }
+
+    [TestMethod]
+    public void Classify_EditMode_UserTyped_DiskChanged_Conflict()
+    {
+        var c = new NotesEditController("v1");
+        c.EnterEdit();
+        c.UpdateBuffer("user mid-sentence");
+        Assert.AreEqual(NotesExternalChangeAction.Conflict, c.ClassifyExternalChange("v2-from-agent"));
+    }
+
+    [TestMethod]
+    public void Classify_EditMode_UserTyped_DiskUnchanged_Ignore()
+    {
+        var c = new NotesEditController("v1");
+        c.EnterEdit();
+        c.UpdateBuffer("user typed");
+        Assert.AreEqual(NotesExternalChangeAction.Ignore, c.ClassifyExternalChange("v1"));
+    }
+
+    [TestMethod]
+    public void Classify_NullDiskValue_TreatedAsEmpty()
+    {
+        var c = new NotesEditController("v1");
+        Assert.AreEqual(NotesExternalChangeAction.SilentRefresh, c.ClassifyExternalChange(null));
+        var c2 = new NotesEditController(string.Empty);
+        Assert.AreEqual(NotesExternalChangeAction.Ignore, c2.ClassifyExternalChange(null));
+    }
+
+    [TestMethod]
+    public void ApplySilentRefresh_ReadMode_UpdatesBaseline()
+    {
+        var c = new NotesEditController("v1");
+        c.ApplySilentRefresh("v2");
+        Assert.AreEqual("v2", c.Baseline);
+        Assert.AreEqual(NotesEditMode.Read, c.Mode);
+    }
+
+    [TestMethod]
+    public void ApplySilentRefresh_EditMode_NoTyping_UpdatesBufferAndBaseline_StaysInEdit()
+    {
+        var c = new NotesEditController("v1");
+        c.EnterEdit();
+        c.ApplySilentRefresh("v2-from-agent");
+
+        Assert.AreEqual("v2-from-agent", c.Baseline);
+        Assert.AreEqual("v2-from-agent", c.Buffer, "Pristine buffer must follow disk so the user sees the agent's changes.");
+        Assert.AreEqual(NotesEditMode.Edit, c.Mode);
+    }
+
+    [TestMethod]
+    public void ApplyDiscardAndReload_ReplacesBufferWithDisk_TransitionsToRead()
+    {
+        var c = new NotesEditController("v1");
+        c.EnterEdit();
+        c.UpdateBuffer("user typed lots");
+        var transitions = new List<NotesEditMode>();
+        c.ModeChanged += (_, m) => transitions.Add(m);
+
+        var result = c.ApplyDiscardAndReload("v2-from-agent");
+
+        Assert.AreEqual("v2-from-agent", result);
+        Assert.AreEqual("v2-from-agent", c.Baseline);
+        Assert.AreEqual("v2-from-agent", c.Buffer);
+        Assert.AreEqual(NotesEditMode.Read, c.Mode);
+        CollectionAssert.AreEqual(new[] { NotesEditMode.Read }, transitions);
+    }
+
+    [TestMethod]
+    public void ApplyKeepAndOverwrite_UpdatesBaselineOnly_BufferAndModeUntouched()
+    {
+        var c = new NotesEditController("v1");
+        c.EnterEdit();
+        c.UpdateBuffer("user mid-sentence");
+        var transitions = new List<NotesEditMode>();
+        c.ModeChanged += (_, m) => transitions.Add(m);
+
+        c.ApplyKeepAndOverwrite("v2-from-agent");
+
+        Assert.AreEqual("v2-from-agent", c.Baseline,
+            "After 'keep mine', baseline must snap to the new disk content so the next external change doesn't re-trigger until it actually changes again.");
+        Assert.AreEqual("user mid-sentence", c.Buffer);
+        Assert.AreEqual(NotesEditMode.Edit, c.Mode);
+        Assert.AreEqual(0, transitions.Count, "Mode must not transition.");
+    }
+
+    [TestMethod]
+    public void ApplyKeepAndOverwrite_NextClassifyOnSameDisk_ReturnsIgnore()
+    {
+        var c = new NotesEditController("v1");
+        c.EnterEdit();
+        c.UpdateBuffer("user typed");
+        c.ApplyKeepAndOverwrite("v2-from-agent");
+
+        Assert.AreEqual(NotesExternalChangeAction.Ignore, c.ClassifyExternalChange("v2-from-agent"),
+            "Once snapped to v2, a subsequent watcher tick reading the same v2 must not re-fire the conflict.");
+    }
+
+    // ─── Tracer-bullet scenarios from the issue ──────────────────────────────
+
+    [TestMethod]
+    public void Scenario1_ReadMode_AgentAppendsLine_SilentRefresh()
+    {
+        var c = new NotesEditController("first line");
+        var classification = c.ClassifyExternalChange("first line\nsecond line");
+        Assert.AreEqual(NotesExternalChangeAction.SilentRefresh, classification);
+
+        c.ApplySilentRefresh("first line\nsecond line");
+        Assert.AreEqual("first line\nsecond line", c.Baseline);
+        Assert.AreEqual(NotesEditMode.Read, c.Mode);
+    }
+
+    [TestMethod]
+    public void Scenario2_EditMode_NoTyping_AgentAppendsLine_BufferUpdatesSilently()
+    {
+        var c = new NotesEditController("first line");
+        c.EnterEdit();
+        // user hasn't typed
+        var classification = c.ClassifyExternalChange("first line\nsecond line");
+        Assert.AreEqual(NotesExternalChangeAction.SilentRefresh, classification);
+
+        c.ApplySilentRefresh("first line\nsecond line");
+        Assert.AreEqual("first line\nsecond line", c.Buffer);
+        Assert.AreEqual("first line\nsecond line", c.Baseline);
+        Assert.AreEqual(NotesEditMode.Edit, c.Mode);
+    }
+
+    [TestMethod]
+    public void Scenario3_EditMode_UserTyped_AgentRewrites_ShowsConflict()
+    {
+        var c = new NotesEditController("first line");
+        c.EnterEdit();
+        c.UpdateBuffer("first line and my edits");
+
+        var classification = c.ClassifyExternalChange("first line\nagent appended");
+        Assert.AreEqual(NotesExternalChangeAction.Conflict, classification);
+
+        // Discard mine and reload → user sees disk
+        c.ApplyDiscardAndReload("first line\nagent appended");
+        Assert.AreEqual("first line\nagent appended", c.Buffer);
+        Assert.AreEqual(NotesEditMode.Read, c.Mode);
+    }
 }
