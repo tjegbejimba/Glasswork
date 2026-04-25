@@ -569,21 +569,7 @@ public sealed partial class TaskDetailPage : Page
         if (_isLoading) return;
         if (sender is not FrameworkElement fe || fe.DataContext is not SubTask sub) return;
 
-        if (sub.Due is null)
-        {
-            App.Vault.SetSubtaskDue(Task.Id, sub.Text, DateTime.Today);
-            var reloaded = App.Vault.Load(Task.Id);
-            if (reloaded is not null)
-            {
-                Task = reloaded;
-                BindSubtasks(reloaded.Subtasks);
-            }
-            try { App.Index.Refresh(); } catch { /* best-effort */ }
-        }
-        else
-        {
-            await PromptSetDueAsync(sub);
-        }
+        await PromptSetDueAsync(sub);
     }
 
     private async void DeleteSubtask_Click(object sender, RoutedEventArgs e)
@@ -916,6 +902,20 @@ public sealed partial class TaskDetailPage : Page
         var dueItem = new MenuFlyoutItem { Text = "Set due date..." };
         dueItem.Click += async (_, __) => await PromptSetDueAsync(sub);
         menu.Items.Add(dueItem);
+
+        // Clear due date (only shown when dated)
+        if (sub.Due.HasValue)
+        {
+            var clearDueItem = new MenuFlyoutItem { Text = "Clear due date" };
+            clearDueItem.Click += (_, __) =>
+            {
+                App.Vault.SetSubtaskDue(Task.Id, sub.Text, null);
+                var reloaded = App.Vault.Load(Task.Id);
+                if (reloaded is not null) ApplyTask(reloaded);
+                try { App.Index.Refresh(); } catch { /* best-effort */ }
+            };
+            menu.Items.Add(clearDueItem);
+        }
 
         // Edit text...
         var textItem = new MenuFlyoutItem { Text = "Edit text..." };
