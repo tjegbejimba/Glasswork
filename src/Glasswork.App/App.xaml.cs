@@ -1,17 +1,19 @@
 ﻿using System;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Threading;
+using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Services;
+using Microsoft.Windows.AppLifecycle;
 using Microsoft.UI.Xaml;
+using Windows.ApplicationModel.Activation;
 
 namespace Glasswork;
 
 public partial class App : Application
 {
     private Window? _window;
-    private static Mutex? _mutex;
+    private static AppInstance? _mainAppInstance;
 
     public const string AppUserModelId = "Glasswork.Desktop";
 
@@ -122,13 +124,24 @@ public partial class App : Application
 
     protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
     {
-        // Single-instance: if already running, just exit this instance
-        _mutex = new Mutex(true, @"Global\Glasswork.Desktop", out bool createdNew);
-        if (!createdNew)
+        // Single-instance via AppInstance: also enables forwarding protocol-activation
+        // URIs from a second instance to the already-running primary instance.
+        var currentInstance = AppInstance.GetCurrent();
+        var activationArgs = currentInstance.GetActivatedEventArgs();
+
+        _mainAppInstance = AppInstance.FindOrRegisterForKey("main");
+        if (!_mainAppInstance.IsCurrent)
         {
+            // Already running — forward the activation (carries the glasswork:// URI)
+            // and exit this instance.
+            _mainAppInstance.RedirectActivationToAsync(activationArgs).AsTask()
+                            .GetAwaiter().GetResult();
             Environment.Exit(0);
             return;
         }
+
+        // Primary instance: receive forwarded activations from any second instance.
+        _mainAppInstance.Activated += OnAppInstanceActivated;
 
         var vaultPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -209,9 +222,85 @@ public partial class App : Application
         BacklinksWatcher.BacklinksChanged += (s, e) => BacklinksChangedExternally?.Invoke(s, e);
         BacklinksWatcher.Start();
 
+        // Register glasswork:// URL scheme for this executable so links work even
+        // without MSIX packaging. Idempotent: re-running on every launch is cheap
+        // and ensures the path stays correct after the binary is moved.
+        RegisterUrlScheme();
+
         _window = new MainWindow();
         ApplyTheme(_window);
         _window.Activate();
+
+        // Navigate to the target if the app was cold-started via a glasswork:// URI.
+        var pendingUri = ExtractUri(activationArgs);
+        if (pendingUri is not null && _window is MainWindow mw)
+            mw.NavigateTo(pendingUri);
+    }
+
+    private static void OnAppInstanceActivated(AppInstance sender, AppActivationArguments args)
+    {
+        // Fired on a background thread — marshal UI work to the dispatcher.
+        var uri = ExtractUri(args);
+        if (uri is null) return;
+
+        var window = (Current as App)?._window;
+        window?.DispatcherQueue.TryEnqueue(() =>
+        {
+            window.Activate();
+            (window as MainWindow)?.NavigateTo(uri);
+        });
+    }
+
+    /// <summary>
+    /// Extract a <see cref="GlassworkUri"/> from activation args, handling both
+    /// Windows App SDK protocol activation and command-line URI arguments (used
+    /// by the registry-registered URL scheme for unpackaged apps).
+    /// </summary>
+    private static GlassworkUri? ExtractUri(AppActivationArguments args)
+    {
+        if (args.Kind == ExtendedActivationKind.Protocol &&
+            args.Data is IProtocolActivatedEventArgs proto)
+        {
+            return GlassworkUriParser.Parse(proto.Uri?.ToString());
+        }
+
+        // Fallback: when the URL scheme is registered via the registry the OS passes
+        // the URI as the first command-line argument to the executable.
+        foreach (var arg in Environment.GetCommandLineArgs())
+        {
+            var uri = GlassworkUriParser.Parse(arg);
+            if (uri is not null) return uri;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Register the <c>glasswork://</c> URL scheme under HKCU so that clicking a
+    /// glasswork:// link in any app cold-starts (or activates) Glasswork. This is
+    /// the standard registry-based scheme registration for unpackaged Win32 apps;
+    /// packaged (MSIX) deployments use the manifest declaration instead.
+    /// </summary>
+    private static void RegisterUrlScheme()
+    {
+        try
+        {
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exePath)) return;
+
+            using var clsKey = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(
+                @"Software\Classes\glasswork");
+            clsKey.SetValue("", "URL:Glasswork Protocol");
+            clsKey.SetValue("URL Protocol", "");
+
+            using var cmdKey = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(
+                @"Software\Classes\glasswork\shell\open\command");
+            cmdKey.SetValue("", $"\"{exePath}\" \"%1\"");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"glasswork:// URL scheme registration failed: {ex.Message}");
+        }
     }
 
     private static void OnTaskFileChanged(object? sender, string fileName)

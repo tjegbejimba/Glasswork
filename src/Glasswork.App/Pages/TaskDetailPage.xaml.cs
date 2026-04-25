@@ -636,6 +636,16 @@ public sealed partial class TaskDetailPage : Page
         await App.ObsidianLauncher.Open(vaultRelative);
     }
 
+    private void CopyTaskLink_Click(object sender, RoutedEventArgs e)
+    {
+        var uri = Glasswork.Core.Models.GlassworkUriParser.Build(
+            new Glasswork.Core.Models.GlassworkUri.Task(Task.Id));
+        var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        pkg.SetText(uri);
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+        ClipboardHint.Text = $"Copied — {uri}";
+    }
+
     private async void OpenArtifactInObsidian_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement fe || fe.Tag is not string artifactPath) return;
