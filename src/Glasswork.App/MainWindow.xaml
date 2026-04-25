@@ -65,13 +65,21 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
-            <Frame x:Name="NavFrame">
-                <Frame.ContentTransitions>
-                    <TransitionCollection>
-                        <NavigationThemeTransition />
-                    </TransitionCollection>
-                </Frame.ContentTransitions>
-            </Frame>
+            <Grid RowDefinitions="Auto,*">
+                <InfoBar x:Name="DeepLinkErrorBar"
+                         Grid.Row="0"
+                         IsOpen="False"
+                         IsClosable="True"
+                         Severity="Warning"
+                         Margin="8,8,8,0" />
+                <Frame x:Name="NavFrame" Grid.Row="1">
+                    <Frame.ContentTransitions>
+                        <TransitionCollection>
+                            <NavigationThemeTransition />
+                        </TransitionCollection>
+                    </Frame.ContentTransitions>
+                </Frame>
+            </Grid>
         </NavigationView>
 
         <!-- Footer status bar: vault path, task count, watcher state, last reload -->

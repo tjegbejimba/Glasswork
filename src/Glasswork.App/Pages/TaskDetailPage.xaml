@@ -527,6 +527,7 @@
                 <Button Content="Delete" Click="Delete_Click" />
                 <Button Content="Open in Obsidian" Click="OpenObsidian_Click" />
                 <Button Content="Copy task link" Click="CopyTaskLink_Click"
+                        AutomationProperties.Name="Copy task link"
                         ToolTipService.ToolTip="Copy glasswork:// deep-link to clipboard" />
             </StackPanel>
         </StackPanel>

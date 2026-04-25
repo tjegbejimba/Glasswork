@@ -198,17 +198,26 @@ public sealed partial class MainWindow : Window
         {
             case GlassworkUri.Task t:
                 var task = App.Vault.Load(t.TaskId);
-                if (task is null) return;
+                if (task is null)
+                {
+                    DeepLinkErrorBar.Title = "Task not found";
+                    DeepLinkErrorBar.Message = $"No task with id "{t.TaskId}" was found in the vault.";
+                    DeepLinkErrorBar.IsOpen = true;
+                    return;
+                }
+                DeepLinkErrorBar.IsOpen = false;
                 NavFrame.Navigate(typeof(TaskDetailPage), task);
                 // Don't clear the back-stack — the user may want to go back to their
                 // previous section after following a link.
                 break;
 
             case GlassworkUri.MyDay:
+                DeepLinkErrorBar.IsOpen = false;
                 NavigateToTopLevel(typeof(MyDayPage));
                 break;
 
             case GlassworkUri.Backlog:
+                DeepLinkErrorBar.IsOpen = false;
                 NavigateToTopLevel(typeof(BacklogPage));
                 break;
         }

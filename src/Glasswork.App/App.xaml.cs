@@ -280,6 +280,12 @@ public partial class App : Application
     /// glasswork:// link in any app cold-starts (or activates) Glasswork. This is
     /// the standard registry-based scheme registration for unpackaged Win32 apps;
     /// packaged (MSIX) deployments use the manifest declaration instead.
+    ///
+    /// Security: the OS passes the URI as <c>%1</c> on the command line. All URI
+    /// strings are validated and parsed by <see cref="GlassworkUriParser.Parse"/> before
+    /// any navigation action is taken — that method rejects anything that is not a
+    /// recognised <c>glasswork://</c> deep-link and is the security boundary against
+    /// malformed or malicious input.
     /// </summary>
     private static void RegisterUrlScheme()
     {
