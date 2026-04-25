@@ -59,6 +59,22 @@ public sealed partial class MainWindow : Window
 
     private void InitStatusBar()
     {
+        RefreshStatusBar();
+        App.TaskFileChangedExternally += (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                RefreshTaskCount();
+                UpdateLastReload();
+            });
+        };
+    }
+
+    /// <summary>
+    /// Refreshes all status bar elements. Call after a vault switch.
+    /// </summary>
+    internal void RefreshStatusBar()
+    {
         StatusVaultText.Text = App.Vault?.VaultPath ?? "(no vault)";
         var ver = System.Reflection.Assembly.GetExecutingAssembly()
             .GetName().Version;
@@ -70,14 +86,6 @@ public sealed partial class MainWindow : Window
                 : Windows.UI.Color.FromArgb(0xFF, 0xCA, 0x5C, 0x00)); // amber
         StatusWatcherText.Text = App.Watcher is not null ? "watching" : "watcher off";
         UpdateLastReload();
-        App.TaskFileChangedExternally += (_, _) =>
-        {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                RefreshTaskCount();
-                UpdateLastReload();
-            });
-        };
     }
 
     private void RefreshTaskCount()

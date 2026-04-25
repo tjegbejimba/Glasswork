@@ -14,6 +14,48 @@
                 Text="Settings"
                 Style="{ThemeResource TitleTextBlockStyle}" />
 
+            <!-- Vault Configuration -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="Vault"
+                    Style="{ThemeResource SubtitleTextBlockStyle}" />
+                <TextBlock
+                    Text="The folder Glasswork reads tasks from. Switching vaults resets per-task UI state (collapse overrides, etc.)."
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="4">
+                    <TextBox
+                        Grid.Column="0" Grid.Row="0"
+                        x:Name="VaultPathBox"
+                        Header="Path"
+                        IsReadOnly="True"
+                        PlaceholderText="(no vault configured)" />
+                    <Button
+                        Grid.Column="1" Grid.Row="0"
+                        x:Name="SwitchVaultButton"
+                        Content="Switch…"
+                        VerticalAlignment="Bottom"
+                        Margin="8,0,0,0"
+                        Click="SwitchVaultButton_Click" />
+
+                    <TextBlock
+                        Grid.Column="0" Grid.Row="1" Grid.ColumnSpan="2"
+                        x:Name="VaultInfoText"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        TextWrapping="Wrap" />
+
+                    <InfoBar
+                        Grid.Column="0" Grid.Row="2" Grid.ColumnSpan="2"
+                        x:Name="VaultWarningBar"
+                        IsOpen="False"
+                        IsClosable="True"
+                        Severity="Warning" />
+                </Grid>
+            </StackPanel>
+
+            <!-- Appearance -->
             <StackPanel Spacing="8">
                 <TextBlock
                     Text="Appearance"
@@ -31,6 +73,7 @@
                 </ComboBox>
             </StackPanel>
 
+            <!-- Azure DevOps -->
             <StackPanel Spacing="8">
                 <TextBlock
                     Text="Azure DevOps"
@@ -53,3 +96,4 @@
         </StackPanel>
     </ScrollViewer>
 </Page>
+
