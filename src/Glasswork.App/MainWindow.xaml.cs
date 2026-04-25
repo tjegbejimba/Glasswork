@@ -6,6 +6,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Glasswork.Core.Feedback;
+using Glasswork.Core.Models;
 using Glasswork.Pages;
 
 // To learn more about WinUI, the WinUI project structure,
@@ -187,6 +188,47 @@ public sealed partial class MainWindow : Window
         // back stack so "back" doesn't keep cycling through old detail pages.
         NavFrame.Navigate(pageType);
         NavFrame.BackStack.Clear();
+    }
+
+    /// <summary>
+    /// Navigate to the destination described by a <c>glasswork://</c> deep-link.
+    /// Safe to call from any thread (marshals to the dispatcher internally) and from
+    /// both cold-start and warm-start (forwarded <see cref="AppInstance.Activated"/>).
+    /// </summary>
+    public void NavigateTo(GlassworkUri uri)
+    {
+        DispatcherQueue.TryEnqueue(() => NavigateToCore(uri));
+    }
+
+    private void NavigateToCore(GlassworkUri uri)
+    {
+        switch (uri)
+        {
+            case GlassworkUri.Task t:
+                var task = App.Vault.Load(t.TaskId);
+                if (task is null)
+                {
+                    DeepLinkErrorBar.Title = "Task not found";
+                    DeepLinkErrorBar.Message = $"No task with id "{t.TaskId}" was found in the vault.";
+                    DeepLinkErrorBar.IsOpen = true;
+                    return;
+                }
+                DeepLinkErrorBar.IsOpen = false;
+                NavFrame.Navigate(typeof(TaskDetailPage), task);
+                // Don't clear the back-stack — the user may want to go back to their
+                // previous section after following a link.
+                break;
+
+            case GlassworkUri.MyDay:
+                DeepLinkErrorBar.IsOpen = false;
+                NavigateToTopLevel(typeof(MyDayPage));
+                break;
+
+            case GlassworkUri.Backlog:
+                DeepLinkErrorBar.IsOpen = false;
+                NavigateToTopLevel(typeof(BacklogPage));
+                break;
+        }
     }
 
     private async void ShowFeedbackDialog()
