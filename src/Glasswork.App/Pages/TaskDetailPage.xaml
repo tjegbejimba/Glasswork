@@ -327,11 +327,62 @@
                      Text="{x:Bind Task.Description, Mode=TwoWay}"
                      LostFocus="Field_LostFocus" />
 
-            <!-- Notes -->
-            <TextBox x:Name="NotesBox" Header="Notes" AcceptsReturn="True"
-                     MinHeight="80" TextWrapping="Wrap"
-                     Text="{x:Bind Task.Notes, Mode=TwoWay}"
-                     LostFocus="Field_LostFocus" />
+            <!-- Notes (read mode renders via VaultMarkdownView; Edit toggles to TextBox) -->
+            <StackPanel x:Name="NotesSection" Spacing="4">
+                <StackPanel.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="E" Modifiers="Control" Invoked="NotesEditAccelerator_Invoked" />
+                </StackPanel.KeyboardAccelerators>
+
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Notes"
+                               FontWeight="SemiBold"
+                               Opacity="0.8"
+                               VerticalAlignment="Center" />
+                    <Button Grid.Column="1" x:Name="NotesEditButton"
+                            Background="Transparent" BorderThickness="0"
+                            Padding="6"
+                            Click="NotesEditToggle_Click"
+                            ToolTipService.ToolTip="Edit Notes (Ctrl+E)">
+                        <FontIcon x:Name="NotesEditIcon" FontFamily="Segoe Fluent Icons" Glyph="&#xE70F;" FontSize="14" Opacity="0.7" />
+                    </Button>
+                </Grid>
+
+                <Grid x:Name="NotesContent">
+                    <VisualStateManager.VisualStateGroups>
+                        <VisualStateGroup x:Name="NotesModeStates">
+                            <VisualState x:Name="ReadState">
+                                <VisualState.Setters>
+                                    <Setter Target="NotesReadView.Visibility" Value="Visible" />
+                                    <Setter Target="NotesBox.Visibility" Value="Collapsed" />
+                                    <Setter Target="NotesEmptyHint.Visibility" Value="Collapsed" />
+                                </VisualState.Setters>
+                            </VisualState>
+                            <VisualState x:Name="EditState">
+                                <VisualState.Setters>
+                                    <Setter Target="NotesReadView.Visibility" Value="Collapsed" />
+                                    <Setter Target="NotesBox.Visibility" Value="Visible" />
+                                    <Setter Target="NotesEmptyHint.Visibility" Value="Collapsed" />
+                                </VisualState.Setters>
+                            </VisualState>
+                        </VisualStateGroup>
+                    </VisualStateManager.VisualStateGroups>
+
+                    <controls:VaultMarkdownView x:Name="NotesReadView"
+                                                Loaded="OnNotesMarkdownLoaded"
+                                                Unloaded="OnNotesMarkdownUnloaded" />
+                    <TextBlock x:Name="NotesEmptyHint"
+                               Text="No notes yet. Click the pencil to add some."
+                               Opacity="0.5"
+                               FontStyle="Italic"
+                               Visibility="Collapsed" />
+                    <TextBox x:Name="NotesBox" AcceptsReturn="True"
+                             MinHeight="120" TextWrapping="Wrap"
+                             Text="{x:Bind Task.Notes, Mode=TwoWay}"
+                             KeyDown="NotesBox_KeyDown"
+                             LostFocus="Field_LostFocus"
+                             Visibility="Collapsed" />
+                </Grid>
+            </StackPanel>
 
             <!-- Artifacts (slice 2 — agent-produced markdown work-products) -->
             <StackPanel x:Name="ArtifactsSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
