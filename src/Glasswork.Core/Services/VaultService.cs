@@ -159,6 +159,75 @@ public class VaultService
     }
 
     /// <summary>
+    /// Targeted edit: set or clear the <c>due</c> metadata on a subtask without rewriting
+    /// the rest of the file. When <paramref name="due"/> is non-null, inserts or replaces
+    /// the <c>- due: yyyy-MM-dd</c> line in the subtask's metadata block (immediately after
+    /// the matching <c>### [ ]</c> header, before any other metadata lines if no due exists,
+    /// or in-place if one does). When null, removes the existing line if present.
+    /// No-op if the title is not found or the value is already in the desired state.
+    /// </summary>
+    public void SetSubtaskDue(string taskId, string subtaskTitle, DateTime? due)
+    {
+        var path = GetFilePath(taskId);
+        if (!File.Exists(path)) return;
+
+        var content = File.ReadAllText(path);
+        var newline = content.Contains("\r\n") ? "\r\n" : "\n";
+        var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+
+        var headerPattern = new System.Text.RegularExpressions.Regex(
+            @"^### \[[ xX]\] " + System.Text.RegularExpressions.Regex.Escape(subtaskTitle) + @"\s*$");
+        var metaLinePattern = new System.Text.RegularExpressions.Regex(@"^- ([a-z_][a-z0-9_]*): (.*)$");
+
+        int headerIdx = -1;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (headerPattern.IsMatch(lines[i]))
+            {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) return;
+
+        int metaEnd = headerIdx;
+        int existingDueIdx = -1;
+        for (int i = headerIdx + 1; i < lines.Count; i++)
+        {
+            var m = metaLinePattern.Match(lines[i]);
+            if (!m.Success) break;
+            metaEnd = i;
+            if (m.Groups[1].Value == "due") existingDueIdx = i;
+        }
+
+        if (due is { } d)
+        {
+            var newLine = $"- due: {d:yyyy-MM-dd}";
+            if (existingDueIdx >= 0)
+            {
+                if (lines[existingDueIdx] == newLine) return;
+                lines[existingDueIdx] = newLine;
+            }
+            else
+            {
+                lines.Insert(metaEnd + 1, newLine);
+            }
+        }
+        else
+        {
+            if (existingDueIdx < 0) return;
+            lines.RemoveAt(existingDueIdx);
+        }
+
+        var hadTrailingNewline = content.EndsWith('\n');
+        var rebuilt = string.Join(newline, lines);
+        if (hadTrailingNewline && !rebuilt.EndsWith(newline))
+            rebuilt += newline;
+        _selfWrites?.RegisterWrite(path);
+        File.WriteAllText(path, rebuilt);
+    }
+
+    /// <summary>
     /// <summary>
     /// Targeted edit: set or clear the <c>ado_link</c>/<c>ado_title</c> frontmatter keys without
     /// rewriting any other frontmatter keys or the body. When <paramref name="adoId"/> is non-null,
