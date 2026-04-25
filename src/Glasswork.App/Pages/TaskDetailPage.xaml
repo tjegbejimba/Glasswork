@@ -389,6 +389,9 @@
                                Visibility="Collapsed" />
                     <TextBox x:Name="NotesBox" AcceptsReturn="True"
                              MinHeight="120" TextWrapping="Wrap"
+                             PlaceholderText="Add notes in markdown..."
+                             BorderThickness="1"
+                             BorderBrush="{ThemeResource TextControlBorderBrush}"
                              Text="{x:Bind Task.Notes, Mode=TwoWay}"
                              KeyDown="NotesBox_KeyDown"
                              LostFocus="Field_LostFocus"

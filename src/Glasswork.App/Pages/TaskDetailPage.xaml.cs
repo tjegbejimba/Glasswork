@@ -139,6 +139,8 @@ public sealed partial class TaskDetailPage : Page
             NotesEmptyHint.Visibility = Visibility.Collapsed;
             NotesEditIcon.Glyph = "\uE73E";
             ToolTipService.SetToolTip(NotesEditButton, "Done (Ctrl+E)");
+            // Force layout so the TextBox is in the tree before we focus it.
+            NotesContent.UpdateLayout();
             NotesBox.Focus(FocusState.Programmatic);
             NotesBox.SelectionStart = NotesBox.Text?.Length ?? 0;
         }
