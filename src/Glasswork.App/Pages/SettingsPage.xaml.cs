@@ -3,7 +3,6 @@
 
 using System;
 using System.IO;
-using System.Linq;
 using Glasswork.Core.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -44,8 +43,8 @@ public sealed partial class SettingsPage : Page
 
         try
         {
-            var taskCount = Directory.GetFiles(path, "*.md", SearchOption.TopDirectoryOnly)
-                .Count(f => !Path.GetFileName(f).StartsWith('_'));
+            // Delegate counting to VaultService so the filtering rules stay in one place.
+            var taskCount = App.Vault?.LoadAll().Count ?? 0;
             var lastWrite = Directory.GetLastWriteTime(path);
             VaultInfoText.Text = $"{taskCount} task file{(taskCount == 1 ? "" : "s")} · last modified {lastWrite:g}";
         }
@@ -59,6 +58,7 @@ public sealed partial class SettingsPage : Page
     {
         var picker = new FolderPicker();
         picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.ComputerFolder;
+        // WinRT requires at least one entry in FileTypeFilter even for folder pickers.
         picker.FileTypeFilter.Add("*");
 
         // WinUI 3 requires the picker to be associated with the window handle.

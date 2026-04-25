@@ -248,7 +248,8 @@ public partial class App : Application
             throw new ArgumentException("Vault path must not be empty.", nameof(newVaultPath));
 
         UiState.Set(VaultPathKey, newVaultPath);
-        // Reset per-task UI state so stale collapse/sort entries from the old vault are gone.
+        // Remove all collapsed-task overrides — they're keyed by task ID which is vault-relative,
+        // so every entry from the old vault would be stale in the new one.
         UiState.RemoveKeysNotIn(CollapsedTaskKeyPrefix, System.Array.Empty<string>());
         UiState.Save();
 
