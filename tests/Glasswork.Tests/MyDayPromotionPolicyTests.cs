@@ -61,6 +61,19 @@ public class MyDayPromotionPolicyTests
     }
 
     [TestMethod]
+    public void IsTaskInMyDayToday_PinnedMyDay_StatusDone_ReturnsFalse()
+    {
+        // Done tasks belong in Recently Completed, not Today's tasks — even when pinned via my_day.
+        var task = new GlassworkTask
+        {
+            Id = "t-done-pinned",
+            Status = GlassworkTask.Statuses.Done,
+            MyDay = DateTime.Today,
+        };
+        Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
     public void IsTaskInMyDayToday_OneFlaggedSubtask_ReturnsTrue()
     {
         var task = new GlassworkTask
@@ -124,6 +137,49 @@ public class MyDayPromotionPolicyTests
             MyDay = DateTime.Today,
         };
         var dismissed = new HashSet<string> { "t8" };
+        Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, dismissed));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_VirtuallyPromotedThenDismissed_ReturnsFalse()
+    {
+        // #97 case 1: parent promoted only by a flagged subtask. With the parent's id
+        // in dismissedToday, IsTaskInMyDayToday must return false so the parent
+        // disappears from My Day immediately and stays gone on refresh.
+        var parent = new GlassworkTask { Id = "p-virtual" };
+        parent.Subtasks.Add(new SubTask { Text = "promoter", Metadata = new() { ["my_day"] = "true" } });
+        var dismissed = new HashSet<string> { "p-virtual" };
+
+        Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(parent, Today, dismissed));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_VirtuallyPromoted_NotDismissed_ReturnsTrue()
+    {
+        // #97 case 2: same parent without the dismissed-today entry promotes again
+        // (the dismiss key is date-scoped, so "tomorrow" naturally re-promotes).
+        var parent = new GlassworkTask { Id = "p-virtual" };
+        parent.Subtasks.Add(new SubTask { Text = "promoter", Metadata = new() { ["my_day"] = "true" } });
+
+        Assert.IsTrue(MyDayPromotionPolicy.IsTaskInMyDayToday(parent, Today, NoDismissals));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_PinnedAndDueToday_Dismissed_ReturnsFalse()
+    {
+        // #97 case 3: directly-pinned task that is also due today. Once the command
+        // both clears my_day AND sets dismiss, the task must NOT bounce back via the
+        // due-today rule. Modeling that here as: my_day cleared (null) + id in
+        // dismissedToday + task still due today. Predicate must return false.
+        var task = new GlassworkTask
+        {
+            Id = "p-pinned",
+            MyDay = null,
+            Due = DateTime.Today,
+            Status = GlassworkTask.Statuses.Todo,
+        };
+        var dismissed = new HashSet<string> { "p-pinned" };
+
         Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, dismissed));
     }
 

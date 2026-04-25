@@ -18,6 +18,9 @@ public static class MyDayPromotionPolicy
     {
         if (dismissedToday.Contains(task.Id)) return false;
 
+        // Done tasks belong in Recently Completed, never Today's tasks.
+        if (task.Status == GlassworkTask.Statuses.Done) return false;
+
         // Direct pin: MyDay frontmatter is set (any non-null value).
         if (task.MyDay.HasValue) return true;
 

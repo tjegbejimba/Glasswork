@@ -179,6 +179,19 @@ public partial class GlassworkTask : ObservableObject
     /// True when a card layout should be rendered for this task in lists (active and not collapsed).
     /// </summary>
     public bool ShowCardDetails => IsActive && !IsManuallyCollapsed;
+
+    /// <summary>
+    /// Subtasks that should render inline beneath this task on the My Day surface — the
+    /// flagged or due-today subtasks driving virtual promotion (ADR 0008). Populated by
+    /// <see cref="Glasswork.Core.Services.MyDayPromotionPolicy.TodaysSubtasks"/> at refresh
+    /// time and consumed by the My Day card template. Transient (not serialized).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasTodaysSubtasks))]
+    public partial System.Collections.Generic.IReadOnlyList<SubTask>? TodaysSubtasks { get; set; }
+
+    /// <summary>True when there is at least one subtask to render inline in My Day.</summary>
+    public bool HasTodaysSubtasks => TodaysSubtasks is { Count: > 0 };
 }
 
 /// <summary>
