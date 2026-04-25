@@ -1268,10 +1268,8 @@ public sealed class MyDayBrushConverter : IValueConverter
     {
         if (value is bool b && b)
         {
-            // Active: prefer system accent if available, fall back to a fixed accent color.
-            if (Application.Current.Resources.TryGetValue("SystemAccentColor", out var accent) && accent is Color c)
-                return new SolidColorBrush(c);
-            return new SolidColorBrush(Color.FromArgb(0xFF, 0x00, 0x78, 0xD4));
+            // Active: sunny gold to match the sun glyph.
+            return new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0xC1, 0x07));
         }
         return new SolidColorBrush(Color.FromArgb(0x80, 0x80, 0x80, 0x80));
     }
