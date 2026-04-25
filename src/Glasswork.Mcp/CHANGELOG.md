@@ -5,7 +5,17 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.3.0] — 2026-04-24
+## [0.3.0] — 2026-04-25
+
+### Fixed
+
+- **Bug 1 (stdout corruption)**: `Host.CreateApplicationBuilder` registered a default console logger that wrote to stdout, corrupting the stdio JSON-RPC transport. All Microsoft.Extensions.Hosting log providers are now cleared on startup and replaced with a console provider configured to write exclusively to stderr (`LogToStandardErrorThreshold = LogLevel.Trace`). MCP clients (Copilot CLI, Claude Desktop) now receive only valid JSON-RPC frames on stdout.
+- **Bug 2 (wrong task directory)**: `GlassworkTools` was initialising `VaultService` with the vault root path supplied by `GLASSWORK_VAULT`, causing `list_tasks`, `add_task`, `get_task`, and `add_artifact` to scan/write in the vault root instead of the `wiki/todo/` subdirectory where Glasswork tasks actually live. `GlassworkTools` now computes the task directory as `<GLASSWORK_VAULT>/wiki/todo/` and passes that to `VaultService` and `SelfWriteCoordinator`.
+- **Bug 3 (stale version)**: Hard-coded server version in `Program.cs` and `Glasswork.Mcp.csproj` was stuck at `0.2.0` after M3 shipped. Both have been updated to `0.3.0`.
+
+---
+
+## [0.3.0-preview] — 2026-04-24
 
 ### Added
 
