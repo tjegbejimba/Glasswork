@@ -25,6 +25,7 @@ public sealed partial class TaskDetailPage : Page
     private bool _isLoading;
     private bool _suppressNextNotesSave;
     private NotesEditController _notesEdit = new(string.Empty);
+    private string _pendingDiskNotes = string.Empty;
 
     public TaskDetailPage()
     {
@@ -106,6 +107,10 @@ public sealed partial class TaskDetailPage : Page
 
         _notesEdit = new NotesEditController(task.Notes);
         ApplyNotesMode(NotesEditMode.Read);
+        // Fresh task → discard any stale conflict banner state from a previous task.
+        NotesConflictBanner.IsOpen = false;
+        ReloadBanner.IsOpen = false;
+        _pendingDiskNotes = string.Empty;
 
         _isLoading = false;
     }
@@ -331,8 +336,57 @@ public sealed partial class TaskDetailPage : Page
     private void OnFileChangedExternally(object? sender, string fileName)
     {
         if (!App.ActiveTask.IsActive(fileName)) return;
-        // Watcher fires on a thread-pool thread; show the banner on the UI thread.
-        DispatcherQueue.TryEnqueue(() => ReloadBanner.IsOpen = true);
+        // Watcher fires on a thread-pool thread; marshal to UI thread before
+        // touching the model or any banners.
+        DispatcherQueue.TryEnqueue(HandleExternalFileChange);
+    }
+
+    private void HandleExternalFileChange()
+    {
+        var id = Task?.Id;
+        if (string.IsNullOrEmpty(id)) return;
+
+        // Reload to compare. We never blanket-replace Task here — that would
+        // clobber unsaved Title/Description/etc. edits.
+        var fresh = App.Vault.Load(id);
+        if (fresh is null)
+        {
+            // File may have been deleted; fall back to the legacy banner.
+            ReloadBanner.IsOpen = true;
+            return;
+        }
+
+        var newDiskNotes = fresh.Notes ?? string.Empty;
+        var classification = _notesEdit.ClassifyExternalChange(newDiskNotes);
+
+        switch (classification)
+        {
+            case NotesExternalChangeAction.SilentRefresh:
+                _notesEdit.ApplySilentRefresh(newDiskNotes);
+                Task.Notes = newDiskNotes;
+                if (_notesEdit.Mode == NotesEditMode.Edit)
+                    NotesBox.Text = newDiskNotes;
+                else
+                    NotesReadView.Markdown = newDiskNotes;
+                // Spec (M8): silent — no banner. We accept that a coincident
+                // change to a non-Notes field will not surface its own banner.
+                // Agent edits in practice target Notes; non-Notes external
+                // edits remain covered by the Ignore branch below.
+                break;
+
+            case NotesExternalChangeAction.Conflict:
+                _pendingDiskNotes = newDiskNotes;
+                NotesConflictBanner.IsOpen = true;
+                break;
+
+            case NotesExternalChangeAction.Ignore:
+            default:
+                // Notes unchanged on disk; whatever differs is non-Notes
+                // (Title, Status, Subtasks, …). Surface the legacy banner so
+                // the user can choose Reload vs Keep my version.
+                ReloadBanner.IsOpen = true;
+                break;
+        }
     }
 
     private void OnArtifactChangedExternally(object? sender, ArtifactChangedEventArgs e)
@@ -371,6 +425,42 @@ public sealed partial class TaskDetailPage : Page
     {
         // Dismiss only — the next Save() will overwrite the on-disk change.
         ReloadBanner.IsOpen = false;
+    }
+
+    private void NotesConflictDiscard_Click(object sender, RoutedEventArgs e)
+    {
+        // Discard mine and reload: replace TextBox + baseline with disk and
+        // transition back to read mode.
+        var disk = _pendingDiskNotes;
+        _suppressNextNotesSave = true;
+        _notesEdit.ApplyDiscardAndReload(disk);
+        Task.Notes = disk;
+        NotesBox.Text = disk;
+        ApplyNotesMode(NotesEditMode.Read);
+        NotesConflictBanner.IsOpen = false;
+        _pendingDiskNotes = string.Empty;
+    }
+
+    private void NotesConflictKeep_Click(object sender, RoutedEventArgs e)
+    {
+        // Keep mine and overwrite on save: snap baseline to disk so the next
+        // watcher tick reading the same content does not re-fire the conflict.
+        // The user's buffer (and edit mode) are preserved. The eventual Save()
+        // path goes through Vault.Save → SelfWriteCoordinator, so the
+        // overwrite will not bounce back as a new external change.
+        _notesEdit.ApplyKeepAndOverwrite(_pendingDiskNotes);
+        NotesConflictBanner.IsOpen = false;
+        _pendingDiskNotes = string.Empty;
+    }
+
+    private async void NotesConflictOpenObsidian_Click(object sender, RoutedEventArgs e)
+    {
+        // Build the vault-relative path to the active task file and let the
+        // user resolve in Obsidian. Banner stays open until they decide.
+        var taskPath = Path.Combine(App.Vault.VaultPath, $"{Task.Id}.md");
+        var vaultRelative = ToVaultRelativePath(taskPath);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
     }
 
     private void Field_LostFocus(object sender, RoutedEventArgs e)

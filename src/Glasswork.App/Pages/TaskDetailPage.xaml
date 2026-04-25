@@ -31,6 +31,23 @@
                 </StackPanel>
             </InfoBar>
 
+            <!-- Notes conflict banner (M8 / ADR 0006 §5): shown only when the
+                 user has typed mid-sentence AND the Notes section was changed
+                 externally. Other field-level external changes still surface
+                 via ReloadBanner above. -->
+            <InfoBar x:Name="NotesConflictBanner"
+                     IsOpen="False"
+                     IsClosable="False"
+                     Severity="Warning"
+                     Title="Notes was changed externally"
+                     Message="Someone (probably an agent) changed this task's Notes while you were editing.">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+                    <Button Content="Discard mine and reload" Click="NotesConflictDiscard_Click" />
+                    <Button Content="Keep mine and overwrite on save" Click="NotesConflictKeep_Click" />
+                    <Button Content="Open Obsidian to merge" Click="NotesConflictOpenObsidian_Click" />
+                </StackPanel>
+            </InfoBar>
+
             <InfoBar x:Name="ObsidianInstallBanner"
                      IsOpen="False"
                      IsClosable="True"
