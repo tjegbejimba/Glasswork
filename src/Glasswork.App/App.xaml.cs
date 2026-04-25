@@ -4,8 +4,8 @@ using System.Runtime.InteropServices;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Services;
-using Microsoft.Windows.AppLifecycle;
 using Microsoft.UI.Xaml;
+using Microsoft.Windows.AppLifecycle;
 using Windows.ApplicationModel.Activation;
 
 namespace Glasswork;
@@ -67,6 +67,13 @@ public partial class App : Application
     /// UI state key for the app theme. Values: "system" (default), "light", "dark".
     /// </summary>
     public const string ThemeKey = "app.theme";
+
+    /// <summary>
+    /// UI state key for the configured vault path.
+    /// Matches the key used by <c>Glasswork.Mcp.VaultDiscovery</c> so that both
+    /// the desktop app and the MCP server read from the same location.
+    /// </summary>
+    public const string VaultPathKey = "vault.path";
 
     /// <summary>
     /// Apply the persisted theme (or default System) to the given window's root content.
@@ -143,40 +150,7 @@ public partial class App : Application
         // Primary instance: receive forwarded activations from any second instance.
         _mainAppInstance.Activated += OnAppInstanceActivated;
 
-        var vaultPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Wiki", "wiki", "todo");
-
-        SelfWrites = new SelfWriteCoordinator(vaultPath);
-        Vault = new VaultService(vaultPath, SelfWrites);
-        Tasks = new TaskService(Vault);
-        Index = new IndexService(Vault);
-        // FileSystemArtifactStore wants the vault root (the folder containing wiki/todo/),
-        // not the todo folder itself. This same path is the root the user has registered
-        // with Obsidian, so the launcher uses it too. (Glasswork currently assumes the
-        // Obsidian vault root == ~/Wiki; making this configurable is tracked separately.)
-        var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
-        Artifacts = new FileSystemArtifactStore(vaultRoot);
-        ObsidianLauncher = new ObsidianLauncher(vaultRoot);
-
-        // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
-        // that mention a Glasswork task via [[stem]] / [[stem|alias]]. Built
-        // once at launch; B3 will add a watcher for incremental updates.
-        var backlinkIndex = new BacklinkIndex();
-        try { backlinkIndex.Build(vaultRoot); }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Backlink index build failed: {ex.Message}"); }
-        BacklinkIndex = backlinkIndex;
-
-        // One-shot V1 → V2 migration of any pre-existing files. Idempotent: V2 files
-        // are skipped, so re-running on every launch is cheap. New files written by
-        // FrontmatterParser.Serialize are V2 from birth, so this only matters for files
-        // that pre-date the V2 default (or were written by an external tool).
-        try { Vault.MigrateAllToV2(); }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"V2 migration failed: {ex.Message}"); }
-
-        // UI state: per-machine, per-user JSON file under %LocalAppData%\Glasswork\.
-        // Writes are coalesced through a 500ms debouncer; callers just call UiState.Set
-        // and let the debouncer flush to disk. See ADR 0001.
+        // UI state must be initialised first so that vault path can be read from it.
         var uiStateImpl = new JsonFileUiStateService(JsonFileUiStateService.DefaultFilePath());
         UiState = uiStateImpl;
         _uiStateDebouncer = new Debouncer(TimeSpan.FromMilliseconds(500), () =>
@@ -184,6 +158,69 @@ public partial class App : Application
             try { uiStateImpl.Save(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"UI state save failed: {ex.Message}"); }
         });
+
+        // Resolve vault path: persisted setting wins; fall back to the hard-coded default
+        // so first-run behaviour is unchanged until the user picks a different vault.
+        var persistedVaultPath = uiStateImpl.Get<string>(VaultPathKey);
+        var vaultPath = !string.IsNullOrWhiteSpace(persistedVaultPath) && Directory.Exists(persistedVaultPath)
+            ? persistedVaultPath
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Wiki", "wiki", "todo");
+
+        InitVaultServices(vaultPath, uiStateImpl);
+
+        // Register glasswork:// URL scheme for this executable so links work even
+        // without MSIX packaging. Idempotent: re-running on every launch is cheap
+        // and ensures the path stays correct after the binary is moved.
+        RegisterUrlScheme();
+
+        _window = new MainWindow();
+        ApplyTheme(_window);
+        _window.Activate();
+
+        // Navigate to the target if the app was cold-started via a glasswork:// URI.
+        var pendingUri = ExtractUri(activationArgs);
+        if (pendingUri is not null && _window is MainWindow mw)
+            mw.NavigateTo(pendingUri);
+    }
+
+    /// <summary>
+    /// Initialises (or reinitialises) all vault-dependent services for the given path.
+    /// Tears down existing watchers before rebuilding so that switching vaults is safe.
+    /// </summary>
+    /// <param name="vaultPath">Absolute path to the Glasswork todo directory.</param>
+    /// <param name="uiStateImpl">The already-initialised UI state service, used for GC.</param>
+    private static void InitVaultServices(string vaultPath, JsonFileUiStateService uiStateImpl)
+    {
+        // Tear down existing watchers (no-op on first launch).
+        Watcher?.Stop();
+        ArtifactsWatcher?.Stop();
+        BacklinksWatcher?.Stop();
+
+        SelfWrites = new SelfWriteCoordinator(vaultPath);
+        Vault = new VaultService(vaultPath, SelfWrites);
+        Tasks = new TaskService(Vault);
+        Index = new IndexService(Vault);
+
+        // FileSystemArtifactStore wants the vault root (the folder containing wiki/todo/),
+        // not the todo folder itself. This same path is the root the user has registered
+        // with Obsidian, so the launcher uses it too.
+        var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
+        Artifacts = new FileSystemArtifactStore(vaultRoot);
+        ObsidianLauncher = new ObsidianLauncher(vaultRoot);
+
+        // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
+        // that mention a Glasswork task via [[stem]] / [[stem|alias]].
+        var backlinkIndex = new BacklinkIndex();
+        try { backlinkIndex.Build(vaultRoot); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Backlink index build failed: {ex.Message}"); }
+        BacklinkIndex = backlinkIndex;
+
+        // One-shot V1 → V2 migration of any pre-existing files. Idempotent: V2 files
+        // are skipped, so re-running on every launch is cheap.
+        try { Vault.MigrateAllToV2(); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"V2 migration failed: {ex.Message}"); }
 
         // GC stale per-task UI state entries (e.g. collapse overrides for tasks the
         // user has since deleted from the vault). Cheap: O(state) + one vault scan.
@@ -202,8 +239,6 @@ public partial class App : Application
 
         // File watcher: external (Obsidian / agent) edits to task files trigger
         // a debounced index regeneration and notify any open page.
-        // FileSystemWatcher events fire on thread-pool threads — anything
-        // touching UI in a subscriber must marshal via DispatcherQueue.
         _indexDebouncer = new Debouncer(TimeSpan.FromMilliseconds(500), () =>
         {
             try { Index.Refresh(); }
@@ -221,20 +256,28 @@ public partial class App : Application
         BacklinksWatcher = new BacklinksWatcher(vaultRoot, BacklinkIndex);
         BacklinksWatcher.BacklinksChanged += (s, e) => BacklinksChangedExternally?.Invoke(s, e);
         BacklinksWatcher.Start();
+    }
 
-        // Register glasswork:// URL scheme for this executable so links work even
-        // without MSIX packaging. Idempotent: re-running on every launch is cheap
-        // and ensures the path stays correct after the binary is moved.
-        RegisterUrlScheme();
+    /// <summary>
+    /// Persists <paramref name="newVaultPath"/> to <see cref="UiState"/>, tears down all
+    /// vault-dependent services, and rebuilds them for the new path.
+    /// Resets per-task UI state (collapse overrides, etc.) because task IDs are path-relative
+    /// and would be stale after a vault switch.
+    /// </summary>
+    /// <param name="newVaultPath">Absolute path to the new Glasswork todo directory.</param>
+    public static void SwitchVault(string newVaultPath)
+    {
+        if (string.IsNullOrWhiteSpace(newVaultPath))
+            throw new ArgumentException("Vault path must not be empty.", nameof(newVaultPath));
 
-        _window = new MainWindow();
-        ApplyTheme(_window);
-        _window.Activate();
+        UiState.Set(VaultPathKey, newVaultPath);
+        // Remove all collapsed-task overrides — they're keyed by task ID which is vault-relative,
+        // so every entry from the old vault would be stale in the new one.
+        UiState.RemoveKeysNotIn(CollapsedTaskKeyPrefix, System.Array.Empty<string>());
+        UiState.Save();
 
-        // Navigate to the target if the app was cold-started via a glasswork:// URI.
-        var pendingUri = ExtractUri(activationArgs);
-        if (pendingUri is not null && _window is MainWindow mw)
-            mw.NavigateTo(pendingUri);
+        var uiStateImpl = (JsonFileUiStateService)UiState;
+        InitVaultServices(newVaultPath, uiStateImpl);
     }
 
     private static void OnAppInstanceActivated(AppInstance sender, AppActivationArguments args)

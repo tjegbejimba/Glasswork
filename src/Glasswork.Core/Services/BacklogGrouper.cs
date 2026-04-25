@@ -51,7 +51,8 @@ public static class BacklogGrouper
                 key: group.Key,
                 totalCount: group.Count(),
                 isCollapsed: collapsed,
-                adoUrl: AdoLinkResolver.TryResolve(rawDisplay, adoBaseUrl));
+                adoUrl: AdoLinkResolver.TryResolve(rawDisplay, adoBaseUrl),
+                rawParent: rawDisplay);
             rows.Add(header);
             if (!collapsed)
             {

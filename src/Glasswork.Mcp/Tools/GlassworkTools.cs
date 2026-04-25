@@ -23,7 +23,7 @@ public sealed class GlassworkTools
 
     public GlassworkTools(VaultContext vaultContext, McpLogger? logger = null)
     {
-        _vaultPath = vaultContext.VaultPath;
+        _vaultPath = Path.Combine(vaultContext.VaultPath, "wiki", "todo");
         _selfWrites = new SelfWriteCoordinator(_vaultPath);
         _vault = new VaultService(_vaultPath, _selfWrites);
         _logger = logger;

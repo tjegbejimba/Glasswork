@@ -17,6 +17,9 @@
 
     <ScrollViewer Padding="32">
         <StackPanel Spacing="16">
+            <StackPanel.KeyboardAccelerators>
+                <KeyboardAccelerator Key="O" Modifiers="Control,Shift" Invoked="OpenInObsidian_Accelerator" />
+            </StackPanel.KeyboardAccelerators>
 
             <!-- Reload banner: shown when the open file is changed externally -->
             <InfoBar x:Name="ReloadBanner"
@@ -55,10 +58,20 @@
                      Title="Obsidian couldn't be opened"
                      Message="Install Obsidian or register the obsidian:// protocol to enable Open in Obsidian." />
 
-            <!-- Title -->
-            <TextBox x:Name="TitleBox" Header="Title" FontSize="18"
-                     Text="{x:Bind Task.Title, Mode=TwoWay}"
-                     LostFocus="Field_LostFocus" />
+            <!-- Title + Open in Obsidian -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox x:Name="TitleBox" Grid.Column="0" Header="Title" FontSize="18"
+                         Text="{x:Bind Task.Title, Mode=TwoWay}"
+                         LostFocus="Field_LostFocus" />
+                <Button Grid.Column="1" VerticalAlignment="Bottom"
+                        Click="OpenObsidian_Click"
+                        ToolTipService.ToolTip="Open in Obsidian (Ctrl+Shift+O)">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8A7;" FontSize="13" />
+                        <TextBlock Text="Open in Obsidian" />
+                    </StackPanel>
+                </Button>
+            </Grid>
 
             <!-- Status + Priority row -->
             <StackPanel Orientation="Horizontal" Spacing="16">
