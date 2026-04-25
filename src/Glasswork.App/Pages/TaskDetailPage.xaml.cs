@@ -23,6 +23,8 @@ public sealed partial class TaskDetailPage : Page
     public GlassworkTask Task { get; private set; } = new();
 
     private bool _isLoading;
+    private bool _suppressNextNotesSave;
+    private NotesEditController _notesEdit = new(string.Empty);
 
     public TaskDetailPage()
     {
@@ -102,7 +104,87 @@ public sealed partial class TaskDetailPage : Page
 
         ApplyParent(task);
 
+        _notesEdit = new NotesEditController(task.Notes);
+        ApplyNotesMode(NotesEditMode.Read);
+
         _isLoading = false;
+    }
+
+    private void ApplyNotesMode(NotesEditMode mode)
+    {
+        if (mode == NotesEditMode.Read)
+        {
+            NotesReadView.Markdown = Task.Notes ?? string.Empty;
+            VisualStateManager.GoToState(this, "ReadState", false);
+            var hasContent = !string.IsNullOrWhiteSpace(Task.Notes);
+            NotesEmptyHint.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
+            NotesEditIcon.Glyph = "\uE70F";
+            ToolTipService.SetToolTip(NotesEditButton, "Edit Notes (Ctrl+E)");
+        }
+        else
+        {
+            VisualStateManager.GoToState(this, "EditState", false);
+            NotesEmptyHint.Visibility = Visibility.Collapsed;
+            NotesEditIcon.Glyph = "\uE73E";
+            ToolTipService.SetToolTip(NotesEditButton, "Done (Ctrl+E)");
+            NotesBox.Focus(FocusState.Programmatic);
+            NotesBox.SelectionStart = NotesBox.Text?.Length ?? 0;
+        }
+    }
+
+    private void NotesEditToggle_Click(object sender, RoutedEventArgs e) => ToggleNotesMode();
+
+    private void NotesEditAccelerator_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        ToggleNotesMode();
+        args.Handled = true;
+    }
+
+    private void ToggleNotesMode()
+    {
+        if (_isLoading) return;
+        if (_notesEdit.Mode == NotesEditMode.Read)
+        {
+            _notesEdit.EnterEdit();
+            ApplyNotesMode(NotesEditMode.Edit);
+        }
+        else
+        {
+            // Done: flush the TwoWay binding into Task.Notes, then save.
+            Task.Notes = NotesBox.Text ?? string.Empty;
+            _notesEdit.UpdateBuffer(Task.Notes);
+            _notesEdit.Done();
+            Save();
+            ApplyNotesMode(NotesEditMode.Read);
+        }
+    }
+
+    private void NotesBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Escape) return;
+        if (_notesEdit.Mode != NotesEditMode.Edit) return;
+
+        // Restore baseline before LostFocus fires (which would otherwise persist the buffer).
+        var baseline = _notesEdit.Cancel();
+        _suppressNextNotesSave = true;
+        Task.Notes = baseline;
+        NotesBox.Text = baseline;
+        ApplyNotesMode(NotesEditMode.Read);
+        e.Handled = true;
+    }
+
+    private void OnNotesMarkdownLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not VaultMarkdownView view) return;
+        view.WikiLinkResolver ??= BuildWikiLinkResolver();
+        view.LinkClicked -= OnArtifactLinkClicked;
+        view.LinkClicked += OnArtifactLinkClicked;
+    }
+
+    private void OnNotesMarkdownUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not VaultMarkdownView view) return;
+        view.LinkClicked -= OnArtifactLinkClicked;
     }
 
     private void ApplyParent(GlassworkTask task)
@@ -293,7 +375,13 @@ public sealed partial class TaskDetailPage : Page
 
     private void Field_LostFocus(object sender, RoutedEventArgs e)
     {
-        if (!_isLoading) Save();
+        if (_isLoading) return;
+        if (sender == NotesBox && _suppressNextNotesSave)
+        {
+            _suppressNextNotesSave = false;
+            return;
+        }
+        Save();
     }
 
     private void Status_Changed(object sender, SelectionChangedEventArgs e)
