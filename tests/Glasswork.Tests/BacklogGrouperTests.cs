@@ -319,4 +319,34 @@ public class BacklogGrouperTests
         Assert.IsTrue(header.IsCollapsed);
         Assert.AreEqual(2, header.TotalCount);
     }
+
+    [TestMethod]
+    public void Header_RawParent_IsUnenrichedOriginalString()
+    {
+        Func<string, string?> resolver = _ => "Enriched title";
+
+        var rows = BacklogGrouper.Group(
+            [Task("a", "concepts/foo")],
+            parentTitleResolver: resolver);
+
+        var header = rows.OfType<BacklogParentGroupHeader>().Single();
+        // DisplayHeader may be enriched; RawParent must preserve the original slug.
+        Assert.AreEqual("concepts/foo", header.RawParent);
+    }
+
+    [TestMethod]
+    public void Header_RawParent_NullWhenNoParent()
+    {
+        var rows = BacklogGrouper.Group([Task("a")]);
+        Assert.IsFalse(rows.OfType<BacklogParentGroupHeader>().Any());
+    }
+
+    [TestMethod]
+    public void Header_RawParent_PreservedCasing()
+    {
+        var rows = BacklogGrouper.Group([Task("a", "Systems/Database-Design")]);
+
+        var header = rows.OfType<BacklogParentGroupHeader>().Single();
+        Assert.AreEqual("Systems/Database-Design", header.RawParent);
+    }
 }

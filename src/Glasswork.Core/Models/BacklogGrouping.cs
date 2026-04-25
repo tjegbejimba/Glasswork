@@ -20,17 +20,26 @@ public sealed class BacklogParentGroupHeader
     /// </summary>
     public string? AdoUrl { get; }
 
+    /// <summary>
+    /// The raw (unenriched) parent string as typed by the user, preserved for
+    /// wiki-page resolution in the App layer (e.g. to build an Obsidian URI when
+    /// the parent slug maps to a vault markdown file).
+    /// </summary>
+    public string? RawParent { get; }
+
     public BacklogParentGroupHeader(
         string displayHeader,
         string key,
         int totalCount,
         bool isCollapsed,
-        string? adoUrl = null)
+        string? adoUrl = null,
+        string? rawParent = null)
     {
         DisplayHeader = displayHeader;
         Key = key;
         TotalCount = totalCount;
         IsCollapsed = isCollapsed;
         AdoUrl = adoUrl;
+        RawParent = rawParent;
     }
 }

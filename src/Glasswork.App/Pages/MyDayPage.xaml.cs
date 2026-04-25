@@ -1,5 +1,7 @@
 using System;
+using System.IO;
 using Glasswork.Core.Models;
+using Glasswork.Services;
 using Glasswork.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -134,6 +136,34 @@ public sealed partial class MyDayPage : Page
     private void CarryAll_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.CarryAllCommand.Execute(null);
+    }
+
+    private async void TaskRow_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not GlassworkTask task) return;
+
+        var absolutePath = Path.Combine(App.Vault.VaultPath, $"{task.Id}.md");
+        var vaultRelative = VaultPageHelper.ToVaultRelativePath(absolutePath);
+        if (vaultRelative is null) return;
+
+        var menu = new MenuFlyout();
+        var openItem = new MenuFlyoutItem { Text = "Open in Obsidian" };
+        openItem.Click += async (_, __) => await App.ObsidianLauncher.Open(vaultRelative);
+        menu.Items.Add(openItem);
+
+        menu.ShowAt(fe);
+        e.Handled = true;
+    }
+
+    private async void OpenInObsidian_Accelerator(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        var task = TodayList.SelectedItem as GlassworkTask ?? VaultPageHelper.GetFocusedTask(XamlRoot);
+        if (task is null) return;
+        args.Handled = true;
+        var absolutePath = Path.Combine(App.Vault.VaultPath, $"{task.Id}.md");
+        var vaultRelative = VaultPageHelper.ToVaultRelativePath(absolutePath);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
     }
 }
 

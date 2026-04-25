@@ -47,6 +47,9 @@
             IsItemClickEnabled="False"
             MinHeight="320"
             Margin="0,16,0,0">
+            <ListView.KeyboardAccelerators>
+                <KeyboardAccelerator Key="O" Modifiers="Control,Shift" Invoked="OpenInObsidian_Accelerator" />
+            </ListView.KeyboardAccelerators>
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -58,6 +61,7 @@
                 <DataTemplate>
                     <Grid Padding="10,8" RowDefinitions="Auto,Auto"
                           DoubleTapped="TaskRow_DoubleTapped"
+                          ContextRequested="TaskRow_ContextRequested"
                           Background="Transparent">
                         <!-- Title row -->
                         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto">

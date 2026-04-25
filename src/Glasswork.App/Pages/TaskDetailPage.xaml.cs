@@ -629,6 +629,15 @@ public sealed partial class TaskDetailPage : Page
     }
 
     private async void OpenObsidian_Click(object sender, RoutedEventArgs e)
+        => await OpenCurrentTaskInObsidianAsync();
+
+    private async void OpenInObsidian_Accelerator(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        await OpenCurrentTaskInObsidianAsync();
+    }
+
+    private async System.Threading.Tasks.Task OpenCurrentTaskInObsidianAsync()
     {
         var absolutePath = Path.Combine(App.Vault.VaultPath, $"{Task.Id}.md");
         var vaultRelative = ToVaultRelativePath(absolutePath);

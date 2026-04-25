@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Glasswork.Core.Models;
+using Glasswork.Core.Services;
+using Glasswork.Services;
 using Glasswork.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -215,5 +218,59 @@ public sealed partial class BacklogPage : Page
         // Rebuild rows to reflect new collapse state.
         ViewModel.Refresh();
         e.Handled = true;
+    }
+
+    private async void OpenTaskInObsidian_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
+        var absolutePath = Path.Combine(App.Vault.VaultPath, $"{task.Id}.md");
+        var vaultRelative = VaultPageHelper.ToVaultRelativePath(absolutePath);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
+    }
+
+    private async void GroupHeader_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not BacklogParentGroupHeader header) return;
+        var wikiPagePath = ResolveParentAsWikiPage(header.RawParent);
+        if (wikiPagePath is null) return;
+
+        var vaultRelative = VaultPageHelper.ToVaultRelativePath(wikiPagePath);
+        if (vaultRelative is null) return;
+
+        var menu = new MenuFlyout();
+        var openItem = new MenuFlyoutItem { Text = "Open in Obsidian" };
+        openItem.Click += async (_, __) => await App.ObsidianLauncher.Open(vaultRelative);
+        menu.Items.Add(openItem);
+
+        menu.ShowAt(fe);
+        e.Handled = true;
+    }
+
+    private async void OpenInObsidian_Accelerator(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        var task = VaultPageHelper.GetFocusedTask(XamlRoot);
+        if (task is null) return;
+        args.Handled = true;
+        var absolutePath = Path.Combine(App.Vault.VaultPath, $"{task.Id}.md");
+        var vaultRelative = VaultPageHelper.ToVaultRelativePath(absolutePath);
+        if (vaultRelative is null) return;
+        await App.ObsidianLauncher.Open(vaultRelative);
+    }
+
+    private static string? ResolveParentAsWikiPage(string? rawParent)
+    {
+        if (string.IsNullOrWhiteSpace(rawParent)) return null;
+        var p = rawParent.Trim();
+        // Skip parents that are already ADO links (numeric IDs or HTTP URLs).
+        if (AdoLinkResolver.TryResolve(p, null) is not null) return null;
+
+        // Wiki pages live under App.Vault.VaultPath/../ (the wiki/ directory).
+        var wikiRoot = Path.GetDirectoryName(App.Vault.VaultPath);
+        if (wikiRoot is null) return null;
+
+        var slugPath = p.Replace('/', Path.DirectorySeparatorChar);
+        var absolutePath = Path.Combine(wikiRoot, slugPath + ".md");
+        return File.Exists(absolutePath) ? absolutePath : null;
     }
 }
