@@ -24,7 +24,7 @@ parses YAML frontmatter, watches for external changes (Obsidian editing,
 agent edits, git pulls), and serializes back without losing user content.
 
 - **Source of truth for**: every `GlassworkTask`, every subtask, every note.
-- **Key services**: `VaultService`, `TaskFileWatcher`, `SelfWriteTracker`.
+- **Key services**: `VaultService`, `FileWatcherService`, `SelfWriteCoordinator`.
 - **Speaks to**: Task Model (parses files into models), Presentation (raises
   `TaskFileChangedExternally` events).
 - **Does not own**: anything ephemeral, anything UI.
@@ -97,7 +97,7 @@ no domain logic — composes the other contexts into screens.
   When adding a new service, follow this shape.
 - **Debouncing** — `Debouncer` class (500ms) is the standard for batching
   writes. Reused for both index regen and UI state writes.
-- **Self-write tracking** — `SelfWriteTracker` suppresses watcher echoes
+- **Self-write tracking** — `SelfWriteCoordinator` suppresses watcher echoes
   from our own writes. Any new code that writes the vault must register
   with it, or watcher events will fire spuriously.
 - **Virtual My Day promotion** — a task can be "in My Day today" without

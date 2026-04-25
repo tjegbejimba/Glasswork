@@ -65,8 +65,8 @@ this content, it does not own it.
 4. **Service locator over DI.** `App.Vault`, `App.Tasks`, `App.Index`,
    `App.UiState` — new services follow this shape. No DI container.
 
-5. **Any code that writes the vault must register with `SelfWriteTracker`**
-   or `TaskFileWatcher` will fire spurious external-change events.
+5. **Any code that writes the vault must register with `SelfWriteCoordinator`**
+   or `FileWatcherService` will fire spurious external-change events.
 
 ## Investigation guidance (for issue triage & root-cause analysis)
 
