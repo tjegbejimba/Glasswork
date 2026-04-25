@@ -10,6 +10,9 @@ public class GlassworkToolsTests
     private string _vaultDir = null!;
     private GlassworkTools _tools = null!;
 
+    // GlassworkTools resolves the task directory as <vault>/wiki/todo.
+    private string TasksDir => Path.Combine(_vaultDir, "wiki", "todo");
+
     [TestInitialize]
     public void Setup()
     {
@@ -38,7 +41,7 @@ public class GlassworkToolsTests
 
         Assert.IsFalse(string.IsNullOrEmpty(taskId));
         Assert.IsTrue(File.Exists(path), "Task file must exist on disk after add_task.");
-        StringAssert.Contains(path, _vaultDir);
+        StringAssert.Contains(path, TasksDir);
     }
 
     [TestMethod]
@@ -124,8 +127,8 @@ public class GlassworkToolsTests
         var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
 
         Assert.AreNotEqual(id1, id2, "Two tasks with the same title must get distinct IDs.");
-        Assert.IsTrue(File.Exists(Path.Combine(_vaultDir, $"{id1}.md")));
-        Assert.IsTrue(File.Exists(Path.Combine(_vaultDir, $"{id2}.md")));
+        Assert.IsTrue(File.Exists(Path.Combine(TasksDir, $"{id1}.md")));
+        Assert.IsTrue(File.Exists(Path.Combine(TasksDir, $"{id2}.md")));
     }
 
     [TestMethod]
@@ -133,7 +136,7 @@ public class GlassworkToolsTests
     {
         _tools.AddTask("Marker File Task");
 
-        var markerFile = Path.Combine(_vaultDir, ".glasswork", "recent-writes.json");
+        var markerFile = Path.Combine(TasksDir, ".glasswork", "recent-writes.json");
         Assert.IsTrue(File.Exists(markerFile),
             "SelfWriteCoordinator must write its marker file when add_task creates a task.");
     }
@@ -144,7 +147,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("Coord Task");
         var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
 
-        var markerFile = Path.Combine(_vaultDir, ".glasswork", "recent-writes.json");
+        var markerFile = Path.Combine(TasksDir, ".glasswork", "recent-writes.json");
         var markerContent = File.ReadAllText(markerFile);
         StringAssert.Contains(markerContent, Path.GetFileName(path),
             "Marker file must reference the written task path.");
@@ -325,7 +328,7 @@ public class GlassworkToolsTests
         var addJson = _tools.AddTask("Task With Artifacts");
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
 
-        var artifactFolder = Path.Combine(_vaultDir, taskId + ".artifacts");
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
         Directory.CreateDirectory(artifactFolder);
         File.WriteAllText(Path.Combine(artifactFolder, "plan.md"), "# Plan\n\nSome content.");
         File.WriteAllText(Path.Combine(artifactFolder, "notes.md"), "Notes here.");
@@ -350,7 +353,7 @@ public class GlassworkToolsTests
         var addJson = _tools.AddTask("Artifact Path Task");
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
 
-        var artifactFolder = Path.Combine(_vaultDir, taskId + ".artifacts");
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
         Directory.CreateDirectory(artifactFolder);
         File.WriteAllText(Path.Combine(artifactFolder, "design.md"), "Design doc.");
 
@@ -384,7 +387,7 @@ public class GlassworkToolsTests
         Assert.AreEqual(0, JsonDocument.Parse(before).RootElement.GetProperty("artifacts").GetArrayLength());
 
         // Add an artifact to the folder manually
-        var artifactFolder = Path.Combine(_vaultDir, taskId + ".artifacts");
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
         Directory.CreateDirectory(artifactFolder);
         File.WriteAllText(Path.Combine(artifactFolder, "later.md"), "Added later.");
 
@@ -408,7 +411,7 @@ public class GlassworkToolsTests
         Assert.IsTrue(doc.RootElement.TryGetProperty("path", out var pathElem),
             "add_artifact must return a 'path' field on success.");
 
-        var artifactFolder = Path.Combine(_vaultDir, taskId + ".artifacts");
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
         var expectedFile = Path.Combine(artifactFolder, "plan.md");
         Assert.IsTrue(File.Exists(expectedFile), "Artifact file must exist on disk after add_artifact.");
         Assert.AreEqual("# Plan\n\nContent here.", File.ReadAllText(expectedFile));
@@ -476,7 +479,7 @@ public class GlassworkToolsTests
 
         Assert.AreEqual("conflict", doc.RootElement.GetProperty("error").GetString());
 
-        var artifactFolder = Path.Combine(_vaultDir, taskId + ".artifacts");
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
         Assert.AreEqual("first", File.ReadAllText(Path.Combine(artifactFolder, "plan.md")),
             "Conflict must not overwrite the existing artifact.");
     }
@@ -498,7 +501,7 @@ public class GlassworkToolsTests
 
         _tools.AddArtifact(taskId, "artifact.md", "content");
 
-        var markerFile = Path.Combine(_vaultDir, ".glasswork", "recent-writes.json");
+        var markerFile = Path.Combine(TasksDir, ".glasswork", "recent-writes.json");
         Assert.IsTrue(File.Exists(markerFile), "SelfWriteCoordinator must write its marker file when add_artifact creates an artifact.");
         var markerContent = File.ReadAllText(markerFile);
         StringAssert.Contains(markerContent, "artifact.md",

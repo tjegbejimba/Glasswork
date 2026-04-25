@@ -40,18 +40,18 @@ dotnet tool update -g glasswork-mcp --add-source ./nupkg
 
 `glasswork-mcp` discovers the vault directory in this order on startup:
 
-1. **`GLASSWORK_VAULT` environment variable** — if set and points to an existing directory, that path is used.
+1. **`GLASSWORK_VAULT` environment variable** — set this to the **Obsidian vault root** (the top-level folder you opened in Obsidian, e.g. `~/Wiki`). The server resolves the task directory internally as `<GLASSWORK_VAULT>/wiki/todo/`.
 2. **App state file** — the path stored by the Glasswork desktop app in `%LocalAppData%\Glasswork\ui-state.json` (key `vault.path`). Opening the Glasswork app and selecting a vault populates this automatically.
 3. **Error** — if neither source resolves to an existing directory, the process exits with a message naming both attempted sources.
 
 ### Setting the env var
 
 ```bash
-# Unix / WSL
-export GLASSWORK_VAULT=/path/to/your/vault
+# Unix / WSL — set to the Obsidian vault root (parent of wiki/todo/)
+export GLASSWORK_VAULT=/path/to/your/vault-root
 
 # PowerShell
-$env:GLASSWORK_VAULT = "C:\path\to\your\vault"
+$env:GLASSWORK_VAULT = "C:\path\to\your\vault-root"
 ```
 
 ---
@@ -66,7 +66,7 @@ Add `glasswork-mcp` to your Copilot CLI MCP configuration:
     "glasswork": {
       "command": "glasswork-mcp",
       "env": {
-        "GLASSWORK_VAULT": "/absolute/path/to/your/vault"
+        "GLASSWORK_VAULT": "/absolute/path/to/your/vault-root"
       }
     }
   }
@@ -87,7 +87,7 @@ Open Claude Desktop's settings (`claude_desktop_config.json`) and add:
     "glasswork": {
       "command": "glasswork-mcp",
       "env": {
-        "GLASSWORK_VAULT": "/absolute/path/to/your/vault"
+        "GLASSWORK_VAULT": "/absolute/path/to/your/vault-root"
       }
     }
   }
