@@ -27,18 +27,12 @@ public partial class MyDayViewModel : ObservableObject
     }
 
     /// <summary>
-    /// A task is "on My Day today" if either its persisted my_day flag is set, or it is
-    /// due today/overdue and not yet done — and the user has not dismissed it for today.
-    /// Dismiss is stored as a per-day UI state flag so the vault stays untouched.
+    /// A task is "on My Day today" per <see cref="MyDayPromotionPolicy.IsTaskInMyDayToday"/>:
+    /// pinned via my_day, due-today/overdue, OR has a flagged-or-due-today subtask — and the
+    /// user has not dismissed it for today. See ADR 0008.
     /// </summary>
-    private bool IsOnMyDayToday(GlassworkTask t)
-    {
-        if (t.Status == GlassworkTask.Statuses.Done) return false;
-        if (IsDismissedToday(t.Id)) return false;
-        if (t.IsMyDay) return true;
-        if (t.Due.HasValue && t.Due.Value.Date <= System.DateTime.Today) return true;
-        return false;
-    }
+    private bool IsOnMyDayToday(GlassworkTask t, System.DateOnly today, System.Collections.Generic.IReadOnlySet<string> dismissed)
+        => MyDayPromotionPolicy.IsTaskInMyDayToday(t, today, dismissed);
 
     private static string DismissKey(string taskId) =>
         $"dismissed.{System.DateTime.Today:yyyy-MM-dd}.{taskId}";
@@ -54,10 +48,27 @@ public partial class MyDayViewModel : ObservableObject
         Suggestions.Clear();
 
         var all = _vault.LoadAll();
+        var today = System.DateOnly.FromDateTime(System.DateTime.Today);
 
-        // Today's tasks: persisted my_day OR due-today/overdue (virtual inclusion).
-        foreach (var task in all.Where(IsOnMyDayToday).OrderByDescending(t => t.Priority == "urgent"))
+        // Build the dismissed-today set once so the predicate stays pure.
+        var dismissed = new System.Collections.Generic.HashSet<string>(
+            all.Where(t => IsDismissedToday(t.Id)).Select(t => t.Id));
+
+        // Today's tasks: pinned, due-today/overdue, OR virtually promoted by a flagged/due-today
+        // subtask (ADR 0008). Only virtually-promoted parents get TodaysSubtasks attached for
+        // inline rendering — directly-promoted parents already show their in-progress subtask
+        // via the card-details "Current step" row.
+        foreach (var task in all.Where(t => IsOnMyDayToday(t, today, dismissed))
+                                 .OrderByDescending(t => t.Priority == "urgent"))
         {
+            var directlyPromoted =
+                task.MyDay.HasValue ||
+                (task.Due.HasValue
+                 && System.DateOnly.FromDateTime(task.Due.Value.Date) <= today
+                 && task.Status != GlassworkTask.Statuses.Done);
+            task.TodaysSubtasks = directlyPromoted
+                ? null
+                : MyDayPromotionPolicy.TodaysSubtasks(task, today);
             TodayTasks.Add(task);
         }
 
@@ -130,13 +141,15 @@ public partial class MyDayViewModel : ObservableObject
     public void RemoveFromMyDay(GlassworkTask? task)
     {
         if (task is null) return;
-        // Clear persisted flag if set.
-        if (task.IsMyDay)
+        var plan = MyDayRemovalPolicy.PlanRemoval(task);
+        if (plan.ClearMyDayFlag)
         {
             _taskService.ToggleMyDay(task);
         }
-        // Also dismiss for today so virtually-included due/overdue tasks don't reappear.
-        _uiState?.Set(DismissKey(task.Id), true);
+        if (plan.SetDismissForToday)
+        {
+            _uiState?.Set(DismissKey(task.Id), true);
+        }
         Refresh();
     }
 
