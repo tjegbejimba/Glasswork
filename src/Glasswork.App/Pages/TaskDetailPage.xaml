@@ -106,7 +106,7 @@
                                     CornerRadius="4"
                                     Padding="10,8"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                                <Grid ColumnDefinitions="*,Auto,Auto">
+                                <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                                     <Grid Grid.Column="0" ColumnDefinitions="Auto,*">
                                         <CheckBox Grid.Column="0"
                                                   IsChecked="{Binding IsCompleted, Mode=TwoWay}"
@@ -125,14 +125,21 @@
                                             <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
                                         </Button>
                                     </Grid>
-                                    <Button Grid.Column="1" Click="ToggleSubtaskMyDay_Click"
+                                    <Button Grid.Column="1" Click="SubtaskDue_Click"
+                                            Background="Transparent" BorderThickness="0"
+                                            Padding="6" VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="Set due date (today if unset)">
+                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEC92;" FontSize="14"
+                                                  Opacity="0.6" />
+                                    </Button>
+                                    <Button Grid.Column="2" Click="ToggleSubtaskMyDay_Click"
                                             Background="Transparent" BorderThickness="0"
                                             Padding="6" VerticalAlignment="Center"
                                             ToolTipService.ToolTip="Toggle My Day for this subtask">
                                         <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" FontSize="14"
                                                   Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
                                     </Button>
-                                    <Button Grid.Column="2" Click="SubtaskMore_Click"
+                                    <Button Grid.Column="3" Click="SubtaskMore_Click"
                                             Background="Transparent" BorderThickness="0"
                                             Padding="6" VerticalAlignment="Center"
                                             ToolTipService.ToolTip="More actions">
@@ -150,7 +157,7 @@
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                 <StackPanel Spacing="6">
                                     <!-- Header row: checkbox + title + status pill + due chip + my-day toggle + "..." menu -->
-                                    <Grid ColumnDefinitions="*,Auto,Auto">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                                         <Grid Grid.Column="0" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
                                             <CheckBox Grid.Column="0"
                                                       IsChecked="{Binding IsCompleted, Mode=TwoWay}"
@@ -188,14 +195,21 @@
                                                            FontWeight="SemiBold" />
                                             </Border>
                                         </Grid>
-                                        <Button Grid.Column="1" Click="ToggleSubtaskMyDay_Click"
+                                        <Button Grid.Column="1" Click="SubtaskDue_Click"
+                                                Background="Transparent" BorderThickness="0"
+                                                Padding="6" VerticalAlignment="Center"
+                                                ToolTipService.ToolTip="Set due date (today if unset)">
+                                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEC92;" FontSize="14"
+                                                      Opacity="0.6" />
+                                        </Button>
+                                        <Button Grid.Column="2" Click="ToggleSubtaskMyDay_Click"
                                                 Background="Transparent" BorderThickness="0"
                                                 Padding="6" VerticalAlignment="Center"
                                                 ToolTipService.ToolTip="Toggle My Day for this subtask">
                                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" FontSize="14"
                                                       Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
                                         </Button>
-                                        <Button Grid.Column="2" Click="SubtaskMore_Click"
+                                        <Button Grid.Column="3" Click="SubtaskMore_Click"
                                                 Background="Transparent" BorderThickness="0"
                                                 Padding="6" VerticalAlignment="Center"
                                                 ToolTipService.ToolTip="More actions">

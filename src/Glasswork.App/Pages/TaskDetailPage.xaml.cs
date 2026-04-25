@@ -386,6 +386,28 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
+    private async void SubtaskDue_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading) return;
+        if (sender is not FrameworkElement fe || fe.DataContext is not SubTask sub) return;
+
+        if (sub.Due is null)
+        {
+            App.Vault.SetSubtaskDue(Task.Id, sub.Text, DateTime.Today);
+            var reloaded = App.Vault.Load(Task.Id);
+            if (reloaded is not null)
+            {
+                Task = reloaded;
+                BindSubtasks(reloaded.Subtasks);
+            }
+            try { App.Index.Refresh(); } catch { /* best-effort */ }
+        }
+        else
+        {
+            await PromptSetDueAsync(sub);
+        }
+    }
+
     private async void DeleteSubtask_Click(object sender, RoutedEventArgs e)
     {
         if (_isLoading) return;
