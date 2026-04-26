@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
+using Glasswork.Controls;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Services;
@@ -272,5 +274,24 @@ public sealed partial class BacklogPage : Page
         var slugPath = p.Replace('/', Path.DirectorySeparatorChar);
         var absolutePath = Path.Combine(wikiRoot, slugPath + ".md");
         return File.Exists(absolutePath) ? absolutePath : null;
+    }
+
+    private void OnBlurbMarkdownLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not VaultMarkdownView view) return;
+        view.WikiLinkResolver ??= VaultPageHelper.BuildWikiLinkResolver();
+        view.LinkClicked -= OnBlurbLinkClicked;
+        view.LinkClicked += OnBlurbLinkClicked;
+    }
+
+    private void OnBlurbMarkdownUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not VaultMarkdownView view) return;
+        view.LinkClicked -= OnBlurbLinkClicked;
+    }
+
+    private async void OnBlurbLinkClicked(object? sender, LinkClickedEventArgs e)
+    {
+        await VaultPageHelper.RouteLinkClickAsync(Frame, e);
     }
 }

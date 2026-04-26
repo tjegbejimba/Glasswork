@@ -449,9 +449,13 @@ public sealed partial class VaultMarkdownView : UserControl
         if (ArtifactLinkPolicy.Decide(link.Href) == ArtifactLinkPolicy.Decision.Allow
             && Uri.TryCreate(link.Href, UriKind.Absolute, out var uri))
         {
-            var hl = new Hyperlink { NavigateUri = uri };
+            var hl = new Hyperlink();
             hl.Inlines.Add(new Run { Text = label });
             hl.Click += (s, e) => LinkClicked?.Invoke(this, new LinkClickedEventArgs(link.Href, LinkKind.Url));
+            // glasswork:// URIs are handled via LinkClicked (in-app navigation).
+            // All other allowed schemes use WinUI's built-in NavigateUri to open externally.
+            if (!string.Equals(uri.Scheme, GlassworkUriParser.Scheme, StringComparison.OrdinalIgnoreCase))
+                hl.NavigateUri = uri;
             return hl;
         }
 

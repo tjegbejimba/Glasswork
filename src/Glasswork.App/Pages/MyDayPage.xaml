@@ -145,9 +145,11 @@
                                            Foreground="#C50F1F" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                             <!-- Blurb -->
-                            <TextBlock Text="{Binding BlurbPreview}" FontSize="12" Opacity="0.65"
-                                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
-                                       Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
+                            <controls:VaultMarkdownView Markdown="{Binding Description}"
+                                                        AutomationProperties.Name="{Binding BlurbPreview}"
+                                                        Loaded="OnBlurbMarkdownLoaded"
+                                                        Unloaded="OnBlurbMarkdownUnloaded"
+                                                        Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
                         </StackPanel>
 
                         <!-- Today's subtasks (ADR 0008): flagged or due-today subtasks rendered
