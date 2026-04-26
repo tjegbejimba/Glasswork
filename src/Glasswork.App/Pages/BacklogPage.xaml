@@ -107,6 +107,7 @@
                     </StackPanel>
                     <controls:VaultMarkdownView Markdown="{Binding Description}"
                                                AutomationProperties.Name="{Binding BlurbPreview}"
+                                               Opacity="0.8"
                                                Loaded="OnBlurbMarkdownLoaded"
                                                Unloaded="OnBlurbMarkdownUnloaded"
                                                Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
