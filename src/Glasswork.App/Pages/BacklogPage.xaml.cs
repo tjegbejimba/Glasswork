@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Services;
@@ -344,5 +345,103 @@ public sealed partial class BacklogPage : Page
         var slugPath = p.Replace('/', Path.DirectorySeparatorChar);
         var absolutePath = Path.Combine(wikiRoot, slugPath + ".md");
         return File.Exists(absolutePath) ? absolutePath : null;
+    }
+
+    // Drag-to-change-status (Board view only)
+    private GlassworkTask? _draggedTask;
+
+    private void BoardCard_DragStarting(Microsoft.UI.Xaml.UIElement sender, Microsoft.UI.Xaml.DragStartingEventArgs args)
+    {
+        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
+        _draggedTask = task;
+        args.Data.Properties["task"] = task;
+        args.Data.RequestedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Move;
+    }
+
+    private void BoardColumn_DragOver(object sender, Microsoft.UI.Xaml.DragEventArgs e)
+    {
+        if (_draggedTask is null) return;
+        e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Move;
+        e.DragUIOverride.IsCaptionVisible = false;
+        e.DragUIOverride.IsGlyphVisible = false;
+    }
+
+    private async void BoardColumn_Drop(object sender, Microsoft.UI.Xaml.DragEventArgs e)
+    {
+        if (_draggedTask is null) return;
+        if (sender is not FrameworkElement { DataContext: BoardColumn targetColumn }) return;
+
+        var task = _draggedTask;
+        _draggedTask = null;
+
+        // Determine target status from column name
+        var targetStatus = targetColumn.ColumnName == "To Do" 
+            ? GlassworkTask.Statuses.Todo 
+            : GlassworkTask.Statuses.InProgress;
+
+        // No-op if dropping in same column
+        if (task.Status == targetStatus) return;
+
+        // Update task status BEFORE UI changes to prevent race with file watcher refresh
+        task.Status = targetStatus;
+
+        // Optimistic UI: move card immediately
+        var originalColumn = ViewModel.BoardColumns.FirstOrDefault(c => c.Tasks.Contains(task));
+        if (originalColumn is not null)
+        {
+            originalColumn.Tasks.Remove(task);
+            targetColumn.Tasks.Add(task);
+        }
+
+        try
+        {
+            // Background write via BoardDragStatusWriter
+            var writer = new BoardDragStatusWriter(App.Vault, App.SelfWrites);
+            var result = await writer.TryWriteStatusChange(task, targetStatus);
+
+            if (!result.Success)
+            {
+                // Snap back on failure
+                task.Status = task.Status == GlassworkTask.Statuses.Todo 
+                    ? GlassworkTask.Statuses.InProgress 
+                    : GlassworkTask.Statuses.Todo;
+                if (originalColumn is not null)
+                {
+                    targetColumn.Tasks.Remove(task);
+                    originalColumn.Tasks.Add(task);
+                }
+
+                // Show error InfoBar
+                ShowErrorInfoBar(result.ErrorMessage ?? "Failed to update task status");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Snap back on exception (e.g., disk full, permissions error)
+            task.Status = task.Status == GlassworkTask.Statuses.Todo 
+                ? GlassworkTask.Statuses.InProgress 
+                : GlassworkTask.Statuses.Todo;
+            if (originalColumn is not null)
+            {
+                targetColumn.Tasks.Remove(task);
+                originalColumn.Tasks.Add(task);
+            }
+            ShowErrorInfoBar($"Failed to update task: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"Drag-drop exception: {ex}");
+        }
+    }
+
+    private void ShowErrorInfoBar(string message)
+    {
+        // Placeholder: InfoBar UI will be added in next iteration
+        // For now, just log the error
+        System.Diagnostics.Debug.WriteLine($"Drag-drop error: {message}");
+    }
+
+    private void BoardCard_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
+        Frame.Navigate(typeof(TaskDetailPage), task);
+        e.Handled = true;
     }
 }

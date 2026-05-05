@@ -228,4 +228,48 @@ public class TaskServiceTests
         Assert.IsFalse(task.IsDone);
         Assert.IsTrue(notified);
     }
+
+    [TestMethod]
+    public void SetStatusOnly_ChangesStatusWithoutTouchingTimestamps()
+    {
+        // Tracer bullet: status-only writes don't modify completed_at or updated_at
+        var task = new GlassworkTask
+        {
+            Id = "board-card",
+            Title = "Board Card",
+            Status = GlassworkTask.Statuses.Todo,
+            CompletedAt = null,
+        };
+        _vault.Save(task);
+
+        _taskService.SetStatusOnly(task, GlassworkTask.Statuses.InProgress);
+
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, task.Status);
+        Assert.IsNull(task.CompletedAt, "SetStatusOnly should not set CompletedAt");
+
+        var loaded = _vault.Load("board-card")!;
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, loaded.Status);
+        Assert.IsNull(loaded.CompletedAt);
+    }
+
+    [TestMethod]
+    public void SetStatusOnly_NeverModifiesMyDay()
+    {
+        var myDayDate = DateTime.Today.AddDays(-2);
+        var task = new GlassworkTask
+        {
+            Id = "myday-card",
+            Title = "My Day Card",
+            Status = GlassworkTask.Statuses.Todo,
+            MyDay = myDayDate,
+        };
+        _vault.Save(task);
+
+        _taskService.SetStatusOnly(task, GlassworkTask.Statuses.InProgress);
+
+        Assert.AreEqual(myDayDate, task.MyDay, "SetStatusOnly should not modify MyDay");
+        
+        var loaded = _vault.Load("myday-card")!;
+        Assert.AreEqual(myDayDate, loaded.MyDay);
+    }
 }
