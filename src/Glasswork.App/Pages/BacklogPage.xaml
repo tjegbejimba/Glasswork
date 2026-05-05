@@ -138,6 +138,8 @@
                     CornerRadius="8"
                     Padding="12,10"
                     Margin="0,0,0,8"
+                    CanDrag="True"
+                    DragStarting="BoardCard_DragStarting"
                     DoubleTapped="BoardCard_DoubleTapped">
                 <Grid RowDefinitions="Auto,Auto,Auto">
                     <!-- Title row -->
@@ -349,7 +351,10 @@
                             <!-- Scrollable card list -->
                             <ScrollViewer Grid.Row="1"
                                           VerticalScrollBarVisibility="Auto"
-                                          HorizontalScrollBarVisibility="Disabled">
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          AllowDrop="True"
+                                          DragOver="BoardColumn_DragOver"
+                                          Drop="BoardColumn_Drop">
                                 <ItemsControl ItemsSource="{Binding Tasks}"
                                               ItemTemplate="{StaticResource BoardCardTemplate}" />
                             </ScrollViewer>
