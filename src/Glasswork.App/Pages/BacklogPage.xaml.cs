@@ -18,6 +18,8 @@ public sealed partial class BacklogPage : Page
     public BacklogPage()
     {
         ViewModel = new BacklogViewModel(App.Vault, App.Tasks, App.UiState);
+        // Load persisted ViewMode (default "list") BEFORE InitializeComponent
+        ViewModel.ViewMode = App.UiState.Get<string>(App.BacklogViewModeKey) ?? "list";
         // Load persisted toggle (default true) BEFORE InitializeComponent so the
         // x:Bind TwoWay binding to ToggleButton.IsChecked picks up the right value.
         ViewModel.IsGrouped = App.UiState.Get<bool?>(App.BacklogGroupByParentKey) ?? true;
@@ -35,6 +37,7 @@ public sealed partial class BacklogPage : Page
         };
         InitializeComponent();
         ViewModel.Rows.CollectionChanged += (_, _) => UpdateEmptyState();
+        ViewModel.BoardColumns.CollectionChanged += (_, _) => UpdateEmptyState();
         // Persist toggle whenever the user flips it. Bind here (not in VM) so the
         // VM stays UI-state-store-agnostic.
         ViewModel.PropertyChanged += (_, args) =>
@@ -44,7 +47,63 @@ public sealed partial class BacklogPage : Page
                 App.UiState.Set(App.BacklogGroupByParentKey, ViewModel.IsGrouped);
                 App.ScheduleUiStateSave();
             }
+            if (args.PropertyName == nameof(BacklogViewModel.ViewMode))
+            {
+                App.UiState.Set(App.BacklogViewModeKey, ViewModel.ViewMode);
+                App.ScheduleUiStateSave();
+                UpdateViewModeUI();
+            }
         };
+        // Initialize view mode UI on first load
+        UpdateViewModeUI();
+    }
+
+    private void UpdateViewModeUI()
+    {
+        var isList = ViewModel.ViewMode == "list";
+        var isBoard = ViewModel.ViewMode == "board";
+
+        // Sync toggle buttons
+        ListViewToggle.IsChecked = isList;
+        BoardViewToggle.IsChecked = isBoard;
+
+        // Show/hide main views
+        TaskList.Visibility = isList ? Visibility.Visible : Visibility.Collapsed;
+        BoardView.Visibility = isBoard ? Visibility.Visible : Visibility.Collapsed;
+
+        // Show/hide filter controls
+        StatusFilter.Visibility = isList ? Visibility.Visible : Visibility.Collapsed;
+        GroupToggle.Visibility = isList ? Visibility.Visible : Visibility.Collapsed;
+        WorkLogLink.Visibility = isBoard ? Visibility.Visible : Visibility.Collapsed;
+
+        // Update empty state
+        UpdateEmptyState();
+    }
+
+    private void ListViewToggle_Checked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ViewMode == "list") return;
+        ViewModel.ViewMode = "list";
+        BoardViewToggle.IsChecked = false;
+    }
+
+    private void BoardViewToggle_Checked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ViewMode == "board") return;
+        ViewModel.ViewMode = "board";
+        ListViewToggle.IsChecked = false;
+    }
+
+    private void WorkLogLink_Click(object sender, RoutedEventArgs e)
+    {
+        Frame.Navigate(typeof(WorkLogPage));
+    }
+
+    private void BoardCard_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
+        Frame.Navigate(typeof(TaskDetailPage), task);
+        e.Handled = true;
     }
 
     private IReadOnlyDictionary<string, bool> LoadGroupCollapseState()
@@ -100,7 +159,20 @@ public sealed partial class BacklogPage : Page
     private void UpdateEmptyState()
     {
         var hasContent = ViewModel.Tasks.Count > 0;
-        TaskList.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        var isList = ViewModel.ViewMode == "list";
+        var isBoard = ViewModel.ViewMode == "board";
+        
+        // Only manage TaskList visibility in list mode
+        if (isList)
+        {
+            TaskList.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        }
+        // Only manage BoardView visibility in board mode
+        if (isBoard)
+        {
+            BoardView.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        }
+        
         EmptyStateView.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
     }
 
