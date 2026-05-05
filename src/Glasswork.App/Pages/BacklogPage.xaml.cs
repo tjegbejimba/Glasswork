@@ -159,7 +159,20 @@ public sealed partial class BacklogPage : Page
     private void UpdateEmptyState()
     {
         var hasContent = ViewModel.Tasks.Count > 0;
-        TaskList.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        var isList = ViewModel.ViewMode == "list";
+        var isBoard = ViewModel.ViewMode == "board";
+        
+        // Only manage TaskList visibility in list mode
+        if (isList)
+        {
+            TaskList.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        }
+        // Only manage BoardView visibility in board mode
+        if (isBoard)
+        {
+            BoardView.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        }
+        
         EmptyStateView.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
     }
 

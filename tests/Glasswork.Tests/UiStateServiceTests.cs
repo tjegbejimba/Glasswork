@@ -120,7 +120,7 @@ public class UiStateServiceTests
         var dir = NewTempDir();
         var svc = new JsonFileUiStateService(Path.Combine(dir, "ui-state.json"));
 
-        var mode = svc.Get<string>("backlog.view-mode") ?? "list";
+        var mode = svc.Get<string>("backlog.viewMode") ?? "list";
 
         Assert.AreEqual("list", mode);
     }
@@ -131,11 +131,11 @@ public class UiStateServiceTests
         var dir = NewTempDir();
         var path = Path.Combine(dir, "ui-state.json");
         var svc1 = new JsonFileUiStateService(path);
-        svc1.Set("backlog.view-mode", "board");
+        svc1.Set("backlog.viewMode", "board");
         svc1.Save();
 
         var svc2 = new JsonFileUiStateService(path);
 
-        Assert.AreEqual("board", svc2.Get<string>("backlog.view-mode"));
+        Assert.AreEqual("board", svc2.Get<string>("backlog.viewMode"));
     }
 }
