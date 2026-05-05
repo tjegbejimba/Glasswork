@@ -382,6 +382,9 @@ public sealed partial class BacklogPage : Page
         // No-op if dropping in same column
         if (task.Status == targetStatus) return;
 
+        // Update task status BEFORE UI changes to prevent race with file watcher refresh
+        task.Status = targetStatus;
+
         // Optimistic UI: move card immediately
         var originalColumn = ViewModel.BoardColumns.FirstOrDefault(c => c.Tasks.Contains(task));
         if (originalColumn is not null)
@@ -390,26 +393,41 @@ public sealed partial class BacklogPage : Page
             targetColumn.Tasks.Add(task);
         }
 
-        // Background write via BoardDragStatusWriter
-        var writer = new BoardDragStatusWriter(App.Vault, App.SelfWrites);
-        var result = await writer.TryWriteStatusChange(task, targetStatus);
-
-        if (!result.Success)
+        try
         {
-            // Snap back on failure
+            // Background write via BoardDragStatusWriter
+            var writer = new BoardDragStatusWriter(App.Vault, App.SelfWrites);
+            var result = await writer.TryWriteStatusChange(task, targetStatus);
+
+            if (!result.Success)
+            {
+                // Snap back on failure
+                task.Status = task.Status == GlassworkTask.Statuses.Todo 
+                    ? GlassworkTask.Statuses.InProgress 
+                    : GlassworkTask.Statuses.Todo;
+                if (originalColumn is not null)
+                {
+                    targetColumn.Tasks.Remove(task);
+                    originalColumn.Tasks.Add(task);
+                }
+
+                // Show error InfoBar
+                ShowErrorInfoBar(result.ErrorMessage ?? "Failed to update task status");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Snap back on exception (e.g., disk full, permissions error)
+            task.Status = task.Status == GlassworkTask.Statuses.Todo 
+                ? GlassworkTask.Statuses.InProgress 
+                : GlassworkTask.Statuses.Todo;
             if (originalColumn is not null)
             {
                 targetColumn.Tasks.Remove(task);
                 originalColumn.Tasks.Add(task);
             }
-
-            // Show error InfoBar
-            ShowErrorInfoBar(result.ErrorMessage ?? "Failed to update task status");
-        }
-        else
-        {
-            // Update task model to reflect new status (so UI is in sync)
-            task.Status = targetStatus;
+            ShowErrorInfoBar($"Failed to update task: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"Drag-drop exception: {ex}");
         }
     }
 
