@@ -9,12 +9,16 @@ using Glasswork.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Media.Animation;
+using Microsoft.UI.Xaml.Media;
 
 namespace Glasswork.Pages;
 
 public sealed partial class BacklogPage : Page
 {
     public BacklogViewModel ViewModel { get; }
+    private readonly BacklogUndoState _undoState = new();
+    private DispatcherTimer? _undoTimer;
 
     public BacklogPage()
     {
@@ -131,12 +135,16 @@ public sealed partial class BacklogPage : Page
         base.OnNavigatedTo(e);
         Refresh();
         App.TaskFileChangedExternally += OnFileChanged;
+        // Clear undo state when navigating to the page
+        ClearUndoState();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
         App.TaskFileChangedExternally -= OnFileChanged;
+        // Clear undo state when navigating away
+        ClearUndoState();
     }
 
     private void OnFileChanged(object? sender, string fileName)
@@ -215,8 +223,23 @@ public sealed partial class BacklogPage : Page
     {
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
+            // Capture undo state ONLY for board view mark-done
+            var isBoard = ViewModel.ViewMode == "board";
+            var isMarkDone = status == GlassworkTask.Statuses.Done;
+
+            if (isBoard && isMarkDone)
+            {
+                _undoState.CaptureMarkDone(task);
+            }
+
             ViewModel.SelectedTask = task;
             ViewModel.SetStatusCommand.Execute(status);
+
+            // Show undo InfoBar ONLY for board view mark-done
+            if (isBoard && isMarkDone)
+            {
+                ShowUndoInfoBar(task.Title);
+            }
         }
     }
 
@@ -249,12 +272,27 @@ public sealed partial class BacklogPage : Page
     {
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
+            // Capture undo state ONLY for board view mark-done
+            var isBoard = ViewModel.ViewMode == "board";
+            var isMarkDone = !task.IsDone; // About to mark done
+
+            if (isBoard && isMarkDone)
+            {
+                _undoState.CaptureMarkDone(task);
+            }
+
             // Toggle based on current model state — Button has no IsChecked.
             var newStatus = task.IsDone
                 ? GlassworkTask.Statuses.Todo
                 : GlassworkTask.Statuses.Done;
             ViewModel.SelectedTask = task;
             ViewModel.SetStatusCommand.Execute(newStatus);
+
+            // Show undo InfoBar ONLY for board view mark-done
+            if (isBoard && isMarkDone)
+            {
+                ShowUndoInfoBar(task.Title);
+            }
         }
     }
 
@@ -345,6 +383,133 @@ public sealed partial class BacklogPage : Page
         var slugPath = p.Replace('/', Path.DirectorySeparatorChar);
         var absolutePath = Path.Combine(wikiRoot, slugPath + ".md");
         return File.Exists(absolutePath) ? absolutePath : null;
+    }
+
+    // Drag-to-change-status (Board view only)
+    private GlassworkTask? _draggedTask;
+
+    private void ShowUndoInfoBar(string taskTitle)
+    {
+        // Show InfoBar with task title
+        UndoInfoBar.Title = $"Marked done: \"{taskTitle}\"";
+        UndoInfoBar.IsOpen = true;
+
+        // Cancel any existing timer
+        _undoTimer?.Stop();
+
+        // Start 6-second auto-dismiss timer
+        _undoTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(6)
+        };
+        _undoTimer.Tick += (_, _) =>
+        {
+            _undoTimer.Stop();
+            UndoInfoBar.IsOpen = false;
+            _undoState.Clear();
+        };
+        _undoTimer.Start();
+    }
+
+    private void UndoInfoBar_Closed(InfoBar sender, InfoBarClosedEventArgs args)
+    {
+        // User manually closed or timer auto-dismissed
+        _undoTimer?.Stop();
+        _undoState.Clear();
+    }
+
+    private void UndoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_undoState.HasUndo) return;
+
+        // Find the task to restore
+        var task = ViewModel.Tasks.FirstOrDefault(t => t.Id == _undoState.TaskId);
+        if (task is null) return;
+
+        // Cancel the timer
+        _undoTimer?.Stop();
+
+        // Restore previous status
+        var previousStatus = _undoState.PreviousStatus ?? GlassworkTask.Statuses.Todo;
+        task.Status = previousStatus;
+
+        // Write the restored status
+        ViewModel.SelectedTask = task;
+        ViewModel.SetStatusCommand.Execute(previousStatus);
+
+        // Close InfoBar
+        UndoInfoBar.IsOpen = false;
+
+        // Clear undo state
+        _undoState.Clear();
+
+        // Flash the restored card with accent outline
+        FlashRestoredCard(task);
+    }
+
+    private void FlashRestoredCard(GlassworkTask task)
+    {
+        // Find the card in the board view
+        // We need to wait for the UI to update after status change
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            // Find the Border element that represents this card
+            var border = FindCardBorder(task);
+            if (border is null) return;
+
+            // Create flash animation (accent outline for ~150ms)
+            var originalBrush = border.BorderBrush;
+            var originalThickness = border.BorderThickness;
+
+            border.BorderBrush = (Brush)Application.Current.Resources["SystemAccentColor"];
+            border.BorderThickness = new Thickness(2);
+
+            var timer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(150)
+            };
+            timer.Tick += (_, _) =>
+            {
+                border.BorderBrush = originalBrush;
+                border.BorderThickness = originalThickness;
+                timer.Stop();
+            };
+            timer.Start();
+        });
+    }
+
+    private Border? FindCardBorder(GlassworkTask task)
+    {
+        // Walk the visual tree to find the Border with matching DataContext
+        return FindChildByDataContext<Border>(BoardView, task);
+    }
+
+    private T? FindChildByDataContext<T>(DependencyObject parent, object dataContext) where T : FrameworkElement
+    {
+        if (parent is null) return null;
+
+        var childCount = VisualTreeHelper.GetChildrenCount(parent);
+        for (var i = 0; i < childCount; i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            
+            if (child is T element && element.DataContext == dataContext)
+            {
+                return element;
+            }
+
+            var result = FindChildByDataContext<T>(child, dataContext);
+            if (result is not null) return result;
+        }
+
+        return null;
+    }
+
+    private void ClearUndoState()
+    {
+        _undoTimer?.Stop();
+        _undoState.Clear();
+        UndoInfoBar.IsOpen = false;
     }
 
     // Drag-to-change-status (Board view only)
