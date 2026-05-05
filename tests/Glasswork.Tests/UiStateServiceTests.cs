@@ -113,4 +113,29 @@ public class UiStateServiceTests
         Assert.IsTrue(svc.Get<bool>("collapsed.task-3"));
         Assert.AreEqual("MyDay", svc.Get<string>("nav.last-page"), "unrelated keys must not be touched");
     }
+
+    [TestMethod]
+    public void BacklogViewMode_DefaultsToList_WhenNotSet()
+    {
+        var dir = NewTempDir();
+        var svc = new JsonFileUiStateService(Path.Combine(dir, "ui-state.json"));
+
+        var mode = svc.Get<string>("backlog.view-mode") ?? "list";
+
+        Assert.AreEqual("list", mode);
+    }
+
+    [TestMethod]
+    public void BacklogViewMode_PersistsAcrossInstances()
+    {
+        var dir = NewTempDir();
+        var path = Path.Combine(dir, "ui-state.json");
+        var svc1 = new JsonFileUiStateService(path);
+        svc1.Set("backlog.view-mode", "board");
+        svc1.Save();
+
+        var svc2 = new JsonFileUiStateService(path);
+
+        Assert.AreEqual("board", svc2.Get<string>("backlog.view-mode"));
+    }
 }

@@ -52,6 +52,11 @@ public partial class App : Application
     public const string BacklogGroupByParentKey = "backlog.groupByParent";
 
     /// <summary>
+    /// UI state key for the Backlog page's view mode ("list" | "board", default "list").
+    /// </summary>
+    public const string BacklogViewModeKey = "backlog.viewMode";
+
+    /// <summary>
     /// Key prefix for per-parent-group collapse state on the Backlog page.
     /// Suffix is the lowercased+trimmed parent string.
     /// </summary>

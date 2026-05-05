@@ -27,8 +27,15 @@ public partial class BacklogViewModel : ObservableObject
     /// The bound row sequence: when <see cref="IsGrouped"/> is true, contains
     /// interleaved <see cref="BacklogParentGroupHeader"/> and <see cref="GlassworkTask"/>
     /// items as produced by <see cref="BacklogGrouper"/>. When false, contains tasks only.
+    /// Unused when <see cref="ViewMode"/> is "board" — see <see cref="BoardColumns"/>.
     /// </summary>
     public ObservableCollection<object> Rows { get; } = [];
+
+    /// <summary>
+    /// Board columns: populated when <see cref="ViewMode"/> is "board".
+    /// Each entry contains a column name and filtered/sorted tasks for that status.
+    /// </summary>
+    public ObservableCollection<BoardColumn> BoardColumns { get; } = [];
 
     /// <summary>
     /// Optional source of per-parent-group collapse state, keyed by lowercased parent.
@@ -58,6 +65,7 @@ public partial class BacklogViewModel : ObservableObject
     [ObservableProperty] public partial string FilterStatus { get; set; } = "all";
     [ObservableProperty] public partial GlassworkTask? SelectedTask { get; set; }
     [ObservableProperty] public partial bool IsGrouped { get; set; } = true;
+    [ObservableProperty] public partial string ViewMode { get; set; } = "list"; // "list" | "board"
 
     public BacklogViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
     {
@@ -71,49 +79,71 @@ public partial class BacklogViewModel : ObservableObject
     {
         Tasks.Clear();
         Rows.Clear();
+        BoardColumns.Clear();
         var all = _vault.LoadAll();
 
-        var filtered = FilterStatus switch
+        if (ViewMode == "board")
         {
-            "all" => all.Where(t => t.Status != GlassworkTask.Statuses.Done),
-            _ => all.Where(t => t.Status == FilterStatus)
-        };
-
-        var ordered = filtered.OrderByDescending(t => t.Priority == "urgent")
-                              .ThenByDescending(t => t.Priority == "high")
-                              .ThenByDescending(t => t.Created)
-                              .ToList();
-
-        foreach (var task in ordered)
-        {
-            Tasks.Add(task);
-        }
-
-        if (IsGrouped)
-        {
-            // Hydrate cache from persisted store before grouping so headers render
-            // resolved titles on the first frame instead of flashing the bare ID.
-            HydrateParentTitleCache(ordered);
-
-            var collapseState = GroupCollapseStateProvider?.Invoke()
-                                ?? new Dictionary<string, bool>();
-            var baseUrl = AdoBaseUrlProvider?.Invoke();
-            foreach (var row in BacklogGrouper.Group(ordered, collapseState, baseUrl, ResolveParentTitleFromCache))
+            // Board mode: use BacklogBoardGrouper, ignore FilterStatus and IsGrouped
+            var columns = BacklogBoardGrouper.GroupByStatus(all);
+            foreach (var col in columns)
             {
-                Rows.Add(row);
+                BoardColumns.Add(col);
             }
-
-            // GC stale entries no longer referenced by any task in the current set.
-            CompactParentTitleStore(ordered);
-
-            // Kick off background fetches for any numeric parents we haven't resolved yet.
-            KickOffParentTitleFetches(ordered);
+            // Populate flat Tasks collection for count exposure
+            foreach (var col in columns)
+            {
+                foreach (var task in col.Tasks)
+                {
+                    Tasks.Add(task);
+                }
+            }
         }
         else
         {
+            // List mode: existing logic
+            var filtered = FilterStatus switch
+            {
+                "all" => all.Where(t => t.Status != GlassworkTask.Statuses.Done),
+                _ => all.Where(t => t.Status == FilterStatus)
+            };
+
+            var ordered = filtered.OrderByDescending(t => t.Priority == "urgent")
+                                  .ThenByDescending(t => t.Priority == "high")
+                                  .ThenByDescending(t => t.Created)
+                                  .ToList();
+
             foreach (var task in ordered)
             {
-                Rows.Add(task);
+                Tasks.Add(task);
+            }
+
+            if (IsGrouped)
+            {
+                // Hydrate cache from persisted store before grouping so headers render
+                // resolved titles on the first frame instead of flashing the bare ID.
+                HydrateParentTitleCache(ordered);
+
+                var collapseState = GroupCollapseStateProvider?.Invoke()
+                                    ?? new Dictionary<string, bool>();
+                var baseUrl = AdoBaseUrlProvider?.Invoke();
+                foreach (var row in BacklogGrouper.Group(ordered, collapseState, baseUrl, ResolveParentTitleFromCache))
+                {
+                    Rows.Add(row);
+                }
+
+                // GC stale entries no longer referenced by any task in the current set.
+                CompactParentTitleStore(ordered);
+
+                // Kick off background fetches for any numeric parents we haven't resolved yet.
+                KickOffParentTitleFetches(ordered);
+            }
+            else
+            {
+                foreach (var task in ordered)
+                {
+                    Rows.Add(task);
+                }
             }
         }
     }
@@ -214,6 +244,7 @@ public partial class BacklogViewModel : ObservableObject
     public event Action? ParentTitlesResolved;
 
     partial void OnIsGroupedChanged(bool value) => Refresh();
+    partial void OnViewModeChanged(string value) => Refresh();
 
     [RelayCommand]
     public void SetStatus(string newStatus)
