@@ -394,8 +394,8 @@ public sealed partial class BacklogPage : Page
         UndoInfoBar.Title = $"Marked done: \"{taskTitle}\"";
         UndoInfoBar.IsOpen = true;
 
-        // Cancel any existing timer
-        _undoTimer?.Stop();
+        // Dispose and cancel any existing timer
+        DisposeTimer();
 
         // Start 6-second auto-dismiss timer
         _undoTimer = new DispatcherTimer
@@ -404,9 +404,9 @@ public sealed partial class BacklogPage : Page
         };
         _undoTimer.Tick += (_, _) =>
         {
-            _undoTimer.Stop();
             UndoInfoBar.IsOpen = false;
             _undoState.Clear();
+            DisposeTimer();
         };
         _undoTimer.Start();
     }
@@ -414,7 +414,7 @@ public sealed partial class BacklogPage : Page
     private void UndoInfoBar_Closed(InfoBar sender, InfoBarClosedEventArgs args)
     {
         // User manually closed or timer auto-dismissed
-        _undoTimer?.Stop();
+        DisposeTimer();
         _undoState.Clear();
     }
 
@@ -422,18 +422,28 @@ public sealed partial class BacklogPage : Page
     {
         if (!_undoState.HasUndo) return;
 
+        // Stop timer immediately to prevent race condition
+        DisposeTimer();
+
         // Find the task to restore
         var task = ViewModel.Tasks.FirstOrDefault(t => t.Id == _undoState.TaskId);
-        if (task is null) return;
+        if (task is null)
+        {
+            _undoState.Clear();
+            UndoInfoBar.IsOpen = false;
+            return;
+        }
 
-        // Cancel the timer
-        _undoTimer?.Stop();
+        // Validate task is still done (reject stale undo if status changed)
+        if (task.Status != GlassworkTask.Statuses.Done)
+        {
+            _undoState.Clear();
+            UndoInfoBar.IsOpen = false;
+            return;
+        }
 
-        // Restore previous status
+        // Restore previous status (don't write directly, let command handle it)
         var previousStatus = _undoState.PreviousStatus ?? GlassworkTask.Statuses.Todo;
-        task.Status = previousStatus;
-
-        // Write the restored status
         ViewModel.SelectedTask = task;
         ViewModel.SetStatusCommand.Execute(previousStatus);
 
@@ -473,6 +483,7 @@ public sealed partial class BacklogPage : Page
                 border.BorderBrush = originalBrush;
                 border.BorderThickness = originalThickness;
                 timer.Stop();
+                timer.Dispose();
             };
             timer.Start();
         });
@@ -507,9 +518,19 @@ public sealed partial class BacklogPage : Page
 
     private void ClearUndoState()
     {
-        _undoTimer?.Stop();
+        DisposeTimer();
         _undoState.Clear();
         UndoInfoBar.IsOpen = false;
+    }
+
+    private void DisposeTimer()
+    {
+        if (_undoTimer is not null)
+        {
+            _undoTimer.Stop();
+            _undoTimer.Dispose();
+            _undoTimer = null;
+        }
     }
 
     // Drag-to-change-status (Board view only)
