@@ -285,7 +285,7 @@ public partial class App : Application
         InitVaultServices(newVaultPath, uiStateImpl);
     }
 
-    private static void OnAppInstanceActivated(AppInstance sender, AppActivationArguments args)
+    private static void OnAppInstanceActivated(object? sender, AppActivationArguments args)
     {
         // Fired on a background thread — marshal UI work to the dispatcher.
         var uri = ExtractUri(args);

@@ -209,7 +209,7 @@ public sealed partial class MainWindow : Window
                 if (task is null)
                 {
                     DeepLinkErrorBar.Title = "Task not found";
-                    DeepLinkErrorBar.Message = $"No task with id "{t.TaskId}" was found in the vault.";
+                    DeepLinkErrorBar.Message = $"No task with id \"{t.TaskId}\" was found in the vault.";
                     DeepLinkErrorBar.IsOpen = true;
                     return;
                 }
