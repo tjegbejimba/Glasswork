@@ -91,6 +91,13 @@ public sealed partial class SubtaskDetailDialog : ContentDialog
 
     private void UpdateBlockerVisibility()
     {
+        // Defensive: StatusBox.SelectionChanged would fire during InitializeComponent
+        // if anyone added a SelectedIndex= literal to the XAML, and BlockerBox is
+        // declared *after* StatusBox in the markup — it would be null at that point.
+        // No SelectedIndex= today; the constructor calls SetComboByTag(StatusBox, ...)
+        // after InitializeComponent, by which time BlockerBox exists. This guard makes
+        // that ordering invariant explicit. See "XAML init-order bug audit" (May 2026).
+        if (BlockerBox is null) return;
         var tag = (StatusBox.SelectedItem as ComboBoxItem)?.Tag?.ToString();
         BlockerBox.Visibility = tag == "blocked" ? Visibility.Visible : Visibility.Collapsed;
     }

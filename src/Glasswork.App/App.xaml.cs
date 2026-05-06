@@ -131,6 +131,42 @@ public partial class App : Application
     {
         // Set AUMID before any window creation for consistent taskbar identity
         SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
+
+        // Capture unhandled exceptions to a known file. Without this, self-contained
+        // WinUI desktop apps crash silently with only a STOWED_EXCEPTION (0xc000027b)
+        // in WER — no stack trace, no managed exception info.
+        UnhandledException += (_, e) =>
+        {
+            try
+            {
+                var logPath = Path.Combine(Path.GetTempPath(), "glasswork-unhandled.log");
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] UI thread:\n{e.Exception}\n\n");
+            }
+            catch { /* logging failure must not crash again */ }
+            // Don't mark Handled — let the app crash so we still get the WER report.
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            try
+            {
+                var logPath = Path.Combine(Path.GetTempPath(), "glasswork-unhandled.log");
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] AppDomain:\n{e.ExceptionObject}\n\n");
+            }
+            catch { }
+        };
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            try
+            {
+                var logPath = Path.Combine(Path.GetTempPath(), "glasswork-unhandled.log");
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] Unobserved Task:\n{e.Exception}\n\n");
+            }
+            catch { }
+        };
+
         InitializeComponent();
     }
 
