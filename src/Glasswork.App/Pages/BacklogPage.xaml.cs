@@ -89,14 +89,17 @@ public sealed partial class BacklogPage : Page
     {
         if (ViewModel.ViewMode == "list") return;
         ViewModel.ViewMode = "list";
-        BoardViewToggle.IsChecked = false;
+        // Null-conditional: during InitializeComponent the other toggle may not
+        // exist yet when XAML sets IsChecked="True" on this one. UpdateViewModeUI
+        // syncs both toggles correctly after InitializeComponent completes.
+        if (BoardViewToggle is not null) BoardViewToggle.IsChecked = false;
     }
 
     private void BoardViewToggle_Checked(object sender, RoutedEventArgs e)
     {
         if (ViewModel.ViewMode == "board") return;
         ViewModel.ViewMode = "board";
-        ListViewToggle.IsChecked = false;
+        if (ListViewToggle is not null) ListViewToggle.IsChecked = false;
     }
 
     private void WorkLogLink_Click(object sender, RoutedEventArgs e)
