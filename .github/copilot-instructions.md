@@ -68,6 +68,18 @@ this content, it does not own it.
 5. **Any code that writes the vault must register with `SelfWriteCoordinator`**
    or `FileWatcherService` will fire spurious external-change events.
 
+6. **WinUI XAML event handlers must not unconditionally dereference other
+   named XAML elements.** Initial-state attributes (`IsChecked="True"`,
+   `SelectedIndex="0"`, `IsSelected="True"`, `Value=`, `IsOn="True"`, etc.)
+   fire their corresponding `Changed`/`Checked`/`SelectionChanged` events
+   *during* `InitializeComponent`, in document order — sibling controls
+   declared *later* in the XAML are still `null` at that point. A handler
+   that pokes another named control crashes with `XamlParseException`
+   (surfaces in self-contained Release as a silent `STOWED_EXCEPTION
+   0xc000027b`). Either gate cross-references with `if (Other is not null)`
+   / `?.`, or do the cross-control sync in a method called *after*
+   `InitializeComponent`. See PR #153 and the audit it carries.
+
 ## Investigation guidance (for issue triage & root-cause analysis)
 
 When assigned a user-reported issue (label `user-report`):
