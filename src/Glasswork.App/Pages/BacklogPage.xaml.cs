@@ -385,9 +385,6 @@ public sealed partial class BacklogPage : Page
         return File.Exists(absolutePath) ? absolutePath : null;
     }
 
-    // Drag-to-change-status (Board view only)
-    private GlassworkTask? _draggedTask;
-
     private void ShowUndoInfoBar(string taskTitle)
     {
         // Show InfoBar with task title
@@ -483,7 +480,6 @@ public sealed partial class BacklogPage : Page
                 border.BorderBrush = originalBrush;
                 border.BorderThickness = originalThickness;
                 timer.Stop();
-                timer.Dispose();
             };
             timer.Start();
         });
@@ -528,7 +524,6 @@ public sealed partial class BacklogPage : Page
         if (_undoTimer is not null)
         {
             _undoTimer.Stop();
-            _undoTimer.Dispose();
             _undoTimer = null;
         }
     }
@@ -622,12 +617,5 @@ public sealed partial class BacklogPage : Page
         // Placeholder: InfoBar UI will be added in next iteration
         // For now, just log the error
         System.Diagnostics.Debug.WriteLine($"Drag-drop error: {message}");
-    }
-
-    private void BoardCard_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
-        Frame.Navigate(typeof(TaskDetailPage), task);
-        e.Handled = true;
     }
 }
