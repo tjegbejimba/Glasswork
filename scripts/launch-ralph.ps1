@@ -171,9 +171,12 @@ function Start-Loop {
     $rest = $RepoRoot.Substring(2) -replace '\\', '/'
     $posixRepo = "/$drive$rest"
 
-    # The 'exec' replaces the bash login shell with launch.sh so killing the
-    # launcher kills the loop directly (no orphan parent to track).
-    $bashCmd = "cd '$posixRepo' && exec ./.ralph/launch.sh --foreground"
+    # Output is captured via shell redirection inside bash (relative paths, since
+    # we cd into the repo first). This avoids the .NET RedirectStandardOutput/Error
+    # properties, which (on this machine, in this combo) caused the spawned bash to
+    # exit immediately with no error output. The 'exec' replaces the bash login
+    # shell with launch.sh so killing the launcher kills the loop directly.
+    $bashCmd = "cd '$posixRepo' && exec ./.ralph/launch.sh --foreground > .ralph/logs/launcher-$timestamp.out 2> .ralph/logs/launcher-$timestamp.err"
 
     Write-Host "=== Launching Ralph (foreground, detached) ===" -ForegroundColor Cyan
     Write-Host "  Repo:    $RepoRoot"
@@ -181,15 +184,20 @@ function Start-Loop {
     Write-Host "  stdout:  $stdoutLog"
     Write-Host "  stderr:  $stderrLog"
 
-    $proc = Start-Process `
-        -FilePath $BashExe `
-        -ArgumentList @("-lc", $bashCmd) `
-        -WorkingDirectory $RepoRoot `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $stdoutLog `
-        -RedirectStandardError $stderrLog `
-        -PassThru
+    # Use System.Diagnostics.Process directly. Start-Process with -WindowStyle Hidden
+    # + -RedirectStandardOutput/-Error reliably FAILED on this machine: the spawned
+    # bash exited immediately, redirect files stayed 0 bytes, no error surfaced.
+    # The .NET ProcessStartInfo path with UseShellExecute=false + CreateNoWindow=true
+    # launches detached, survives the spawning PowerShell session ending, and is the
+    # canonical Windows pattern for "spawn console process with no window".
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $BashExe
+    $psi.Arguments = "-lc `"$bashCmd`""
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = $RepoRoot
 
+    $proc = [System.Diagnostics.Process]::Start($psi)
     $proc.Id | Set-Content $PidFile
 
     Write-Host ""
