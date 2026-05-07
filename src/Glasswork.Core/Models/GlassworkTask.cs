@@ -20,8 +20,12 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial DateTime? CompletedAt { get; set; }
     [ObservableProperty] public partial DateTime? Due { get; set; }
     [ObservableProperty] public partial DateTime? MyDay { get; set; }
-    [ObservableProperty] public partial int? AdoLink { get; set; }
-    [ObservableProperty] public partial string? AdoTitle { get; set; }
+    
+    // TODO(Slice 128+): When Links editing UI is added, consider changing to ObservableCollection
+    // and subscribing to CollectionChanged to propagate AdoLink/AdoTitle derived property changes.
+    // For v1 (read-only Links UI), List is sufficient since mutations only happen via derived setters.
+    [ObservableProperty] public partial List<TaskLink> Links { get; set; } = [];
+    
     [ObservableProperty] public partial string? Parent { get; set; }
     [ObservableProperty] public partial string Description { get; set; } = string.Empty;
     [ObservableProperty] public partial string Notes { get; set; } = string.Empty;
@@ -192,6 +196,75 @@ public partial class GlassworkTask : ObservableObject
 
     /// <summary>True when there is at least one subtask to render inline in My Day.</summary>
     public bool HasTodaysSubtasks => TodaysSubtasks is { Count: > 0 };
+
+    /// <summary>
+    /// Derived property: reads/writes the first ADO-typed link in <see cref="Links"/>.
+    /// Preserves backward compatibility with existing consumers that reference AdoLink directly.
+    /// Setting to null removes the ADO link; setting to a value adds or updates it.
+    /// </summary>
+    public int? AdoLink
+    {
+        get
+        {
+            var adoLink = Links.FirstOrDefault(l => l.Type == TaskLink.Types.Ado);
+            return adoLink != null && int.TryParse(adoLink.Value, out var id) ? id : null;
+        }
+        set
+        {
+            var existingIndex = Links.FindIndex(l => l.Type == TaskLink.Types.Ado);
+            if (value.HasValue)
+            {
+                var newLink = new TaskLink
+                {
+                    Type = TaskLink.Types.Ado,
+                    Value = value.Value.ToString(),
+                    Label = existingIndex >= 0 ? Links[existingIndex].Label : null
+                };
+                if (existingIndex >= 0)
+                    Links[existingIndex] = newLink;
+                else
+                    Links.Insert(0, newLink);
+            }
+            else if (existingIndex >= 0)
+            {
+                Links.RemoveAt(existingIndex);
+            }
+            OnPropertyChanged(nameof(AdoLink));
+            OnPropertyChanged(nameof(AdoTitle));
+            OnPropertyChanged(nameof(Links));
+        }
+    }
+
+    /// <summary>
+    /// Derived property: reads/writes the label of the first ADO-typed link in <see cref="Links"/>.
+    /// If no ADO link exists and a non-null value is set, creates a placeholder ADO link with
+    /// an empty Value (to be filled by setting AdoLink later).
+    /// </summary>
+    public string? AdoTitle
+    {
+        get => Links.FirstOrDefault(l => l.Type == TaskLink.Types.Ado)?.Label;
+        set
+        {
+            var existingIndex = Links.FindIndex(l => l.Type == TaskLink.Types.Ado);
+            if (existingIndex >= 0)
+            {
+                Links[existingIndex] = Links[existingIndex] with { Label = value };
+            }
+            else if (!string.IsNullOrWhiteSpace(value))
+            {
+                // Create placeholder ADO link with empty Value when title is set first
+                Links.Insert(0, new TaskLink
+                {
+                    Type = TaskLink.Types.Ado,
+                    Value = string.Empty,
+                    Label = value
+                });
+            }
+            OnPropertyChanged(nameof(AdoTitle));
+            OnPropertyChanged(nameof(AdoLink));
+            OnPropertyChanged(nameof(Links));
+        }
+    }
 }
 
 /// <summary>

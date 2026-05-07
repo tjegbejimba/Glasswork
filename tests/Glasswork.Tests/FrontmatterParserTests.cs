@@ -663,4 +663,210 @@ public class FrontmatterParserTests
 
         StringAssert.Contains(md, "## Notes");
     }
+
+    // ===== Slice 127: Structured links tests =====
+
+    [TestMethod]
+    public void Parse_LinksInFrontmatter_PopulatesLinksCollection()
+    {
+        var markdown = """
+            ---
+            id: test
+            title: Test
+            links:
+              - type: ado
+                value: "1234"
+                label: "My ADO item"
+              - type: pr
+                value: "https://github.com/foo/bar/pull/5"
+            ---
+            Description here.
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(2, task.Links.Count);
+        Assert.AreEqual("ado", task.Links[0].Type);
+        Assert.AreEqual("1234", task.Links[0].Value);
+        Assert.AreEqual("My ADO item", task.Links[0].Label);
+        Assert.AreEqual("pr", task.Links[1].Type);
+        Assert.AreEqual("https://github.com/foo/bar/pull/5", task.Links[1].Value);
+        Assert.IsNull(task.Links[1].Label);
+    }
+
+    [TestMethod]
+    public void Serialize_LinksInModel_EmitsLinksInFrontmatter()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "test",
+            Title = "Test",
+            Created = new DateTime(2026, 4, 17),
+        };
+        task.Links.Add(new TaskLink { Type = "ado", Value = "1234", Label = "ADO Item" });
+        task.Links.Add(new TaskLink { Type = "pr", Value = "https://pr.url" });
+
+        var markdown = _parser.Serialize(task);
+
+        StringAssert.Contains(markdown, "links:");
+        StringAssert.Contains(markdown, "- type: ado");
+        StringAssert.Contains(markdown, "value: 1234");
+        StringAssert.Contains(markdown, "label: ADO Item");
+        StringAssert.Contains(markdown, "- type: pr");
+        StringAssert.Contains(markdown, "value: https://pr.url");
+        Assert.IsFalse(markdown.Contains("ado_link:"), "Legacy ado_link key should be omitted");
+        Assert.IsFalse(markdown.Contains("ado_title:"), "Legacy ado_title key should be omitted");
+    }
+
+    [TestMethod]
+    public void Parse_LegacyAdoLinkOnly_MigratesIntoLinks()
+    {
+        var markdown = """
+            ---
+            id: legacy
+            title: Legacy Task
+            ado_link: 5678
+            ---
+            Description here.
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        // Legacy ado_link should appear in Links collection
+        Assert.AreEqual(1, task.Links.Count);
+        Assert.AreEqual("ado", task.Links[0].Type);
+        Assert.AreEqual("5678", task.Links[0].Value);
+        Assert.IsNull(task.Links[0].Label);
+        
+        // Derived property should work
+        Assert.AreEqual(5678, task.AdoLink);
+    }
+
+    [TestMethod]
+    public void Parse_LegacyAdoLinkWithTitle_PreservesLabel()
+    {
+        var markdown = """
+            ---
+            id: legacy-full
+            title: Legacy Task
+            ado_link: 9999
+            ado_title: "Legacy title"
+            ---
+            Description.
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(1, task.Links.Count);
+        Assert.AreEqual("ado", task.Links[0].Type);
+        Assert.AreEqual("9999", task.Links[0].Value);
+        Assert.AreEqual("Legacy title", task.Links[0].Label);
+        Assert.AreEqual(9999, task.AdoLink);
+        Assert.AreEqual("Legacy title", task.AdoTitle);
+    }
+
+    [TestMethod]
+    public void RoundTrip_LegacyAdoLink_DropsLegacyKeysOnSerialize()
+    {
+        var original = """
+            ---
+            id: migrate-me
+            title: Migrate me
+            ado_link: 1111
+            ado_title: "Original title"
+            ---
+            Desc.
+            """;
+
+        var task = _parser.Parse(original);
+        var reserialized = _parser.Serialize(task);
+
+        // After round-trip, legacy keys should be gone
+        Assert.IsFalse(reserialized.Contains("ado_link:"), "ado_link should be dropped after migration");
+        Assert.IsFalse(reserialized.Contains("ado_title:"), "ado_title should be dropped after migration");
+        StringAssert.Contains(reserialized, "links:");
+        StringAssert.Contains(reserialized, "type: ado");
+        StringAssert.Contains(reserialized, "value: 1111");
+    }
+
+    [TestMethod]
+    public void GlassworkTask_SetAdoLink_AddsToLinksCollection()
+    {
+        var task = new GlassworkTask { Id = "test", Title = "Test" };
+        task.AdoLink = 4242;
+
+        Assert.AreEqual(1, task.Links.Count);
+        Assert.AreEqual("ado", task.Links[0].Type);
+        Assert.AreEqual("4242", task.Links[0].Value);
+        Assert.IsNull(task.Links[0].Label);
+    }
+
+    [TestMethod]
+    public void GlassworkTask_SetAdoLinkToNull_RemovesFromLinks()
+    {
+        var task = new GlassworkTask { Id = "test", Title = "Test" };
+        task.AdoLink = 123;
+        task.AdoLink = null;
+
+        Assert.AreEqual(0, task.Links.Count);
+    }
+
+    [TestMethod]
+    public void GlassworkTask_SetAdoTitle_UpdatesExistingAdoLink()
+    {
+        var task = new GlassworkTask { Id = "test", Title = "Test" };
+        task.AdoLink = 999;
+        task.AdoTitle = "Updated title";
+
+        Assert.AreEqual(1, task.Links.Count);
+        Assert.AreEqual("Updated title", task.Links[0].Label);
+        Assert.AreEqual("999", task.Links[0].Value);
+    }
+
+    [TestMethod]
+    public void GlassworkTask_SetAdoTitleWithoutLink_CreatesPlaceholder()
+    {
+        var task = new GlassworkTask { Id = "test", Title = "Test" };
+        task.AdoTitle = "Title first";
+
+        Assert.AreEqual(1, task.Links.Count);
+        Assert.AreEqual("ado", task.Links[0].Type);
+        Assert.AreEqual(string.Empty, task.Links[0].Value);
+        Assert.AreEqual("Title first", task.Links[0].Label);
+    }
+
+    [TestMethod]
+    public void Parse_UnknownLinkType_CoercesToOther()
+    {
+        var markdown = """
+            ---
+            id: unknown
+            title: Unknown type
+            links:
+              - type: futuretype
+                value: "xyz"
+            ---
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(1, task.Links.Count);
+        Assert.AreEqual("other", task.Links[0].Type);
+        Assert.AreEqual("xyz", task.Links[0].Value);
+    }
+
+    [TestMethod]
+    public void Serialize_EmptyLinks_OmitsLinksKey()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "no-links",
+            Title = "No links",
+            Created = new DateTime(2026, 4, 17),
+        };
+
+        var markdown = _parser.Serialize(task);
+
+        Assert.IsFalse(markdown.Contains("links:"), "Empty Links should not emit links: key");
+    }
 }
