@@ -66,7 +66,7 @@ public class LinkUriPolicyTests
         var result = LinkUriPolicy.Resolve(link, "https://dev.azure.com/myorg/myproj");
 
         Assert.IsNotNull(result);
-        Assert.AreEqual("https://dev.azure.com/myorg/myproj/_git//pullrequest/456", result.ToString());
+        Assert.AreEqual("https://dev.azure.com/myorg/myproj/_git/pullrequest/456", result.ToString());
     }
 
     [TestMethod]
@@ -229,6 +229,34 @@ public class LinkUriPolicyTests
         };
 
         Assert.AreEqual("ADO #12345", LinkUriPolicy.DisplayText(link));
+    }
+
+    [TestMethod]
+    public void Resolve_IncidentType_EmbeddedDigits_ReturnsNull()
+    {
+        // Regex should reject "foo123bar" - digits must be standalone
+        var link = new TaskLink { Type = TaskLink.Types.Incident, Value = "foo123bar" };
+        var result = LinkUriPolicy.Resolve(link, null);
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void Resolve_IncidentType_DigitsWithExtraText_ReturnsNull()
+    {
+        // Regex should reject "ICM 123 with extra" - no trailing text allowed
+        var link = new TaskLink { Type = TaskLink.Types.Incident, Value = "ICM 123 with extra" };
+        var result = LinkUriPolicy.Resolve(link, null);
+        Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void Resolve_PrType_Integer_NoDoubleSlash()
+    {
+        // Verify ADO PR URL doesn't have double slash after _git
+        var link = new TaskLink { Type = TaskLink.Types.Pr, Value = "456" };
+        var result = LinkUriPolicy.Resolve(link, "https://dev.azure.com/org/proj");
+        Assert.IsNotNull(result);
+        Assert.AreEqual("https://dev.azure.com/org/proj/_git/pullrequest/456", result.ToString());
     }
 
     [TestMethod]

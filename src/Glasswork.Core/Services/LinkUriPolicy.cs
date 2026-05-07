@@ -80,7 +80,7 @@ public static class LinkUriPolicy
         {
             var trimmedBase = adoBaseUrl.Trim().TrimEnd('/');
             if (trimmedBase.Length == 0) return null;
-            var url = $"{trimmedBase}/_git//pullrequest/{trimmed}";
+            var url = $"{trimmedBase}/_git/pullrequest/{trimmed}";
             return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri : null;
         }
 
@@ -100,7 +100,8 @@ public static class LinkUriPolicy
         }
 
         // Extract incident number from "ICM 123456" or bare "123456"
-        var match = Regex.Match(trimmed, @"(?:ICM\s+)?(\d+)", RegexOptions.IgnoreCase);
+        // Anchor to require entire string matches pattern (not just substring)
+        var match = Regex.Match(trimmed, @"^(?:ICM\s+)?(\d+)$", RegexOptions.IgnoreCase);
         if (match.Success && match.Groups[1].Success)
         {
             var incidentId = match.Groups[1].Value;
