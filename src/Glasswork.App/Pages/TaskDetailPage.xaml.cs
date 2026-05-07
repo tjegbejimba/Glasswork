@@ -1275,24 +1275,3 @@ public sealed class HexToBrushConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, string language)
         => throw new NotImplementedException();
 }
-
-/// <summary>
-/// Bool → SolidColorBrush converter that highlights the My Day toggle when active.
-/// True returns the system accent brush; false returns a muted gray to indicate the
-/// toggle is available but inactive.
-/// </summary>
-public sealed class MyDayBrushConverter : IValueConverter
-{
-    public object Convert(object value, Type targetType, object parameter, string language)
-    {
-        if (value is bool b && b)
-        {
-            // Active: sunny gold to match the sun glyph.
-            return new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0xC1, 0x07));
-        }
-        return new SolidColorBrush(Color.FromArgb(0x80, 0x80, 0x80, 0x80));
-    }
-
-    public object ConvertBack(object value, Type targetType, object parameter, string language)
-        => throw new NotImplementedException();
-}

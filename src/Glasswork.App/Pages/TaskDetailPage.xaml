@@ -6,13 +6,14 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:local="using:Glasswork.Pages"
+    xmlns:conv="using:Glasswork.Converters"
     xmlns:controls="using:Glasswork.Controls"
     mc:Ignorable="d">
 
     <Page.Resources>
         <local:BoolToVisibilityConverter x:Key="BoolToVis" />
         <local:HexToBrushConverter x:Key="HexToBrush" />
-        <local:MyDayBrushConverter x:Key="MyDayBrush" />
+        <conv:MyDayBrushConverter x:Key="MyDayBrush" />
     </Page.Resources>
 
     <ScrollViewer Padding="32">
