@@ -85,6 +85,20 @@ public partial class FrontmatterParser
             Tags = frontmatter.Tags ?? [],
         };
 
+        // Hydrate Links from DTO
+        if (frontmatter.Links is not null)
+        {
+            foreach (var dto in frontmatter.Links)
+            {
+                task.Links.Add(new TaskLink
+                {
+                    Type = TaskLink.Types.Normalize(dto.Type),
+                    Value = dto.Value ?? string.Empty,
+                    Label = dto.Label
+                });
+            }
+        }
+
         // Parse subtasks from checkbox lines, separate from description prose
         var (subtasks, cleanDescription) = ParseSubtasks(body);
         task.Subtasks = subtasks;
@@ -111,11 +125,16 @@ public partial class FrontmatterParser
             CompletedAt = task.CompletedAt?.ToString("yyyy-MM-dd"),
             Due = task.Due?.ToString("yyyy-MM-dd"),
             MyDay = task.MyDay?.ToString("yyyy-MM-dd"),
-            AdoLink = task.AdoLink,
-            AdoTitle = task.AdoTitle,
             Parent = task.Parent,
             ContextLinks = task.ContextLinks.Count > 0 ? task.ContextLinks : null,
             Tags = task.Tags.Count > 0 ? task.Tags : null,
+            Links = task.Links.Count > 0 ? task.Links.Select(l => new TaskLinkDto
+            {
+                Type = l.Type,
+                Value = l.Value,
+                Label = l.Label
+            }).ToList() : null,
+            // Legacy keys are omitted: AdoLink and AdoTitle are derived properties now
         };
 
         var yaml = YamlSerializer.Serialize(frontmatter).TrimEnd();
@@ -355,5 +374,16 @@ public partial class FrontmatterParser
         [YamlMember(Alias = "context_links")]
         public List<string>? ContextLinks { get; set; }
         public List<string>? Tags { get; set; }
+        public List<TaskLinkDto>? Links { get; set; }
+    }
+
+    /// <summary>
+    /// DTO for deserializing a single link from YAML frontmatter.
+    /// </summary>
+    private class TaskLinkDto
+    {
+        public string? Type { get; set; }
+        public string? Value { get; set; }
+        public string? Label { get; set; }
     }
 }
