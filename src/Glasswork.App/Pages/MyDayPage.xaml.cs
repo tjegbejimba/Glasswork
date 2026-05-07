@@ -133,6 +133,43 @@ public sealed partial class MyDayPage : Page
         }
     }
 
+    // Quick-copy agent-command lines from a My Day card without round-tripping through
+    // TaskDetail. The strings come from TaskInvocationFormatter (the canonical source);
+    // this is purely a UX shortcut.
+    private void CopyStartWork_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        {
+            CopyToClipboard(Glasswork.Core.Services.TaskInvocationFormatter.FormatStartWork(task.Id), "Start work");
+        }
+    }
+
+    private void CopyResume_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        {
+            CopyToClipboard(Glasswork.Core.Services.TaskInvocationFormatter.FormatResume(task.Id), "Resume");
+        }
+    }
+
+    private void CopyWrapUp_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        {
+            CopyToClipboard(Glasswork.Core.Services.TaskInvocationFormatter.FormatWrapUp(task.Id), "Wrap up");
+        }
+    }
+
+    private void CopyToClipboard(string text, string label)
+    {
+        var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        pkg.SetText(text);
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+        ClipboardHint.Title = $"Copied '{label}' command";
+        ClipboardHint.Message = "Paste into your Copilot CLI session.";
+        ClipboardHint.IsOpen = true;
+    }
+
     private void CarryAll_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.CarryAllCommand.Execute(null);

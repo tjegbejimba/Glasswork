@@ -15,6 +15,7 @@
         <conv:SubtaskSegmentBrushConverter x:Key="SegBrush" />
         <conv:DueUrgencyBrushConverter x:Key="DueBg" />
         <conv:DueUrgencyForegroundBrushConverter x:Key="DueFg" />
+        <conv:MyDayBrushConverter x:Key="MyDayBrush" />
 
         <DataTemplate x:Key="BacklogTaskTemplate">
             <Grid Padding="10,8" RowDefinitions="Auto,Auto"
@@ -51,7 +52,8 @@
                             ToolTipService.ToolTip="Toggle My Day"
                             Background="Transparent" BorderThickness="0"
                             Padding="6,2" VerticalAlignment="Center" Margin="6,0,0,0">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE706;" FontSize="13" />
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE706;" FontSize="13"
+                                  Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
                     </Button>
                     <Button Grid.Column="5" Background="Transparent" BorderThickness="0"
                             Padding="6,2" VerticalAlignment="Center">
@@ -177,7 +179,8 @@
                                 ToolTipService.ToolTip="Toggle My Day"
                                 Background="Transparent" BorderThickness="0"
                                 Padding="4" VerticalAlignment="Center">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE706;" FontSize="12" />
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE706;" FontSize="12"
+                                      Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
                         </Button>
                     </StackPanel>
 
