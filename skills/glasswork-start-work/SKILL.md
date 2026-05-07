@@ -1,6 +1,6 @@
 ---
 name: glasswork-start-work
-description: Start fresh work on a Glasswork task. Use when the user pastes "Start work on Glasswork task: <task-id>", asks to begin a Glasswork task, or kicks off a new task from the Glasswork app's "Start work" button.
+description: 'Start fresh work on a Glasswork task. Use when the user pastes "Start work on Glasswork task: <task-id>", asks to begin a Glasswork task, or kicks off a new task from the Glasswork app''s "Start work" button.'
 ---
 
 # Glasswork — Start Work
