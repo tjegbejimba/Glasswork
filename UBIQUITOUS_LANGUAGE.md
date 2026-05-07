@@ -7,7 +7,7 @@
 | Term | Definition | Aliases to avoid |
 |---|---|---|
 | **Vault** | The Obsidian folder Glasswork reads tasks from. Source of truth for all task data. Currently `%UserProfile%\Wiki\wiki\todo`. | folder, directory, repo, store |
-| **Task** | A work item represented by one `.md` file in the vault. May have subtasks, notes, ADO links, due date. | item, work item (work item is overloaded — use only when explicitly referring to ADO) |
+| **Task** | A work item represented by one `.md` file in the vault. May have subtasks, notes, Links, due date, and legacy ADO frontmatter during migration. | item, work item (work item is overloaded — use only when explicitly referring to ADO) |
 | **Subtask** | A child step inside a task. Has its own status (`todo`, `in_progress`, `blocked`, `done`, `dropped`), title, optional notes. Lives inline in the parent's `.md` body. | step, todo (step is fine in user copy; subtask is canonical in code) |
 | **Subtask row** | The list-item template that renders one subtask in TaskDetail **and** in the today's-subtasks list beneath each promoted parent on My Day. Two interactive hit zones: the **circle glyph** (single-click toggles done) and the **subtask text** (single-click opens `SubtaskDetailDialog`). Hand cursor on the text advertises the affordance. Same model in active and completed lists. See ADR 0004 (interaction) and ADR 0008 (My Day surface). | subtask line, subtask item |
 | **Active subtask list** | The `ListView` rendering subtasks not in `done` or `dropped` status. Supports drag-reorder. Each row carries the full action set (My Day toggle, `⋯` More menu). | open subtasks, pending subtasks |
@@ -18,6 +18,8 @@
 | **Artifacts section** | Collapsible-list surface in TaskDetail rendered beneath Notes. Hidden when zero artifacts. One `Expander` per artifact, ordered by mtime descending; the newest auto-expands and the rest start collapsed. Each header carries a relative-time badge and an "Open in Obsidian" link; the body renders the artifact markdown read-only. | artifacts panel, artifacts list, attachments section |
 | **Backlink** | An incoming wikilink to a Glasswork task from a vault page **outside** `wiki/todo/` — i.e., any concept, decision, system, incident, or other wiki note that references a task via `[[task-id]]`. The convention lives in [`wiki/concepts/glasswork-task-linking.md`](wiki/concepts/glasswork-task-linking.md) and is mirrored in-app by the Backlinks section. Task-to-task wikilinks (those originating under `wiki/todo/`) are explicitly excluded — those surface as Related, not Backlinks. | reference, mention, incoming link, referenced-from (the UI shows "Backlinks"; use that term in code, copy, and conversation) |
 | **Backlinks section** | Collapsible-list surface in TaskDetail rendered beneath Related. Hidden when zero backlinks. One row per linking page, grouped by `BacklinkPageType` (concept, decision, system, incident, other), ordered by page title. Each row shows the page title and a small page-type badge; click opens the page in Obsidian via `obsidian://` URI, gated through `ArtifactLinkPolicy`. Updates live as the vault changes — see `BacklinksWatcher`. | backlinks panel, backlinks list, references section, referenced-from section |
+| **Link** | A structured outbound pointer stored in task frontmatter under `links:` with `type`, `value`, and optional `label`. Recognized v1 types are `ado`, `pr`, `incident`, `doc`, `build`, and `other`; unknown types are tolerated as `other`. Distinct from Wiki link (markdown syntax inside rendered prose) and Backlink (incoming reference from another vault page). | hyperlink (too broad), external ref, reference |
+| **Links section** | TaskDetail surface that renders a task's Links as read-only rows with type badges and display text. Hidden when `links:` is empty or missing. In v1, Links are edited in Obsidian or YAML, not in-app. | links panel, external refs, references section (reserved for Backlinks-like phrasing) |
 | **Page** | A top-level navigation destination in the app shell (My Day, Backlog, Work Log, Settings). Glasswork keeps "Page" rather than the todo-app convention "Smart List." | screen, view, tab, smart list |
 | **My Day** | The default landing page. Shows tasks that are "in My Day today" — see the inclusion rule below. | today, dashboard, home (Home is reserved for the future Home Dashboard) |
 | **In My Day today** | A task is in My Day today if **any** of: (a) `task.IsMyDay` (`my_day` frontmatter is today), (b) `task.Due <= today` and not done, (c) any of its subtasks is a **flagged subtask**, (d) any of its subtasks has `Due <= today` and is not done. (a) and (b) are *direct*; (c) and (d) are *virtual promotion* — the parent's frontmatter is untouched. Dismiss-for-today (`IUiStateService`) overrides all four. See ADR 0008. | on My Day, today's tasks |
@@ -39,7 +41,7 @@
 | **Chip** | A small inline metadata badge on the title row. Three kinds today: priority chip, due chip, ADO chip. | tag (tag is reserved for vault tags), pill, badge |
 | **Priority chip** | Title-row chip showing task priority (`low`, `med`, `high`, `urgent`). Color-coded. Hidden when priority is unset. | — |
 | **Due chip** | Title-row chip showing relative due date (`overdue` red, `today` orange, `≤ 3 days` accent, `future` neutral). Hidden when no due date. | due date, deadline |
-| **ADO chip** | Title-row chip showing linked Azure DevOps work item (`ADO #1234`). Hidden when no link. Click jumps to ADO. | work item link, ado link |
+| **ADO chip** | Title-row chip showing linked Azure DevOps work item (`ADO #1234`). Hidden when no ADO Link. Click jumps to ADO. Driven by the derived `AdoLink` projection over `Links[type=ado]`; legacy `ado_link` is migration input only. | work item link, ado link |
 | **Empty state** | The visual rendered when a page has no tasks to show. Headline + sub copy + up to 2 CTAs. One reusable `EmptyState` control covers all pages. | placeholder, blank state, zero state |
 | **Footer status bar** | A thin (~28px) strip at the bottom of `MainWindow` showing vault path, task counts, watcher state, and last-reload time. | status strip, status line, footer |
 | **UI state** | Persistent app-local user preferences that **do not belong in the vault**. Stored in `%LocalAppData%\Glasswork\ui-state.json` via `IUiStateService`. Examples: collapsed task ids, future sidebar pane state. | preferences (reserved for actual user settings), settings (reserved for the Settings page), local state |
@@ -58,7 +60,7 @@
 
 - **Code symbols**: `PascalCase` for types, `camelCase` for parameters and locals, `_camelCase` for private fields. Match the term spelling exactly (`SubTask`, not `Subtask` or `Sub_Task`).
 - **UI labels**: title case for headings (`My Day`), sentence case for sub-copy (`Pick something from your backlog.`).
-- **Frontmatter keys**: `snake_case` (`my_day`, `ado_link`, future `summary`).
+- **Frontmatter keys**: `snake_case` (`my_day`, `links`, legacy `ado_link`, future `summary`).
 
 ## When this file is wrong
 

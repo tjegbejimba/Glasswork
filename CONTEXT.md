@@ -46,6 +46,11 @@ The in-memory shape of a task and its subtasks. Pure C# in
   - `Artifacts` — agent-produced markdown work-products in a sibling
     `<taskId>.artifacts/` folder. **Read-only in the app**; rendered via
     `VaultMarkdownView`.
+- **Structured links** (see ADR 0009): `links:` is a typed frontmatter list of
+  outbound task pointers (`ado`, `pr`, `incident`, `doc`, `build`, `other`) with
+  `value` and optional `label`. Links are not a fourth prose tier; they are
+  machine-readable task metadata adjacent to Description, Notes, and Artifacts.
+  The v1 app surface is read-only, with editing in Obsidian or YAML.
 - **Markdown rendering** (see ADR 0006, supersedes parts of ADR 0003):
   every rendered-markdown surface in the app (Artifacts, Notes read mode)
   goes through a single `VaultMarkdownView` UserControl in
