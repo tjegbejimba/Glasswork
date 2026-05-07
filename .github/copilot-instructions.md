@@ -43,6 +43,39 @@ this content, it does not own it.
 - **.NET SDK** — 10.x. Preinstalled in cloud agent via
   `.github/workflows/copilot-setup-steps.yml`.
 
+## Running Ralph (TDD loop) from PowerShell on Windows
+
+Ralph (the autonomous TDD loop in `ralph-loop-dashboard`) drives one issue at
+a time through red→green→refactor and merges the resulting PR. Locally on
+Windows, **always use [`scripts/launch-ralph.ps1`](../scripts/launch-ralph.ps1)
+to start it from any agent context** — including Copilot CLI agents running
+in PowerShell.
+
+```powershell
+pwsh -File scripts\launch-ralph.ps1                  # default: status (read-only)
+pwsh -File scripts\launch-ralph.ps1 -Action Launch   # start the loop detached
+pwsh -File scripts\launch-ralph.ps1 -Action Stop     # stop launcher + active worker
+```
+
+**Why this exists**: `.ralph/launch.sh` background mode crashes Cygwin's fork
+emulation when Git Bash is spawned from a non-Bash parent (PowerShell,
+conhost, `Start-Process`):
+
+```
+bash 1026 dofork: child 1027 - died waiting for dll loading, errno 11
+```
+
+The wrapper sidesteps this by spawning `bash --foreground` via `Start-Process`
+with a hidden window — no fork required. The Windows process is detached, so
+the loop survives the agent session ending. See the script header comment for
+the full rationale.
+
+**When NOT to use it**: if you are typing in a real interactive Git Bash
+window (not a PowerShell-spawned bash), `.ralph/launch.sh` works directly
+and supports `RALPH_PARALLELISM>1`. The wrapper is foreground-only (one
+worker). For real parallelism on Windows, install WSL2 and launch from
+inside Ubuntu.
+
 ## Architectural hard rules
 
 1. **Three-tier task prose model** (ADR 0002):
