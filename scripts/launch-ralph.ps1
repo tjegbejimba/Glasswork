@@ -166,7 +166,10 @@ function Start-Loop {
     $stderrLog = Join-Path $LogDir "launcher-$timestamp.err"
 
     # Convert Windows repo path to a /c/... POSIX path Git Bash understands.
-    $posixRepo = "/" + ($RepoRoot -replace '\\', '/' -replace '^([A-Za-z]):', '$1').Replace(':', '').Substring(0,1).ToLower() + ($RepoRoot -replace '\\', '/' -replace '^([A-Za-z]):', '').ToLower().Substring(1)
+    # Example: "C:\Users\toegbeji\Repos\Glasswork" -> "/c/Users/toegbeji/Repos/Glasswork"
+    $drive = $RepoRoot.Substring(0, 1).ToLower()
+    $rest = $RepoRoot.Substring(2) -replace '\\', '/'
+    $posixRepo = "/$drive$rest"
 
     # The 'exec' replaces the bash login shell with launch.sh so killing the
     # launcher kills the loop directly (no orphan parent to track).
