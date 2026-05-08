@@ -452,6 +452,43 @@
                 </ItemsControl>
             </StackPanel>
 
+            <!-- Links (slice 4 — structured external pointers) -->
+            <StackPanel x:Name="LinksSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
+                <TextBlock Text="Links" Style="{StaticResource SubtitleTextBlockStyle}" />
+                <ItemsControl x:Name="LinksList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    Margin="0,2,0,2"
+                                    Padding="12,8"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    Click="LinkRow_Click">
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                                    <Border Grid.Column="0"
+                                            Background="{Binding TypeBadgeColor, Converter={StaticResource HexToBrush}}"
+                                            CornerRadius="2"
+                                            Padding="6,2"
+                                            VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding TypeBadgeText}"
+                                                   FontSize="10"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="White" />
+                                    </Border>
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding DisplayText}"
+                                               FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
             <!-- Metadata -->
             <StackPanel Spacing="4" Opacity="0.5" Margin="0,16,0,0">
                 <TextBlock x:Name="CreatedText" FontSize="12" />
