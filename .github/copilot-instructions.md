@@ -147,3 +147,16 @@ When assigned a user-reported issue (label `user-report`):
   Markdig, YamlDotNet, CommunityToolkit.Mvvm, WinUI 3, MSTest.
 - **Don't introduce DI frameworks, xUnit/NUnit, or alternative markdown
   renderers** — these are settled choices.
+
+<!-- ralph-loop-instructions -->
+## Ralph Loop
+
+This repo may use Ralph Loop. If an agent needs to understand, install, refresh, operate, or troubleshoot Ralph here, load the `ralph-loop` skill.
+
+- Ralph source checkout on this machine: `/c/Users/toegbeji/Repos/ralph-loop-dashboard`
+- Repo worker prompt: `.ralph/RALPH.md`
+- Repo config: `.ralph/config.json`
+- Refresh scripts: `/c/Users/toegbeji/Repos/ralph-loop-dashboard/install.sh "/c/Users/toegbeji/Repos/Glasswork" --scripts-only`
+- Check/stop/cleanup workers: `.ralph/launch.sh --status`, `--stop`, or `--cleanup`
+
+Do not overwrite `.ralph/RALPH.md` or `.ralph/config.json` unless explicitly asked.
