@@ -399,7 +399,9 @@ public sealed partial class TaskDetailPage : Page
         var deleteItem = new MenuFlyoutItem { Text = "Delete" };
         deleteItem.Click += (_, __) =>
         {
-            var updatedLinks = Task.Links.Where(l => l != row.Source).ToList();
+            // Use ReferenceEquals to remove only the exact clicked instance
+            // (guards against duplicate links with identical values).
+            var updatedLinks = Task.Links.Where(l => !ReferenceEquals(l, row.Source)).ToList();
             App.Vault.SetLinks(Task.Id, updatedLinks);
             var reloaded = App.Vault.Load(Task.Id);
             if (reloaded is not null) ApplyTask(reloaded);
