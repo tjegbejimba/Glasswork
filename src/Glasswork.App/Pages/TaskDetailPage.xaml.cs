@@ -13,6 +13,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media;
+using Windows.System;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 
@@ -80,6 +81,7 @@ public sealed partial class TaskDetailPage : Page
         BindSubtasks(task.Subtasks);
         BindRelated(task.RelatedLinks);
         BindArtifacts(task.Id);
+        BindLinks(task.Links);
         BindBacklinks(task.Id);
 
         CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
@@ -297,6 +299,41 @@ public sealed partial class TaskDetailPage : Page
         var vaultRelative = ToVaultRelativePath(row.Path);
         if (vaultRelative is null) return;
         await App.ObsidianLauncher.Open(vaultRelative);
+    }
+
+    private void BindLinks(IList<TaskLink> links)
+    {
+        if (links.Count == 0)
+        {
+            LinksSection.Visibility = Visibility.Collapsed;
+            LinksList.ItemsSource = null;
+            return;
+        }
+
+        LinksSection.Visibility = Visibility.Visible;
+        LinksList.ItemsSource = LinkRow.Project(links);
+    }
+
+    private async void LinkRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not LinkRow row) return;
+
+        // Retrieve ADO base URL from persistent UI state
+        var adoBaseUrl = App.UiState?.Get<string>(App.AdoBaseUrlKey) ?? string.Empty;
+
+        // Resolve the URI (can return null for malformed links)
+        var resolved = LinkUriPolicy.Resolve(row.Source, adoBaseUrl);
+        if (resolved is null) return; // Malformed link - no-op click
+
+        // Agent-supplied links are untrusted per ADR 0009; run through security boundary
+        if (ArtifactLinkPolicy.Decide(resolved.ToString()) == ArtifactLinkPolicy.Decision.Block)
+        {
+            // TODO (future): show warning dialog explaining the block
+            return;
+        }
+
+        // Launch the external link
+        await Launcher.LaunchUriAsync(resolved);
     }
 
 

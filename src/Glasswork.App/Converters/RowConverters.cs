@@ -119,3 +119,30 @@ public sealed class CollapseChevronGlyphConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, string language)
         => throw new NotImplementedException();
 }
+/// <summary>
+/// Converts hex color strings (e.g., "#0F6CBD") to SolidColorBrush instances.
+/// Used for type badges in the Links section (slice 4).
+/// </summary>
+public sealed class HexToBrushConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language)
+    {
+        if (value is not string hex || !hex.StartsWith('#') || hex.Length != 7)
+            return new SolidColorBrush(Colors.Gray); // Fallback for invalid hex
+
+        try
+        {
+            var r = System.Convert.ToByte(hex.Substring(1, 2), 16);
+            var g = System.Convert.ToByte(hex.Substring(3, 2), 16);
+            var b = System.Convert.ToByte(hex.Substring(5, 2), 16);
+            return new SolidColorBrush(Color.FromArgb(0xFF, r, g, b));
+        }
+        catch
+        {
+            return new SolidColorBrush(Colors.Gray);
+        }
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
+        => throw new NotImplementedException();
+}
