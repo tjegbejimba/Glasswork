@@ -303,15 +303,8 @@ public sealed partial class TaskDetailPage : Page
 
     private void BindLinks(IList<TaskLink> links)
     {
-        if (links.Count == 0)
-        {
-            LinksSection.Visibility = Visibility.Collapsed;
-            LinksList.ItemsSource = null;
-            return;
-        }
-
-        LinksSection.Visibility = Visibility.Visible;
-        LinksList.ItemsSource = LinkRow.Project(links);
+        // Section is always visible so the Add link button is always accessible.
+        LinksList.ItemsSource = links.Count > 0 ? LinkRow.Project(links) : null;
     }
 
     private async void LinkRow_Click(object sender, RoutedEventArgs e)
@@ -334,6 +327,87 @@ public sealed partial class TaskDetailPage : Page
 
         // Launch the external link
         await Launcher.LaunchUriAsync(resolved);
+    }
+
+    private async void AddLink_Click(object sender, RoutedEventArgs e)
+    {
+        var typeBox = new ComboBox
+        {
+            Header = "Type",
+            MinWidth = 120,
+            ItemsSource = new[]
+            {
+                TaskLink.Types.Ado,
+                TaskLink.Types.Pr,
+                TaskLink.Types.Incident,
+                TaskLink.Types.Doc,
+                TaskLink.Types.Build,
+                TaskLink.Types.Other,
+            },
+            SelectedIndex = 5, // default to "other"
+        };
+        var valueBox = new TextBox
+        {
+            Header = "Value (URL or identifier)",
+            PlaceholderText = "e.g. https://... or 12345 or ICM 965114",
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+        var labelBox = new TextBox
+        {
+            Header = "Label (optional display name)",
+            PlaceholderText = "Short name shown in the UI",
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+        var panel = new StackPanel { MinWidth = 380 };
+        panel.Children.Add(typeBox);
+        panel.Children.Add(valueBox);
+        panel.Children.Add(labelBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Add link",
+            Content = panel,
+            PrimaryButtonText = "Add",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        var type = typeBox.SelectedItem?.ToString() ?? TaskLink.Types.Other;
+        var value = valueBox.Text?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(value)) return;
+        var label = string.IsNullOrWhiteSpace(labelBox.Text) ? null : labelBox.Text.Trim();
+
+        var newLink = new TaskLink { Type = type, Value = value, Label = label };
+        var updatedLinks = Task.Links.Append(newLink).ToList();
+        App.Vault.SetLinks(Task.Id, updatedLinks);
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null) ApplyTask(reloaded);
+        try { App.Index.Refresh(); } catch { /* best-effort */ }
+    }
+
+    private void LinkMore_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not LinkRow row) return;
+
+        var menu = new MenuFlyout();
+
+        var deleteItem = new MenuFlyoutItem { Text = "Delete" };
+        deleteItem.Click += (_, __) =>
+        {
+            var updatedLinks = Task.Links.Where(l => l != row.Source).ToList();
+            App.Vault.SetLinks(Task.Id, updatedLinks);
+            var reloaded = App.Vault.Load(Task.Id);
+            if (reloaded is not null) ApplyTask(reloaded);
+            try { App.Index.Refresh(); } catch { /* best-effort */ }
+        };
+        menu.Items.Add(deleteItem);
+
+        menu.ShowAt(fe);
     }
 
 
