@@ -34,15 +34,30 @@ jobs:
           GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN }}
           ISSUE: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
-        # Best-effort: if the token is missing or lacks permission, we still post
-        # the triage comment below so a human can assign manually.
+        # Fails loudly when the token is missing OR rejected (e.g. expired PAT) so
+        # token-rotation problems show up as a red workflow run instead of a warning
+        # that gets swept under the rug. Other failures (transient network, GH outage)
+        # still fall through with a warning so the triage comment posts anyway.
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "::warning::COPILOT_ASSIGN_TOKEN secret not set; skipping auto-assignment."
-            exit 0
+            echo "::error::COPILOT_ASSIGN_TOKEN secret not set. Triage will be posted but"
+            echo "::error::Copilot will NOT auto-start without an assignee. Set the secret to a PAT"
+            echo "::error::with repo:write scope (the default GITHUB_TOKEN cannot assign copilot-swe-agent)."
+            exit 1
           fi
-          gh issue edit "$ISSUE" --repo "$REPO" --add-assignee copilot-swe-agent || \
-            echo "::warning::Could not assign Copilot automatically; triage comment will still be posted."
+          set +e
+          out=$(gh issue edit "$ISSUE" --repo "$REPO" --add-assignee copilot-swe-agent 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          if [ $rc -ne 0 ]; then
+            if echo "$out" | grep -qiE "401|bad credentials|unauthorized|expired"; then
+              echo "::error::COPILOT_ASSIGN_TOKEN appears to be invalid or expired."
+              echo "::error::Rotate the PAT and re-run failed user-report triages by removing+re-adding the 'user-report' label."
+              exit 1
+            fi
+            echo "::warning::Could not assign Copilot automatically (non-auth failure); triage comment will still be posted."
+          fi
 
       - name: Request triage
         env:
