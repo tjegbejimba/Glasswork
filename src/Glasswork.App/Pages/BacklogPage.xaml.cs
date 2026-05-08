@@ -170,9 +170,17 @@ public sealed partial class BacklogPage : Page
 
     private void UpdateEmptyState()
     {
-        var hasContent = ViewModel.Tasks.Count > 0;
         var isList = ViewModel.ViewMode == "list";
         var isBoard = ViewModel.ViewMode == "board";
+
+        // In board mode, derive content presence from BoardColumns rather than the flat
+        // Tasks list. ViewModel.Refresh() populates BoardColumns before Tasks, so Tasks
+        // can momentarily be empty when BoardColumns.CollectionChanged fires — causing
+        // the board to flash to the empty state and never recover (since Tasks changes
+        // are not observed). Checking BoardColumns directly avoids the stale-count race.
+        var hasContent = isBoard
+            ? ViewModel.BoardColumns.Any(c => c.Tasks.Count > 0)
+            : ViewModel.Tasks.Count > 0;
         
         // Only manage TaskList visibility in list mode
         if (isList)
