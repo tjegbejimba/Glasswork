@@ -28,6 +28,32 @@ this content, it does not own it.
   - Task prose fields (Description / Notes / Artifacts split) → ADR 0002
   - UI state storage → ADR 0001
 
+### WinUI 3 internals (when chasing platform behavior)
+
+The WinUI repo's [`design-notes/`](https://github.com/microsoft/microsoft-ui-xaml/tree/winui3/main/src/docs/design-notes)
+folder is the closest thing to authoritative documentation for WinUI's
+internal model. Reach for these only when investigating platform behavior
+that public docs don't explain — they're not required reading:
+
+- [`loading-loaded-unloaded-events.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/loading-loaded-unloaded-events.md)
+  — exact timing of `Loading` / `Loaded` / `Unloaded` (see hard rule 6).
+- [`customtitlebar.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/customtitlebar.md)
+  — the "glass window" model behind `TitleBar` + `ExtendsContentIntoTitleBar`.
+  Useful when debugging drag regions, caption-button hit-test, or NC messages.
+- [`xaml-object-lifetime.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/xaml-object-lifetime.md)
+  — CCW/RCW reference-tracker model. Reach for this if a Page/Control isn't
+  getting collected after navigation (common cause: a long-lived service
+  closes over a short-lived UI element).
+- [`unpackaged-apps.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/unpackaged-apps.md)
+  — activation/lifetime quirks for unpackaged self-contained apps (Glasswork
+  ships unpackaged); relevant context for the silent `STOWED_EXCEPTION` mode
+  noted in hard rule 6.
+- [`focus.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/focus.md),
+  [`popup.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/popup.md),
+  [`text-controls.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/text-controls.md)
+  — useful for focus traversal, dialog behavior, and read-only text rendering
+  (`VaultMarkdownView`).
+
 ## Build & test constraints
 
 - **`Glasswork.Core`** — pure .NET 10, no Windows dependencies. **Builds and
@@ -111,7 +137,17 @@ inside Ubuntu.
    (surfaces in self-contained Release as a silent `STOWED_EXCEPTION
    0xc000027b`). Either gate cross-references with `if (Other is not null)`
    / `?.`, or do the cross-control sync in a method called *after*
-   `InitializeComponent`. See PR #153 and the audit it carries.
+   `InitializeComponent`. See PR #153 and the audit it carries. Upstream
+   reference: WinUI's [`loading-loaded-unloaded-events.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/loading-loaded-unloaded-events.md).
+
+   Related forward-looking guidance from that same doc, in case we ever
+   add `Loaded`/`Unloaded` handlers (we currently have none):
+   - `Loaded` and `Unloaded` are on **different** async queues and can fire
+     **out of order** and unpaired when an element churns in/out of the tree.
+   - Don't trust `FrameworkElement.IsLoaded` to disambiguate — it's gated on
+     whether the Loaded event is still pending in the queue, so it can read
+     `false` on an element that's already in the live tree. Check
+     `element.Parent != null` instead.
 
 ## Investigation guidance (for issue triage & root-cause analysis)
 
