@@ -16,14 +16,11 @@
         <conv:MyDayBrushConverter x:Key="MyDayBrush" />
     </Page.Resources>
 
-    <ScrollViewer Padding="32">
-        <StackPanel Spacing="16">
-            <StackPanel.KeyboardAccelerators>
-                <KeyboardAccelerator Key="O" Modifiers="Control,Shift" Invoked="OpenInObsidian_Accelerator" />
-            </StackPanel.KeyboardAccelerators>
-
+    <Grid RowDefinitions="Auto,*">
+        <StackPanel Grid.Row="0" Spacing="16">
             <!-- Reload banner: shown when the open file is changed externally -->
             <InfoBar x:Name="ReloadBanner"
+                     Margin="32,32,32,0"
                      IsOpen="False"
                      IsClosable="False"
                      Severity="Warning"
@@ -40,6 +37,7 @@
                  externally. Other field-level external changes still surface
                  via ReloadBanner above. -->
             <InfoBar x:Name="NotesConflictBanner"
+                     Margin="32,0,32,0"
                      IsOpen="False"
                      IsClosable="False"
                      Severity="Warning"
@@ -53,11 +51,19 @@
             </InfoBar>
 
             <InfoBar x:Name="ObsidianInstallBanner"
+                     Margin="32,0,32,0"
                      IsOpen="False"
                      IsClosable="True"
                      Severity="Informational"
                      Title="Obsidian couldn't be opened"
                      Message="Install Obsidian or register the obsidian:// protocol to enable Open in Obsidian." />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" Padding="32">
+            <StackPanel Spacing="16">
+                <StackPanel.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="O" Modifiers="Control,Shift" Invoked="OpenInObsidian_Accelerator" />
+                </StackPanel.KeyboardAccelerators>
 
             <!-- Title + Open in Obsidian -->
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
@@ -581,6 +587,7 @@
                         AutomationProperties.Name="Copy task link"
                         ToolTipService.ToolTip="Copy glasswork:// deep-link to clipboard" />
             </StackPanel>
-        </StackPanel>
-    </ScrollViewer>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
 </Page>
