@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
+using Glasswork.Mcp.Preconditions;
 using ModelContextProtocol.Server;
 
 namespace Glasswork.Mcp.Tools;
@@ -24,14 +25,19 @@ public sealed class GlassworkTools
 
     public GlassworkTools(VaultContext vaultContext, McpLogger? logger = null)
     {
-        _vaultRoot = vaultContext.VaultPath;
-        _vaultPath = Path.Combine(vaultContext.VaultPath, "wiki", "todo");
+        var vaultPath = vaultContext.VaultPath
+            ?? throw new InvalidOperationException(
+                "VaultContext.VaultPath is null. Tools should be filtered out by the " +
+                "precondition pipeline before construction; this indicates a wireup bug.");
+        _vaultRoot = vaultPath;
+        _vaultPath = Path.Combine(vaultPath, "wiki", "todo");
         _selfWrites = new SelfWriteCoordinator(_vaultPath);
         _vault = new VaultService(_vaultPath, _selfWrites);
         _logger = logger;
     }
 
     [McpServerTool(Name = "add_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Create a new task file in the Glasswork vault.")]
     public string AddTask(
         [Description("Task title (required).")] string title,
@@ -77,6 +83,7 @@ public sealed class GlassworkTools
     }
 
     [McpServerTool(Name = "list_tasks")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("List task summaries from the Glasswork vault. Re-reads from disk on every call (no cache).")]
     public string ListTasks(
         [Description("Filter by status: todo, doing, or done.")] string? status = null,
@@ -147,6 +154,7 @@ public sealed class GlassworkTools
     }
 
     [McpServerTool(Name = "get_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Return full task content (frontmatter + Description + Notes + artifact filenames). Re-reads from disk on every call.")]
     public string GetTask(
         [Description("Task ID to look up.")] string task_id)
@@ -185,6 +193,7 @@ public sealed class GlassworkTools
     }
 
     [McpServerTool(Name = "add_artifact")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Create a markdown artifact file in the task's artifact folder. Artifacts are agent-produced work products (plans, designs, logs). Fails with 'conflict' if the file already exists.")]
     public string AddArtifact(
         [Description("Task ID that owns the artifact.")] string task_id,
@@ -225,6 +234,7 @@ public sealed class GlassworkTools
     }
 
     [McpServerTool(Name = "load_context")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Return a task's complete context bundle: task content + artifact bodies + recursive subtasks (to depth) + backlinks. Single-call replacement for chaining get_task + N artifact reads + list_tasks + backlink discovery. Read-only.")]
     public string LoadContext(
         [Description("Task ID to load context for.")] string task_id,

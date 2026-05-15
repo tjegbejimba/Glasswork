@@ -14,7 +14,7 @@ public sealed class McpLogger
 {
     public const long MaxLogFileSizeBytes = 1_048_576; // ~1 MB
 
-    private readonly string _vaultPath;
+    private readonly string? _vaultPath;
     private readonly TextWriter _stderr;
     private readonly bool _fileEnabled;
     private readonly bool _traceEnabled;
@@ -27,7 +27,7 @@ public sealed class McpLogger
 
     // Constructor used by tests and callers that need to inject a custom stderr sink
     // or override the environment-variable-based feature flags.
-    public McpLogger(string vaultPath, TextWriter? stderr, bool fileEnabled, bool traceEnabled)
+    public McpLogger(string? vaultPath, TextWriter? stderr, bool fileEnabled, bool traceEnabled)
     {
         _vaultPath = vaultPath;
         _stderr = stderr ?? Console.Error;
@@ -42,6 +42,33 @@ public sealed class McpLogger
     /// Begins timing a tool call. Dispose the returned scope to emit the log line.
     /// </summary>
     public CallScope BeginCall(string toolName) => new(this, toolName);
+
+    /// <summary>
+    /// Emits a single structured event line (not tied to a tool-call duration scope).
+    /// Used by the precondition filter pipeline to record one-off lifecycle events
+    /// like "tool filtered out of ListTools because precondition failed".
+    /// </summary>
+    public void EmitEvent(string evt, string? tool = null, string? reason = null)
+    {
+        using var buffer = new MemoryStream();
+        using var writer = new Utf8JsonWriter(buffer);
+
+        writer.WriteStartObject();
+        writer.WriteString("ts", DateTime.UtcNow.ToString("o"));
+        writer.WriteString("event", evt);
+        if (tool is not null)
+            writer.WriteString("tool", tool);
+        if (reason is not null)
+            writer.WriteString("reason", reason);
+        writer.WriteEndObject();
+        writer.Flush();
+
+        var json = Encoding.UTF8.GetString(buffer.ToArray());
+        _stderr.WriteLine(json);
+
+        if (_fileEnabled)
+            AppendToLogFile(json);
+    }
 
     internal void EmitLogLine(
         string toolName,
@@ -92,6 +119,9 @@ public sealed class McpLogger
 
     private void AppendToLogFile(string json)
     {
+        if (string.IsNullOrWhiteSpace(_vaultPath))
+            return; // No vault available; file sink silently disabled. Stderr line still emitted.
+
         var glassworkDir = Path.Combine(_vaultPath, ".glasswork");
         Directory.CreateDirectory(glassworkDir);
         var logPath = Path.Combine(glassworkDir, "mcp.log");
