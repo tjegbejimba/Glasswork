@@ -66,14 +66,27 @@ For each work item, retrieve at minimum:
 
 ### 3. Build the dedup index
 
-Before creating or updating any task, scan the entire Glasswork corpus to discover what's already imported. For each markdown file under `wiki/todo/**/*.md` (**including `wiki/todo/done/`**), search the body for either pattern:
+Before creating or updating any task, scan the Glasswork corpus to discover what's already imported.
 
-```
-\bADO\s+<id>\b
-_workitems/edit/<id>\b
-```
+**Scope** — scan only:
+- `wiki/todo/*.md` (root-level task files)
+- `wiki/todo/done/*.md` (completed task files)
 
-Build a dictionary `imported: { ado_id -> file_path }`. This is the only authoritative source of "already imported." Do not check the `parent:` frontmatter field — that holds the ADO parent, not the work item itself, and a `parent:`-based check would wrongly suppress imports.
+Do **not** recurse into `wiki/todo/<id>.artifacts/` subdirectories. Artifacts often reference ADO ids that aren't the artifact's "primary" work item (cross-references, related-bug mentions, etc.) — counting those as "imported" would suppress legitimate imports.
+
+**Patterns** — for each file in scope, match the body / frontmatter against these three precise patterns:
+
+| Pattern (regex)                              | What it matches                                     |
+|----------------------------------------------|-----------------------------------------------------|
+| `(?m)^ADO\s+(\d+)\b`                         | Canonical body line `ADO <id> — <url>` (anchored to start of line) |
+| `_workitems/edit/(\d+)\b`                    | The canonical ADO URL anywhere in the file         |
+| `(?m)^ado_link:\s*(\d+)\s*$`                 | Legacy schema frontmatter field per `_schema.md`   |
+
+Do **not** match a bare `\bADO\s+\d+\b` (no line anchor) — casual Notes mentions like "Same shape as ADO 37076384" would false-positive and suppress legitimate imports.
+
+Do **not** match the `parent:` frontmatter field or the `Parent ADO:` body line — those carry the *parent's* ADO id, which is a different work item from the one the task represents.
+
+Build a dictionary `imported: { ado_id -> file_path }`. This is the authoritative source of "already imported."
 
 ### 4. Per-item action: classify, then act
 
@@ -84,9 +97,14 @@ For each ADO work item from step 2:
 | ADO state          | Glasswork status   |
 |--------------------|--------------------|
 | `New`              | `todo`             |
+| `To Do`            | `todo`             |
 | `Committed`        | `todo`             |
 | `Active`           | `in-progress`      |
+| `In Progress`      | `in-progress`      |
+| `In Review`        | `in-progress`      |
 | `Resolved`         | `done`             |
+
+If you encounter an ADO state not in this table, **skip the item** and surface it in the summary under "Skipped (unmapped state)" with the state name. Do not guess a mapping — surface the gap so the skill can be updated.
 
 **Decide the action:**
 
@@ -190,8 +208,9 @@ Stale (K) — previously imported, not in current sprint:
   - ADO <id>: <title> → now in <new-iteration-path> [state: <ado-state>] — wiki/todo/<slug>.md
   ...
 
-Skipped (slug collisions, J):
-  - ADO <id>: <title> would collide with <existing-file>
+Skipped (J) — reason listed per item:
+  - ADO <id>: <title> [slug collision] would collide with <existing-file>
+  - ADO <id>: <title> [unmapped state] ADO state `<state>` has no mapping; update the skill's state map
   ...
 
 Pending user action — promote to done (P, unattended mode only):
