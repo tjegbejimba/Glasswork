@@ -2,7 +2,7 @@
 
 `glasswork-mcp` is a standalone [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI agents typed read/write access to a [Glasswork](https://github.com/tjegbejimba/Glasswork) task vault. It communicates over stdio and requires no running Glasswork app instance.
 
-> **v0.3.0 — M3**: `get_task` and `add_artifact` are now implemented. See [Tool reference](#tool-reference) for schemas.
+> **v0.4.0 — M4**: `load_context` is now implemented — one-call full-context fetch for agent handoff. See [Tool reference](#tool-reference) for the schema.
 
 ---
 
@@ -106,6 +106,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | `list_tasks` | v0.2.0 | List task summaries |
 | `get_task` | v0.3.0 | Return full task content |
 | `add_artifact` | v0.3.0 | Create a task artifact file |
+| `load_context` | v0.4.0 | One-call full-context fetch: task + artifact bodies + recursive subtasks + backlinks |
 
 ### `add_task`
 
@@ -232,6 +233,122 @@ Re-reads the vault and artifact folder on every call (no cache). The `artifacts`
 | `conflict` | A file with that name already exists — `add_artifact` is create-only in v1 |
 
 Artifacts are stored under `<vault>/<task-id>.artifacts/<filename>`. The write is registered with `SelfWriteCoordinator` so the running Glasswork app does not raise a spurious "external change" banner.
+
+---
+
+### `load_context`
+
+Returns a task's complete context bundle — task content, every artifact's body, all subtasks recursively to `depth`, and all backlinks — in a single call. Built for agent handoffs (e.g. Ralph loop) where chaining `get_task` + N artifact reads + `list_tasks` + backlink discovery is expensive and error-prone.
+
+**Input**
+
+```json
+{
+  "task_id": "string (required) — task ID to load",
+  "depth": "int (optional, default 1) — subtask recursion depth, clamped to [0, 3]"
+}
+```
+
+`depth` semantics: `0` returns no subtasks; `1` (default) returns direct children only; `2`/`3` recurse further. Values `> 3` are silently clamped (no error). Negative values are treated as `0`.
+
+**Output (success)**
+
+```json
+{
+  "task": {
+    "id": "string",
+    "title": "string",
+    "status": "\"todo\" | \"doing\" | \"done\"",
+    "parent_id": "string | null",
+    "description": "string",
+    "notes": "string"
+  },
+  "artifacts": [
+    {
+      "filename": "string — e.g. plan.md",
+      "path": "string — vault-relative, e.g. task-id.artifacts/plan.md",
+      "content": "string — full file body"
+    }
+  ],
+  "subtasks": [
+    {
+      "task": { "id": "...", "title": "...", "...": "same shape as task above" },
+      "artifacts": [ { "filename": "...", "path": "...", "content": "..." } ],
+      "subtasks": [ "...further subtrees to remaining depth..." ]
+    }
+  ],
+  "backlinks": [
+    {
+      "source_path": "string — vault-relative path to the linking page",
+      "source_title": "string — H1 or first non-empty line",
+      "page_type": "\"concept\" | \"decision\" | \"incident\" | \"system\" | \"other\""
+    }
+  ]
+}
+```
+
+**Output (not found)**
+
+```json
+{
+  "error": "not_found",
+  "message": "string"
+}
+```
+
+**Design notes**
+
+- **Backlinks are root-only.** Subtask payloads include their own artifacts and nested subtasks but NOT a `backlinks` field. The backlink scan is the dominant cost; running it per subtree would blow up payload size and latency without clear agent value. Agents that need a subtask's backlinks can issue a follow-up `load_context` rooted at that subtask.
+- **Stateless re-read.** The backlink index is rebuilt per call (ADR 0007 §6). ADR 0005 measures this at well under 2s on a 10k-file vault on cold start.
+- **Cycle-safe.** A visited-set guards the BFS so hand-edited vaults with parent loops do not stack-overflow.
+- **`not_found` short-circuits the backlink build** to avoid the scan cost on misses.
+
+**Example payload**
+
+For task `issue-137-mcp-load-context` with one artifact `plan.md`, one direct child `child-task-a`, and one concept page referencing it:
+
+```json
+{
+  "task": {
+    "id": "issue-137-mcp-load-context",
+    "title": "MCP: load_context tool",
+    "status": "doing",
+    "parent_id": null,
+    "description": "Single-call full-context fetch for agent handoff.",
+    "notes": ""
+  },
+  "artifacts": [
+    {
+      "filename": "plan.md",
+      "path": "issue-137-mcp-load-context.artifacts/plan.md",
+      "content": "# Plan\n\nReuse VaultService, BacklinkIndex..."
+    }
+  ],
+  "subtasks": [
+    {
+      "task": {
+        "id": "child-task-a",
+        "title": "Child A",
+        "status": "todo",
+        "parent_id": "issue-137-mcp-load-context",
+        "description": "",
+        "notes": ""
+      },
+      "artifacts": [],
+      "subtasks": []
+    }
+  ],
+  "backlinks": [
+    {
+      "source_path": "wiki/concepts/agent-handoff.md",
+      "source_title": "Agent Handoff",
+      "page_type": "concept"
+    }
+  ]
+}
+```
+
+Under `GLASSWORK_MCP_TRACE=1`, the log line for a `load_context` call includes per-phase timings: `load_task`, `load_artifacts`, `load_subtasks`, `load_backlinks`.
 
 ---
 

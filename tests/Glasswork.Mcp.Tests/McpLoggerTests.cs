@@ -289,6 +289,27 @@ public class McpLoggerTests
             Assert.IsTrue(phase.Value.GetInt64() >= 0, $"Phase '{phase.Name}' must be >= 0 ms.");
     }
 
+    [TestMethod]
+    public void TraceEnabled_LoadContext_PhasesContainExpectedKeys()
+    {
+        var sink = new StringBuilder();
+        var tools = MakeTools(MakeLogger(sink, traceEnabled: true));
+
+        var addJson = tools.AddTask("Trace LoadContext Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        sink.Clear();
+
+        tools.LoadContext(taskId);
+
+        var doc = JsonDocument.Parse(sink.ToString().Trim());
+        var phases = doc.RootElement.GetProperty("phases");
+
+        Assert.IsTrue(phases.TryGetProperty("load_task", out _), "Must have 'load_task' phase.");
+        Assert.IsTrue(phases.TryGetProperty("load_artifacts", out _), "Must have 'load_artifacts' phase.");
+        Assert.IsTrue(phases.TryGetProperty("load_subtasks", out _), "Must have 'load_subtasks' phase.");
+        Assert.IsTrue(phases.TryGetProperty("load_backlinks", out _), "Must have 'load_backlinks' phase.");
+    }
+
     // ─────────────────────── helpers ─────────────────────────────────────
 
     private static bool IsValidJson(string s)
