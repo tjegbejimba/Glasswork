@@ -317,4 +317,69 @@ public class McpLoggerTests
         try { JsonDocument.Parse(s); return true; }
         catch { return false; }
     }
+
+    // ─────────────────────── PR #178 review regression tests ─────────────
+
+    [TestMethod]
+    public void EmitEvent_WithDeletedVault_DoesNotRecreateVaultRoot()
+    {
+        // GPT-5.5 (High) finding: AppendToLogFile unconditionally called
+        // Directory.CreateDirectory(<vault>/.glasswork), which silently recreated
+        // a deleted vault root and defeated VaultPathReadablePrecondition.
+        var sink = new StringBuilder();
+        var logger = new McpLogger(_vaultDir, new StringWriter(sink), fileEnabled: true, traceEnabled: false);
+
+        Directory.Delete(_vaultDir, recursive: true);
+        Assert.IsFalse(Directory.Exists(_vaultDir), "Pre-check: vault must be gone.");
+
+        logger.EmitEvent("regression_test", tool: "deleted_vault_probe");
+
+        Assert.IsFalse(Directory.Exists(_vaultDir),
+            "Logger must not recreate a deleted vault root as a side effect of writing.");
+        Assert.IsFalse(Directory.Exists(Path.Combine(_vaultDir, ".glasswork")),
+            "Logger must not recreate .glasswork under a deleted vault.");
+
+        // Stderr leg still works — the file sink is what we gated, not stderr.
+        Assert.IsTrue(sink.Length > 0, "Stderr line must still be emitted even when vault is gone.");
+    }
+
+    [TestMethod]
+    public void EmitEvent_ConcurrentCallers_DoNotThrow()
+    {
+        // Opus 4.7 (Medium) finding: AppendToLogFile + RotateIfNeeded were not
+        // concurrency-safe. With fileEnabled=true, a race between ListTools and
+        // CallTool filter delegates could surface as an IOException escaping into
+        // CallScope.Dispose or the filter pipeline. The fix serializes file I/O
+        // with _fileLock and swallows IOException locally.
+        var sink = new StringBuilder();
+        var logger = new McpLogger(_vaultDir, TextWriter.Synchronized(new StringWriter(sink)), fileEnabled: true, traceEnabled: false);
+
+        var exceptions = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+        System.Threading.Tasks.Parallel.For(0, 200, i =>
+        {
+            try
+            {
+                logger.EmitEvent("concurrent_probe", tool: $"i{i}");
+            }
+            catch (Exception ex)
+            {
+                exceptions.Add(ex);
+            }
+        });
+
+        Assert.AreEqual(0, exceptions.Count,
+            $"EmitEvent must not throw under concurrent load. First error: {exceptions.FirstOrDefault()?.Message}");
+
+        var logPath = Path.Combine(_vaultDir, ".glasswork", "mcp.log");
+        Assert.IsTrue(File.Exists(logPath), "Log file should have been created.");
+
+        // Every line that was written must be a complete JSON object — no
+        // interleaved/torn writes from a missing lock.
+        var lines = File.ReadAllLines(logPath);
+        Assert.IsTrue(lines.Length > 0, "Some lines should have made it to disk.");
+        foreach (var line in lines)
+        {
+            Assert.IsTrue(IsValidJson(line), $"Torn write detected — invalid JSON line: {line}");
+        }
+    }
 }

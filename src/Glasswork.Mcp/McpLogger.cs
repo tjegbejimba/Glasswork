@@ -18,6 +18,7 @@ public sealed class McpLogger
     private readonly TextWriter _stderr;
     private readonly bool _fileEnabled;
     private readonly bool _traceEnabled;
+    private readonly object _fileLock = new();
 
     public McpLogger(VaultContext vaultContext, TextWriter? stderr = null)
         : this(vaultContext.VaultPath, stderr,
@@ -122,12 +123,38 @@ public sealed class McpLogger
         if (string.IsNullOrWhiteSpace(_vaultPath))
             return; // No vault available; file sink silently disabled. Stderr line still emitted.
 
-        var glassworkDir = Path.Combine(_vaultPath, ".glasswork");
-        Directory.CreateDirectory(glassworkDir);
-        var logPath = Path.Combine(glassworkDir, "mcp.log");
+        // Guard against vault resurrection: if the vault root was removed (or never
+        // existed at startup), we must not recreate it as a side effect of logging.
+        // Doing so would defeat preconditions like VaultPathReadablePrecondition, which
+        // gates tool availability on Directory.Exists(_vaultPath). The stderr line was
+        // already emitted by the caller.
+        if (!Directory.Exists(_vaultPath))
+            return;
 
-        RotateIfNeeded(logPath);
-        File.AppendAllText(logPath, json + Environment.NewLine);
+        // Serialize file I/O across threads. ListTools + CallTool can race, and
+        // RotateIfNeeded is a non-atomic read-modify-write. We also swallow IOExceptions
+        // here so a transient logging failure never escapes into the filter delegate or
+        // CallScope.Dispose (where it would mask the real tool result).
+        lock (_fileLock)
+        {
+            try
+            {
+                var glassworkDir = Path.Combine(_vaultPath, ".glasswork");
+                Directory.CreateDirectory(glassworkDir);
+                var logPath = Path.Combine(glassworkDir, "mcp.log");
+
+                RotateIfNeeded(logPath);
+                File.AppendAllText(logPath, json + Environment.NewLine);
+            }
+            catch (IOException ex)
+            {
+                _stderr.WriteLine($"{{\"event\":\"mcp_log_io_error\",\"error\":{JsonSerializer.Serialize(ex.Message)}}}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _stderr.WriteLine($"{{\"event\":\"mcp_log_io_error\",\"error\":{JsonSerializer.Serialize(ex.Message)}}}");
+            }
+        }
     }
 
     public static void RotateIfNeeded(string logPath)
