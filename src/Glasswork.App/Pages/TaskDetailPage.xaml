@@ -29,13 +29,17 @@
         </Grid.KeyboardAccelerators>
 
         <!-- Sticky banner row. Collapses to 0 height when no banner is
-             open (each InfoBar hides itself when IsOpen="False", and
-             StackPanel.Spacing skips collapsed children). -->
+             open — each InfoBar binds its own Visibility to its IsOpen so
+             that closed banners are removed from StackPanel.Spacing (the
+             stock InfoBar template only collapses its inner ContentRoot,
+             not the outer element, so a closed InfoBar still occupies a
+             Spacing slot in a StackPanel). -->
         <StackPanel Grid.Row="0" Spacing="8">
 
             <!-- Reload banner: shown when the open file is changed externally -->
             <InfoBar x:Name="ReloadBanner"
                      IsOpen="False"
+                     Visibility="{x:Bind ReloadBanner.IsOpen, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                      IsClosable="False"
                      Severity="Warning"
                      Title="This file changed on disk"
@@ -52,6 +56,7 @@
                  via ReloadBanner above. -->
             <InfoBar x:Name="NotesConflictBanner"
                      IsOpen="False"
+                     Visibility="{x:Bind NotesConflictBanner.IsOpen, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                      IsClosable="False"
                      Severity="Warning"
                      Title="Notes was changed externally"
@@ -65,6 +70,7 @@
 
             <InfoBar x:Name="ObsidianInstallBanner"
                      IsOpen="False"
+                     Visibility="{x:Bind ObsidianInstallBanner.IsOpen, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                      IsClosable="True"
                      Severity="Informational"
                      Title="Obsidian couldn't be opened"
