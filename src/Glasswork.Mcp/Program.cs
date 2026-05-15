@@ -20,7 +20,7 @@ builder.Services
         options.ServerInfo = new Implementation
         {
             Name = "glasswork-mcp",
-            Version = "0.3.0",
+            Version = "0.4.0",
         };
     })
     .WithStdioServerTransport()

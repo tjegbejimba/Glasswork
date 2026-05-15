@@ -523,4 +523,199 @@ public class GlassworkToolsTests
         Assert.AreEqual(1, artifacts.GetArrayLength());
         Assert.AreEqual("research.md", artifacts[0].GetProperty("filename").GetString());
     }
+
+    // ───────────────────────────── load_context ──────────────────────────
+
+    [TestMethod]
+    public void LoadContext_LeafTask_ReturnsEmptyChildrenArrays()
+    {
+        var addJson = _tools.AddTask("Leaf", description: "Leaf desc.");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.LoadContext(taskId);
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual(taskId, doc.RootElement.GetProperty("task").GetProperty("id").GetString());
+        Assert.AreEqual("Leaf", doc.RootElement.GetProperty("task").GetProperty("title").GetString());
+        Assert.AreEqual("Leaf desc.", doc.RootElement.GetProperty("task").GetProperty("description").GetString());
+        Assert.AreEqual(0, doc.RootElement.GetProperty("artifacts").GetArrayLength());
+        Assert.AreEqual(0, doc.RootElement.GetProperty("subtasks").GetArrayLength());
+        Assert.AreEqual(0, doc.RootElement.GetProperty("backlinks").GetArrayLength());
+    }
+
+    [TestMethod]
+    public void LoadContext_IncludesArtifactBodies()
+    {
+        var addJson = _tools.AddTask("With Artifacts");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
+        Directory.CreateDirectory(artifactFolder);
+        File.WriteAllText(Path.Combine(artifactFolder, "plan.md"), "# Plan\n\nThe plan.");
+        File.WriteAllText(Path.Combine(artifactFolder, "design.md"), "# Design\n\nThe design.");
+
+        var json = _tools.LoadContext(taskId);
+        var artifacts = JsonDocument.Parse(json).RootElement.GetProperty("artifacts");
+
+        Assert.AreEqual(2, artifacts.GetArrayLength());
+
+        // OrdinalIgnoreCase filename order: design.md then plan.md
+        Assert.AreEqual("design.md", artifacts[0].GetProperty("filename").GetString());
+        StringAssert.Contains(artifacts[0].GetProperty("path").GetString()!, taskId + ".artifacts");
+        Assert.AreEqual("# Design\n\nThe design.", artifacts[0].GetProperty("content").GetString());
+
+        Assert.AreEqual("plan.md", artifacts[1].GetProperty("filename").GetString());
+        Assert.AreEqual("# Plan\n\nThe plan.", artifacts[1].GetProperty("content").GetString());
+    }
+
+    [TestMethod]
+    public void LoadContext_WalksSubtasksToDepthOne()
+    {
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
+        var childAId = JsonDocument.Parse(_tools.AddTask("Child A", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
+        var childBId = JsonDocument.Parse(_tools.AddTask("Child B", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
+        _tools.AddTask("Grandchild A1", parent_task_id: childAId);
+        _tools.AddTask("Grandchild B1", parent_task_id: childBId);
+
+        var json = _tools.LoadContext(parentId); // depth defaults to 1
+        var subtasks = JsonDocument.Parse(json).RootElement.GetProperty("subtasks");
+
+        Assert.AreEqual(2, subtasks.GetArrayLength(), "Default depth=1 must return direct children only.");
+        foreach (var i in Enumerable.Range(0, subtasks.GetArrayLength()))
+        {
+            Assert.AreEqual(0, subtasks[i].GetProperty("subtasks").GetArrayLength(),
+                "Grandchildren must NOT appear at depth=1.");
+        }
+    }
+
+    [TestMethod]
+    public void LoadContext_WalksSubtasksToDepthTwo()
+    {
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
+        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
+        _tools.AddTask("Grandchild", parent_task_id: childId);
+
+        var json = _tools.LoadContext(parentId, depth: 2);
+        var subtasks = JsonDocument.Parse(json).RootElement.GetProperty("subtasks");
+
+        Assert.AreEqual(1, subtasks.GetArrayLength());
+        var grandchildren = subtasks[0].GetProperty("subtasks");
+        Assert.AreEqual(1, grandchildren.GetArrayLength(), "Grandchildren must appear at depth=2.");
+        Assert.AreEqual("Grandchild", grandchildren[0].GetProperty("task").GetProperty("title").GetString());
+    }
+
+    [TestMethod]
+    public void LoadContext_DepthZero_ReturnsNoSubtasks()
+    {
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
+        _tools.AddTask("Child", parent_task_id: parentId);
+
+        var json = _tools.LoadContext(parentId, depth: 0);
+        var subtasks = JsonDocument.Parse(json).RootElement.GetProperty("subtasks");
+
+        Assert.AreEqual(0, subtasks.GetArrayLength());
+    }
+
+    [TestMethod]
+    public void LoadContext_DepthGreaterThanThree_Clamps()
+    {
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
+        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
+        var gcId = JsonDocument.Parse(_tools.AddTask("Grandchild", parent_task_id: childId)).RootElement.GetProperty("task_id").GetString()!;
+        var ggcId = JsonDocument.Parse(_tools.AddTask("GGC", parent_task_id: gcId)).RootElement.GetProperty("task_id").GetString()!;
+        // Great-great-grandchild at depth 4 must NOT appear even at depth=99 (clamp to 3).
+        _tools.AddTask("GGGC", parent_task_id: ggcId);
+
+        var json = _tools.LoadContext(parentId, depth: 99);
+        var doc = JsonDocument.Parse(json);
+
+        Assert.IsFalse(doc.RootElement.TryGetProperty("error", out _),
+            "depth > 3 must clamp silently, not error.");
+
+        // Walk: child -> grandchild -> GGC (3 levels). Then GGC.subtasks must be empty.
+        var ggcSubtree = doc.RootElement
+            .GetProperty("subtasks")[0]
+            .GetProperty("subtasks")[0]
+            .GetProperty("subtasks")[0];
+        Assert.AreEqual("GGC", ggcSubtree.GetProperty("task").GetProperty("title").GetString());
+        Assert.AreEqual(0, ggcSubtree.GetProperty("subtasks").GetArrayLength(),
+            "Depth must clamp at 3; level-4 descendants must NOT appear.");
+    }
+
+    [TestMethod]
+    public void LoadContext_IncludesBacklinks()
+    {
+        var taskId = JsonDocument.Parse(_tools.AddTask("Linked Task")).RootElement.GetProperty("task_id").GetString()!;
+
+        // BacklinkIndex scans the vault root for files outside wiki/todo.
+        var conceptDir = Path.Combine(_vaultDir, "wiki", "concepts");
+        Directory.CreateDirectory(conceptDir);
+        File.WriteAllText(Path.Combine(conceptDir, "foo.md"),
+            $"# Foo Concept\n\nReferences [[{taskId}]] inline.");
+
+        var json = _tools.LoadContext(taskId);
+        var backlinks = JsonDocument.Parse(json).RootElement.GetProperty("backlinks");
+
+        Assert.AreEqual(1, backlinks.GetArrayLength());
+        var entry = backlinks[0];
+        StringAssert.Contains(entry.GetProperty("source_path").GetString()!, "foo.md");
+        Assert.AreEqual("concept", entry.GetProperty("page_type").GetString());
+        Assert.IsTrue(entry.TryGetProperty("source_title", out _), "Backlink entry must include source_title.");
+    }
+
+    [TestMethod]
+    public void LoadContext_NonExistent_ReturnsNotFound()
+    {
+        var json = _tools.LoadContext("does-not-exist");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("not_found", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsTrue(doc.RootElement.TryGetProperty("message", out _));
+    }
+
+    [TestMethod]
+    public void LoadContext_CycleSafe()
+    {
+        // Manually craft a parent cycle (the App enforces parent integrity, but
+        // external writers don't — the MCP server must not stack-overflow).
+        var aPath = Path.Combine(TasksDir, "task-a.md");
+        var bPath = Path.Combine(TasksDir, "task-b.md");
+        Directory.CreateDirectory(TasksDir);
+        File.WriteAllText(aPath, "---\nid: task-a\ntitle: A\nstatus: todo\nparent: task-b\n---\n");
+        File.WriteAllText(bPath, "---\nid: task-b\ntitle: B\nstatus: todo\nparent: task-a\n---\n");
+
+        // depth=3 with a cycle would infinite-recurse without the visited set.
+        var json = _tools.LoadContext("task-a", depth: 3);
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("task-a", doc.RootElement.GetProperty("task").GetProperty("id").GetString());
+        // The subtree must terminate. (A's children include B; B's children would
+        // include A, but A is already visited, so the recursion stops there.)
+    }
+
+    [TestMethod]
+    public void LoadContext_Subtree_HasArtifactsAndNestedSubtasks_ButNoBacklinks()
+    {
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
+        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
+        _tools.AddTask("Grandchild", parent_task_id: childId);
+
+        // Give the child an artifact to confirm subtree artifacts are inlined.
+        var childArtifacts = Path.Combine(TasksDir, childId + ".artifacts");
+        Directory.CreateDirectory(childArtifacts);
+        File.WriteAllText(Path.Combine(childArtifacts, "child-plan.md"), "child plan body");
+
+        var json = _tools.LoadContext(parentId, depth: 2);
+        var child = JsonDocument.Parse(json).RootElement.GetProperty("subtasks")[0];
+
+        // Subtree carries task + artifacts + subtasks
+        Assert.AreEqual("Child", child.GetProperty("task").GetProperty("title").GetString());
+        Assert.AreEqual(1, child.GetProperty("artifacts").GetArrayLength());
+        Assert.AreEqual("child plan body", child.GetProperty("artifacts")[0].GetProperty("content").GetString());
+        Assert.AreEqual(1, child.GetProperty("subtasks").GetArrayLength());
+
+        // But NOT backlinks — those are root-only in v1.
+        Assert.IsFalse(child.TryGetProperty("backlinks", out _),
+            "Subtask payloads must not carry a 'backlinks' field (root-only in v1).");
+    }
 }
