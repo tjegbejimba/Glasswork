@@ -42,7 +42,7 @@ dotnet tool update -g glasswork-mcp --add-source ./nupkg
 
 1. **`GLASSWORK_VAULT` environment variable** — set this to the **Obsidian vault root** (the top-level folder you opened in Obsidian, e.g. `~/Wiki`). The server resolves the task directory internally as `<GLASSWORK_VAULT>/wiki/todo/`.
 2. **App state file** — the path stored by the Glasswork desktop app in `%LocalAppData%\Glasswork\ui-state.json` (key `vault.path`). Opening the Glasswork app and selecting a vault populates this automatically.
-3. **Error** — if neither source resolves to an existing directory, the process exits with a message naming both attempted sources.
+3. **Boot with empty tool list** — if neither source resolves to an existing directory, the server still starts but advertises **zero tools** via `ListTools`. A diagnostic naming both attempted sources is written to stderr. See [Tool preconditions](#tool-preconditions) for the pattern.
 
 ### Setting the env var
 
@@ -415,6 +415,61 @@ $p50 = $ms[[int]($ms.Count * 0.50)]
 $p95 = $ms[[int]($ms.Count * 0.95)]
 "p50=${p50}ms  p95=${p95}ms"
 ```
+
+---
+
+## Tool preconditions
+
+Tools advertise themselves via `ListTools` only when their **preconditions** pass. This is a **detection-before-display** pattern: instead of advertising five tools and letting the agent get a runtime error when it calls one against a missing vault, the server filters unavailable tools out of the listing entirely.
+
+### How it works
+
+1. Each tool method on `GlassworkTools` is annotated with `[ToolPrecondition("<name>")]` alongside its `[McpServerTool]` attribute.
+2. At server startup, `ToolPreconditionRegistry` reflects over the tool type and builds a tool-name → precondition map.
+3. A `ListTools` filter (registered via the SDK's `WithRequestFilters` / `AddListToolsFilter` hook) evaluates each tool's precondition and removes failing tools from the response.
+4. A companion `CallTool` filter re-evaluates the precondition at call time. This closes the TOCTOU gap — if the vault disappears between `ListTools` and `CallTool`, the agent gets a clean `tool unavailable: <reason>` instead of a `NullReferenceException`.
+
+### Annotating a tool
+
+```csharp
+[McpServerTool(Name = "add_task")]
+[ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+[Description("Create a new task file.")]
+public string AddTask(...) { ... }
+```
+
+A tool with **no** `[ToolPrecondition]` attribute is always advertised and always invokable — same behavior as before the pattern was introduced.
+
+### Built-in preconditions
+
+| Name | Source | Fails when |
+|---|---|---|
+| `vault-path-readable` | `VaultPathReadablePrecondition` | Vault path was never resolved, the path points to a non-existent directory, or the directory cannot be read. |
+
+### Authoring a new precondition
+
+Implement `IToolPrecondition`:
+
+```csharp
+public sealed class MyPrecondition : IToolPrecondition
+{
+    public const string PreconditionName = "my-precondition";
+    public string Name => PreconditionName;
+
+    public ToolPreconditionResult Evaluate() =>
+        IsHealthy()
+            ? ToolPreconditionResult.Ok()
+            : ToolPreconditionResult.Unavailable("reason shown in logs");
+}
+```
+
+Register the instance in `Program.cs` alongside `VaultPathReadablePrecondition`, then annotate tools with `[ToolPrecondition(MyPrecondition.PreconditionName)]`.
+
+**Evaluation rules:**
+
+- Preconditions are evaluated **synchronously** and **uncached**. Keep them cheap (sub-millisecond). The vault-readable check is a `Directory.Exists` + tiny probe.
+- If `Evaluate()` throws, the tool is treated as unavailable and the exception is logged to stderr via `McpLogger`. A bug in a precondition never crashes the server.
+- Every filtered-out tool is logged once per `ListTools` call at the `Information` level so agents can debug why a tool isn't showing up.
 
 ---
 
