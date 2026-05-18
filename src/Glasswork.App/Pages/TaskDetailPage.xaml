@@ -17,7 +17,12 @@
     </Page.Resources>
 
     <Grid RowDefinitions="Auto,*">
-        <StackPanel Grid.Row="0" Spacing="16">
+        <!-- Banners are pinned above the scrolling content. Each banner carries
+             its own top margin so that whichever one is visible (they can show
+             independently) gets a consistent 32px gap from the top of the
+             content area. Collapsed banners contribute nothing to layout, so
+             when none are open this row collapses to zero height. -->
+        <StackPanel Grid.Row="0" Spacing="0">
             <!-- Reload banner: shown when the open file is changed externally -->
             <InfoBar x:Name="ReloadBanner"
                      Margin="32,32,32,0"
@@ -37,7 +42,7 @@
                  externally. Other field-level external changes still surface
                  via ReloadBanner above. -->
             <InfoBar x:Name="NotesConflictBanner"
-                     Margin="32,0,32,0"
+                     Margin="32,32,32,0"
                      IsOpen="False"
                      IsClosable="False"
                      Severity="Warning"
@@ -51,7 +56,7 @@
             </InfoBar>
 
             <InfoBar x:Name="ObsidianInstallBanner"
-                     Margin="32,0,32,0"
+                     Margin="32,32,32,0"
                      IsOpen="False"
                      IsClosable="True"
                      Severity="Informational"
