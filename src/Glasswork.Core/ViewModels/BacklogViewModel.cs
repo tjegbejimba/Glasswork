@@ -146,6 +146,8 @@ public partial class BacklogViewModel : ObservableObject
                 }
             }
         }
+
+        Refreshed?.Invoke();
     }
 
     private void HydrateParentTitleCache(IReadOnlyList<GlassworkTask> ordered)
@@ -242,6 +244,21 @@ public partial class BacklogViewModel : ObservableObject
     /// group headers with the enriched titles.
     /// </summary>
     public event Action? ParentTitlesResolved;
+
+    /// <summary>
+    /// Raised exactly once at the end of <see cref="Refresh"/> after all collections
+    /// (<see cref="Tasks"/>, <see cref="Rows"/>, <see cref="BoardColumns"/>) have been
+    /// fully populated. Page hosts subscribe to this instead of individual
+    /// <c>CollectionChanged</c> events so empty-state UI is computed against the final
+    /// state, not the transient empty state that exists between the internal
+    /// <c>Clear()</c> and <c>Add()</c> calls.
+    ///
+    /// This fires on whichever thread called <see cref="Refresh"/>. All current call
+    /// sites invoke <see cref="Refresh"/> on the UI thread (commands and watcher
+    /// callbacks dispatched via <c>DispatcherQueue.TryEnqueue</c>); subscribers that
+    /// touch XAML controls should still verify <c>HasThreadAccess</c> defensively.
+    /// </summary>
+    public event Action? Refreshed;
 
     partial void OnIsGroupedChanged(bool value) => Refresh();
     partial void OnViewModeChanged(string value) => Refresh();

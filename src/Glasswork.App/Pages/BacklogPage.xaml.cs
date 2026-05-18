@@ -41,8 +41,24 @@ public sealed partial class BacklogPage : Page
             DispatcherQueue?.TryEnqueue(() => ViewModel.Refresh());
         };
         InitializeComponent();
-        ViewModel.Rows.CollectionChanged += (_, _) => UpdateEmptyState();
-        ViewModel.BoardColumns.CollectionChanged += (_, _) => UpdateEmptyState();
+        // Update empty-state exactly once at the end of each VM Refresh, instead of as
+        // a side effect of every BoardColumns/Rows CollectionChanged event. The old
+        // approach left a brief flash to the empty state between the internal Clear()
+        // and the first Add() — and was fragile against any future reorder of the
+        // collection population in BacklogViewModel.Refresh().
+        ViewModel.Refreshed += () =>
+        {
+            // Refreshed fires on whichever thread called VM.Refresh(); all current call
+            // sites are on the UI thread, but guard defensively in case that ever changes.
+            if (DispatcherQueue.HasThreadAccess)
+            {
+                UpdateEmptyState();
+            }
+            else
+            {
+                DispatcherQueue.TryEnqueue(UpdateEmptyState);
+            }
+        };
         // Persist toggle whenever the user flips it. Bind here (not in VM) so the
         // VM stays UI-state-store-agnostic.
         ViewModel.PropertyChanged += (_, args) =>
@@ -159,13 +175,13 @@ public sealed partial class BacklogPage : Page
     private void Refresh()
     {
         // First populate Tasks (so LoadGroupCollapseState has parents to query),
-        // then re-run grouping. ViewModel.Refresh() does both atomically.
+        // then re-run grouping. ViewModel.Refresh() does both atomically and raises
+        // Refreshed at the end, which the constructor wires to UpdateEmptyState().
         ViewModel.Refresh();
         foreach (var t in ViewModel.Tasks)
         {
             t.IsManuallyCollapsed = App.UiState.Get<bool>($"{App.CollapsedTaskKeyPrefix}{t.Id}");
         }
-        UpdateEmptyState();
     }
 
     private void UpdateEmptyState()
