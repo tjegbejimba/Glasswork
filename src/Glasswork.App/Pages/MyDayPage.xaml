@@ -351,9 +351,12 @@
                                 <TextBlock Grid.Column="1" Text="{Binding CurrentStepText}" FontSize="13" FontWeight="SemiBold"
                                            TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                             </Grid>
-                            <TextBlock Text="{Binding BlurbPreview}" FontSize="12" Opacity="0.65"
-                                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
-                                       Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
+                            <controls:VaultMarkdownView Markdown="{Binding Description}"
+                                                        AutomationProperties.Name="{Binding BlurbPreview}"
+                                                        Opacity="0.8"
+                                                        Loaded="OnBlurbMarkdownLoaded"
+                                                        Unloaded="OnBlurbMarkdownUnloaded"
+                                                        Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
                         </StackPanel>
                     </Grid>
                 </DataTemplate>
