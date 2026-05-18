@@ -24,7 +24,7 @@ public static class ArtifactLinkPolicy
         var scheme = uri.Scheme.ToLowerInvariant();
         return scheme switch
         {
-            "http" or "https" or "obsidian" => Decision.Allow,
+            "http" or "https" or "obsidian" or "glasswork" => Decision.Allow,
             _ => Decision.Block,
         };
     }

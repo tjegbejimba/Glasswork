@@ -26,6 +26,15 @@ public class ArtifactLinkPolicyTests
     }
 
     [TestMethod]
+    public void Glasswork_IsAllowed()
+    {
+        Assert.AreEqual(ArtifactLinkPolicy.Decision.Allow, ArtifactLinkPolicy.Decide("glasswork://task/TASK-1"));
+        Assert.AreEqual(ArtifactLinkPolicy.Decision.Allow, ArtifactLinkPolicy.Decide("glasswork://my-day"));
+        Assert.AreEqual(ArtifactLinkPolicy.Decision.Allow, ArtifactLinkPolicy.Decide("glasswork://backlog"));
+        Assert.AreEqual(ArtifactLinkPolicy.Decision.Allow, ArtifactLinkPolicy.Decide("GLASSWORK://task/TASK-1"));
+    }
+
+    [TestMethod]
     public void File_IsBlocked()
     {
         Assert.AreEqual(ArtifactLinkPolicy.Decision.Block, ArtifactLinkPolicy.Decide("file:///C:/Windows/System32/cmd.exe"));
