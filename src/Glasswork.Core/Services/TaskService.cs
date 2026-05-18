@@ -69,6 +69,17 @@ public class TaskService
     }
 
     /// <summary>
+    /// Change a task's status without touching completed_at or updated_at.
+    /// Used by drag-to-change-status in Board view where timestamp updates
+    /// are not desired.
+    /// </summary>
+    public void SetStatusOnly(GlassworkTask task, string newStatus)
+    {
+        task.Status = newStatus;
+        _vault.Save(task);
+    }
+
+    /// <summary>
     /// Get incomplete tasks that were on My Day for a previous date (carryover candidates).
     /// </summary>
     public List<GlassworkTask> GetCarryoverTasks()

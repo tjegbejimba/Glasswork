@@ -28,6 +28,32 @@ this content, it does not own it.
   - Task prose fields (Description / Notes / Artifacts split) → ADR 0002
   - UI state storage → ADR 0001
 
+### WinUI 3 internals (when chasing platform behavior)
+
+The WinUI repo's [`design-notes/`](https://github.com/microsoft/microsoft-ui-xaml/tree/winui3/main/src/docs/design-notes)
+folder is the closest thing to authoritative documentation for WinUI's
+internal model. Reach for these only when investigating platform behavior
+that public docs don't explain — they're not required reading:
+
+- [`loading-loaded-unloaded-events.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/loading-loaded-unloaded-events.md)
+  — exact timing of `Loading` / `Loaded` / `Unloaded` (see hard rule 6).
+- [`customtitlebar.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/customtitlebar.md)
+  — the "glass window" model behind `TitleBar` + `ExtendsContentIntoTitleBar`.
+  Useful when debugging drag regions, caption-button hit-test, or NC messages.
+- [`xaml-object-lifetime.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/xaml-object-lifetime.md)
+  — CCW/RCW reference-tracker model. Reach for this if a Page/Control isn't
+  getting collected after navigation (common cause: a long-lived service
+  closes over a short-lived UI element).
+- [`unpackaged-apps.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/unpackaged-apps.md)
+  — activation/lifetime quirks for unpackaged self-contained apps (Glasswork
+  ships unpackaged); relevant context for the silent `STOWED_EXCEPTION` mode
+  noted in hard rule 6.
+- [`focus.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/focus.md),
+  [`popup.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/popup.md),
+  [`text-controls.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/text-controls.md)
+  — useful for focus traversal, dialog behavior, and read-only text rendering
+  (`VaultMarkdownView`).
+
 ## Build & test constraints
 
 - **`Glasswork.Core`** — pure .NET 10, no Windows dependencies. **Builds and
@@ -42,6 +68,39 @@ this content, it does not own it.
   red-green-refactor, not horizontal slices.
 - **.NET SDK** — 10.x. Preinstalled in cloud agent via
   `.github/workflows/copilot-setup-steps.yml`.
+
+## Running Ralph (TDD loop) from PowerShell on Windows
+
+Ralph (the autonomous TDD loop in `ralph-loop-dashboard`) drives one issue at
+a time through red→green→refactor and merges the resulting PR. Locally on
+Windows, **always use [`scripts/launch-ralph.ps1`](../scripts/launch-ralph.ps1)
+to start it from any agent context** — including Copilot CLI agents running
+in PowerShell.
+
+```powershell
+pwsh -File scripts\launch-ralph.ps1                  # default: status (read-only)
+pwsh -File scripts\launch-ralph.ps1 -Action Launch   # start the loop detached
+pwsh -File scripts\launch-ralph.ps1 -Action Stop     # stop launcher + active worker
+```
+
+**Why this exists**: `.ralph/launch.sh` background mode crashes Cygwin's fork
+emulation when Git Bash is spawned from a non-Bash parent (PowerShell,
+conhost, `Start-Process`):
+
+```
+bash 1026 dofork: child 1027 - died waiting for dll loading, errno 11
+```
+
+The wrapper sidesteps this by spawning `bash --foreground` via `Start-Process`
+with a hidden window — no fork required. The Windows process is detached, so
+the loop survives the agent session ending. See the script header comment for
+the full rationale.
+
+**When NOT to use it**: if you are typing in a real interactive Git Bash
+window (not a PowerShell-spawned bash), `.ralph/launch.sh` works directly
+and supports `RALPH_PARALLELISM>1`. The wrapper is foreground-only (one
+worker). For real parallelism on Windows, install WSL2 and launch from
+inside Ubuntu.
 
 ## Architectural hard rules
 
@@ -67,6 +126,28 @@ this content, it does not own it.
 
 5. **Any code that writes the vault must register with `SelfWriteCoordinator`**
    or `FileWatcherService` will fire spurious external-change events.
+
+6. **WinUI XAML event handlers must not unconditionally dereference other
+   named XAML elements.** Initial-state attributes (`IsChecked="True"`,
+   `SelectedIndex="0"`, `IsSelected="True"`, `Value=`, `IsOn="True"`, etc.)
+   fire their corresponding `Changed`/`Checked`/`SelectionChanged` events
+   *during* `InitializeComponent`, in document order — sibling controls
+   declared *later* in the XAML are still `null` at that point. A handler
+   that pokes another named control crashes with `XamlParseException`
+   (surfaces in self-contained Release as a silent `STOWED_EXCEPTION
+   0xc000027b`). Either gate cross-references with `if (Other is not null)`
+   / `?.`, or do the cross-control sync in a method called *after*
+   `InitializeComponent`. See PR #153 and the audit it carries. Upstream
+   reference: WinUI's [`loading-loaded-unloaded-events.md`](https://github.com/microsoft/microsoft-ui-xaml/blob/winui3/main/src/docs/design-notes/loading-loaded-unloaded-events.md).
+
+   Related forward-looking guidance from that same doc, in case we ever
+   add `Loaded`/`Unloaded` handlers (we currently have none):
+   - `Loaded` and `Unloaded` are on **different** async queues and can fire
+     **out of order** and unpaired when an element churns in/out of the tree.
+   - Don't trust `FrameworkElement.IsLoaded` to disambiguate — it's gated on
+     whether the Loaded event is still pending in the queue, so it can read
+     `false` on an element that's already in the live tree. Check
+     `element.Parent != null` instead.
 
 ## Investigation guidance (for issue triage & root-cause analysis)
 
@@ -102,3 +183,16 @@ When assigned a user-reported issue (label `user-report`):
   Markdig, YamlDotNet, CommunityToolkit.Mvvm, WinUI 3, MSTest.
 - **Don't introduce DI frameworks, xUnit/NUnit, or alternative markdown
   renderers** — these are settled choices.
+
+<!-- ralph-loop-instructions -->
+## Ralph Loop
+
+This repo may use Ralph Loop. If an agent needs to understand, install, refresh, operate, or troubleshoot Ralph here, load the `ralph-loop` skill.
+
+- Ralph source checkout on this machine: `/c/Users/toegbeji/Repos/ralph-loop-dashboard`
+- Repo worker prompt: `.ralph/RALPH.md`
+- Repo config: `.ralph/config.json`
+- Refresh scripts: `/c/Users/toegbeji/Repos/ralph-loop-dashboard/install.sh "/c/Users/toegbeji/Repos/Glasswork" --scripts-only`
+- Check/stop/cleanup workers: `.ralph/launch.sh --status`, `--stop`, or `--cleanup`
+
+Do not overwrite `.ralph/RALPH.md` or `.ralph/config.json` unless explicitly asked.

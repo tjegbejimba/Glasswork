@@ -15,6 +15,7 @@
         <conv:SubtaskSegmentBrushConverter x:Key="SegBrush" />
         <conv:DueUrgencyBrushConverter x:Key="DueBg" />
         <conv:DueUrgencyForegroundBrushConverter x:Key="DueFg" />
+        <conv:MyDayBrushConverter x:Key="MyDayBrush" />
 
         <DataTemplate x:Key="BacklogTaskTemplate">
             <Grid Padding="10,8" RowDefinitions="Auto,Auto"
@@ -51,7 +52,8 @@
                             ToolTipService.ToolTip="Toggle My Day"
                             Background="Transparent" BorderThickness="0"
                             Padding="6,2" VerticalAlignment="Center" Margin="6,0,0,0">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE706;" FontSize="13" />
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE706;" FontSize="13"
+                                  Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
                     </Button>
                     <Button Grid.Column="5" Background="Transparent" BorderThickness="0"
                             Padding="6,2" VerticalAlignment="Center">
@@ -134,6 +136,92 @@
             </Grid>
         </DataTemplate>
 
+        <DataTemplate x:Key="BoardCardTemplate">
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderThickness="1"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    CornerRadius="8"
+                    Padding="12,10"
+                    Margin="0,0,0,8"
+                    CanDrag="True"
+                    DragStarting="BoardCard_DragStarting"
+                    DoubleTapped="BoardCard_DoubleTapped">
+                <Grid RowDefinitions="Auto,Auto,Auto">
+                    <!-- Title row -->
+                    <Grid Grid.Row="0" ColumnDefinitions="Auto,*">
+                        <Grid Grid.Column="0" Width="20" Height="20" VerticalAlignment="Top" Margin="0,2,10,0">
+                            <CheckBox VerticalAlignment="Center" HorizontalAlignment="Center"
+                                      IsChecked="{Binding IsDone, Mode=OneWay}"
+                                      Style="{StaticResource CircleCheckBoxStyle}"
+                                      IsHitTestVisible="False" IsTabStop="False" />
+                            <Button Background="Transparent" BorderThickness="0" Padding="0"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                    Click="TaskCheckbox_Click" />
+                        </Grid>
+                        <TextBlock Grid.Column="1" Text="{Binding Title}"
+                                   TextWrapping="Wrap"
+                                   FontSize="14"
+                                   VerticalAlignment="Top"
+                                   Margin="0,0,0,8" />
+                    </Grid>
+
+                    <!-- Chips + My Day row -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,0,0,8">
+                        <Border Style="{StaticResource ChipBorderStyle}"
+                                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                Visibility="{Binding HasPriorityChip, Converter={StaticResource BoolVis}}">
+                            <TextBlock Text="{Binding Priority}" Style="{StaticResource ChipTextStyle}" />
+                        </Border>
+                        <Border Style="{StaticResource ChipBorderStyle}"
+                                Background="{Binding DueUrgency, Converter={StaticResource DueBg}}"
+                                Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
+                            <TextBlock Text="{Binding DueChipText}" Style="{StaticResource ChipTextStyle}"
+                                       Foreground="{Binding DueUrgency, Converter={StaticResource DueFg}}" />
+                        </Border>
+                        <Button Click="ToggleMyDay_Click"
+                                ToolTipService.ToolTip="Toggle My Day"
+                                Background="Transparent" BorderThickness="0"
+                                Padding="4" VerticalAlignment="Center">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE706;" FontSize="12"
+                                      Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Progress bar + More menu -->
+                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
+                        <ItemsControl Grid.Column="0" ItemsSource="{Binding Subtasks}"
+                                      Visibility="{Binding UseSegmentedBar, Converter={StaticResource BoolVis}}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="2" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Width="18" Height="5" CornerRadius="2"
+                                            Background="{Binding Converter={StaticResource SegBrush}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Button Grid.Column="1" Background="Transparent" BorderThickness="0"
+                                Padding="4" VerticalAlignment="Center">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="12" />
+                            <Button.Flyout>
+                                <MenuFlyout>
+                                    <MenuFlyoutItem Text="Mark To Do" Click="SetTodo_Click" />
+                                    <MenuFlyoutItem Text="Mark In Progress" Click="SetInProgress_Click" />
+                                    <MenuFlyoutItem Text="Mark Done" Click="SetDone_Click" />
+                                    <MenuFlyoutSeparator />
+                                    <MenuFlyoutItem Text="Open in Obsidian" Click="OpenTaskInObsidian_Click" />
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
         <controls:BacklogRowTemplateSelector x:Key="BacklogRowSelector"
             TaskTemplate="{StaticResource BacklogTaskTemplate}"
             GroupHeaderTemplate="{StaticResource BacklogGroupHeaderTemplate}" />
@@ -141,7 +229,7 @@
         <conv:CollapseChevronGlyphConverter x:Key="ChevronGlyph" />
     </Page.Resources>
 
-    <Grid Padding="32" RowDefinitions="Auto,Auto,*">
+    <Grid Padding="32" RowDefinitions="Auto,Auto,Auto,*">
 
         <!-- Header -->
         <TextBlock
@@ -149,9 +237,52 @@
             Style="{StaticResource TitleTextBlockStyle}"
             Text="Backlog" />
 
+        <!-- Undo InfoBar (board view only) -->
+        <InfoBar
+            x:Name="UndoInfoBar"
+            Grid.Row="1"
+            Severity="Informational"
+            IsOpen="False"
+            Closed="UndoInfoBar_Closed"
+            Margin="0,12,0,0">
+            <InfoBar.ActionButton>
+                <Button Content="Undo" Click="UndoButton_Click" />
+            </InfoBar.ActionButton>
+        </InfoBar>
+
         <!-- Filter bar -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,16,0,16">
-            <ComboBox x:Name="StatusFilter" SelectedIndex="0" SelectionChanged="StatusFilter_Changed" Width="160">
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" Margin="0,16,0,16">
+            <!-- View mode toggle -->
+            <Border BorderThickness="1"
+                    BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                    CornerRadius="4"
+                    Padding="1">
+                <StackPanel Orientation="Horizontal" Spacing="1">
+                    <ToggleButton x:Name="ListViewToggle"
+                                  IsChecked="True"
+                                  Checked="ListViewToggle_Checked"
+                                  Width="40" Height="32"
+                                  ToolTipService.ToolTip="List view"
+                                  CornerRadius="3,0,0,3"
+                                  BorderThickness="0">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8FD;" FontSize="13" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="BoardViewToggle"
+                                  IsChecked="False"
+                                  Checked="BoardViewToggle_Checked"
+                                  Width="40" Height="32"
+                                  ToolTipService.ToolTip="Board view"
+                                  CornerRadius="0,3,3,0"
+                                  BorderThickness="0">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xF0E2;" FontSize="13" />
+                    </ToggleButton>
+                </StackPanel>
+            </Border>
+
+            <ComboBox x:Name="StatusFilter"
+                      SelectedIndex="0"
+                      SelectionChanged="StatusFilter_Changed"
+                      Width="160">
                 <ComboBoxItem Tag="all" Content="Active (not done)" />
                 <ComboBoxItem Tag="todo" Content="To Do" />
                 <ComboBoxItem Tag="in-progress" Content="In Progress" />
@@ -165,11 +296,19 @@
             </ToggleButton>
 
             <Button Content="&#xE710;" FontFamily="Segoe Fluent Icons" Click="AddTask_Click" ToolTipService.ToolTip="New task" />
+
+            <!-- Work Log link (board mode only) -->
+            <HyperlinkButton x:Name="WorkLogLink"
+                             Content="View Work Log →"
+                             Click="WorkLogLink_Click"
+                             VerticalAlignment="Center"
+                             Visibility="Collapsed"
+                             Margin="12,0,0,0" />
         </StackPanel>
 
         <!-- Task list (mixed: group headers + tasks when grouped, tasks only otherwise) -->
         <ListView
-            Grid.Row="2"
+            Grid.Row="3"
             x:Name="TaskList"
             ItemsSource="{x:Bind ViewModel.Rows}"
             ItemTemplateSelector="{StaticResource BacklogRowSelector}"
@@ -187,10 +326,67 @@
             </ListView.ItemContainerStyle>
         </ListView>
 
+        <!-- Board view (two columns: To Do | In Progress) -->
+        <ScrollViewer
+            x:Name="BoardView"
+            Grid.Row="3"
+            Visibility="Collapsed"
+            HorizontalScrollBarVisibility="Auto"
+            VerticalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{x:Bind ViewModel.BoardColumns}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="16" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid RowDefinitions="Auto,*" Width="360" MaxWidth="480" MinWidth="320">
+                            <!-- Sticky column header -->
+                            <Border Grid.Row="0"
+                                    Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                    Padding="12,8"
+                                    Margin="0,0,0,12"
+                                    CornerRadius="6">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding ColumnName}"
+                                               FontWeight="SemiBold"
+                                               FontSize="14"
+                                               VerticalAlignment="Center" />
+                                    <Border Grid.Column="1"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            CornerRadius="10"
+                                            Padding="8,2"
+                                            MinWidth="24">
+                                        <TextBlock Text="{Binding Tasks.Count}"
+                                                   FontSize="12"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Border>
+                                </Grid>
+                            </Border>
+
+                            <!-- Scrollable card list -->
+                            <ScrollViewer Grid.Row="1"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          AllowDrop="True"
+                                          DragOver="BoardColumn_DragOver"
+                                          Drop="BoardColumn_Drop">
+                                <ItemsControl ItemsSource="{Binding Tasks}"
+                                              ItemTemplate="{StaticResource BoardCardTemplate}" />
+                            </ScrollViewer>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
         <!-- Empty state: shown when the filtered Backlog has no tasks -->
         <controls:EmptyState
             x:Name="EmptyStateView"
-            Grid.Row="2"
+            Grid.Row="3"
             Glyph="&#xE8FD;"
             Headline="Nothing in the Backlog yet."
             Body="Capture a task to get started. You can pull anything you add here into My Day later."

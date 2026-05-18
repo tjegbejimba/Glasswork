@@ -184,6 +184,12 @@ public sealed partial class MainWindow : Window
 
     private void NavigateToTopLevel(Type pageType)
     {
+        // Defensive: NavView_SelectionChanged can fire during InitializeComponent if
+        // NavigationView's selection-deferral changes in a future WinUI version, or
+        // if anyone re-fires selection synchronously. NavFrame is declared after the
+        // MenuItems in MainWindow.xaml, so we must not dereference it before init
+        // completes. See "XAML init-order bug audit" (May 2026).
+        if (NavFrame is null) return;
         // Top-level nav represents an explicit user choice of section; flush the
         // back stack so "back" doesn't keep cycling through old detail pages.
         NavFrame.Navigate(pageType);
@@ -209,7 +215,7 @@ public sealed partial class MainWindow : Window
                 if (task is null)
                 {
                     DeepLinkErrorBar.Title = "Task not found";
-                    DeepLinkErrorBar.Message = $"No task with id "{t.TaskId}" was found in the vault.";
+                    DeepLinkErrorBar.Message = $"No task with id \"{t.TaskId}\" was found in the vault.";
                     DeepLinkErrorBar.IsOpen = true;
                     return;
                 }

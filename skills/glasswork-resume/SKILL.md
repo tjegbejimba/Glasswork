@@ -1,6 +1,6 @@
 ---
 name: glasswork-resume
-description: Resume an in-flight Glasswork task. Use when the user pastes "Resume Glasswork task: <task-id>", asks to pick a Glasswork task back up, or hits the Glasswork app's "Resume" button.
+description: 'Resume an in-flight Glasswork task. Use when the user pastes "Resume Glasswork task: <task-id>", asks to pick a Glasswork task back up, or hits the Glasswork app''s "Resume" button.'
 ---
 
 # Glasswork — Resume

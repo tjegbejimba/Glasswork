@@ -1,6 +1,6 @@
 ---
 name: glasswork-wrap-up
-description: Wrap up a Glasswork task that's done or being parked. Use when the user pastes "Wrap up Glasswork task: <task-id>", asks to finish/close a Glasswork task, or hits the Glasswork app's "Wrap up" button.
+description: 'Wrap up a Glasswork task that''s done or being parked. Use when the user pastes "Wrap up Glasswork task: <task-id>", asks to finish/close a Glasswork task, or hits the Glasswork app''s "Wrap up" button.'
 ---
 
 # Glasswork — Wrap Up

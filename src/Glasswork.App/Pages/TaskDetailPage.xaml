@@ -6,24 +6,40 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:local="using:Glasswork.Pages"
+    xmlns:conv="using:Glasswork.Converters"
     xmlns:controls="using:Glasswork.Controls"
     mc:Ignorable="d">
 
     <Page.Resources>
         <local:BoolToVisibilityConverter x:Key="BoolToVis" />
         <local:HexToBrushConverter x:Key="HexToBrush" />
-        <local:MyDayBrushConverter x:Key="MyDayBrush" />
+        <conv:MyDayBrushConverter x:Key="MyDayBrush" />
     </Page.Resources>
 
-    <ScrollViewer Padding="32">
-        <StackPanel Spacing="16">
-            <StackPanel.KeyboardAccelerators>
-                <KeyboardAccelerator Key="O" Modifiers="Control,Shift" Invoked="OpenInObsidian_Accelerator" />
-            </StackPanel.KeyboardAccelerators>
+    <!-- Issue #174: banners live above the ScrollViewer so they stay
+         visible regardless of scroll position. Previously they were the
+         first children inside the ScrollViewer and scrolled out of view
+         on long pages. -->
+    <Grid RowDefinitions="Auto,*">
+        <!-- Page-scope accelerator: keep the Ctrl+Shift+O shortcut working
+             regardless of whether focus is on the content area or on a
+             button inside one of the sticky banners. -->
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="O" Modifiers="Control,Shift" Invoked="OpenInObsidian_Accelerator" />
+        </Grid.KeyboardAccelerators>
+
+        <!-- Sticky banner row. Collapses to 0 height when no banner is
+             open — each InfoBar binds its own Visibility to its IsOpen so
+             that closed banners are removed from StackPanel.Spacing (the
+             stock InfoBar template only collapses its inner ContentRoot,
+             not the outer element, so a closed InfoBar still occupies a
+             Spacing slot in a StackPanel). -->
+        <StackPanel Grid.Row="0" Spacing="8">
 
             <!-- Reload banner: shown when the open file is changed externally -->
             <InfoBar x:Name="ReloadBanner"
                      IsOpen="False"
+                     Visibility="{x:Bind ReloadBanner.IsOpen, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                      IsClosable="False"
                      Severity="Warning"
                      Title="This file changed on disk"
@@ -40,6 +56,7 @@
                  via ReloadBanner above. -->
             <InfoBar x:Name="NotesConflictBanner"
                      IsOpen="False"
+                     Visibility="{x:Bind NotesConflictBanner.IsOpen, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                      IsClosable="False"
                      Severity="Warning"
                      Title="Notes was changed externally"
@@ -53,142 +70,95 @@
 
             <InfoBar x:Name="ObsidianInstallBanner"
                      IsOpen="False"
+                     Visibility="{x:Bind ObsidianInstallBanner.IsOpen, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                      IsClosable="True"
                      Severity="Informational"
                      Title="Obsidian couldn't be opened"
                      Message="Install Obsidian or register the obsidian:// protocol to enable Open in Obsidian." />
+        </StackPanel>
 
-            <!-- Title + Open in Obsidian -->
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <TextBox x:Name="TitleBox" Grid.Column="0" Header="Title" FontSize="18"
-                         Text="{x:Bind Task.Title, Mode=TwoWay}"
-                         LostFocus="Field_LostFocus" />
-                <Button Grid.Column="1" VerticalAlignment="Bottom"
-                        Click="OpenObsidian_Click"
-                        ToolTipService.ToolTip="Open in Obsidian (Ctrl+Shift+O)">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8A7;" FontSize="13" />
-                        <TextBlock Text="Open in Obsidian" />
-                    </StackPanel>
-                </Button>
-            </Grid>
+        <ScrollViewer Grid.Row="1" Padding="32">
+            <StackPanel Spacing="16">
+                <!-- Title + Open in Obsidian -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBox x:Name="TitleBox" Grid.Column="0" Header="Title" FontSize="18"
+                             Text="{x:Bind Task.Title, Mode=TwoWay}"
+                             LostFocus="Field_LostFocus" />
+                    <Button Grid.Column="1" VerticalAlignment="Bottom"
+                            Click="OpenObsidian_Click"
+                            ToolTipService.ToolTip="Open in Obsidian (Ctrl+Shift+O)">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8A7;" FontSize="13" />
+                            <TextBlock Text="Open in Obsidian" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
 
-            <!-- Status + Priority row -->
-            <StackPanel Orientation="Horizontal" Spacing="16">
-                <ComboBox x:Name="StatusBox" Header="Status" Width="160" SelectionChanged="Status_Changed">
-                    <ComboBoxItem Tag="todo" Content="To Do" />
-                    <ComboBoxItem Tag="in-progress" Content="In Progress" />
-                    <ComboBoxItem Tag="done" Content="Done" />
-                </ComboBox>
-                <ComboBox x:Name="PriorityBox" Header="Priority" Width="160" SelectionChanged="Priority_Changed">
-                    <ComboBoxItem Tag="low" Content="Low" />
-                    <ComboBoxItem Tag="medium" Content="Medium" />
-                    <ComboBoxItem Tag="high" Content="High" />
-                    <ComboBoxItem Tag="urgent" Content="Urgent" />
-                </ComboBox>
-            </StackPanel>
+                <!-- Status + Priority row -->
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <ComboBox x:Name="StatusBox" Header="Status" Width="160" SelectionChanged="Status_Changed">
+                        <ComboBoxItem Tag="todo" Content="To Do" />
+                        <ComboBoxItem Tag="in-progress" Content="In Progress" />
+                        <ComboBoxItem Tag="done" Content="Done" />
+                    </ComboBox>
+                    <ComboBox x:Name="PriorityBox" Header="Priority" Width="160" SelectionChanged="Priority_Changed">
+                        <ComboBoxItem Tag="low" Content="Low" />
+                        <ComboBoxItem Tag="medium" Content="Medium" />
+                        <ComboBoxItem Tag="high" Content="High" />
+                        <ComboBoxItem Tag="urgent" Content="Urgent" />
+                    </ComboBox>
+                </StackPanel>
 
-            <!-- Dates -->
-            <CalendarDatePicker x:Name="DueDatePicker" Header="Due date" DateChanged="DueDate_Changed" />
+                <!-- Dates -->
+                <CalendarDatePicker x:Name="DueDatePicker" Header="Due date" DateChanged="DueDate_Changed" />
 
-            <!-- ADO link -->
-            <StackPanel x:Name="AdoPanel" Orientation="Horizontal" Spacing="8">
-                <TextBlock x:Name="AdoLabel" VerticalAlignment="Center">
-                    <Run Text="ADO: " />
-                    <Run x:Name="AdoTitleRun" />
-                </TextBlock>
-                <HyperlinkButton x:Name="AdoLinkButton" Content="Open in ADO" Click="OpenAdo_Click" />
-                <Button x:Name="EditAdoButton" Content="Edit ADO link" Click="EditAdoLink_Click" />
-            </StackPanel>
+                <!-- ADO link -->
+                <StackPanel x:Name="AdoPanel" Orientation="Horizontal" Spacing="8">
+                    <TextBlock x:Name="AdoLabel" VerticalAlignment="Center">
+                        <Run Text="ADO: " />
+                        <Run x:Name="AdoTitleRun" />
+                    </TextBlock>
+                    <HyperlinkButton x:Name="AdoLinkButton" Content="Open in ADO" Click="OpenAdo_Click" />
+                    <Button x:Name="EditAdoButton" Content="Edit ADO link" Click="EditAdoLink_Click" />
+                </StackPanel>
 
-            <!-- Parent -->
-            <StackPanel x:Name="ParentPanel" Orientation="Horizontal" Spacing="8">
-                <TextBlock x:Name="ParentLabel" VerticalAlignment="Center">
-                    <Run Text="Parent: " />
-                    <Run x:Name="ParentTextRun" />
-                </TextBlock>
-                <HyperlinkButton x:Name="ParentLinkButton" Content="Open in ADO" Click="OpenParent_Click" />
-                <Button x:Name="EditParentButton" Content="Edit parent" Click="EditParent_Click" />
-            </StackPanel>
+                <!-- Parent -->
+                <StackPanel x:Name="ParentPanel" Orientation="Horizontal" Spacing="8">
+                    <TextBlock x:Name="ParentLabel" VerticalAlignment="Center">
+                        <Run Text="Parent: " />
+                        <Run x:Name="ParentTextRun" />
+                    </TextBlock>
+                    <HyperlinkButton x:Name="ParentLinkButton" Content="Open in ADO" Click="OpenParent_Click" />
+                    <Button x:Name="EditParentButton" Content="Edit parent" Click="EditParent_Click" />
+                </StackPanel>
 
-            <!-- Subtasks -->
-            <TextBlock Text="Subtasks" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,8,0,0" />
+                <!-- Subtasks -->
+                <TextBlock Text="Subtasks" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,8,0,0" />
 
-            <!-- Active subtasks: hybrid rendering -->
-            <ListView x:Name="ActiveSubtaskList"
-                      SelectionMode="None"
-                      CanReorderItems="True"
-                      AllowDrop="True"
-                      DragItemsCompleted="ActiveSubtaskList_DragItemsCompleted">
-                <ListView.ItemContainerStyle>
-                    <Style TargetType="ListViewItem">
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="Padding" Value="0" />
-                    </Style>
-                </ListView.ItemContainerStyle>
-                <ListView.ItemTemplate>
-                    <DataTemplate>
-                        <Grid Margin="0,2,0,2">
-                            <!-- Simple row: plain checkbox + my-day toggle + "..." menu (in matching card chrome) -->
-                            <Border Visibility="{Binding IsSimple, Converter={StaticResource BoolToVis}}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="4"
-                                    Padding="10,8"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                                <Grid ColumnDefinitions="*,Auto,Auto,Auto">
-                                    <Grid Grid.Column="0" ColumnDefinitions="Auto,*">
-                                        <CheckBox Grid.Column="0"
-                                                  IsChecked="{Binding IsCompleted, Mode=TwoWay}"
-                                                  Style="{StaticResource CircleCheckBoxStyle}"
-                                                  Click="Subtask_Click"
-                                                  VerticalAlignment="Center"
-                                                  ToolTipService.ToolTip="Toggle done" />
-                                        <Button Grid.Column="1"
-                                                Background="Transparent" BorderThickness="0"
-                                                Padding="6,4,6,4"
-                                                HorizontalAlignment="Stretch"
-                                                HorizontalContentAlignment="Left"
-                                                VerticalAlignment="Center"
-                                                Click="SubtaskText_Click"
-                                                ToolTipService.ToolTip="Open subtask detail">
-                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
-                                        </Button>
-                                    </Grid>
-                                    <Button Grid.Column="1" Click="SubtaskDue_Click"
-                                            Background="Transparent" BorderThickness="0"
-                                            Padding="6" VerticalAlignment="Center"
-                                            ToolTipService.ToolTip="Set due date">
-                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEC92;" FontSize="14"
-                                                  Opacity="0.6" />
-                                    </Button>
-                                    <Button Grid.Column="2" Click="ToggleSubtaskMyDay_Click"
-                                            Background="Transparent" BorderThickness="0"
-                                            Padding="6" VerticalAlignment="Center"
-                                            ToolTipService.ToolTip="Toggle My Day for this subtask">
-                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE706;" FontSize="14"
-                                                  Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
-                                    </Button>
-                                    <Button Grid.Column="3" Click="SubtaskMore_Click"
-                                            Background="Transparent" BorderThickness="0"
-                                            Padding="6" VerticalAlignment="Center"
-                                            ToolTipService.ToolTip="More actions">
-                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" Opacity="0.6" />
-                                    </Button>
-                                </Grid>
-                            </Border>
-
-                            <!-- Card form: rich (auto-expanded or collapsed) -->
-                            <Border Visibility="{Binding ShowAsCard, Converter={StaticResource BoolToVis}}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="4"
-                                    Padding="10,8"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                                <StackPanel Spacing="6">
-                                    <!-- Header row: checkbox + title + status pill + due chip + my-day toggle + "..." menu -->
+                <!-- Active subtasks: hybrid rendering -->
+                <ListView x:Name="ActiveSubtaskList"
+                          SelectionMode="None"
+                          CanReorderItems="True"
+                          AllowDrop="True"
+                          DragItemsCompleted="ActiveSubtaskList_DragItemsCompleted">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="0" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,2,0,2">
+                                <!-- Simple row: plain checkbox + my-day toggle + "..." menu (in matching card chrome) -->
+                                <Border Visibility="{Binding IsSimple, Converter={StaticResource BoolToVis}}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="4"
+                                        Padding="10,8"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                     <Grid ColumnDefinitions="*,Auto,Auto,Auto">
-                                        <Grid Grid.Column="0" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+                                        <Grid Grid.Column="0" ColumnDefinitions="Auto,*">
                                             <CheckBox Grid.Column="0"
                                                       IsChecked="{Binding IsCompleted, Mode=TwoWay}"
                                                       Style="{StaticResource CircleCheckBoxStyle}"
@@ -205,25 +175,6 @@
                                                     ToolTipService.ToolTip="Open subtask detail">
                                                 <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
                                             </Button>
-                                            <Border Grid.Column="2" Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
-                                                    CornerRadius="10"
-                                                    Padding="8,2"
-                                                    VerticalAlignment="Center"
-                                                    Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
-                                                <TextBlock Text="{Binding StatusPillText}"
-                                                           Foreground="White"
-                                                           FontSize="11"
-                                                           FontWeight="SemiBold" />
-                                            </Border>
-                                            <Border Grid.Column="3" Visibility="{Binding DueVisible, Converter={StaticResource BoolToVis}}"
-                                                    CornerRadius="10"
-                                                    Padding="8,2"
-                                                    VerticalAlignment="Center"
-                                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}">
-                                                <TextBlock Text="{Binding DueChipText}"
-                                                           FontSize="11"
-                                                           FontWeight="SemiBold" />
-                                            </Border>
                                         </Grid>
                                         <Button Grid.Column="1" Click="SubtaskDue_Click"
                                                 Background="Transparent" BorderThickness="0"
@@ -246,303 +197,411 @@
                                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" Opacity="0.6" />
                                         </Button>
                                     </Grid>
+                                </Border>
 
-                                    <!-- Blocker line (only when status: blocked) -->
-                                    <TextBlock Visibility="{Binding BlockerVisible, Converter={StaticResource BoolToVis}}"
-                                               Text="{Binding BlockerText}"
-                                               Foreground="#C50F1F"
-                                               FontSize="12"
-                                               TextWrapping="Wrap"
-                                               Margin="28,0,0,0" />
+                                <!-- Card form: rich (auto-expanded or collapsed) -->
+                                <Border Visibility="{Binding ShowAsCard, Converter={StaticResource BoolToVis}}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="4"
+                                        Padding="10,8"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                    <StackPanel Spacing="6">
+                                        <!-- Header row: checkbox + title + status pill + due chip + my-day toggle + "..." menu -->
+                                        <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                                            <Grid Grid.Column="0" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+                                                <CheckBox Grid.Column="0"
+                                                          IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                                          Style="{StaticResource CircleCheckBoxStyle}"
+                                                          Click="Subtask_Click"
+                                                          VerticalAlignment="Center"
+                                                          ToolTipService.ToolTip="Toggle done" />
+                                                <Button Grid.Column="1"
+                                                        Background="Transparent" BorderThickness="0"
+                                                        Padding="6,4,6,4"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Left"
+                                                        VerticalAlignment="Center"
+                                                        Click="SubtaskText_Click"
+                                                        ToolTipService.ToolTip="Open subtask detail">
+                                                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                                                </Button>
+                                                <Border Grid.Column="2" Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
+                                                        CornerRadius="10"
+                                                        Padding="8,2"
+                                                        VerticalAlignment="Center"
+                                                        Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
+                                                    <TextBlock Text="{Binding StatusPillText}"
+                                                               Foreground="White"
+                                                               FontSize="11"
+                                                               FontWeight="SemiBold" />
+                                                </Border>
+                                                <Border Grid.Column="3" Visibility="{Binding DueVisible, Converter={StaticResource BoolToVis}}"
+                                                        CornerRadius="10"
+                                                        Padding="8,2"
+                                                        VerticalAlignment="Center"
+                                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                                    <TextBlock Text="{Binding DueChipText}"
+                                                               FontSize="11"
+                                                               FontWeight="SemiBold" />
+                                                </Border>
+                                            </Grid>
+                                            <Button Grid.Column="1" Click="SubtaskDue_Click"
+                                                    Background="Transparent" BorderThickness="0"
+                                                    Padding="6" VerticalAlignment="Center"
+                                                    ToolTipService.ToolTip="Set due date">
+                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEC92;" FontSize="14"
+                                                          Opacity="0.6" />
+                                            </Button>
+                                            <Button Grid.Column="2" Click="ToggleSubtaskMyDay_Click"
+                                                    Background="Transparent" BorderThickness="0"
+                                                    Padding="6" VerticalAlignment="Center"
+                                                    ToolTipService.ToolTip="Toggle My Day for this subtask">
+                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE706;" FontSize="14"
+                                                          Foreground="{Binding IsMyDay, Converter={StaticResource MyDayBrush}}" />
+                                            </Button>
+                                            <Button Grid.Column="3" Click="SubtaskMore_Click"
+                                                    Background="Transparent" BorderThickness="0"
+                                                    Padding="6" VerticalAlignment="Center"
+                                                    ToolTipService.ToolTip="More actions">
+                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" Opacity="0.6" />
+                                            </Button>
+                                        </Grid>
 
-                                    <!-- Auto-expanded body: full notes + metadata table -->
-                                    <StackPanel Visibility="{Binding IsAutoExpanded, Converter={StaticResource BoolToVis}}"
-                                                Spacing="4" Margin="28,0,0,0">
-                                        <TextBlock Text="{Binding Notes}"
-                                                   Visibility="{Binding HasNotes, Converter={StaticResource BoolToVis}}"
+                                        <!-- Blocker line (only when status: blocked) -->
+                                        <TextBlock Visibility="{Binding BlockerVisible, Converter={StaticResource BoolToVis}}"
+                                                   Text="{Binding BlockerText}"
+                                                   Foreground="#C50F1F"
+                                                   FontSize="12"
                                                    TextWrapping="Wrap"
-                                                   FontSize="13" />
-                                        <ItemsControl ItemsSource="{Binding Metadata}"
-                                                      Visibility="{Binding HasMetadata, Converter={StaticResource BoolToVis}}">
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock FontSize="11" Opacity="0.7">
-                                                        <Run Text="{Binding Key}" />
-                                                        <Run Text=": " />
-                                                        <Run Text="{Binding Value}" />
-                                                    </TextBlock>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
+                                                   Margin="28,0,0,0" />
+
+                                        <!-- Auto-expanded body: full notes + metadata table -->
+                                        <StackPanel Visibility="{Binding IsAutoExpanded, Converter={StaticResource BoolToVis}}"
+                                                    Spacing="4" Margin="28,0,0,0">
+                                            <TextBlock Text="{Binding Notes}"
+                                                       Visibility="{Binding HasNotes, Converter={StaticResource BoolToVis}}"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="13" />
+                                            <ItemsControl ItemsSource="{Binding Metadata}"
+                                                          Visibility="{Binding HasMetadata, Converter={StaticResource BoolToVis}}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock FontSize="11" Opacity="0.7">
+                                                            <Run Text="{Binding Key}" />
+                                                            <Run Text=": " />
+                                                            <Run Text="{Binding Value}" />
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+
+                                        <!-- Collapsed-rich preview: one-line notes summary -->
+                                        <TextBlock Visibility="{Binding IsCollapsedRich, Converter={StaticResource BoolToVis}}"
+                                                   Text="{Binding NotesPreview}"
+                                                   TextWrapping="NoWrap"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Opacity="0.7"
+                                                   FontSize="12"
+                                                   Margin="28,0,0,0" />
                                     </StackPanel>
-
-                                    <!-- Collapsed-rich preview: one-line notes summary -->
-                                    <TextBlock Visibility="{Binding IsCollapsedRich, Converter={StaticResource BoolToVis}}"
-                                               Text="{Binding NotesPreview}"
-                                               TextWrapping="NoWrap"
-                                               TextTrimming="CharacterEllipsis"
-                                               Opacity="0.7"
-                                               FontSize="12"
-                                               Margin="28,0,0,0" />
-                                </StackPanel>
-                            </Border>
-                        </Grid>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
-
-            <!-- Add subtask: inline editor (Enter to commit, button as alternative) -->
-            <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
-                <TextBox x:Name="AddSubtaskBox" Grid.Column="0"
-                         PlaceholderText="Add subtask..."
-                         KeyDown="AddSubtaskBox_KeyDown" />
-                <Button x:Name="AddSubtaskButton" Grid.Column="1"
-                        Content="Add" Margin="8,0,0,0"
-                        Click="AddSubtask_Click" />
-            </Grid>
-
-            <!-- Completed / dropped subtasks: collapsed under an expander -->
-            <Expander x:Name="CompletedExpander" HorizontalAlignment="Stretch"
-                      HorizontalContentAlignment="Stretch"
-                      Visibility="Collapsed">
-                <Expander.Header>
-                    <TextBlock x:Name="CompletedHeader" Text="Completed (0)" />
-                </Expander.Header>
-                <ListView x:Name="CompletedSubtaskList"
-                         SelectionMode="None"
-                         HorizontalAlignment="Stretch"
-                         HorizontalContentAlignment="Stretch">
-                    <ListView.ItemContainerStyle>
-                        <Style TargetType="ListViewItem">
-                            <Setter Property="HorizontalAlignment" Value="Stretch" />
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                            <Setter Property="Padding" Value="0" />
-                        </Style>
-                    </ListView.ItemContainerStyle>
-                    <ListView.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Margin="0,2,0,2" ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
-                                <Grid Grid.Column="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                    <CheckBox Grid.Column="0"
-                                              IsChecked="{Binding IsCompleted, Mode=TwoWay}"
-                                              Style="{StaticResource CircleCheckBoxStyle}"
-                                              Click="Subtask_Click"
-                                              VerticalAlignment="Center"
-                                              ToolTipService.ToolTip="Toggle done" />
-                                    <Button Grid.Column="1"
-                                            Background="Transparent" BorderThickness="0"
-                                            Padding="6,4,6,4"
-                                            HorizontalAlignment="Stretch"
-                                            HorizontalContentAlignment="Left"
-                                            VerticalAlignment="Center"
-                                            Click="SubtaskText_Click"
-                                            ToolTipService.ToolTip="Open subtask detail">
-                                        <TextBlock Text="{Binding Text}"
-                                                   TextDecorations="Strikethrough"
-                                                   Opacity="0.6"
-                                                   TextWrapping="Wrap" />
-                                    </Button>
-                                    <Border Grid.Column="2" Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
-                                            CornerRadius="10"
-                                            Padding="8,2"
-                                            VerticalAlignment="Center"
-                                            Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
-                                        <TextBlock Text="{Binding StatusPillText}"
-                                                   Foreground="White"
-                                                   FontSize="11"
-                                                   FontWeight="SemiBold" />
-                                    </Border>
-                                </Grid>
-                                <Button Grid.Column="1" Click="CompletedSubtaskMore_Click"
-                                        Background="Transparent" BorderThickness="0"
-                                        Padding="6" VerticalAlignment="Center"
-                                        ToolTipService.ToolTip="More actions">
-                                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" Opacity="0.6" />
-                                </Button>
+                                </Border>
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-            </Expander>
 
-            <!-- Description -->
-            <TextBox x:Name="DescriptionBox" Header="Description" AcceptsReturn="True"
-                     MinHeight="120" TextWrapping="Wrap"
-                     Text="{x:Bind Task.Description, Mode=TwoWay}"
-                     LostFocus="Field_LostFocus" />
-
-            <!-- Notes (read mode renders via VaultMarkdownView; Edit toggles to TextBox) -->
-            <StackPanel x:Name="NotesSection" Spacing="4">
-                <StackPanel.KeyboardAccelerators>
-                    <KeyboardAccelerator Key="E" Modifiers="Control" Invoked="NotesEditAccelerator_Invoked" />
-                </StackPanel.KeyboardAccelerators>
-
-                <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock Grid.Column="0" Text="Notes"
-                               FontWeight="SemiBold"
-                               Opacity="0.8"
-                               VerticalAlignment="Center" />
-                    <Button Grid.Column="1" x:Name="NotesEditButton"
-                            Background="Transparent" BorderThickness="0"
-                            Padding="6"
-                            Click="NotesEditToggle_Click"
-                            ToolTipService.ToolTip="Edit Notes (Ctrl+E)">
-                        <FontIcon x:Name="NotesEditIcon" FontFamily="Segoe Fluent Icons" Glyph="&#xE70F;" FontSize="14" Opacity="0.7" />
-                    </Button>
+                <!-- Add subtask: inline editor (Enter to commit, button as alternative) -->
+                <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                    <TextBox x:Name="AddSubtaskBox" Grid.Column="0"
+                             PlaceholderText="Add subtask..."
+                             KeyDown="AddSubtaskBox_KeyDown" />
+                    <Button x:Name="AddSubtaskButton" Grid.Column="1"
+                            Content="Add" Margin="8,0,0,0"
+                            Click="AddSubtask_Click" />
                 </Grid>
 
-                <Grid x:Name="NotesContent">
-                    <controls:VaultMarkdownView x:Name="NotesReadView"
-                                                Loaded="OnNotesMarkdownLoaded"
-                                                Unloaded="OnNotesMarkdownUnloaded" />
-                    <TextBlock x:Name="NotesEmptyHint"
-                               Text="No notes yet. Click the pencil to add some."
-                               Opacity="0.5"
-                               FontStyle="Italic"
-                               Visibility="Collapsed" />
-                    <TextBox x:Name="NotesBox" AcceptsReturn="True"
-                             MinHeight="120" TextWrapping="Wrap"
-                             PlaceholderText="Add notes in markdown..."
-                             BorderThickness="1"
-                             BorderBrush="{ThemeResource TextControlBorderBrush}"
-                             Text="{x:Bind Task.Notes, Mode=TwoWay}"
-                             KeyDown="NotesBox_KeyDown"
-                             LostFocus="Field_LostFocus"
-                             Visibility="Collapsed" />
-                </Grid>
-            </StackPanel>
-
-            <!-- Artifacts (slice 2 — agent-produced markdown work-products) -->
-            <StackPanel x:Name="ArtifactsSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
-                <TextBlock Text="Artifacts" Style="{StaticResource SubtitleTextBlockStyle}" />
-                <ItemsControl x:Name="ArtifactsList">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Expander HorizontalAlignment="Stretch"
-                                      HorizontalContentAlignment="Stretch"
-                                      Margin="0,0,0,4"
-                                      IsExpanded="{Binding IsExpanded}">
-                                <Expander.Header>
-                                    <Grid HorizontalAlignment="Stretch">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
-                                            <TextBlock Text="{Binding TimeBadge}" Opacity="0.6" FontSize="12" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                        <HyperlinkButton Grid.Column="1"
-                                                         Content="Open in Obsidian"
-                                                         Tag="{Binding Path}"
-                                                         Click="OpenArtifactInObsidian_Click"
-                                                         FontSize="12"
-                                                         Padding="8,2"
-                                                         VerticalAlignment="Center"
-                                                         Margin="8,0,8,0" />
+                <!-- Completed / dropped subtasks: collapsed under an expander -->
+                <Expander x:Name="CompletedExpander" HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Stretch"
+                          Visibility="Collapsed">
+                    <Expander.Header>
+                        <TextBlock x:Name="CompletedHeader" Text="Completed (0)" />
+                    </Expander.Header>
+                    <ListView x:Name="CompletedSubtaskList"
+                             SelectionMode="None"
+                             HorizontalAlignment="Stretch"
+                             HorizontalContentAlignment="Stretch">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,2,0,2" ColumnDefinitions="*,Auto" HorizontalAlignment="Stretch">
+                                    <Grid Grid.Column="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                        <CheckBox Grid.Column="0"
+                                                  IsChecked="{Binding IsCompleted, Mode=TwoWay}"
+                                                  Style="{StaticResource CircleCheckBoxStyle}"
+                                                  Click="Subtask_Click"
+                                                  VerticalAlignment="Center"
+                                                  ToolTipService.ToolTip="Toggle done" />
+                                        <Button Grid.Column="1"
+                                                Background="Transparent" BorderThickness="0"
+                                                Padding="6,4,6,4"
+                                                HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Left"
+                                                VerticalAlignment="Center"
+                                                Click="SubtaskText_Click"
+                                                ToolTipService.ToolTip="Open subtask detail">
+                                            <TextBlock Text="{Binding Text}"
+                                                       TextDecorations="Strikethrough"
+                                                       Opacity="0.6"
+                                                       TextWrapping="Wrap" />
+                                        </Button>
+                                        <Border Grid.Column="2" Visibility="{Binding StatusPillVisible, Converter={StaticResource BoolToVis}}"
+                                                CornerRadius="10"
+                                                Padding="8,2"
+                                                VerticalAlignment="Center"
+                                                Background="{Binding StatusPillColor, Converter={StaticResource HexToBrush}}">
+                                            <TextBlock Text="{Binding StatusPillText}"
+                                                       Foreground="White"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold" />
+                                        </Border>
                                     </Grid>
-                                </Expander.Header>
-                                <controls:VaultMarkdownView Markdown="{Binding Body}"
-                                                            Loaded="OnArtifactMarkdownLoaded"
-                                                            Unloaded="OnArtifactMarkdownUnloaded" />
-                            </Expander>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
-
-            <!-- Metadata -->
-            <StackPanel Spacing="4" Opacity="0.5" Margin="0,16,0,0">
-                <TextBlock x:Name="CreatedText" FontSize="12" />
-                <TextBlock x:Name="CompletedText" FontSize="12" />
-                <TextBlock x:Name="IdText" FontSize="12" />
-            </StackPanel>
-
-            <!-- Agent invocation buttons (copy one-liner to clipboard, paste into Copilot CLI) -->
-            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-                <Button x:Name="StartWorkButton" Content="Start work" Click="StartWork_Click" />
-                <Button x:Name="ResumeButton" Content="Resume" Click="Resume_Click" />
-                <Button x:Name="WrapUpButton" Content="Wrap up" Click="WrapUp_Click" />
-                <TextBlock x:Name="ClipboardHint" VerticalAlignment="Center" Opacity="0.6" FontSize="12" />
-            </StackPanel>
-
-            <!-- Related (slice 5) -->
-            <StackPanel x:Name="RelatedSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
-                <TextBlock Text="Related" Style="{StaticResource SubtitleTextBlockStyle}" />
-                <ItemsControl x:Name="RelatedList">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Button HorizontalAlignment="Stretch"
-                                    HorizontalContentAlignment="Stretch"
-                                    Margin="0,2,0,2"
-                                    Padding="12,8"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1"
-                                    Click="RelatedLink_Click">
-                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                                    <TextBlock Grid.Column="0" Text="{Binding TypeGlyph}" FontSize="18" VerticalAlignment="Center" />
-                                    <StackPanel Grid.Column="1" Spacing="2">
-                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding Subtitle}" Opacity="0.65" FontSize="12" />
-                                    </StackPanel>
-                                    <TextBlock Grid.Column="2"
-                                               Text="missing"
-                                               Foreground="#C50F1F"
-                                               FontSize="11"
-                                               VerticalAlignment="Center"
-                                               Visibility="{Binding IsMissing, Converter={StaticResource BoolToVis}}" />
+                                    <Button Grid.Column="1" Click="CompletedSubtaskMore_Click"
+                                            Background="Transparent" BorderThickness="0"
+                                            Padding="6" VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="More actions">
+                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" Opacity="0.6" />
+                                    </Button>
                                 </Grid>
-                            </Button>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Expander>
 
-            <!-- Backlinks (slice 6 — incoming wikilinks from outside wiki/todo/) -->
-            <StackPanel x:Name="BacklinksSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
-                <TextBlock x:Name="BacklinksHeader" Text="Backlinks" Style="{StaticResource SubtitleTextBlockStyle}" />
-                <ItemsControl x:Name="BacklinksList">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Button HorizontalAlignment="Stretch"
-                                    HorizontalContentAlignment="Stretch"
-                                    Margin="0,2,0,2"
-                                    Padding="12,8"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1"
-                                    Click="Backlink_Click">
-                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                                    <TextBlock Grid.Column="0"
-                                               Text="{Binding Title}"
-                                               FontWeight="SemiBold"
-                                               TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center" />
-                                    <Border Grid.Column="1"
-                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                            CornerRadius="4"
-                                            Padding="6,2"
-                                            VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding TypeLabel}"
+                <!-- Description -->
+                <TextBox x:Name="DescriptionBox" Header="Description" AcceptsReturn="True"
+                         MinHeight="120" TextWrapping="Wrap"
+                         Text="{x:Bind Task.Description, Mode=TwoWay}"
+                         LostFocus="Field_LostFocus" />
+
+                <!-- Notes (read mode renders via VaultMarkdownView; Edit toggles to TextBox) -->
+                <StackPanel x:Name="NotesSection" Spacing="4">
+                    <StackPanel.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="E" Modifiers="Control" Invoked="NotesEditAccelerator_Invoked" />
+                    </StackPanel.KeyboardAccelerators>
+
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Notes"
+                                   FontWeight="SemiBold"
+                                   Opacity="0.8"
+                                   VerticalAlignment="Center" />
+                        <Button Grid.Column="1" x:Name="NotesEditButton"
+                                Background="Transparent" BorderThickness="0"
+                                Padding="6"
+                                Click="NotesEditToggle_Click"
+                                ToolTipService.ToolTip="Edit Notes (Ctrl+E)">
+                            <FontIcon x:Name="NotesEditIcon" FontFamily="Segoe Fluent Icons" Glyph="&#xE70F;" FontSize="14" Opacity="0.7" />
+                        </Button>
+                    </Grid>
+
+                    <Grid x:Name="NotesContent">
+                        <controls:VaultMarkdownView x:Name="NotesReadView"
+                                                    Loaded="OnNotesMarkdownLoaded"
+                                                    Unloaded="OnNotesMarkdownUnloaded" />
+                        <TextBlock x:Name="NotesEmptyHint"
+                                   Text="No notes yet. Click the pencil to add some."
+                                   Opacity="0.5"
+                                   FontStyle="Italic"
+                                   Visibility="Collapsed" />
+                        <TextBox x:Name="NotesBox" AcceptsReturn="True"
+                                 MinHeight="120" TextWrapping="Wrap"
+                                 PlaceholderText="Add notes in markdown..."
+                                 BorderThickness="1"
+                                 BorderBrush="{ThemeResource TextControlBorderBrush}"
+                                 Text="{x:Bind Task.Notes, Mode=TwoWay}"
+                                 KeyDown="NotesBox_KeyDown"
+                                 LostFocus="Field_LostFocus"
+                                 Visibility="Collapsed" />
+                    </Grid>
+                </StackPanel>
+
+                <!-- Artifacts (slice 2 — agent-produced markdown work-products) -->
+                <StackPanel x:Name="ArtifactsSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
+                    <TextBlock Text="Artifacts" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <ItemsControl x:Name="ArtifactsList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Expander HorizontalAlignment="Stretch"
+                                          HorizontalContentAlignment="Stretch"
+                                          Margin="0,0,0,4"
+                                          IsExpanded="{Binding IsExpanded}">
+                                    <Expander.Header>
+                                        <Grid HorizontalAlignment="Stretch">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding TimeBadge}" Opacity="0.6" FontSize="12" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <HyperlinkButton Grid.Column="1"
+                                                             Content="Open in Obsidian"
+                                                             Tag="{Binding Path}"
+                                                             Click="OpenArtifactInObsidian_Click"
+                                                             FontSize="12"
+                                                             Padding="8,2"
+                                                             VerticalAlignment="Center"
+                                                             Margin="8,0,8,0" />
+                                        </Grid>
+                                    </Expander.Header>
+                                    <controls:VaultMarkdownView Markdown="{Binding Body}"
+                                                                Loaded="OnArtifactMarkdownLoaded"
+                                                                Unloaded="OnArtifactMarkdownUnloaded" />
+                                </Expander>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- Links (slice 4 — structured external pointers) -->
+                <StackPanel x:Name="LinksSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
+                    <TextBlock Text="Links" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <ItemsControl x:Name="LinksList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        Margin="0,2,0,2"
+                                        Padding="12,8"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        Click="LinkRow_Click">
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                                        <Border Grid.Column="0"
+                                                Background="{Binding TypeBadgeColor, Converter={StaticResource HexToBrush}}"
+                                                CornerRadius="2"
+                                                Padding="6,2"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding TypeBadgeText}"
+                                                       FontSize="10"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="White" />
+                                        </Border>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding DisplayText}"
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- Metadata -->
+                <StackPanel Spacing="4" Opacity="0.5" Margin="0,16,0,0">
+                    <TextBlock x:Name="CreatedText" FontSize="12" />
+                    <TextBlock x:Name="CompletedText" FontSize="12" />
+                    <TextBlock x:Name="IdText" FontSize="12" />
+                </StackPanel>
+
+                <!-- Agent invocation buttons (copy one-liner to clipboard, paste into Copilot CLI) -->
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                    <Button x:Name="StartWorkButton" Content="Start work" Click="StartWork_Click" />
+                    <Button x:Name="ResumeButton" Content="Resume" Click="Resume_Click" />
+                    <Button x:Name="WrapUpButton" Content="Wrap up" Click="WrapUp_Click" />
+                    <TextBlock x:Name="ClipboardHint" VerticalAlignment="Center" Opacity="0.6" FontSize="12" />
+                </StackPanel>
+
+                <!-- Related (slice 5) -->
+                <StackPanel x:Name="RelatedSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
+                    <TextBlock Text="Related" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <ItemsControl x:Name="RelatedList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        Margin="0,2,0,2"
+                                        Padding="12,8"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        Click="RelatedLink_Click">
+                                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                                        <TextBlock Grid.Column="0" Text="{Binding TypeGlyph}" FontSize="18" VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Subtitle}" Opacity="0.65" FontSize="12" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="missing"
+                                                   Foreground="#C50F1F"
                                                    FontSize="11"
-                                                   Opacity="0.75" />
-                                    </Border>
-                                </Grid>
-                            </Button>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
+                                                   VerticalAlignment="Center"
+                                                   Visibility="{Binding IsMissing, Converter={StaticResource BoolToVis}}" />
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
 
-            <!-- Actions -->
-            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,16,0,0">
-                <Button Content="Delete" Click="Delete_Click" />
-                <Button Content="Open in Obsidian" Click="OpenObsidian_Click" />
-                <Button Content="Copy task link" Click="CopyTaskLink_Click"
-                        AutomationProperties.Name="Copy task link"
-                        ToolTipService.ToolTip="Copy glasswork:// deep-link to clipboard" />
+                <!-- Backlinks (slice 6 — incoming wikilinks from outside wiki/todo/) -->
+                <StackPanel x:Name="BacklinksSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
+                    <TextBlock x:Name="BacklinksHeader" Text="Backlinks" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <ItemsControl x:Name="BacklinksList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        Margin="0,2,0,2"
+                                        Padding="12,8"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        Click="Backlink_Click">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding Title}"
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                        <Border Grid.Column="1"
+                                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                                CornerRadius="4"
+                                                Padding="6,2"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding TypeLabel}"
+                                                       FontSize="11"
+                                                       Opacity="0.75" />
+                                        </Border>
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- Actions -->
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,16,0,0">
+                    <Button Content="Delete" Click="Delete_Click" />
+                    <Button Content="Open in Obsidian" Click="OpenObsidian_Click" />
+                    <Button Content="Copy task link" Click="CopyTaskLink_Click"
+                            AutomationProperties.Name="Copy task link"
+                            ToolTipService.ToolTip="Copy glasswork:// deep-link to clipboard" />
+                </StackPanel>
             </StackPanel>
-        </StackPanel>
-    </ScrollViewer>
+        </ScrollViewer>
+    </Grid>
 </Page>

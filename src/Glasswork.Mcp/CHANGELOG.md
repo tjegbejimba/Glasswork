@@ -5,6 +5,21 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.4.0] — 2026-05-15
+
+### Added
+
+- **`load_context` tool** (M4, issue #137): single-call replacement for chaining `get_task` + N artifact reads + `list_tasks(parent_id)` + backlink discovery. Returns `{ task, artifacts[], subtasks[], backlinks[] }` for the given `task_id`:
+  - `artifacts[]` — every artifact in the task's `<task-id>.artifacts/` folder, with `filename`, vault-relative `path`, and full `content` body inlined.
+  - `subtasks[]` — every direct child task (and recursively their children to `depth`, default `1`, clamped to `[0, 3]`). Each subtree entry has the same `{ task, artifacts[], subtasks[] }` shape. `depth > 3` is silently clamped, not errored.
+  - `backlinks[]` — every wiki page outside `wiki/todo/` that links to this task via `[[task-id]]`. Reuses `Glasswork.Core.Services.BacklinkIndex` (ADR 0005); no scanner re-implementation. Built per call against the vault root (stateless, ADR 0007 §6). v1 tradeoff: backlinks are root-only — subtree payloads do NOT carry a `backlinks` field, to keep latency and payload size bounded.
+  - Returns the structured `{ "error": "not_found", "message": ... }` shape when `task_id` does not exist; the not-found check runs BEFORE the expensive backlink `Build` to keep misses cheap.
+  - Cycle-safe BFS via a visited-id set, so hand-edited vaults with `a.parent = b ∧ b.parent = a` do not stack-overflow.
+  - Under `GLASSWORK_MCP_TRACE=1`, emits per-phase timings `load_task`, `load_artifacts`, `load_subtasks`, `load_backlinks`.
+- **`GlassworkToolsTests.LoadContext_*`** — MSTest coverage: leaf task, artifact body inlining, depth=1/2/0/clamp-to-3, backlinks via a wiki-concept page, `not_found` short-circuit, cycle safety, subtree shape (artifacts + nested subtasks but no `backlinks` field), and `McpLoggerTests.TraceEnabled_LoadContext_PhasesContainExpectedKeys` for the four phase keys.
+
+---
+
 ## [0.3.0] — 2026-04-25
 
 ### Fixed

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Glasswork.Controls;
 using Glasswork.Core.Models;
@@ -10,16 +11,22 @@ using Glasswork.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Media.Animation;
+using Microsoft.UI.Xaml.Media;
 
 namespace Glasswork.Pages;
 
 public sealed partial class BacklogPage : Page
 {
     public BacklogViewModel ViewModel { get; }
+    private readonly BacklogUndoState _undoState = new();
+    private DispatcherTimer? _undoTimer;
 
     public BacklogPage()
     {
         ViewModel = new BacklogViewModel(App.Vault, App.Tasks, App.UiState);
+        // Load persisted ViewMode (default "list") BEFORE InitializeComponent
+        ViewModel.ViewMode = App.UiState.Get<string>(App.BacklogViewModeKey) ?? "list";
         // Load persisted toggle (default true) BEFORE InitializeComponent so the
         // x:Bind TwoWay binding to ToggleButton.IsChecked picks up the right value.
         ViewModel.IsGrouped = App.UiState.Get<bool?>(App.BacklogGroupByParentKey) ?? true;
@@ -37,6 +44,7 @@ public sealed partial class BacklogPage : Page
         };
         InitializeComponent();
         ViewModel.Rows.CollectionChanged += (_, _) => UpdateEmptyState();
+        ViewModel.BoardColumns.CollectionChanged += (_, _) => UpdateEmptyState();
         // Persist toggle whenever the user flips it. Bind here (not in VM) so the
         // VM stays UI-state-store-agnostic.
         ViewModel.PropertyChanged += (_, args) =>
@@ -46,7 +54,66 @@ public sealed partial class BacklogPage : Page
                 App.UiState.Set(App.BacklogGroupByParentKey, ViewModel.IsGrouped);
                 App.ScheduleUiStateSave();
             }
+            if (args.PropertyName == nameof(BacklogViewModel.ViewMode))
+            {
+                App.UiState.Set(App.BacklogViewModeKey, ViewModel.ViewMode);
+                App.ScheduleUiStateSave();
+                UpdateViewModeUI();
+            }
         };
+        // Initialize view mode UI on first load
+        UpdateViewModeUI();
+    }
+
+    private void UpdateViewModeUI()
+    {
+        var isList = ViewModel.ViewMode == "list";
+        var isBoard = ViewModel.ViewMode == "board";
+
+        // Sync toggle buttons
+        ListViewToggle.IsChecked = isList;
+        BoardViewToggle.IsChecked = isBoard;
+
+        // Show/hide main views
+        TaskList.Visibility = isList ? Visibility.Visible : Visibility.Collapsed;
+        BoardView.Visibility = isBoard ? Visibility.Visible : Visibility.Collapsed;
+
+        // Show/hide filter controls
+        StatusFilter.Visibility = isList ? Visibility.Visible : Visibility.Collapsed;
+        GroupToggle.Visibility = isList ? Visibility.Visible : Visibility.Collapsed;
+        WorkLogLink.Visibility = isBoard ? Visibility.Visible : Visibility.Collapsed;
+
+        // Update empty state
+        UpdateEmptyState();
+    }
+
+    private void ListViewToggle_Checked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ViewMode == "list") return;
+        ViewModel.ViewMode = "list";
+        // Null-conditional: during InitializeComponent the other toggle may not
+        // exist yet when XAML sets IsChecked="True" on this one. UpdateViewModeUI
+        // syncs both toggles correctly after InitializeComponent completes.
+        if (BoardViewToggle is not null) BoardViewToggle.IsChecked = false;
+    }
+
+    private void BoardViewToggle_Checked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ViewMode == "board") return;
+        ViewModel.ViewMode = "board";
+        if (ListViewToggle is not null) ListViewToggle.IsChecked = false;
+    }
+
+    private void WorkLogLink_Click(object sender, RoutedEventArgs e)
+    {
+        Frame.Navigate(typeof(WorkLogPage));
+    }
+
+    private void BoardCard_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
+        Frame.Navigate(typeof(TaskDetailPage), task);
+        e.Handled = true;
     }
 
     private IReadOnlyDictionary<string, bool> LoadGroupCollapseState()
@@ -73,12 +140,16 @@ public sealed partial class BacklogPage : Page
         base.OnNavigatedTo(e);
         Refresh();
         App.TaskFileChangedExternally += OnFileChanged;
+        // Clear undo state when navigating to the page
+        ClearUndoState();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
         App.TaskFileChangedExternally -= OnFileChanged;
+        // Clear undo state when navigating away
+        ClearUndoState();
     }
 
     private void OnFileChanged(object? sender, string fileName)
@@ -101,8 +172,29 @@ public sealed partial class BacklogPage : Page
 
     private void UpdateEmptyState()
     {
-        var hasContent = ViewModel.Tasks.Count > 0;
-        TaskList.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        var isList = ViewModel.ViewMode == "list";
+        var isBoard = ViewModel.ViewMode == "board";
+
+        // In board mode, derive content presence from BoardColumns rather than the flat
+        // Tasks list. ViewModel.Refresh() populates BoardColumns before Tasks, so Tasks
+        // can momentarily be empty when BoardColumns.CollectionChanged fires — causing
+        // the board to flash to the empty state and never recover (since Tasks changes
+        // are not observed). Checking BoardColumns directly avoids the stale-count race.
+        var hasContent = isBoard
+            ? ViewModel.BoardColumns.Any(c => c.Tasks.Count > 0)
+            : ViewModel.Tasks.Count > 0;
+        
+        // Only manage TaskList visibility in list mode
+        if (isList)
+        {
+            TaskList.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        }
+        // Only manage BoardView visibility in board mode
+        if (isBoard)
+        {
+            BoardView.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
+        }
+        
         EmptyStateView.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -144,8 +236,23 @@ public sealed partial class BacklogPage : Page
     {
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
+            // Capture undo state ONLY for board view mark-done
+            var isBoard = ViewModel.ViewMode == "board";
+            var isMarkDone = status == GlassworkTask.Statuses.Done;
+
+            if (isBoard && isMarkDone)
+            {
+                _undoState.CaptureMarkDone(task);
+            }
+
             ViewModel.SelectedTask = task;
             ViewModel.SetStatusCommand.Execute(status);
+
+            // Show undo InfoBar ONLY for board view mark-done
+            if (isBoard && isMarkDone)
+            {
+                ShowUndoInfoBar(task.Title);
+            }
         }
     }
 
@@ -178,12 +285,27 @@ public sealed partial class BacklogPage : Page
     {
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
+            // Capture undo state ONLY for board view mark-done
+            var isBoard = ViewModel.ViewMode == "board";
+            var isMarkDone = !task.IsDone; // About to mark done
+
+            if (isBoard && isMarkDone)
+            {
+                _undoState.CaptureMarkDone(task);
+            }
+
             // Toggle based on current model state — Button has no IsChecked.
             var newStatus = task.IsDone
                 ? GlassworkTask.Statuses.Todo
                 : GlassworkTask.Statuses.Done;
             ViewModel.SelectedTask = task;
             ViewModel.SetStatusCommand.Execute(newStatus);
+
+            // Show undo InfoBar ONLY for board view mark-done
+            if (isBoard && isMarkDone)
+            {
+                ShowUndoInfoBar(task.Title);
+            }
         }
     }
 
@@ -293,5 +415,239 @@ public sealed partial class BacklogPage : Page
     private async void OnBlurbLinkClicked(object? sender, LinkClickedEventArgs e)
     {
         await VaultPageHelper.RouteLinkClickAsync(Frame, e);
+    }
+
+    private void ShowUndoInfoBar(string taskTitle)
+    {
+        // Show InfoBar with task title
+        UndoInfoBar.Title = $"Marked done: \"{taskTitle}\"";
+        UndoInfoBar.IsOpen = true;
+
+        // Dispose and cancel any existing timer
+        DisposeTimer();
+
+        // Start 6-second auto-dismiss timer
+        _undoTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(6)
+        };
+        _undoTimer.Tick += (_, _) =>
+        {
+            UndoInfoBar.IsOpen = false;
+            _undoState.Clear();
+            DisposeTimer();
+        };
+        _undoTimer.Start();
+    }
+
+    private void UndoInfoBar_Closed(InfoBar sender, InfoBarClosedEventArgs args)
+    {
+        // User manually closed or timer auto-dismissed
+        DisposeTimer();
+        _undoState.Clear();
+    }
+
+    private void UndoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_undoState.HasUndo) return;
+
+        // Stop timer immediately to prevent race condition
+        DisposeTimer();
+
+        // Find the task to restore
+        var task = ViewModel.Tasks.FirstOrDefault(t => t.Id == _undoState.TaskId);
+        if (task is null)
+        {
+            _undoState.Clear();
+            UndoInfoBar.IsOpen = false;
+            return;
+        }
+
+        // Validate task is still done (reject stale undo if status changed)
+        if (task.Status != GlassworkTask.Statuses.Done)
+        {
+            _undoState.Clear();
+            UndoInfoBar.IsOpen = false;
+            return;
+        }
+
+        // Restore previous status (don't write directly, let command handle it)
+        var previousStatus = _undoState.PreviousStatus ?? GlassworkTask.Statuses.Todo;
+        ViewModel.SelectedTask = task;
+        ViewModel.SetStatusCommand.Execute(previousStatus);
+
+        // Close InfoBar
+        UndoInfoBar.IsOpen = false;
+
+        // Clear undo state
+        _undoState.Clear();
+
+        // Flash the restored card with accent outline
+        FlashRestoredCard(task);
+    }
+
+    private void FlashRestoredCard(GlassworkTask task)
+    {
+        // Find the card in the board view
+        // We need to wait for the UI to update after status change
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            // Find the Border element that represents this card
+            var border = FindCardBorder(task);
+            if (border is null) return;
+
+            // Create flash animation (accent outline for ~150ms)
+            var originalBrush = border.BorderBrush;
+            var originalThickness = border.BorderThickness;
+
+            border.BorderBrush = (Brush)Application.Current.Resources["SystemAccentColor"];
+            border.BorderThickness = new Thickness(2);
+
+            var timer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(150)
+            };
+            timer.Tick += (_, _) =>
+            {
+                border.BorderBrush = originalBrush;
+                border.BorderThickness = originalThickness;
+                timer.Stop();
+            };
+            timer.Start();
+        });
+    }
+
+    private Border? FindCardBorder(GlassworkTask task)
+    {
+        // Walk the visual tree to find the Border with matching DataContext
+        return FindChildByDataContext<Border>(BoardView, task);
+    }
+
+    private T? FindChildByDataContext<T>(DependencyObject parent, object dataContext) where T : FrameworkElement
+    {
+        if (parent is null) return null;
+
+        var childCount = VisualTreeHelper.GetChildrenCount(parent);
+        for (var i = 0; i < childCount; i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            
+            if (child is T element && element.DataContext == dataContext)
+            {
+                return element;
+            }
+
+            var result = FindChildByDataContext<T>(child, dataContext);
+            if (result is not null) return result;
+        }
+
+        return null;
+    }
+
+    private void ClearUndoState()
+    {
+        DisposeTimer();
+        _undoState.Clear();
+        UndoInfoBar.IsOpen = false;
+    }
+
+    private void DisposeTimer()
+    {
+        if (_undoTimer is not null)
+        {
+            _undoTimer.Stop();
+            _undoTimer = null;
+        }
+    }
+
+    // Drag-to-change-status (Board view only)
+    private GlassworkTask? _draggedTask;
+
+    private void BoardCard_DragStarting(Microsoft.UI.Xaml.UIElement sender, Microsoft.UI.Xaml.DragStartingEventArgs args)
+    {
+        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
+        _draggedTask = task;
+        args.Data.Properties["task"] = task;
+        args.Data.RequestedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Move;
+    }
+
+    private void BoardColumn_DragOver(object sender, Microsoft.UI.Xaml.DragEventArgs e)
+    {
+        if (_draggedTask is null) return;
+        e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Move;
+        e.DragUIOverride.IsCaptionVisible = false;
+        e.DragUIOverride.IsGlyphVisible = false;
+    }
+
+    private async void BoardColumn_Drop(object sender, Microsoft.UI.Xaml.DragEventArgs e)
+    {
+        if (_draggedTask is null) return;
+        if (sender is not FrameworkElement { DataContext: BoardColumn targetColumn }) return;
+
+        var task = _draggedTask;
+        _draggedTask = null;
+
+        // Determine target status from column name
+        var targetStatus = targetColumn.ColumnName == "To Do" 
+            ? GlassworkTask.Statuses.Todo 
+            : GlassworkTask.Statuses.InProgress;
+
+        // No-op if dropping in same column
+        if (task.Status == targetStatus) return;
+
+        // Update task status BEFORE UI changes to prevent race with file watcher refresh
+        task.Status = targetStatus;
+
+        // Optimistic UI: move card immediately
+        var originalColumn = ViewModel.BoardColumns.FirstOrDefault(c => c.Tasks.Contains(task));
+        if (originalColumn is not null)
+        {
+            originalColumn.Tasks.Remove(task);
+            targetColumn.Tasks.Add(task);
+        }
+
+        try
+        {
+            // Background write via BoardDragStatusWriter
+            var writer = new BoardDragStatusWriter(App.Vault, App.SelfWrites);
+            var result = await writer.TryWriteStatusChange(task, targetStatus);
+
+            if (!result.Success)
+            {
+                // Snap back on failure
+                task.Status = task.Status == GlassworkTask.Statuses.Todo 
+                    ? GlassworkTask.Statuses.InProgress 
+                    : GlassworkTask.Statuses.Todo;
+                if (originalColumn is not null)
+                {
+                    targetColumn.Tasks.Remove(task);
+                    originalColumn.Tasks.Add(task);
+                }
+
+                // Show error InfoBar
+                ShowErrorInfoBar(result.ErrorMessage ?? "Failed to update task status");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Snap back on exception (e.g., disk full, permissions error)
+            task.Status = task.Status == GlassworkTask.Statuses.Todo 
+                ? GlassworkTask.Statuses.InProgress 
+                : GlassworkTask.Statuses.Todo;
+            if (originalColumn is not null)
+            {
+                targetColumn.Tasks.Remove(task);
+                originalColumn.Tasks.Add(task);
+            }
+            ShowErrorInfoBar($"Failed to update task: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"Drag-drop exception: {ex}");
+        }
+    }
+
+    private void ShowErrorInfoBar(string message)
+    {
+        // Placeholder: InfoBar UI will be added in next iteration
+        // For now, just log the error
+        System.Diagnostics.Debug.WriteLine($"Drag-drop error: {message}");
     }
 }

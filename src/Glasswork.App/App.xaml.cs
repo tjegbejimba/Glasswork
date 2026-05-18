@@ -52,6 +52,11 @@ public partial class App : Application
     public const string BacklogGroupByParentKey = "backlog.groupByParent";
 
     /// <summary>
+    /// UI state key for the Backlog page's view mode ("list" | "board", default "list").
+    /// </summary>
+    public const string BacklogViewModeKey = "backlog.viewMode";
+
+    /// <summary>
     /// Key prefix for per-parent-group collapse state on the Backlog page.
     /// Suffix is the lowercased+trimmed parent string.
     /// </summary>
@@ -126,6 +131,42 @@ public partial class App : Application
     {
         // Set AUMID before any window creation for consistent taskbar identity
         SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
+
+        // Capture unhandled exceptions to a known file. Without this, self-contained
+        // WinUI desktop apps crash silently with only a STOWED_EXCEPTION (0xc000027b)
+        // in WER — no stack trace, no managed exception info.
+        UnhandledException += (_, e) =>
+        {
+            try
+            {
+                var logPath = Path.Combine(Path.GetTempPath(), "glasswork-unhandled.log");
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] UI thread:\n{e.Exception}\n\n");
+            }
+            catch { /* logging failure must not crash again */ }
+            // Don't mark Handled — let the app crash so we still get the WER report.
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            try
+            {
+                var logPath = Path.Combine(Path.GetTempPath(), "glasswork-unhandled.log");
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] AppDomain:\n{e.ExceptionObject}\n\n");
+            }
+            catch { }
+        };
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            try
+            {
+                var logPath = Path.Combine(Path.GetTempPath(), "glasswork-unhandled.log");
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] Unobserved Task:\n{e.Exception}\n\n");
+            }
+            catch { }
+        };
+
         InitializeComponent();
     }
 
@@ -280,7 +321,7 @@ public partial class App : Application
         InitVaultServices(newVaultPath, uiStateImpl);
     }
 
-    private static void OnAppInstanceActivated(AppInstance sender, AppActivationArguments args)
+    private static void OnAppInstanceActivated(object? sender, AppActivationArguments args)
     {
         // Fired on a background thread — marshal UI work to the dispatcher.
         var uri = ExtractUri(args);

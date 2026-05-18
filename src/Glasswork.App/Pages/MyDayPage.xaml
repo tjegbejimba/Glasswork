@@ -39,6 +39,16 @@
         <TextBlock x:Name="TodayHeader" Grid.Row="1" Text="Today's tasks"
                    Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,16,0,8" />
 
+        <!-- Clipboard hint: brief feedback when an agent-command line is copied -->
+        <InfoBar x:Name="ClipboardHint"
+                 Grid.Row="1"
+                 IsOpen="False"
+                 IsClosable="True"
+                 Severity="Success"
+                 HorizontalAlignment="Right"
+                 VerticalAlignment="Top"
+                 Margin="0,0,0,8" />
+
         <ListView
             Grid.Row="2"
             x:Name="TodayList"
@@ -64,7 +74,7 @@
                           ContextRequested="TaskRow_ContextRequested"
                           Background="Transparent">
                         <!-- Title row -->
-                        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
                             <Grid Grid.Column="0" Width="22" Height="22" VerticalAlignment="Center" Margin="0,0,8,0">
                                 <CheckBox VerticalAlignment="Center" HorizontalAlignment="Center"
                                           IsChecked="{Binding IsDone, Mode=OneWay}"
@@ -97,6 +107,31 @@
                                     Padding="6,2" VerticalAlignment="Center" Margin="6,0,0,0"
                                     ToolTipService.ToolTip="Remove from My Day">
                                 <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="13" />
+                            </Button>
+                            <!-- More menu: copy agent-command lines without leaving My Day -->
+                            <Button Grid.Column="5" Background="Transparent" BorderThickness="0"
+                                    Padding="6,2" VerticalAlignment="Center"
+                                    ToolTipService.ToolTip="More actions">
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="13" />
+                                <Button.Flyout>
+                                    <MenuFlyout>
+                                        <MenuFlyoutItem Text="Copy 'Start work' command" Click="CopyStartWork_Click">
+                                            <MenuFlyoutItem.Icon>
+                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE768;" />
+                                            </MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Copy 'Resume' command" Click="CopyResume_Click">
+                                            <MenuFlyoutItem.Icon>
+                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE72C;" />
+                                            </MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutItem Text="Copy 'Wrap up' command" Click="CopyWrapUp_Click">
+                                            <MenuFlyoutItem.Icon>
+                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE73E;" />
+                                            </MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                    </MenuFlyout>
+                                </Button.Flyout>
                             </Button>
                         </Grid>
 

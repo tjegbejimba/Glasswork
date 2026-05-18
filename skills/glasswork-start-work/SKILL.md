@@ -1,6 +1,6 @@
 ---
 name: glasswork-start-work
-description: Start fresh work on a Glasswork task. Use when the user pastes "Start work on Glasswork task: <task-id>", asks to begin a Glasswork task, or kicks off a new task from the Glasswork app's "Start work" button.
+description: 'Start fresh work on a Glasswork task. Use when the user pastes "Start work on Glasswork task: <task-id>", asks to begin a Glasswork task, or kicks off a new task from the Glasswork app''s "Start work" button.'
 ---
 
 # Glasswork — Start Work
@@ -14,11 +14,12 @@ The task lives as a markdown file in the user's wiki vault under `wiki/todo/<tas
 ## Process
 
 1. **Read the task file** at `wiki/todo/<task-id>.md`. Parse the YAML frontmatter and the body.
-2. **Orient**: state the title, status, priority, due date, and any ADO link out loud so the user can confirm you grabbed the right task.
-3. **Skim the description** (the body before any `## Notes` / `## Subtasks` section). Identify what's being asked.
-4. **Plan**: propose a short, ordered list of next steps. Keep it lightweight — this is the kickoff, not the whole project plan.
-5. **Confirm** with the user before doing any work: which step do they want you to start on?
-6. **Append a kickoff entry** to `## Notes` using the timestamped log format (see below). One line is fine: "Started work. <one-line summary of the plan>."
+2. **Set task status to in progress**: if frontmatter `status` is not `in-progress`, update it to `in-progress` with a targeted edit before continuing.
+3. **Orient**: state the title, status, priority, due date, and any ADO link out loud so the user can confirm you grabbed the right task.
+4. **Skim the description** (the body before any `## Notes` / `## Subtasks` section). Identify what's being asked.
+5. **Plan**: propose a short, ordered list of next steps. Keep it lightweight — this is the kickoff, not the whole project plan.
+6. **Confirm** with the user before doing any work: which step do they want you to start on?
+7. **Append a kickoff entry** to `## Notes` using the timestamped log format (see below). One line is fine: "Started work. <one-line summary of the plan>."
 
 ## Subtask status protocol
 
