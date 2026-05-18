@@ -88,10 +88,12 @@ public class BacklogViewModelBoardRefreshTests
         var vm = new BacklogViewModel(_vault, _taskService);
         vm.ViewMode = "board"; // initial board refresh before we subscribe
 
+        var invokeCount = 0;
         var observedBoardHasContent = false;
         var observedTotalTasksInColumns = -1;
         vm.Refreshed += () =>
         {
+            invokeCount++;
             observedBoardHasContent = vm.BoardColumns.Any(col => col.Tasks.Count > 0);
             observedTotalTasksInColumns = vm.BoardColumns.Sum(col => col.Tasks.Count);
         };
@@ -99,6 +101,8 @@ public class BacklogViewModelBoardRefreshTests
         vm.SelectedTask = a;
         vm.SetStatusCommand.Execute(GlassworkTask.Statuses.Done);
 
+        Assert.AreEqual(1, invokeCount,
+            "SetStatusCommand should trigger exactly one Refresh -> Refreshed cycle");
         Assert.IsTrue(observedBoardHasContent,
             "When marking one of three tasks done, the board still has remaining tasks " +
             "and BoardColumns.Any(c => c.Tasks.Count > 0) must be true when Refreshed fires");
