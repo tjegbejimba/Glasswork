@@ -76,7 +76,19 @@ public sealed partial class BacklogPage : Page
             // refreshes (e.g. status command followed by file watcher echo) — without
             // this, the second Refreshing would capture the post-clear scroll-zero
             // state and clobber the user's actual position.
-            _pendingRestore ??= CaptureScrollState();
+            //
+            // Defensive try/catch: scroll preservation must never break Refresh().
+            // If the visual-tree walk throws (rare but possible during render-thread
+            // contention), we drop the snapshot and the refresh proceeds normally —
+            // the only consequence is no scroll restore on this refresh.
+            try
+            {
+                _pendingRestore ??= CaptureScrollState();
+            }
+            catch
+            {
+                _pendingRestore = null;
+            }
         };
         // Update empty-state exactly once at the end of each VM Refresh, instead of as
         // a side effect of every BoardColumns/Rows CollectionChanged event. The old
@@ -810,7 +822,7 @@ public sealed partial class BacklogPage : Page
             if (s.ListOffset > 0 && sv.ScrollableHeight <= 0) return false;
             sv.ChangeView(
                 horizontalOffset: null,
-                verticalOffset: Math.Min(s.ListOffset, Math.Max(0, sv.ScrollableHeight)),
+                verticalOffset: Math.Max(0, Math.Min(s.ListOffset, sv.ScrollableHeight)),
                 zoomFactor: null,
                 disableAnimation: true);
             return true;
@@ -819,25 +831,31 @@ public sealed partial class BacklogPage : Page
         // Board mode
         if (s.BoardHorizontalOffset > 0 && BoardView.ScrollableWidth <= 0) return false;
         BoardView.ChangeView(
-            horizontalOffset: Math.Min(s.BoardHorizontalOffset, Math.Max(0, BoardView.ScrollableWidth)),
+            horizontalOffset: Math.Max(0, Math.Min(s.BoardHorizontalOffset, BoardView.ScrollableWidth)),
             verticalOffset: null,
             zoomFactor: null,
             disableAnimation: true);
 
+        // Per-column vertical offsets: if any column's container or inner
+        // ScrollViewer isn't realized yet, or its extent isn't ready, return
+        // false so the retry loop runs again. Without this guard we'd return
+        // true and permanently lose that column's scroll position.
+        var allColumnsReady = true;
         foreach (var col in ViewModel.BoardColumns)
         {
             if (!s.BoardColumnOffsets.TryGetValue(col.ColumnName, out var offset)) continue;
             var container = BoardColumnsControl.ContainerFromItem(col) as DependencyObject;
-            if (container is null) continue;
+            if (container is null) { allColumnsReady = false; continue; }
             var sv = FindDescendantScrollViewer(container);
-            if (sv is null) continue;
+            if (sv is null) { allColumnsReady = false; continue; }
+            if (offset > 0 && sv.ScrollableHeight <= 0) { allColumnsReady = false; continue; }
             sv.ChangeView(
                 horizontalOffset: null,
-                verticalOffset: Math.Min(offset, Math.Max(0, sv.ScrollableHeight)),
+                verticalOffset: Math.Max(0, Math.Min(offset, sv.ScrollableHeight)),
                 zoomFactor: null,
                 disableAnimation: true);
         }
-        return true;
+        return allColumnsReady;
     }
 
     /// <summary>
