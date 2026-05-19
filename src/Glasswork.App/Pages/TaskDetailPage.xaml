@@ -473,37 +473,50 @@
                 </StackPanel>
 
                 <!-- Links (slice 4 — structured external pointers) -->
-                <StackPanel x:Name="LinksSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
-                    <TextBlock Text="Links" Style="{StaticResource SubtitleTextBlockStyle}" />
+                <StackPanel x:Name="LinksSection" Spacing="8" Margin="0,16,0,0">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Links" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Add link" Click="AddLink_Click"
+                                FontSize="12" Padding="8,4"
+                                ToolTipService.ToolTip="Add a structured link (ADO, PR, ICM, Doc, Build, or Other)" />
+                    </Grid>
                     <ItemsControl x:Name="LinksList">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Button HorizontalAlignment="Stretch"
-                                        HorizontalContentAlignment="Stretch"
-                                        Margin="0,2,0,2"
-                                        Padding="12,8"
-                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1"
-                                        Click="LinkRow_Click">
-                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-                                        <Border Grid.Column="0"
-                                                Background="{Binding TypeBadgeColor, Converter={StaticResource HexToBrush}}"
-                                                CornerRadius="2"
-                                                Padding="6,2"
-                                                VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding TypeBadgeText}"
-                                                       FontSize="10"
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,2,0,2">
+                                    <Button Grid.Column="0"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Stretch"
+                                            Padding="12,8"
+                                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            Click="LinkRow_Click">
+                                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                                            <Border Grid.Column="0"
+                                                    Background="{Binding TypeBadgeColor, Converter={StaticResource HexToBrush}}"
+                                                    CornerRadius="2"
+                                                    Padding="6,2"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding TypeBadgeText}"
+                                                           FontSize="10"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="White" />
+                                            </Border>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding DisplayText}"
                                                        FontWeight="SemiBold"
-                                                       Foreground="White" />
-                                        </Border>
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding DisplayText}"
-                                                   FontWeight="SemiBold"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center" />
-                                    </Grid>
-                                </Button>
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Button>
+                                    <Button Grid.Column="1" Click="LinkMore_Click"
+                                            Background="Transparent" BorderThickness="0"
+                                            Padding="6" VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="More actions">
+                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" Opacity="0.6" />
+                                    </Button>
+                                </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

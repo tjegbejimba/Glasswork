@@ -21,9 +21,6 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial DateTime? Due { get; set; }
     [ObservableProperty] public partial DateTime? MyDay { get; set; }
     
-    // TODO(Slice 128+): When Links editing UI is added, consider changing to ObservableCollection
-    // and subscribing to CollectionChanged to propagate AdoLink/AdoTitle derived property changes.
-    // For v1 (read-only Links UI), List is sufficient since mutations only happen via derived setters.
     [ObservableProperty] public partial List<TaskLink> Links { get; set; } = [];
     
     [ObservableProperty] public partial string? Parent { get; set; }

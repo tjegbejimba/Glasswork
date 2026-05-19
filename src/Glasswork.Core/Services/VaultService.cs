@@ -493,6 +493,19 @@ public class VaultService
     }
 
     /// <summary>
+    /// Replace the full structured links list for a task and persist to disk.
+    /// Loads the task, replaces the Links collection, then re-serializes via <see cref="Save"/>.
+    /// No-op when the task file does not exist.
+    /// </summary>
+    public void SetLinks(string taskId, IReadOnlyList<TaskLink> links)
+    {
+        var task = Load(taskId);
+        if (task is null) return;
+        task.Links = links.ToList();
+        Save(task);
+    }
+
+    /// <summary>
     /// Move a subtask from one position to another within the parent task's full subtask list,
     /// then re-serialize the file. No-op when indices are equal, out of range, or the task does
     /// not exist. Indices refer to <see cref="GlassworkTask.Subtasks"/> as parsed (full list,
