@@ -329,22 +329,25 @@ public sealed partial class TaskDetailPage : Page
         await Launcher.LaunchUriAsync(resolved);
     }
 
+    // Friendly type options for the Add link dialog: (display label, schema type string).
+    private static readonly (string Display, string Type)[] LinkTypeOptions =
+    [
+        ("ADO work item", TaskLink.Types.Ado),
+        ("GitHub / ADO PR", TaskLink.Types.Pr),
+        ("ICM incident", TaskLink.Types.Incident),
+        ("Doc", TaskLink.Types.Doc),
+        ("Build", TaskLink.Types.Build),
+        ("Other", TaskLink.Types.Other),
+    ];
+
     private async void AddLink_Click(object sender, RoutedEventArgs e)
     {
         var typeBox = new ComboBox
         {
             Header = "Type",
-            MinWidth = 120,
-            ItemsSource = new[]
-            {
-                TaskLink.Types.Ado,
-                TaskLink.Types.Pr,
-                TaskLink.Types.Incident,
-                TaskLink.Types.Doc,
-                TaskLink.Types.Build,
-                TaskLink.Types.Other,
-            },
-            SelectedIndex = 5, // default to "other"
+            MinWidth = 160,
+            ItemsSource = LinkTypeOptions.Select(o => o.Display).ToArray(),
+            SelectedIndex = 0, // default to ADO (most common)
         };
         var valueBox = new TextBox
         {
@@ -358,10 +361,35 @@ public sealed partial class TaskDetailPage : Page
             PlaceholderText = "Short name shown in the UI",
             Margin = new Thickness(0, 12, 0, 0),
         };
+        var warning = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Color.FromArgb(255, 0xC4, 0x3E, 0x1C)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
         var panel = new StackPanel { MinWidth = 380 };
         panel.Children.Add(typeBox);
         panel.Children.Add(valueBox);
         panel.Children.Add(labelBox);
+        panel.Children.Add(warning);
+
+        // Auto-detect type from the URL the user pastes, unless they've manually
+        // picked a non-default type.
+        bool userOverrodeType = false;
+        typeBox.SelectionChanged += (_, __) => userOverrodeType = true;
+        valueBox.TextChanged += (_, __) =>
+        {
+            warning.Visibility = Visibility.Collapsed;
+            if (userOverrodeType) return;
+            var detected = DetectLinkType(valueBox.Text);
+            if (detected is null) return;
+            var idx = Array.FindIndex(LinkTypeOptions, o => o.Type == detected);
+            if (idx < 0 || idx == typeBox.SelectedIndex) return;
+            // SelectionChanged fires here too; suppress the override flag.
+            typeBox.SelectedIndex = idx;
+            userOverrodeType = false;
+        };
 
         var dialog = new ContentDialog
         {
@@ -374,10 +402,36 @@ public sealed partial class TaskDetailPage : Page
         };
         dialog.WithAppTheme(this);
 
+        // Validate inside the deferral so a bad value keeps the dialog open.
+        var adoBaseUrl = App.UiState?.Get<string>(App.AdoBaseUrlKey) ?? string.Empty;
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            var v = valueBox.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrEmpty(v))
+            {
+                warning.Text = "Enter a URL or identifier.";
+                warning.Visibility = Visibility.Visible;
+                args.Cancel = true;
+                return;
+            }
+            var idx = typeBox.SelectedIndex;
+            if (idx < 0) idx = 0;
+            var t = LinkTypeOptions[idx].Type;
+            var probe = new TaskLink { Type = t, Value = v };
+            if (LinkUriPolicy.Resolve(probe, adoBaseUrl) is null)
+            {
+                warning.Text = $"This doesn't look like a valid link for type '{LinkTypeOptions[idx].Display}'. " +
+                               "Check the value (URL or identifier) and try again, or pick a different type.";
+                warning.Visibility = Visibility.Visible;
+                args.Cancel = true;
+            }
+        };
+
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
 
-        var type = typeBox.SelectedItem?.ToString() ?? TaskLink.Types.Other;
+        var selectedIdx = typeBox.SelectedIndex < 0 ? 0 : typeBox.SelectedIndex;
+        var type = LinkTypeOptions[selectedIdx].Type;
         var value = valueBox.Text?.Trim() ?? string.Empty;
         if (string.IsNullOrEmpty(value)) return;
         var label = string.IsNullOrWhiteSpace(labelBox.Text) ? null : labelBox.Text.Trim();
@@ -387,7 +441,35 @@ public sealed partial class TaskDetailPage : Page
         App.Vault.SetLinks(Task.Id, updatedLinks);
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+        try { App.Index.Refresh(); } catch (Exception ex) { Debug.WriteLine($"App.Index.Refresh failed after AddLink: {ex}"); }
+    }
+
+    /// <summary>
+    /// Heuristic URL → TaskLink.Types mapping for the Add link dialog. Returns
+    /// null if the value is empty or doesn't match any known pattern.
+    /// </summary>
+    private static string? DetectLinkType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var v = value.Trim();
+
+        // Bare ICM identifier like "ICM 123456"
+        if (System.Text.RegularExpressions.Regex.IsMatch(v, @"^ICM\s+\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return TaskLink.Types.Incident;
+
+        if (!Uri.TryCreate(v, UriKind.Absolute, out var uri)) return null;
+        var host = uri.Host.ToLowerInvariant();
+        var path = uri.AbsolutePath.ToLowerInvariant();
+
+        if (host.Contains("portal.microsofticm.com")) return TaskLink.Types.Incident;
+        if (host == "github.com" && path.Contains("/pull/")) return TaskLink.Types.Pr;
+        if (host.Contains("dev.azure.com") || host.EndsWith(".visualstudio.com"))
+        {
+            if (path.Contains("/pullrequest")) return TaskLink.Types.Pr;
+            if (path.Contains("/_workitems")) return TaskLink.Types.Ado;
+            if (path.Contains("/_build")) return TaskLink.Types.Build;
+        }
+        return null;
     }
 
     private void LinkMore_Click(object sender, RoutedEventArgs e)
@@ -405,7 +487,7 @@ public sealed partial class TaskDetailPage : Page
             App.Vault.SetLinks(Task.Id, updatedLinks);
             var reloaded = App.Vault.Load(Task.Id);
             if (reloaded is not null) ApplyTask(reloaded);
-            try { App.Index.Refresh(); } catch { /* best-effort */ }
+            try { App.Index.Refresh(); } catch (Exception ex) { Debug.WriteLine($"App.Index.Refresh failed after DeleteLink: {ex}"); }
         };
         menu.Items.Add(deleteItem);
 
