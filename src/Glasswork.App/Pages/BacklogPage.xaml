@@ -333,7 +333,7 @@
             Visibility="Collapsed"
             HorizontalScrollBarVisibility="Auto"
             VerticalScrollBarVisibility="Disabled">
-            <ItemsControl ItemsSource="{x:Bind ViewModel.BoardColumns}">
+            <ItemsControl x:Name="BoardColumnsControl" ItemsSource="{x:Bind ViewModel.BoardColumns}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <StackPanel Orientation="Horizontal" Spacing="16" />

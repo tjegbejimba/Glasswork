@@ -22,6 +22,25 @@ public sealed partial class BacklogPage : Page
     private readonly BacklogUndoState _undoState = new();
     private DispatcherTimer? _undoTimer;
 
+    // Issue #182: pending scroll-restore snapshot. Captured in ViewModel.Refreshing,
+    // applied (with bounded retry) after ViewModel.Refreshed. Null when no restore
+    // is queued (e.g. fresh page, or after AddTask which explicitly discards).
+    private ScrollSnapshot? _pendingRestore;
+
+    /// <summary>
+    /// Captured scroll state for a single Refresh() round-trip. Includes the
+    /// layout context (ViewMode/IsGrouped/FilterStatus) so the restore callback
+    /// can detect when an intentional layout change has invalidated the snapshot
+    /// and drop it instead of restoring a now-meaningless offset.
+    /// </summary>
+    private sealed record ScrollSnapshot(
+        string ViewMode,
+        bool IsGrouped,
+        string FilterStatus,
+        double ListOffset,
+        double BoardHorizontalOffset,
+        Dictionary<string, double> BoardColumnOffsets);
+
     public BacklogPage()
     {
         ViewModel = new BacklogViewModel(App.Vault, App.Tasks, App.UiState);
@@ -43,6 +62,34 @@ public sealed partial class BacklogPage : Page
             DispatcherQueue?.TryEnqueue(() => ViewModel.Refresh());
         };
         InitializeComponent();
+        // Issue #182: snapshot scroll position before VM.Refresh() destroys it, restore
+        // it after Refreshed once layout has caught up. The snapshot itself carries the
+        // ViewMode/IsGrouped/FilterStatus it was captured under; if any of those
+        // change before the restore runs, we drop the snapshot — that handles all
+        // intentional layout-change paths (view-mode toggle, GroupToggle two-way
+        // binding, status filter combo, OnNavigatedTo) without a flag dance.
+        ViewModel.Refreshing += () =>
+        {
+            // Visual-tree walks must be on the UI thread.
+            if (!DispatcherQueue.HasThreadAccess) return;
+            // ??= preserves the ORIGINAL pre-refresh offset across back-to-back
+            // refreshes (e.g. status command followed by file watcher echo) — without
+            // this, the second Refreshing would capture the post-clear scroll-zero
+            // state and clobber the user's actual position.
+            //
+            // Defensive try/catch: scroll preservation must never break Refresh().
+            // If the visual-tree walk throws (rare but possible during render-thread
+            // contention), we drop the snapshot and the refresh proceeds normally —
+            // the only consequence is no scroll restore on this refresh.
+            try
+            {
+                _pendingRestore ??= CaptureScrollState();
+            }
+            catch
+            {
+                _pendingRestore = null;
+            }
+        };
         // Update empty-state exactly once at the end of each VM Refresh, instead of as
         // a side effect of every BoardColumns/Rows CollectionChanged event. The old
         // approach left a brief flash to the empty state between the internal Clear()
@@ -59,6 +106,18 @@ public sealed partial class BacklogPage : Page
             else
             {
                 DispatcherQueue.TryEnqueue(UpdateEmptyState);
+            }
+
+            // Dispatch scroll restore at Low priority so layout has a chance to
+            // realize containers + recompute extent before ChangeView lands. Bounded
+            // retry inside TryRestoreWithRetry handles cases where Low alone isn't
+            // enough (virtualized ListView still measuring).
+            if (_pendingRestore is not null)
+            {
+                var snapshot = _pendingRestore;
+                DispatcherQueue.TryEnqueue(
+                    Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                    () => TryRestoreWithRetry(snapshot, attempts: 0));
             }
         };
         // Persist toggle whenever the user flips it. Bind here (not in VM) so the
@@ -232,6 +291,10 @@ public sealed partial class BacklogPage : Page
         if (result == ContentDialogResult.Primary && dialog.CreatedTask is not null)
         {
             ViewModel.Refresh();
+            // Issue #182: newly-created tasks sort to the top of their priority bucket
+            // by Created-desc. Restoring the pre-refresh scroll would hide the new task
+            // from the user. Discard the snapshot so the queued restore is skipped.
+            _pendingRestore = null;
         }
     }
 
@@ -665,5 +728,153 @@ public sealed partial class BacklogPage : Page
         // Placeholder: InfoBar UI will be added in next iteration
         // For now, just log the error
         System.Diagnostics.Debug.WriteLine($"Drag-drop error: {message}");
+    }
+
+    // ---------------------------------------------------------------------
+    // Issue #182: scroll-position capture/restore around VM.Refresh().
+    // The destructive Clear+Add inside BacklogViewModel.Refresh tears down
+    // the bound ListView / ItemsControl containers, resetting all scroll
+    // viewers to offset 0. We capture in VM.Refreshing (before Clear) and
+    // restore in VM.Refreshed via Low-priority dispatch with bounded retry.
+    // See plan.md ("Design — page-side scroll preservation") for the
+    // context-comparison rationale that replaces the original skip-flag idea.
+    // ---------------------------------------------------------------------
+
+    private ScrollSnapshot CaptureScrollState()
+    {
+        var columnOffsets = new Dictionary<string, double>(StringComparer.Ordinal);
+        double listOffset = 0;
+        double boardHorizontal = 0;
+
+        if (ViewModel.ViewMode == "list")
+        {
+            var sv = FindDescendantScrollViewer(TaskList);
+            if (sv is not null) listOffset = sv.VerticalOffset;
+        }
+        else // board mode
+        {
+            // BoardView itself IS the outer (horizontal) ScrollViewer.
+            boardHorizontal = BoardView.HorizontalOffset;
+
+            foreach (var col in ViewModel.BoardColumns)
+            {
+                var container = BoardColumnsControl.ContainerFromItem(col) as DependencyObject;
+                if (container is null) continue;
+                var sv = FindDescendantScrollViewer(container);
+                if (sv is null) continue;
+                columnOffsets[col.ColumnName] = sv.VerticalOffset;
+            }
+        }
+
+        return new ScrollSnapshot(
+            ViewMode: ViewModel.ViewMode,
+            IsGrouped: ViewModel.IsGrouped,
+            FilterStatus: ViewModel.FilterStatus,
+            ListOffset: listOffset,
+            BoardHorizontalOffset: boardHorizontal,
+            BoardColumnOffsets: columnOffsets);
+    }
+
+    private void TryRestoreWithRetry(ScrollSnapshot snapshot, int attempts)
+    {
+        // Stale callback (snapshot was discarded by AddTask, or superseded by a
+        // newer back-to-back refresh that overwrote _pendingRestore)? Bail.
+        if (_pendingRestore != snapshot) return;
+
+        // Layout context changed since capture (user toggled view-mode, group,
+        // or filter)? The captured offset is meaningless now. Drop the snapshot.
+        if (snapshot.ViewMode    != ViewModel.ViewMode    ||
+            snapshot.IsGrouped   != ViewModel.IsGrouped   ||
+            snapshot.FilterStatus != ViewModel.FilterStatus)
+        {
+            _pendingRestore = null;
+            return;
+        }
+
+        if (ApplySnapshot(snapshot))
+        {
+            _pendingRestore = null;
+            return;
+        }
+
+        // Layout not yet ready (e.g. ScrollableHeight == 0 but target > 0).
+        // Re-queue at Low up to 5 times. Empirically generous for a virtualized
+        // ListView coming out of Clear+Add; bounded so a degenerate state can't
+        // loop forever.
+        if (attempts >= 5)
+        {
+            _pendingRestore = null;
+            return;
+        }
+        DispatcherQueue.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            () => TryRestoreWithRetry(snapshot, attempts + 1));
+    }
+
+    private bool ApplySnapshot(ScrollSnapshot s)
+    {
+        if (s.ViewMode == "list")
+        {
+            var sv = FindDescendantScrollViewer(TaskList);
+            if (sv is null) return false;
+            // If we want a non-zero offset but the extent hasn't been measured
+            // yet, the request would silently land at 0. Defer and retry.
+            if (s.ListOffset > 0 && sv.ScrollableHeight <= 0) return false;
+            sv.ChangeView(
+                horizontalOffset: null,
+                verticalOffset: Math.Max(0, Math.Min(s.ListOffset, sv.ScrollableHeight)),
+                zoomFactor: null,
+                disableAnimation: true);
+            return true;
+        }
+
+        // Board mode
+        if (s.BoardHorizontalOffset > 0 && BoardView.ScrollableWidth <= 0) return false;
+        BoardView.ChangeView(
+            horizontalOffset: Math.Max(0, Math.Min(s.BoardHorizontalOffset, BoardView.ScrollableWidth)),
+            verticalOffset: null,
+            zoomFactor: null,
+            disableAnimation: true);
+
+        // Per-column vertical offsets: if any column's container or inner
+        // ScrollViewer isn't realized yet, or its extent isn't ready, return
+        // false so the retry loop runs again. Without this guard we'd return
+        // true and permanently lose that column's scroll position.
+        var allColumnsReady = true;
+        foreach (var col in ViewModel.BoardColumns)
+        {
+            if (!s.BoardColumnOffsets.TryGetValue(col.ColumnName, out var offset)) continue;
+            var container = BoardColumnsControl.ContainerFromItem(col) as DependencyObject;
+            if (container is null) { allColumnsReady = false; continue; }
+            var sv = FindDescendantScrollViewer(container);
+            if (sv is null) { allColumnsReady = false; continue; }
+            if (offset > 0 && sv.ScrollableHeight <= 0) { allColumnsReady = false; continue; }
+            sv.ChangeView(
+                horizontalOffset: null,
+                verticalOffset: Math.Max(0, Math.Min(offset, sv.ScrollableHeight)),
+                zoomFactor: null,
+                disableAnimation: true);
+        }
+        return allColumnsReady;
+    }
+
+    /// <summary>
+    /// VisualTreeHelper DFS to find the first <see cref="ScrollViewer"/> descendant
+    /// of <paramref name="root"/>. Returns null if none exists or <paramref name="root"/>
+    /// is null. Used to dig the implicit ScrollViewer out of ListView's template
+    /// and the per-column inner ScrollViewer out of each BoardColumn container.
+    /// </summary>
+    private static ScrollViewer? FindDescendantScrollViewer(DependencyObject? root)
+    {
+        if (root is null) return null;
+        if (root is ScrollViewer sv) return sv;
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            var found = FindDescendantScrollViewer(child);
+            if (found is not null) return found;
+        }
+        return null;
     }
 }
