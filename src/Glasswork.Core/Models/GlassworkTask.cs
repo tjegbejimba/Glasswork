@@ -29,6 +29,8 @@ public partial class GlassworkTask : ObservableObject
     [NotifyPropertyChangedFor(nameof(BlurbPreview))]
     [NotifyPropertyChangedFor(nameof(HasBlurb))]
     [NotifyPropertyChangedFor(nameof(IsActive))]
+    [NotifyPropertyChangedFor(nameof(IsQuiet))]
+    [NotifyPropertyChangedFor(nameof(ShowCardDetails))]
     public partial string Description { get; set; } = string.Empty;
     [ObservableProperty] public partial string Notes { get; set; } = string.Empty;
     [ObservableProperty] public partial List<string> ContextLinks { get; set; } = [];
@@ -103,6 +105,10 @@ public partial class GlassworkTask : ObservableObject
             if (firstLine == null) return string.Empty;
             // Strip leading markdown noise: heading hashes, blockquote, list markers.
             var cleaned = firstLine.TrimStart('#', '>', '-', '*', ' ', '\t').Trim();
+            // Strip a leading task-list checkbox marker exposed by the previous trim
+            // (e.g. "- [ ] Foo" → "[ ] Foo" → "Foo"). Without this, the literal
+            // brackets leak into the plain-text blurb and look like a broken checkbox.
+            cleaned = TaskCheckboxRegex.Replace(cleaned, string.Empty);
             if (cleaned.Length == 0) return string.Empty;
             // Unwrap link syntax so a plain TextBlock doesn't show raw brackets.
             cleaned = UnwrapLinks(cleaned);
@@ -119,6 +125,10 @@ public partial class GlassworkTask : ObservableObject
         new(@"\[\[(?<target>[^\[\]]+)\]\]", RegexOptions.Compiled);
     private static readonly Regex MarkdownLinkRegex =
         new(@"\[(?<text>[^\[\]]+)\]\((?<url>[^()]+)\)", RegexOptions.Compiled);
+    // Leading "[ ]", "[x]", "[X]" (with optional trailing whitespace) from a
+    // markdown task-list item that survived list-marker stripping.
+    private static readonly Regex TaskCheckboxRegex =
+        new(@"^\[[ xX]\]\s*", RegexOptions.Compiled);
 
     private static string UnwrapLinks(string s)
     {

@@ -131,6 +131,21 @@ public class GlassworkTaskAdaptiveRowTests
         CollectionAssert.Contains(changed, nameof(GlassworkTask.BlurbPreview));
         CollectionAssert.Contains(changed, nameof(GlassworkTask.HasBlurb));
         CollectionAssert.Contains(changed, nameof(GlassworkTask.IsActive));
+        CollectionAssert.Contains(changed, nameof(GlassworkTask.IsQuiet));
+        CollectionAssert.Contains(changed, nameof(GlassworkTask.ShowCardDetails));
+    }
+
+    [TestMethod]
+    public void BlurbPreview_StripsTaskCheckboxMarker()
+    {
+        var t = new GlassworkTask { Description = "- [ ] Write tests" };
+        Assert.AreEqual("Write tests", t.BlurbPreview);
+
+        var t2 = new GlassworkTask { Description = "- [x] Done thing" };
+        Assert.AreEqual("Done thing", t2.BlurbPreview);
+
+        var t3 = new GlassworkTask { Description = "* [X] Capital X" };
+        Assert.AreEqual("Capital X", t3.BlurbPreview);
     }
 
     // ---------- Progress ----------
