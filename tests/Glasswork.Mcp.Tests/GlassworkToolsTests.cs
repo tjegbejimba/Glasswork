@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Mcp.Tools;
 
@@ -9,6 +10,7 @@ public class GlassworkToolsTests
 {
     private string _vaultDir = null!;
     private GlassworkTools _tools = null!;
+    private VaultService _vault = null!;
 
     // GlassworkTools resolves the task directory as <vault>/wiki/todo.
     private string TasksDir => Path.Combine(_vaultDir, "wiki", "todo");
@@ -19,6 +21,7 @@ public class GlassworkToolsTests
         _vaultDir = Path.Combine(Path.GetTempPath(), "glasswork-mcp-tools-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_vaultDir);
         _tools = new GlassworkTools(new VaultContext(_vaultDir));
+        _vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
     }
 
     [TestCleanup]
@@ -285,6 +288,108 @@ public class GlassworkToolsTests
         var json2 = _tools.ListTasks();
         Assert.AreEqual(1, JsonDocument.Parse(json2).RootElement.GetProperty("tasks").GetArrayLength(),
             "list_tasks must reflect vault changes made after the first call.");
+    }
+
+    // ───────────────────────────── search_tasks ───────────────────────────
+
+    [TestMethod]
+    public void SearchTasks_QueryMatchesTitle_ReturnsTaskSummary()
+    {
+        _tools.AddTask("Batch API rollout");
+        _tools.AddTask("Unrelated item");
+
+        var json = _tools.SearchTasks("batch");
+        var tasks = JsonDocument.Parse(json).RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(1, tasks.GetArrayLength());
+        Assert.AreEqual("Batch API rollout", tasks[0].GetProperty("title").GetString());
+        CollectionAssert.AreEquivalent(
+            new[] { "title" },
+            tasks[0].GetProperty("matched_in").EnumerateArray().Select(x => x.GetString()!).ToArray());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(tasks[0].GetProperty("snippet").GetString()));
+    }
+
+    [TestMethod]
+    public void SearchTasks_EmptyVault_ReturnsEmptyArray()
+    {
+        var json = _tools.SearchTasks("anything");
+        var tasks = JsonDocument.Parse(json).RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(0, tasks.GetArrayLength());
+    }
+
+    [TestMethod]
+    public void SearchTasks_StatusFilter_ReturnsOnlyMatchingStatus()
+    {
+        _tools.AddTask("Batch todo task", status: "todo");
+        _tools.AddTask("Batch doing task", status: "doing");
+        _tools.AddTask("Batch done task", status: "done");
+
+        var json = _tools.SearchTasks("batch", status: ["doing"]);
+        var tasks = JsonDocument.Parse(json).RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(1, tasks.GetArrayLength());
+        Assert.AreEqual("doing", tasks[0].GetProperty("status").GetString());
+    }
+
+    [TestMethod]
+    public void SearchTasks_InvalidInField_ThrowsArgumentException()
+    {
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            _tools.SearchTasks("query", @in: ["artifact"]));
+    }
+
+    [TestMethod]
+    public void SearchTasks_EmptyQuery_ThrowsArgumentException()
+    {
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            _tools.SearchTasks("   "));
+    }
+
+    [TestMethod]
+    public void SearchTasks_LimitClampedToOne_ReturnsAtMostOneResult()
+    {
+        _tools.AddTask("Batch task one");
+        _tools.AddTask("Batch task two");
+
+        var json = _tools.SearchTasks("batch", limit: 0);
+        var tasks = JsonDocument.Parse(json).RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(1, tasks.GetArrayLength());
+    }
+
+    [TestMethod]
+    public void SearchTasks_MultiTokenAndMatch_RequiresAllTokensPresent()
+    {
+        _vault.Save(new GlassworkTask { Id = "alpha-task", Title = "Alpha task" });
+        _vault.Save(new GlassworkTask { Id = "beta-task", Title = "Beta task" });
+        // "Alpha item" has "alpha" in title and "beta" in notes — both tokens required
+        _vault.Save(new GlassworkTask { Id = "alpha-item", Title = "Alpha item", Notes = "beta token here" });
+
+        // "alpha beta" requires both tokens — only "Alpha item" matches
+        var json = _tools.SearchTasks("alpha beta");
+        var tasks = JsonDocument.Parse(json).RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(1, tasks.GetArrayLength());
+        Assert.AreEqual("Alpha item", tasks[0].GetProperty("title").GetString());
+    }
+
+    [TestMethod]
+    public void SearchTasks_MatchedInNotes_ReturnsNotesInMatchedIn()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "notes-match",
+            Title = "Unremarkable title",
+            Notes = "special-keyword"
+        });
+
+        var json = _tools.SearchTasks("special-keyword");
+        var tasks = JsonDocument.Parse(json).RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(1, tasks.GetArrayLength());
+        var matchedIn = tasks[0].GetProperty("matched_in").EnumerateArray().Select(x => x.GetString()!).ToArray();
+        CollectionAssert.Contains(matchedIn, "notes");
     }
 
     // ───────────────────────────── get_task ─────────────────────────────

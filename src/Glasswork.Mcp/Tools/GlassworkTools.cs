@@ -18,6 +18,7 @@ namespace Glasswork.Mcp.Tools;
 public sealed class GlassworkTools
 {
     private readonly VaultService _vault;
+    private readonly TaskSearchService _search;
     private readonly SelfWriteCoordinator _selfWrites;
     private readonly string _vaultPath;
     private readonly string _vaultRoot;
@@ -33,6 +34,7 @@ public sealed class GlassworkTools
         _vaultPath = Path.Combine(vaultPath, "wiki", "todo");
         _selfWrites = new SelfWriteCoordinator(_vaultPath);
         _vault = new VaultService(_vaultPath, _selfWrites);
+        _search = new TaskSearchService(_vault);
         _logger = logger;
     }
 
@@ -84,7 +86,7 @@ public sealed class GlassworkTools
 
     [McpServerTool(Name = "list_tasks")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
-    [Description("List task summaries from the Glasswork vault. Re-reads from disk on every call (no cache).")]
+    [Description("List task summaries filtered by status or parent. Re-reads from disk on every call. For topic or keyword search, use search_tasks.")]
     public string ListTasks(
         [Description("Filter by status: todo, doing, or done.")] string? status = null,
         [Description("Filter by parent task ID.")] string? parent_task_id = null)
@@ -145,6 +147,38 @@ public sealed class GlassworkTools
 
             scope?.SetCount("task_count", tasks.Count);
             return JsonSerializer.Serialize(new ListTasksResult(tasks));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "search_tasks")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Search task content by topic across title, description, notes, subtasks, and tags. Returns ranked task summaries with matched fields and a snippet.")]
+    public string SearchTasks(
+        [Description("Free-text query (required).")] string query,
+        [Description("Optional field scope. Valid values: title, description, notes, subtasks, tags.")] string[]? @in = null,
+        [Description("Optional tags filter (AND).")] string[]? tags = null,
+        [Description("Optional status filter(s): todo, doing, done.")] string[]? status = null,
+        [Description("Maximum results. Clamped to [1, 100]. Default: 20.")] int limit = 20)
+    {
+        using var scope = _logger?.BeginCall("search_tasks");
+        try
+        {
+            var hits = _search.Search(query, @in, tags, status, limit)
+                .Select(h => new TaskSearchSummary(
+                    Id: h.Id,
+                    Title: h.Title,
+                    Status: h.Status,
+                    ParentId: h.ParentId,
+                    MatchedIn: h.MatchedIn.ToArray(),
+                    Snippet: h.Snippet))
+                .ToList();
+            scope?.SetCount("task_count", hits.Count);
+            return JsonSerializer.Serialize(new SearchTasksResult(hits));
         }
         catch
         {
@@ -430,6 +464,17 @@ public sealed class GlassworkTools
 
     private sealed record ListTasksResult(
         [property: JsonPropertyName("tasks")] List<TaskSummary> Tasks);
+
+    private sealed record TaskSearchSummary(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("parent_id")] string? ParentId,
+        [property: JsonPropertyName("matched_in")] string[] MatchedIn,
+        [property: JsonPropertyName("snippet")] string Snippet);
+
+    private sealed record SearchTasksResult(
+        [property: JsonPropertyName("tasks")] List<TaskSearchSummary> Tasks);
 
     private sealed record ArtifactInfo(
         [property: JsonPropertyName("filename")] string Filename,

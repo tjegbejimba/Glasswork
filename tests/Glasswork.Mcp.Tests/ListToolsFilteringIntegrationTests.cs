@@ -45,6 +45,7 @@ public sealed class ListToolsFilteringIntegrationTests
             new Tool { Name = "add_task" },
             new Tool { Name = "add_artifact" },
             new Tool { Name = "load_context" },
+            new Tool { Name = "search_tasks" },
         ],
     };
 
@@ -85,7 +86,7 @@ public sealed class ListToolsFilteringIntegrationTests
 
             PreconditionFilters.FilterUnavailableTools(result, registry, logger);
 
-            Assert.HasCount(5, result.Tools!);
+            Assert.HasCount(6, result.Tools!);
         }
         finally
         {

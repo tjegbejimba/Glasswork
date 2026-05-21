@@ -2,7 +2,7 @@
 
 `glasswork-mcp` is a standalone [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI agents typed read/write access to a [Glasswork](https://github.com/tjegbejimba/Glasswork) task vault. It communicates over stdio and requires no running Glasswork app instance.
 
-> **v0.4.0 — M4**: `load_context` is now implemented — one-call full-context fetch for agent handoff. See [Tool reference](#tool-reference) for the schema.
+> **v0.5.0 — M5**: `search_tasks` is now implemented — topic-driven task discovery across title, description, notes, subtasks, and tags with ranked results and per-hit snippets. See [Tool reference](#tool-reference) for the schema.
 
 ---
 
@@ -103,10 +103,71 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | Tool | Status | Description |
 |---|---|---|
 | `add_task` | v0.2.0 | Create a new task file |
-| `list_tasks` | v0.2.0 | List task summaries |
+| `list_tasks` | v0.2.0 | List task summaries (structural enumeration — filter by status or parent) |
 | `get_task` | v0.3.0 | Return full task content |
 | `add_artifact` | v0.3.0 | Create a task artifact file |
 | `load_context` | v0.4.0 | One-call full-context fetch: task + artifact bodies + recursive subtasks + backlinks |
+| `search_tasks` | v0.5.0 | Topic-driven task discovery — ranked, scoped, with per-hit snippets |
+
+### When to use which tool
+
+| Goal | Use |
+|---|---|
+| Know which tasks exist right now | `list_tasks` |
+| Fetch a specific task you already know by ID | `get_task` or `load_context` |
+| Discover tasks related to a concept or keyword | `search_tasks` |
+| Orient before starting work on a new issue | `search_tasks` (find prior art), then `load_context` (deep-dive) |
+
+### `search_tasks`
+
+Topic-driven task discovery. Splits the query on whitespace and requires **all tokens** to match (AND semantics). Searches across up to five field types, returns ranked results with per-hit field clues and a short snippet.
+
+**Input**
+
+```json
+{
+  "query": "string (required) — free-text topic query; max 500 chars",
+  "in": ["title", "description", "notes", "subtasks", "tags"],
+  "tags": ["string", "..."],
+  "status": ["todo", "doing", "done"],
+  "limit": "integer (optional, default 20, clamped to [1, 100])"
+}
+```
+
+- **`in`** (optional): restrict which fields are searched. Omit to search all five. Invalid values cause an `ArgumentException`.
+- **`tags`** (optional): AND filter — every listed tag must be present on the task.
+- **`status`** (optional): include only tasks with one of the listed statuses.
+- **`limit`** (optional): max results. Values outside `[1, 100]` are silently clamped.
+
+**Output**
+
+```json
+{
+  "tasks": [
+    {
+      "id": "string",
+      "title": "string",
+      "status": "\"todo\" | \"doing\" | \"done\"",
+      "parent_id": "string | null",
+      "matched_in": ["title", "notes"],
+      "snippet": "string — ~120-char excerpt from the best matched field"
+    }
+  ]
+}
+```
+
+Results are ranked: tasks with a title match score higher than body-only matches. Tiebreak: newest first, then by ID. Artifact body content is **not** searched in v1.
+
+**Errors** — propagated as `ArgumentException`:
+
+| Condition | Message |
+|---|---|
+| Empty / whitespace query | `query is required.` |
+| Query longer than 500 chars | `query must be 500 characters or fewer.` |
+| Unknown `in` field | `Invalid in field '<name>'. Valid values: title, description, notes, subtasks, tags.` |
+| Unknown `status` value | `Invalid status '<value>'. Valid values: todo, doing, done.` |
+
+---
 
 ### `add_task`
 
