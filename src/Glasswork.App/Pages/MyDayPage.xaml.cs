@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Glasswork.Controls;
 using Glasswork.Core.Models;
 using Glasswork.Services;
 using Glasswork.ViewModels;
@@ -203,25 +202,6 @@ public sealed partial class MyDayPage : Page
         var vaultRelative = VaultPageHelper.ToVaultRelativePath(absolutePath);
         if (vaultRelative is null) return;
         await App.ObsidianLauncher.Open(vaultRelative);
-    }
-
-    private void OnBlurbMarkdownLoaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is not VaultMarkdownView view) return;
-        view.WikiLinkResolver ??= VaultPageHelper.BuildWikiLinkResolver();
-        view.LinkClicked -= OnBlurbLinkClicked;
-        view.LinkClicked += OnBlurbLinkClicked;
-    }
-
-    private void OnBlurbMarkdownUnloaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is not VaultMarkdownView view) return;
-        view.LinkClicked -= OnBlurbLinkClicked;
-    }
-
-    private async void OnBlurbLinkClicked(object? sender, LinkClickedEventArgs e)
-    {
-        await VaultPageHelper.RouteLinkClickAsync(Frame, e);
     }
 }
 

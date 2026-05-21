@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace Glasswork.Core.Models;
@@ -24,7 +25,13 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial List<TaskLink> Links { get; set; } = [];
     
     [ObservableProperty] public partial string? Parent { get; set; }
-    [ObservableProperty] public partial string Description { get; set; } = string.Empty;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BlurbPreview))]
+    [NotifyPropertyChangedFor(nameof(HasBlurb))]
+    [NotifyPropertyChangedFor(nameof(IsActive))]
+    [NotifyPropertyChangedFor(nameof(IsQuiet))]
+    [NotifyPropertyChangedFor(nameof(ShowCardDetails))]
+    public partial string Description { get; set; } = string.Empty;
     [ObservableProperty] public partial string Notes { get; set; } = string.Empty;
     [ObservableProperty] public partial List<string> ContextLinks { get; set; } = [];
     [ObservableProperty] public partial List<string> Tags { get; set; } = [];
@@ -78,7 +85,8 @@ public partial class GlassworkTask : ObservableObject
 
     /// <summary>
     /// Single-line preview shown in the task card. Source: first non-blank line of <see cref="Description"/>,
-    /// stripped of leading markdown noise (#, &gt;, list markers), truncated at 80 chars.
+    /// stripped of leading markdown noise (#, &gt;, list markers) and unwrapped of wiki/markdown link
+    /// syntax so it renders cleanly as plain text. Truncated at 80 chars.
     /// Future: a <c>summary:</c> frontmatter field will take precedence when present.
     /// </summary>
     public string BlurbPreview
@@ -97,9 +105,37 @@ public partial class GlassworkTask : ObservableObject
             if (firstLine == null) return string.Empty;
             // Strip leading markdown noise: heading hashes, blockquote, list markers.
             var cleaned = firstLine.TrimStart('#', '>', '-', '*', ' ', '\t').Trim();
+            // Strip a leading task-list checkbox marker exposed by the previous trim
+            // (e.g. "- [ ] Foo" → "[ ] Foo" → "Foo"). Without this, the literal
+            // brackets leak into the plain-text blurb and look like a broken checkbox.
+            cleaned = TaskCheckboxRegex.Replace(cleaned, string.Empty);
             if (cleaned.Length == 0) return string.Empty;
+            // Unwrap link syntax so a plain TextBlock doesn't show raw brackets.
+            cleaned = UnwrapLinks(cleaned);
             return cleaned.Length > 80 ? cleaned[..80] + "…" : cleaned;
         }
+    }
+
+    // [[target|alias]] -> alias; [[target]] -> target; [text](url) -> text.
+    // Aliased wikilinks must match before bare ones to avoid the bare pattern
+    // swallowing the pipe.
+    private static readonly Regex AliasedWikiLinkRegex =
+        new(@"\[\[(?<target>[^\[\]|]+)\|(?<alias>[^\[\]]+)\]\]", RegexOptions.Compiled);
+    private static readonly Regex BareWikiLinkRegex =
+        new(@"\[\[(?<target>[^\[\]]+)\]\]", RegexOptions.Compiled);
+    private static readonly Regex MarkdownLinkRegex =
+        new(@"\[(?<text>[^\[\]]+)\]\((?<url>[^()]+)\)", RegexOptions.Compiled);
+    // Leading "[ ]", "[x]", "[X]" (with optional trailing whitespace) from a
+    // markdown task-list item that survived list-marker stripping.
+    private static readonly Regex TaskCheckboxRegex =
+        new(@"^\[[ xX]\]\s*", RegexOptions.Compiled);
+
+    private static string UnwrapLinks(string s)
+    {
+        s = AliasedWikiLinkRegex.Replace(s, m => m.Groups["alias"].Value);
+        s = BareWikiLinkRegex.Replace(s, m => m.Groups["target"].Value);
+        s = MarkdownLinkRegex.Replace(s, m => m.Groups["text"].Value);
+        return s;
     }
 
     public bool HasBlurb => BlurbPreview.Length > 0;
