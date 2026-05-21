@@ -272,25 +272,20 @@ public class IndexService
     // ── Legacy disk-writer surface (preserved for existing callers) ───────
 
     /// <summary>
-    /// Regenerate both <c>_index.md</c> and <c>_today.md</c> from a freshly-reloaded
-    /// view of the vault. Pre-issue-#184 behaviour. Existing callers
-    /// (notably <c>App._indexDebouncer</c>) drive this; new code should rely on
-    /// <see cref="TasksChanged"/> instead.
+    /// Regenerate both <c>_index.md</c> and <c>_today.md</c> from the current
+    /// in-memory snapshot. The in-memory store is now authoritative (issue #184),
+    /// so this method no longer reloads from disk — that would risk silently
+    /// dropping tasks that failed to parse mid-write while emitting no delta.
+    /// If the store has not been hydrated yet, <see cref="EnsureLoaded"/> runs
+    /// first. Existing callers (notably <c>App._indexDebouncer</c>) drive this;
+    /// new code should rely on <see cref="TasksChanged"/> instead.
     /// </summary>
     public void Refresh()
     {
-        // Force a full reload from disk — the in-memory store may be stale relative
-        // to cross-process edits if the watcher path is racing with this call.
+        EnsureLoaded();
         List<GlassworkTask> snapshot;
         lock (_gate)
         {
-            _store.Clear();
-            foreach (var t in _vault.LoadAll())
-            {
-                if (!string.IsNullOrEmpty(t.Id))
-                    _store[t.Id] = t;
-            }
-            _loaded = true;
             snapshot = _store.Values.Select(t => t.Clone()).ToList();
         }
         WriteIndex(snapshot);

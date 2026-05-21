@@ -282,4 +282,35 @@ public class IndexServiceAggregateTests
 
         CollectionAssert.AreEquivalent(new[] { "in" }, completed.Select(t => t.Id).ToList());
     }
+
+    // ── Refresh decoupling (issue #184 review fix) ─────────────────────────
+
+    [TestMethod]
+    public void Refresh_WritesSurfacesFromInMemoryStore_NotFromDisk()
+    {
+        // The in-memory store is authoritative; Refresh() must not reload from
+        // disk because that path would silently drop tasks that fail to parse
+        // mid-write and emit no delta. We prove the decoupling by writing a
+        // task file directly to disk (bypassing VaultService.Save, so no event
+        // fires and the in-memory store never sees it) and asserting that
+        // Refresh()'s output does NOT include it.
+        _vault.Save(new GlassworkTask { Id = "known", Title = "Known" });
+        _index.EnsureLoaded();
+
+        // Bypass VaultService entirely — drop a valid task file on disk that
+        // the in-memory store has never been told about.
+        File.WriteAllText(
+            Path.Combine(_tempDir, "ghost.md"),
+            "---\nid: ghost\ntitle: Ghost\nstatus: todo\n---\n");
+
+        _index.Refresh();
+
+        var indexMd = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
+        StringAssert.Contains(indexMd, "Known");
+        Assert.IsFalse(indexMd.Contains("Ghost"),
+            "Refresh() must regenerate _index.md from the in-memory snapshot, " +
+            "not by re-reading the vault. Tasks the store does not know about " +
+            "must arrive via OnFileChangedOnDisk / vault events, not via a " +
+            "silent full reload that bypasses the delta channel.");
+    }
 }

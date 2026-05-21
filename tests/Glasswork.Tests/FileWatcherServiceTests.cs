@@ -262,8 +262,51 @@ public class FileWatcherServiceTests
         File.WriteAllText(path, "x");
 
         Assert.IsFalse(signal.Wait(TimeSpan.FromSeconds(2)),
-            "Typed event must respect SelfWriteCoordinator suppression like the legacy event.");
+            "Typed event must suppress same-process writes (IsOwnProcessWrite).");
         Assert.IsNull(observed);
+    }
+
+    [TestMethod]
+    public void TypedEvent_FiresForCrossProcessWrites_RegisteredOnlyInMarkerFile()
+    {
+        // Two coordinators sharing the same vault simulate two processes
+        // (e.g. desktop app + MCP server). Process B's RegisterWrite updates
+        // the marker file but NOT process A's in-memory dictionary, so
+        // A's watcher should still emit the typed event so its IndexService
+        // can refresh.
+        var coordA = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(2));
+        var coordB = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(2));
+        using var watcher = new FileWatcherService(_tempDir, coordA);
+
+        TaskFileChange? typedObserved = null;
+        string? legacyObserved = null;
+        var typedSignal = new ManualResetEventSlim(false);
+        var legacySignal = new ManualResetEventSlim(false);
+
+        watcher.TaskFileChange += (_, change) =>
+        {
+            typedObserved = change;
+            typedSignal.Set();
+        };
+        watcher.TaskFileChanged += (_, name) =>
+        {
+            legacyObserved = name;
+            legacySignal.Set();
+        };
+
+        watcher.Start();
+        var path = Path.Combine(_tempDir, "cross-process.md");
+        coordB.RegisterWrite(path); // updates marker file only, not coordA's memory
+        File.WriteAllText(path, "x");
+
+        Assert.IsTrue(typedSignal.Wait(TimeSpan.FromSeconds(2)),
+            "Typed TaskFileChange must fire for cross-process writes so IndexService can refresh.");
+        Assert.IsNotNull(typedObserved);
+        Assert.AreEqual("cross-process.md", typedObserved!.NewFileName);
+
+        Assert.IsFalse(legacySignal.Wait(TimeSpan.FromMilliseconds(500)),
+            "Legacy TaskFileChanged must remain suppressed for coordinated cross-process writes so the conflict banner does not fire.");
+        Assert.IsNull(legacyObserved);
     }
 
     [TestMethod]

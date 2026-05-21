@@ -63,18 +63,26 @@ public class FileWatcherService : IDisposable
         // Skip index/schema files
         if (newFileName.StartsWith('_')) return;
 
-        // Skip events caused by our own writes (e.g. VaultService.Save) — otherwise
-        // every Field_LostFocus → Save round-trips into a false-positive reload banner.
-        if (_selfWrites?.IsSuppressed(newPath) == true) return;
-
         var oldFileName = oldPath is null ? null : Path.GetFileName(oldPath);
-        // Rename: if the old name was suppressed (rare — typically only the new
-        // path is registered), still consider the new-path suppression rule the
-        // authoritative one. Old-name suppression alone shouldn't prevent the
-        // event because the new path is the live one.
 
-        TaskFileChanged?.Invoke(this, newFileName);
-        TaskFileChange?.Invoke(this, new TaskFileChange(kind, oldFileName, newFileName));
+        // Two suppression rules — see ADR 0010 §"SelfWriteCoordinator split":
+        //
+        //  * IsOwnProcessWrite — only same-process VaultService.Save echoes. Used
+        //    to gate the typed TaskFileChange event so the IndexService still sees
+        //    cross-process MCP edits and refreshes the UI via the watcher path.
+        //
+        //  * IsSuppressed — same-process AND cross-process (marker-file) writes.
+        //    Used to gate the legacy TaskFileChanged event whose downstream
+        //    consumers (conflict banner, "external edit" reload prompt) must NOT
+        //    fire for coordinated MCP writes.
+        var isOwn = _selfWrites?.IsOwnProcessWrite(newPath) == true;
+        var isSuppressed = _selfWrites?.IsSuppressed(newPath) == true;
+
+        if (!isSuppressed)
+            TaskFileChanged?.Invoke(this, newFileName);
+
+        if (!isOwn)
+            TaskFileChange?.Invoke(this, new TaskFileChange(kind, oldFileName, newFileName));
     }
 
     public void Dispose()
