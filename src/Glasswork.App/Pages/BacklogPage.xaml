@@ -107,12 +107,12 @@
                         <TextBlock Text="{Binding FirstBlockerText}" FontSize="12"
                                    Foreground="#C50F1F" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
-                    <controls:VaultMarkdownView Markdown="{Binding Description}"
-                                               AutomationProperties.Name="{Binding BlurbPreview}"
-                                               Opacity="0.8"
-                                               Loaded="OnBlurbMarkdownLoaded"
-                                               Unloaded="OnBlurbMarkdownUnloaded"
-                                               Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
+                    <TextBlock Text="{Binding BlurbPreview}"
+                               AutomationProperties.Name="{Binding BlurbPreview}"
+                               Opacity="0.8"
+                               TextWrapping="NoWrap"
+                               TextTrimming="CharacterEllipsis"
+                               Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
                 </StackPanel>
             </Grid>
         </DataTemplate>

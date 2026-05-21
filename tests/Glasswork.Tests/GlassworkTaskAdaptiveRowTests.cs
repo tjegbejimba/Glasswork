@@ -75,6 +75,64 @@ public class GlassworkTaskAdaptiveRowTests
         Assert.IsFalse(t.HasBlurb);
     }
 
+    // ---------- BlurbPreview link unwrapping (issue #185) ----------
+    // Blurb is plain text by construction; wiki/markdown link wrappers
+    // would render as literal brackets in a plain TextBlock, so we strip
+    // them at the model layer.
+
+    [TestMethod]
+    public void BlurbPreview_UnwrapsBareWikilink()
+    {
+        var t = new GlassworkTask { Description = "[[Foo]]" };
+        Assert.AreEqual("Foo", t.BlurbPreview);
+    }
+
+    [TestMethod]
+    public void BlurbPreview_UnwrapsAliasedWikilink_PrefersAlias()
+    {
+        var t = new GlassworkTask { Description = "[[wiki/Foo|Friendly Name]]" };
+        Assert.AreEqual("Friendly Name", t.BlurbPreview);
+    }
+
+    [TestMethod]
+    public void BlurbPreview_UnwrapsMarkdownLink_PrefersDisplayText()
+    {
+        var t = new GlassworkTask { Description = "[Foo](https://example.com)" };
+        Assert.AreEqual("Foo", t.BlurbPreview);
+    }
+
+    [TestMethod]
+    public void BlurbPreview_StripsHeadingThenUnwrapsWikilink()
+    {
+        var t = new GlassworkTask { Description = "## [[Foo]]" };
+        Assert.AreEqual("Foo", t.BlurbPreview);
+    }
+
+    [TestMethod]
+    public void BlurbPreview_UnwrapsMidSentenceWikilink()
+    {
+        var t = new GlassworkTask { Description = "See [[Foo|the spec]] for details." };
+        Assert.AreEqual("See the spec for details.", t.BlurbPreview);
+    }
+
+    // ---------- Description change notifications (issue #185) ----------
+    // The card UI binds directly to BlurbPreview/HasBlurb; Description
+    // must raise dependent PropertyChanged events so edits refresh the card.
+
+    [TestMethod]
+    public void Description_Change_RaisesBlurbPreviewAndHasBlurbAndIsActive()
+    {
+        var t = new GlassworkTask();
+        var changed = new List<string>();
+        t.PropertyChanged += (_, e) => changed.Add(e.PropertyName ?? string.Empty);
+
+        t.Description = "Some context.";
+
+        CollectionAssert.Contains(changed, nameof(GlassworkTask.BlurbPreview));
+        CollectionAssert.Contains(changed, nameof(GlassworkTask.HasBlurb));
+        CollectionAssert.Contains(changed, nameof(GlassworkTask.IsActive));
+    }
+
     // ---------- Progress ----------
 
     [TestMethod]
