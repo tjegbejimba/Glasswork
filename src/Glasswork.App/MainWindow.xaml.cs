@@ -93,7 +93,9 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var count = App.Vault?.LoadAll().Count ?? 0;
+            // Status-bar count from the in-memory aggregate (issue #184) —
+            // no disk scan, O(1).
+            var count = App.Index?.Count ?? 0;
             StatusTaskCountText.Text = count == 1 ? "1 task" : $"{count} tasks";
         }
         catch

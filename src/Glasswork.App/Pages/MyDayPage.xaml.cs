@@ -18,7 +18,7 @@ public sealed partial class MyDayPage : Page
 
     public MyDayPage()
     {
-        ViewModel = new MyDayViewModel(App.Vault, App.Tasks, App.UiState);
+        ViewModel = new MyDayViewModel(App.Vault, App.Tasks, App.Index, App.UiState);
         InitializeComponent();
     }
 

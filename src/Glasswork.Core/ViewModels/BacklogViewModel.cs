@@ -67,11 +67,24 @@ public partial class BacklogViewModel : ObservableObject
     [ObservableProperty] public partial bool IsGrouped { get; set; } = true;
     [ObservableProperty] public partial string ViewMode { get; set; } = "list"; // "list" | "board"
 
+    private readonly IndexService _index;
+
     public BacklogViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
+        : this(vault, taskService, EnsureSeededIndex(vault), uiState) { }
+
+    public BacklogViewModel(VaultService vault, TaskService taskService, IndexService index, IUiStateService? uiState = null)
     {
         _vault = vault;
         _taskService = taskService;
+        _index = index;
         _parentTitleStore = uiState is null ? null : new AdoParentTitleCacheStore(uiState);
+    }
+
+    private static IndexService EnsureSeededIndex(VaultService vault)
+    {
+        var idx = new IndexService(vault);
+        idx.EnsureLoaded();
+        return idx;
     }
 
     [RelayCommand]
@@ -81,7 +94,7 @@ public partial class BacklogViewModel : ObservableObject
         Tasks.Clear();
         Rows.Clear();
         BoardColumns.Clear();
-        var all = _vault.LoadAll();
+        var all = _index.All;
 
         if (ViewMode == "board")
         {

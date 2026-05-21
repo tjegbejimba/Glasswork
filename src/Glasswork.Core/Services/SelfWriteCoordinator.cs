@@ -62,16 +62,33 @@ public class SelfWriteCoordinator
         if (string.IsNullOrEmpty(fullPath)) return false;
 
         // Fast path: check in-memory dictionary first (same-process writes).
+        if (IsOwnProcessWrite(fullPath)) return true;
+
+        // Cross-process path: consult the vault-local marker file.
+        if (_markerFilePath != null)
+            return CheckMarkerFile(fullPath);
+
+        return false;
+    }
+
+    /// <summary>
+    /// True only if **this process** registered the write (within TTL); ignores the
+    /// cross-process marker file. Use this for callers that need to update their
+    /// in-memory state from cross-process writes (e.g. <c>IndexService</c> consuming
+    /// watcher events from MCP edits) while leaving the broader
+    /// <see cref="IsSuppressed"/> predicate available for the existing
+    /// external-edit / conflict-banner suppression path. See issue #184.
+    /// </summary>
+    public bool IsOwnProcessWrite(string fullPath)
+    {
+        if (string.IsNullOrEmpty(fullPath)) return false;
+
         if (_recentWrites.TryGetValue(fullPath, out var when))
         {
             if (DateTime.UtcNow - when <= _ttl) return true;
             // Expired — drop it so the dictionary doesn't grow unbounded.
             _recentWrites.TryRemove(fullPath, out _);
         }
-
-        // Cross-process path: consult the vault-local marker file.
-        if (_markerFilePath != null)
-            return CheckMarkerFile(fullPath);
 
         return false;
     }
