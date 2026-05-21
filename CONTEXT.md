@@ -60,12 +60,31 @@ The in-memory shape of a task and its subtasks. Pure C# in
 
 ### 3. Index
 
-In-memory aggregate over all tasks. Computes views ("today's tasks",
-"backlog", "completed"), counts, and lookups by id.
+In-memory aggregate over all tasks. Hydrated once at startup from
+`VaultService.LoadAll()`; kept fresh thereafter via two parallel channels:
 
-- **Owns**: `IndexService`, debounced regen on vault change.
-- **Speaks to**: Task Model (consumes), Presentation (queried by pages).
-- **Does not own**: the tasks themselves.
+- **Same-process writes** → `VaultService.TaskWritten` / `TaskDeleted` domain
+  events.
+- **External edits (Obsidian / agents / MCP)** → `FileWatcherService.TaskFileChange`
+  routed to `IndexService.OnFileChangedOnDisk`, which re-parses just the
+  affected file and replaces that one entry. Parse failures keep the prior
+  snapshot intact so partial in-flight writes don't blow away valid state.
+
+Both paths emit a single typed `TasksChanged` delta carrying `Old` + `New`
+snapshots per affected task, so filtered views (My Day, Backlog) can detect
+removal-from-set as well as add and replace. Every query method returns
+**defensive clones** (`GlassworkTask.Clone()`); the canonical store is never
+exposed by reference. The `_index.md` / `_today.md` agent-facing markdown
+surfaces are subscribers on the delta channel (debounced ~500ms), not
+initiators. See ADR 0010 and issue #184.
+
+- **Owns**: `IndexService`, the `TasksChanged` delta channel, the
+  `_index.md` / `_today.md` writers, and the carryover / completed-between /
+  by-id query surface that view models share.
+- **Speaks to**: Task Model (consumes), Vault Sync (subscribes to events,
+  reads on demand), Presentation (queried by pages, raises deltas to them).
+- **Does not own**: the tasks themselves (Vault Sync owns disk truth), nor
+  any UI state.
 
 ### 4. UI State *(new — this slice)*
 

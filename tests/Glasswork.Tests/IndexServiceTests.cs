@@ -104,6 +104,12 @@ public class IndexServiceTests
             Path.Combine(_tempDir, "wrapped-task.md"),
             Path.Combine(doneDir, "wrapped-task.md"));
 
+        // In production this disk move is observed by FileWatcherService which
+        // delivers a Deleted/Renamed event to the index. The unit test models
+        // that explicitly because we are not running the live watcher here.
+        _index.OnFileChangedOnDisk(new TaskFileChange(
+            TaskFileChangeKind.Deleted, OldFileName: null, NewFileName: "wrapped-task.md"));
+
         _index.Refresh();
 
         var after = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));

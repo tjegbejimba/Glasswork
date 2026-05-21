@@ -43,8 +43,8 @@ public sealed partial class SettingsPage : Page
 
         try
         {
-            // Delegate counting to VaultService so the filtering rules stay in one place.
-            var taskCount = App.Vault?.LoadAll().Count ?? 0;
+            // Count via the in-memory aggregate (issue #184) — no disk scan.
+            var taskCount = App.Index?.Count ?? 0;
             var lastWrite = Directory.GetLastWriteTime(path);
             VaultInfoText.Text = $"{taskCount} task file{(taskCount == 1 ? "" : "s")} · last modified {lastWrite:g}";
         }

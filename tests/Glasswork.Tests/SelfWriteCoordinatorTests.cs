@@ -159,4 +159,66 @@ public class SelfWriteCoordinatorTests
         var glassworkDir = Path.Combine(subVault, ".glasswork");
         Assert.IsTrue(Directory.Exists(glassworkDir), ".glasswork/ must be created on demand.");
     }
+
+    // ── IsOwnProcessWrite: own-process-only predicate (issue #184) ──────────
+    //
+    // Background: IsSuppressed returns true for BOTH same-process writes and
+    // cross-process writes (recorded via the marker file). With an in-memory
+    // Index in place, the latter must still reach the UI: an MCP write should
+    // update the Index via the watcher round-trip. IsOwnProcessWrite is the
+    // narrower predicate that returns true ONLY for writes the current process
+    // performed, so the watcher → Index path can deliberately ignore the
+    // marker file while the banner path keeps IsSuppressed's broader behaviour.
+
+    [TestMethod]
+    public void IsOwnProcessWrite_TrueAfterRegisterInSameProcess()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromMilliseconds(500));
+        var taskPath = Path.Combine(_tempDir, "task.md");
+
+        coord.RegisterWrite(taskPath);
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(taskPath));
+    }
+
+    [TestMethod]
+    public void IsOwnProcessWrite_FalseForCrossProcessMarkerEntry()
+    {
+        // A "cross-process" write is one that only appears in the marker file
+        // and not in this coordinator's in-memory dictionary. We simulate it by
+        // letting coord_a (a separate "process") register the write, then
+        // observing through coord_b which shares only the vault directory.
+        var coordA = new SelfWriteCoordinator(_tempDir, TimeSpan.FromMilliseconds(500));
+        var coordB = new SelfWriteCoordinator(_tempDir, TimeSpan.FromMilliseconds(500));
+        var taskPath = Path.Combine(_tempDir, "task.md");
+
+        coordA.RegisterWrite(taskPath);
+
+        // Sanity: the marker-file-inclusive predicate still sees it.
+        Assert.IsTrue(coordB.IsSuppressed(taskPath),
+            "IsSuppressed must still honour cross-process marker-file entries.");
+
+        // But the own-process predicate must return false — coordB never
+        // registered this path itself.
+        Assert.IsFalse(coordB.IsOwnProcessWrite(taskPath),
+            "IsOwnProcessWrite must return false for cross-process marker-file entries.");
+    }
+
+    [TestMethod]
+    public void IsOwnProcessWrite_FalseAfterTtlExpires()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromMilliseconds(50));
+        coord.RegisterWrite(@"C:\vault\task.md");
+
+        Thread.Sleep(150);
+
+        Assert.IsFalse(coord.IsOwnProcessWrite(@"C:\vault\task.md"));
+    }
+
+    [TestMethod]
+    public void IsOwnProcessWrite_FalseForUnregisteredPath()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromMilliseconds(500));
+        Assert.IsFalse(coord.IsOwnProcessWrite(@"C:\vault\other.md"));
+    }
 }

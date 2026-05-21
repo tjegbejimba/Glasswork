@@ -241,8 +241,6 @@ public partial class App : Application
 
         SelfWrites = new SelfWriteCoordinator(vaultPath);
         Vault = new VaultService(vaultPath, SelfWrites);
-        Tasks = new TaskService(Vault);
-        Index = new IndexService(Vault);
 
         // FileSystemArtifactStore wants the vault root (the folder containing wiki/todo/),
         // not the todo folder itself. This same path is the root the user has registered
@@ -260,15 +258,26 @@ public partial class App : Application
 
         // One-shot V1 → V2 migration of any pre-existing files. Idempotent: V2 files
         // are skipped, so re-running on every launch is cheap.
+        // IMPORTANT (issue #184): migration MUST run before Index.EnsureLoaded so the
+        // in-memory aggregate is never seeded with pre-migration parse artefacts.
         try { Vault.MigrateAllToV2(); }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"V2 migration failed: {ex.Message}"); }
 
+        // In-memory aggregate (issue #184). Subscribe to vault domain events
+        // BEFORE EnsureLoaded so we still capture writes that happen on the seed
+        // pass (defensive — none expected in practice). EnsureLoaded does not
+        // emit TasksChanged: it's a snapshot, not a delta.
+        Index = new IndexService(Vault);
+        Index.EnsureLoaded();
+        Tasks = new TaskService(Vault, Index);
+
         // GC stale per-task UI state entries (e.g. collapse overrides for tasks the
-        // user has since deleted from the vault). Cheap: O(state) + one vault scan.
+        // user has since deleted from the vault). Cheap: O(state) + one in-memory
+        // index walk (no longer a disk scan, per issue #184).
         try
         {
             var liveIds = new System.Collections.Generic.HashSet<string>(
-                System.Linq.Enumerable.Select(Vault.LoadAll(), t => t.Id),
+                System.Linq.Enumerable.Select(Index.All, t => t.Id),
                 StringComparer.Ordinal);
             uiStateImpl.RemoveKeysNotIn(CollapsedTaskKeyPrefix, liveIds);
             uiStateImpl.Save();
@@ -278,15 +287,29 @@ public partial class App : Application
             System.Diagnostics.Debug.WriteLine($"UI state GC failed: {ex.Message}");
         }
 
-        // File watcher: external (Obsidian / agent) edits to task files trigger
-        // a debounced index regeneration and notify any open page.
+        // _index.md / _today.md regeneration: debounce TasksChanged across rapid
+        // edits and let Index.Refresh re-pull from disk + rewrite the agent-facing
+        // markdown surfaces. Subscribing to Index.TasksChanged (rather than the
+        // raw watcher) means we naturally pick up both same-process writes and
+        // external edits without duplicating the suppression logic.
         _indexDebouncer = new Debouncer(TimeSpan.FromMilliseconds(500), () =>
         {
             try { Index.Refresh(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index refresh failed: {ex.Message}"); }
         });
+        Index.TasksChanged += (_, _) => _indexDebouncer?.Trigger();
 
+        // File watcher: external (Obsidian / agent) edits to task files feed
+        // into Index via the typed event. The legacy string-payload event is
+        // also re-raised on TaskFileChangedExternally so existing page
+        // subscribers (MyDayPage / BacklogPage / TaskDetailPage / MainWindow)
+        // keep working until they migrate to Index.TasksChanged directly.
         Watcher = new FileWatcherService(vaultPath, SelfWrites);
+        Watcher.TaskFileChange += (_, change) =>
+        {
+            try { Index.OnFileChangedOnDisk(change); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.OnFileChangedOnDisk failed: {ex.Message}"); }
+        };
         Watcher.TaskFileChanged += OnTaskFileChanged;
         Watcher.Start();
 
@@ -395,9 +418,9 @@ public partial class App : Application
 
     private static void OnTaskFileChanged(object? sender, string fileName)
     {
-        // Always coalesce index regen across rapid edits.
-        _indexDebouncer?.Trigger();
-        // Fan out to UI subscribers (BacklogPage / MyDayPage / TaskDetailPage).
+        // Index updates are driven via the typed TaskFileChange event handler
+        // (wired in InitVaultServices). This handler only fans out to the
+        // legacy string-payload subscribers (pages) until they migrate.
         TaskFileChangedExternally?.Invoke(sender, fileName);
     }
 }

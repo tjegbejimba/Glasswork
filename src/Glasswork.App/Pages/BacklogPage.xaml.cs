@@ -43,7 +43,7 @@ public sealed partial class BacklogPage : Page
 
     public BacklogPage()
     {
-        ViewModel = new BacklogViewModel(App.Vault, App.Tasks, App.UiState);
+        ViewModel = new BacklogViewModel(App.Vault, App.Tasks, App.Index, App.UiState);
         // Load persisted ViewMode (default "list") BEFORE InitializeComponent
         ViewModel.ViewMode = App.UiState.Get<string>(App.BacklogViewModeKey) ?? "list";
         // Load persisted toggle (default true) BEFORE InitializeComponent so the

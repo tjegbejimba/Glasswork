@@ -31,6 +31,38 @@ public class VaultService
     public string VaultPath => _vaultPath;
 
     /// <summary>
+    /// Raised after a successful task-file write (Save or any targeted edit).
+    /// Argument is the task id. Subscribers may throw — exceptions are caught
+    /// and logged so persistence is never affected by indexing or other
+    /// downstream failures (issue #184).
+    /// </summary>
+    public event EventHandler<string>? TaskWritten;
+
+    /// <summary>
+    /// Raised after a successful task-file deletion. Argument is the task id.
+    /// Same exception-isolation contract as <see cref="TaskWritten"/>.
+    /// </summary>
+    public event EventHandler<string>? TaskDeleted;
+
+    private void RaiseTaskWritten(string taskId)
+    {
+        try { TaskWritten?.Invoke(this, taskId); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"TaskWritten subscriber threw for {taskId}: {ex}");
+        }
+    }
+
+    private void RaiseTaskDeleted(string taskId)
+    {
+        try { TaskDeleted?.Invoke(this, taskId); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"TaskDeleted subscriber threw for {taskId}: {ex}");
+        }
+    }
+
+    /// <summary>
     /// Load all tasks from the vault directory.
     /// Skips files starting with _ (index, today, schema).
     /// </summary>
@@ -92,6 +124,7 @@ public class VaultService
         {
             _selfWrites?.RegisterWrite(path);
             File.WriteAllText(path, updated);
+            RaiseTaskWritten(taskId);
         }
     }
 
@@ -156,6 +189,7 @@ public class VaultService
             rebuilt += newline;
         _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, rebuilt);
+        RaiseTaskWritten(taskId);
     }
 
     /// <summary>
@@ -225,6 +259,7 @@ public class VaultService
             rebuilt += newline;
         _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, rebuilt);
+        RaiseTaskWritten(taskId);
     }
 
     /// <summary>
@@ -294,6 +329,7 @@ public class VaultService
 
         _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, output);
+        RaiseTaskWritten(taskId);
     }
 
     /// <summary>
@@ -353,6 +389,7 @@ public class VaultService
 
         _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, output);
+        RaiseTaskWritten(taskId);
     }
 
     /// <summary>
@@ -476,6 +513,7 @@ public class VaultService
 
         _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, rebuilt);
+        RaiseTaskWritten(taskId);
     }
 
     /// <summary>
@@ -490,6 +528,7 @@ public class VaultService
         var path = GetFilePath(task.Id);
         _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, content);
+        RaiseTaskWritten(task.Id);
     }
 
     /// <summary>
@@ -541,6 +580,7 @@ public class VaultService
 
         _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, migrated);
+        RaiseTaskWritten(taskId);
         return true;
     }
 
@@ -570,6 +610,7 @@ public class VaultService
 
             _selfWrites?.RegisterWrite(path);
             File.WriteAllText(path, migratedContent);
+            RaiseTaskWritten(Path.GetFileNameWithoutExtension(path));
             migrated++;
         }
         return migrated;
@@ -585,6 +626,7 @@ public class VaultService
 
         _selfWrites?.RegisterWrite(filePath);
         File.Delete(filePath);
+        RaiseTaskDeleted(taskId);
         return true;
     }
 

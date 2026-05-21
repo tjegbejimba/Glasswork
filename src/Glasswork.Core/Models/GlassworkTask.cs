@@ -195,6 +195,77 @@ public partial class GlassworkTask : ObservableObject
     public bool HasTodaysSubtasks => TodaysSubtasks is { Count: > 0 };
 
     /// <summary>
+    /// Returns a deep, defensive copy of this task suitable for storing in (or
+    /// returning from) the in-memory <c>IndexService</c> snapshot store
+    /// (see issue #184). Subtasks, Links, RelatedLinks, Tags, ContextLinks, and
+    /// each subtask's Metadata dictionary are all deep-copied so that mutating
+    /// the clone never affects the original.
+    ///
+    /// Transient UI fields are intentionally **reset** on the clone:
+    /// <list type="bullet">
+    ///   <item><description><see cref="IsManuallyCollapsed"/> — per-page UI state
+    ///     tracked separately in <c>IUiStateService</c>; the Index must not
+    ///     leak it across pages or hydrate stale values into the canonical
+    ///     snapshot.</description></item>
+    ///   <item><description><see cref="TodaysSubtasks"/> — recomputed per
+    ///     My Day refresh from <c>MyDayPromotionPolicy.TodaysSubtasks</c>;
+    ///     storing it on the snapshot would freeze yesterday's promotion
+    ///     into today's view.</description></item>
+    /// </list>
+    /// </summary>
+    public GlassworkTask Clone()
+    {
+        var copy = new GlassworkTask
+        {
+            Id = Id,
+            Title = Title,
+            Status = Status,
+            Priority = Priority,
+            Created = Created,
+            CompletedAt = CompletedAt,
+            Due = Due,
+            MyDay = MyDay,
+            Parent = Parent,
+            Description = Description,
+            Notes = Notes,
+            IsV1Format = IsV1Format,
+            // Transient UI state intentionally not copied — see remarks above.
+        };
+
+        // TaskLink is an immutable record; the references can be shared, but the
+        // List wrapper must be a new instance.
+        copy.Links = [.. Links];
+
+        copy.Tags = [.. Tags];
+        copy.ContextLinks = [.. ContextLinks];
+
+        copy.Subtasks = new List<SubTask>(Subtasks.Count);
+        foreach (var sub in Subtasks)
+        {
+            copy.Subtasks.Add(new SubTask
+            {
+                Text = sub.Text,
+                IsCompleted = sub.IsCompleted,
+                Status = sub.Status,
+                Notes = sub.Notes,
+                Metadata = new Dictionary<string, string>(sub.Metadata),
+            });
+        }
+
+        copy.RelatedLinks = new List<RelatedLink>(RelatedLinks.Count);
+        foreach (var rl in RelatedLinks)
+        {
+            copy.RelatedLinks.Add(new RelatedLink
+            {
+                Slug = rl.Slug,
+                DisplayName = rl.DisplayName,
+            });
+        }
+
+        return copy;
+    }
+
+    /// <summary>
     /// Derived property: reads/writes the first ADO-typed link in <see cref="Links"/>.
     /// Preserves backward compatibility with existing consumers that reference AdoLink directly.
     /// Setting to null removes the ADO link; setting to a value adds or updates it.

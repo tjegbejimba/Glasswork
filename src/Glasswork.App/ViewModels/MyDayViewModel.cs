@@ -11,6 +11,7 @@ public partial class MyDayViewModel : ObservableObject
 {
     private readonly TaskService _taskService;
     private readonly VaultService _vault;
+    private readonly IndexService _index;
     private readonly IUiStateService? _uiState;
 
     public ObservableCollection<GlassworkTask> TodayTasks { get; } = [];
@@ -20,10 +21,21 @@ public partial class MyDayViewModel : ObservableObject
     [ObservableProperty] public partial bool ShowSuggestions { get; set; }
 
     public MyDayViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
+        : this(vault, taskService, EnsureSeededIndex(vault), uiState) { }
+
+    public MyDayViewModel(VaultService vault, TaskService taskService, IndexService index, IUiStateService? uiState = null)
     {
         _vault = vault;
         _taskService = taskService;
+        _index = index;
         _uiState = uiState;
+    }
+
+    private static IndexService EnsureSeededIndex(VaultService vault)
+    {
+        var idx = new IndexService(vault);
+        idx.EnsureLoaded();
+        return idx;
     }
 
     /// <summary>
@@ -47,7 +59,7 @@ public partial class MyDayViewModel : ObservableObject
         RecentlyCompletedTasks.Clear();
         Suggestions.Clear();
 
-        var all = _vault.LoadAll();
+        var all = _index.All;
         var today = System.DateOnly.FromDateTime(System.DateTime.Today);
 
         // Build the dismissed-today set once so the predicate stays pure.
