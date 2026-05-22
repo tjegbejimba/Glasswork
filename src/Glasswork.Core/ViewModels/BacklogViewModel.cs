@@ -13,7 +13,7 @@ using Glasswork.Core.Services;
 
 namespace Glasswork.ViewModels;
 
-public partial class BacklogViewModel : ObservableObject
+public partial class BacklogViewModel : ObservableObject, IDisposable
 {
     private readonly TaskService _taskService;
     private readonly VaultService _vault;
@@ -78,6 +78,8 @@ public partial class BacklogViewModel : ObservableObject
         _taskService = taskService;
         _index = index;
         _parentTitleStore = uiState is null ? null : new AdoParentTitleCacheStore(uiState);
+        // Issue #188: Page (BacklogPage) subscribes to Index.Changed and marshals to UI thread.
+        // ViewModel stays on Core and has no dispatcher access.
     }
 
     private static IndexService EnsureSeededIndex(VaultService vault)
@@ -307,11 +309,21 @@ public partial class BacklogViewModel : ObservableObject
     partial void OnIsGroupedChanged(bool value) => Refresh();
     partial void OnViewModeChanged(string value) => Refresh();
 
+    public void Dispose()
+    {
+        // Cancel any in-flight parent title fetches
+        _parentFetchCts?.Cancel();
+        _parentFetchCts?.Dispose();
+        _parentFetchCts = null;
+    }
+
     [RelayCommand]
     public void SetStatus(string newStatus)
     {
         if (SelectedTask is null) return;
         _taskService.SetStatus(SelectedTask, newStatus);
+        // Issue #188: Explicit refresh here for immediate UI update. Page will also
+        // refresh when Index.Changed fires, but that's async via DispatcherQueue.
         Refresh();
     }
 
@@ -320,6 +332,7 @@ public partial class BacklogViewModel : ObservableObject
     {
         if (SelectedTask is null) return;
         _taskService.ToggleMyDay(SelectedTask);
+        // Issue #188: No explicit refresh - this is a fire-and-forget toggle
     }
 
     partial void OnFilterStatusChanged(string value) => Refresh();

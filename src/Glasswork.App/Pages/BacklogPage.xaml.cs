@@ -213,7 +213,8 @@ public sealed partial class BacklogPage : Page
     {
         base.OnNavigatedTo(e);
         Refresh();
-        App.TaskFileChangedExternally += OnFileChanged;
+        // Issue #188: Subscribe to Index.Changed for auto-refresh, with UI-thread marshalling
+        App.Index.Changed += OnIndexChanged;
         // Clear undo state when navigating to the page
         ClearUndoState();
     }
@@ -221,14 +222,17 @@ public sealed partial class BacklogPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
-        App.TaskFileChangedExternally -= OnFileChanged;
+        // Issue #188: Unsubscribe from Index.Changed
+        App.Index.Changed -= OnIndexChanged;
         // Clear undo state when navigating away
         ClearUndoState();
     }
 
-    private void OnFileChanged(object? sender, string fileName)
+    private void OnIndexChanged(object? sender, Core.Services.TasksChanged delta)
     {
-        // Watcher fires on thread-pool thread; marshal to UI thread before refresh.
+        // Index.Changed fires on thread-pool thread for external file edits (FileSystemWatcher).
+        // Marshal to UI thread before calling Refresh() to avoid RPC_E_WRONG_THREAD on
+        // ObservableCollection mutations.
         DispatcherQueue.TryEnqueue(Refresh);
     }
 
