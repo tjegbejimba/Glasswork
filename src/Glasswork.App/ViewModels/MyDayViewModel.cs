@@ -3,6 +3,7 @@ using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 
 namespace Glasswork.ViewModels;
@@ -59,20 +60,18 @@ public partial class MyDayViewModel : ObservableObject
         RecentlyCompletedTasks.Clear();
         Suggestions.Clear();
 
-        var all = _index.All;
+        var all = _index.Tasks;
         var today = System.DateOnly.FromDateTime(System.DateTime.Today);
 
         // Build the dismissed-today set once so the predicate stays pure.
         var dismissed = new System.Collections.Generic.HashSet<string>(
-            all.Where(t => IsDismissedToday(t.Id)).Select(t => t.Id));
+            all.Values.Where(t => IsDismissedToday(t.Id)).Select(t => t.Id));
 
-        // Today's tasks: pinned, due-today/overdue, OR virtually promoted by a flagged/due-today
-        // subtask (ADR 0008). Only virtually-promoted parents get TodaysSubtasks attached for
-        // inline rendering — directly-promoted parents already show their in-progress subtask
-        // via the card-details "Current step" row.
-        foreach (var task in all.Where(t => IsOnMyDayToday(t, today, dismissed))
-                                 .OrderByDescending(t => t.Priority == "urgent"))
+        // Today's tasks via MyDayQueries.Today (issue #186/189)
+        var todayTasks = MyDayQueries.Today(all, today, dismissed);
+        foreach (var task in todayTasks)
         {
+            // Attach TodaysSubtasks for virtually-promoted tasks per ADR 0008
             var directlyPromoted =
                 task.MyDay.HasValue ||
                 (task.Due.HasValue
@@ -85,7 +84,7 @@ public partial class MyDayViewModel : ObservableObject
         }
 
         // Recently completed: tasks completed today that were on My Day today (real or virtual).
-        foreach (var task in all.Where(IsRecentlyCompleted).OrderByDescending(t => t.CompletedAt))
+        foreach (var task in all.Values.Where(IsRecentlyCompleted).OrderByDescending(t => t.CompletedAt))
         {
             RecentlyCompletedTasks.Add(task);
         }
@@ -95,7 +94,7 @@ public partial class MyDayViewModel : ObservableObject
         // included in TodayTasks above.
         var yesterday = System.DateTime.Today.AddDays(-1);
         var alreadyToday = TodayTasks.Select(t => t.Id).ToHashSet();
-        var suggestions = all.Where(t =>
+        var suggestions = all.Values.Where(t =>
             t.Status != GlassworkTask.Statuses.Done &&
             !alreadyToday.Contains(t.Id) &&
             (
