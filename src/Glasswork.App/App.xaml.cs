@@ -289,11 +289,12 @@ public partial class App : Application
 
         // GC stale per-task UI state entries (e.g. collapse overrides for tasks the
         // user has since deleted from the vault). Cheap: O(state) + one in-memory
-        // index walk (no longer a disk scan, per issue #184).
+        // index walk (no longer a disk scan, per issue #187). Uses the Tasks
+        // dictionary API from issue #186.
         try
         {
             var liveIds = new System.Collections.Generic.HashSet<string>(
-                System.Linq.Enumerable.Select(Index.All, t => t.Id),
+                Index.Tasks.Keys,
                 StringComparer.Ordinal);
             uiStateImpl.RemoveKeysNotIn(CollapsedTaskKeyPrefix, liveIds);
             uiStateImpl.Save();
