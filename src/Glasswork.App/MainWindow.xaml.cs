@@ -93,9 +93,10 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            // Status-bar count from the in-memory aggregate (issue #187) —
-            // uses the Tasks dictionary API from issue #186.
-            var count = App.Index?.Tasks.Count ?? 0;
+            // Status-bar count from the in-memory aggregate (issue #184) —
+            // O(1) read, no disk scan, no cloning. Use Count directly rather
+            // than Tasks.Count to avoid materializing the dictionary.
+            var count = App.Index?.Count ?? 0;
             StatusTaskCountText.Text = count == 1 ? "1 task" : $"{count} tasks";
         }
         catch

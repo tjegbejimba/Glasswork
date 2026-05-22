@@ -7,6 +7,8 @@ namespace Glasswork.Tests;
 /// Verifies that the new Index.Tasks dictionary API (issue #186) is
 /// functionally equivalent to the legacy Index.Count and Index.All
 /// properties, ensuring safe migration of call sites (issue #187).
+/// Only UI-state GC migrates to Tasks.Keys; counter-only sites continue
+/// to use the O(1) Count property.
 /// </summary>
 [TestClass]
 public class IndexServiceApiEquivalenceTests
@@ -28,6 +30,18 @@ public class IndexServiceApiEquivalenceTests
     {
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
+    }
+
+    [TestMethod]
+    public void Tasks_IsNeverNull()
+    {
+        // Per code-review: MainWindow and SettingsPage rely on Tasks being
+        // non-null (they guard Index, not Tasks). Verify the contract.
+        var fresh = new IndexService(_vault);
+        Assert.IsNotNull(fresh.Tasks, "Tasks should be non-null before EnsureLoaded");
+
+        fresh.EnsureLoaded();
+        Assert.IsNotNull(fresh.Tasks, "Tasks should be non-null after EnsureLoaded");
     }
 
     [TestMethod]
@@ -92,7 +106,8 @@ public class IndexServiceApiEquivalenceTests
     public void Tasks_Keys_CanBeUsedForUiStateGC()
     {
         // Simulates the App.xaml.cs UI-state GC pattern: build a live-id set
-        // from the index and use it to filter stale UI state entries.
+        // from the index and use it to filter stale UI state entries. This
+        // is the one call site that actually migrates to Tasks.Keys (issue #187).
         var t1 = new GlassworkTask { Id = "one", Status = "todo" };
         var t2 = new GlassworkTask { Id = "two", Status = "in-progress" };
         _vault.Save(t1);

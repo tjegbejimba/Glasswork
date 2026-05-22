@@ -43,9 +43,10 @@ public sealed partial class SettingsPage : Page
 
         try
         {
-            // Count via the in-memory aggregate (issue #187) — uses the Tasks
-            // dictionary API from issue #186.
-            var taskCount = App.Index?.Tasks.Count ?? 0;
+            // Count via the in-memory aggregate (issue #184) — O(1) read, no
+            // disk scan, no cloning. Use Count directly rather than Tasks.Count
+            // to avoid materializing the dictionary.
+            var taskCount = App.Index?.Count ?? 0;
             var lastWrite = Directory.GetLastWriteTime(path);
             VaultInfoText.Text = $"{taskCount} task file{(taskCount == 1 ? "" : "s")} · last modified {lastWrite:g}";
         }
