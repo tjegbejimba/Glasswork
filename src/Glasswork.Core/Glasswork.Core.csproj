@@ -12,4 +12,8 @@
     <PackageReference Include="YamlDotNet" Version="17.0.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Glasswork.Tests" />
+  </ItemGroup>
+
 </Project>

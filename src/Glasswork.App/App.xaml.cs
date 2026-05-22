@@ -27,6 +27,7 @@ public partial class App : Application
     public static VaultService Vault { get; private set; } = null!;
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
+    public static IndexMarkdownWriter? IndexMarkdownWriter { get; private set; }
     public static IArtifactStore Artifacts { get; private set; } = null!;
     public static FileWatcherService? Watcher { get; private set; }
     public static ArtifactWatcherService? ArtifactsWatcher { get; private set; }
@@ -270,6 +271,21 @@ public partial class App : Application
         Index = new IndexService(Vault);
         Index.EnsureLoaded();
         Tasks = new TaskService(Vault, Index);
+
+        // Issue #186: the IndexMarkdownWriter is the new owner of _index.md /
+        // _today.md generation. It subscribes to Index.Changed, owns its own
+        // 500ms debouncer, and lands in IndexMarkdownWriter.WriteOnce. The
+        // legacy _indexDebouncer (below) still calls Index.Refresh() which
+        // delegates to the same WriteOnce — both paths are serialised per
+        // vault path so concurrent writes are safe. Dark-launch: identical
+        // observable behaviour as before; this just makes the writer
+        // independently testable on Linux.
+        //
+        // Dispose any predecessor before swapping vaults — InitVaultServices
+        // reruns on vault switch, and a stale writer would keep firing
+        // against the old vault path.
+        IndexMarkdownWriter?.Dispose();
+        IndexMarkdownWriter = new IndexMarkdownWriter(Index, vaultPath);
 
         // GC stale per-task UI state entries (e.g. collapse overrides for tasks the
         // user has since deleted from the vault). Cheap: O(state) + one in-memory

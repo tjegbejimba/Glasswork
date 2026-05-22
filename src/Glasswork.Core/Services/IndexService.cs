@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using Glasswork.Core.Models;
 
 namespace Glasswork.Core.Services;
@@ -52,6 +53,16 @@ public class IndexService
     /// </summary>
     public event EventHandler<TasksChangedEventArgs>? TasksChanged;
 
+    /// <summary>
+    /// New deepened delta channel (issue #186). Fires from the same internal
+    /// mutation point as the legacy <see cref="TasksChanged"/> event, carrying
+    /// flat Added / Changed / Removed lists. Subscribers (notably
+    /// <see cref="IndexMarkdownWriter"/>) get a ready-to-consume payload
+    /// without the <c>(Old, New)</c> reshaping step. Exceptions thrown by
+    /// subscribers are caught and logged.
+    /// </summary>
+    public event EventHandler<TasksChanged>? Changed;
+
     public IndexService(VaultService vault)
     {
         _vault = vault;
@@ -78,6 +89,25 @@ public class IndexService
                 var list = new List<GlassworkTask>(_store.Count);
                 foreach (var t in _store.Values) list.Add(t.Clone());
                 return list;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Dictionary view over the store (issue #186): defensive-clone snapshot
+    /// keyed by task id. Pure-static <c>Glasswork.Core.Queries</c> helpers
+    /// consume this shape; subscribers may iterate or look up freely without
+    /// affecting the canonical store. Built fresh per call — do not cache.
+    /// </summary>
+    public IReadOnlyDictionary<string, GlassworkTask> Tasks
+    {
+        get
+        {
+            lock (_gate)
+            {
+                var dict = new Dictionary<string, GlassworkTask>(_store.Count, StringComparer.Ordinal);
+                foreach (var kv in _store) dict[kv.Key] = kv.Value.Clone();
+                return dict;
             }
         }
     }
@@ -111,6 +141,19 @@ public class IndexService
             }
             _loaded = true;
         }
+    }
+
+    /// <summary>
+    /// Async hydrate (issue #186 contract). Today the implementation is
+    /// synchronous — it just calls <see cref="EnsureLoaded"/> and returns a
+    /// completed task. App composition keeps calling <see cref="EnsureLoaded"/>
+    /// directly to avoid blocking-on-async foot-guns if this ever becomes
+    /// truly async.
+    /// </summary>
+    public Task LoadAsync()
+    {
+        EnsureLoaded();
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -148,6 +191,27 @@ public class IndexService
 
         if (changes.Count > 0)
             RaiseTasksChanged(changes);
+    }
+
+    /// <summary>
+    /// String-overload entry point (issue #186 contract). Determines kind by
+    /// checking whether the file currently exists: missing ⇒ Deleted, present
+    /// (or untestable) ⇒ CreatedOrChanged. Delegates to the typed
+    /// <see cref="OnFileChangedOnDisk(TaskFileChange)"/> so both
+    /// <see cref="TasksChanged"/> and <see cref="Changed"/> fire from the
+    /// single shared mutation path. Rename precision is unavailable through
+    /// this overload — callers needing it should use the typed overload.
+    /// </summary>
+    public void OnFileChangedOnDisk(string taskId)
+    {
+        if (string.IsNullOrEmpty(taskId)) return;
+
+        var path = Path.Combine(_vault.VaultPath, taskId + ".md");
+        var kind = File.Exists(path)
+            ? TaskFileChangeKind.CreatedOrChanged
+            : TaskFileChangeKind.Deleted;
+
+        OnFileChangedOnDisk(new TaskFileChange(kind, OldFileName: null, NewFileName: taskId + ".md"));
     }
 
     private void OnVaultTaskWritten(object? sender, string taskId)
@@ -220,6 +284,7 @@ public class IndexService
 
     private void RaiseTasksChanged(IReadOnlyList<TaskChange> changes)
     {
+        // Legacy event (issue #184).
         try
         {
             TasksChanged?.Invoke(this, new TasksChangedEventArgs { Changes = changes });
@@ -227,6 +292,27 @@ public class IndexService
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"IndexService.TasksChanged subscriber threw: {ex}");
+        }
+
+        // New deepened event (issue #186): same mutation, reshaped payload.
+        // Both events fire from one mutation so the store is never mutated
+        // twice and Added/Changed/Removed are derived from the same TaskChange list.
+        var added = new List<GlassworkTask>();
+        var changedList = new List<GlassworkTask>();
+        var removed = new List<string>();
+        foreach (var c in changes)
+        {
+            if (c.Old is null && c.New is not null) added.Add(c.New);
+            else if (c.Old is not null && c.New is null) removed.Add(c.Old.Id);
+            else if (c.Old is not null && c.New is not null) changedList.Add(c.New);
+        }
+        try
+        {
+            Changed?.Invoke(this, new TasksChanged(added, changedList, removed));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"IndexService.Changed subscriber threw: {ex}");
         }
     }
 
@@ -273,130 +359,16 @@ public class IndexService
 
     /// <summary>
     /// Regenerate both <c>_index.md</c> and <c>_today.md</c> from the current
-    /// in-memory snapshot. The in-memory store is now authoritative (issue #184),
-    /// so this method no longer reloads from disk — that would risk silently
-    /// dropping tasks that failed to parse mid-write while emitting no delta.
-    /// If the store has not been hydrated yet, <see cref="EnsureLoaded"/> runs
-    /// first. Existing callers (notably <c>App._indexDebouncer</c>) drive this;
-    /// new code should rely on <see cref="TasksChanged"/> instead.
+    /// in-memory snapshot. Foundation slice (issue #186) extracted the actual
+    /// writing into <see cref="IndexMarkdownWriter.WriteOnce"/>; this method
+    /// remains as a shim so the legacy <c>App._indexDebouncer</c> path (and
+    /// every <c>App.Index.Refresh()</c> call site in <c>TaskDetailPage</c>)
+    /// keeps working unchanged. New code should rely on
+    /// <see cref="Changed"/> + <see cref="IndexMarkdownWriter"/> instead.
     /// </summary>
     public void Refresh()
     {
         EnsureLoaded();
-        List<GlassworkTask> snapshot;
-        lock (_gate)
-        {
-            snapshot = _store.Values.Select(t => t.Clone()).ToList();
-        }
-        WriteIndex(snapshot);
-        WriteToday(snapshot);
-    }
-
-    private void WriteIndex(List<GlassworkTask> tasks)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("---");
-        sb.AppendLine("id: todo-index");
-        sb.AppendLine("title: Glasswork Task Index");
-        sb.AppendLine("type: index");
-        sb.AppendLine($"updated: {DateTime.Today:yyyy-MM-dd}");
-        sb.AppendLine("---");
-        sb.AppendLine();
-        sb.AppendLine("# Glasswork Tasks");
-        sb.AppendLine();
-        sb.AppendLine("> Auto-generated by Glasswork. Do not edit manually.");
-        sb.AppendLine();
-
-        WriteStatusSection(sb, "In Progress", tasks.Where(t => t.Status == GlassworkTask.Statuses.InProgress));
-        WriteStatusSection(sb, "Todo", tasks.Where(t => t.Status == GlassworkTask.Statuses.Todo));
-        WriteStatusSection(sb, "Done (Recent)", tasks
-            .Where(t => t.Status == GlassworkTask.Statuses.Done)
-            .OrderByDescending(t => t.CompletedAt)
-            .Take(20));
-
-        File.WriteAllText(Path.Combine(_vault.VaultPath, "_index.md"), sb.ToString());
-    }
-
-    private void WriteToday(List<GlassworkTask> tasks)
-    {
-        var parentMyDay = tasks.Where(t => t.IsMyDay).ToList();
-        var subtaskMyDay = tasks
-            .Where(t => !t.IsMyDay && t.Subtasks.Any(s => s.IsMyDay))
-            .ToList();
-
-        var sb = new StringBuilder();
-        sb.AppendLine("---");
-        sb.AppendLine("id: todo-today");
-        sb.AppendLine("title: Glasswork — My Day");
-        sb.AppendLine("type: index");
-        sb.AppendLine($"updated: {DateTime.Today:yyyy-MM-dd}");
-        sb.AppendLine("---");
-        sb.AppendLine();
-        sb.AppendLine("# My Day");
-        sb.AppendLine();
-        sb.AppendLine("> Auto-generated by Glasswork. Shows what TJ is focused on today.");
-        sb.AppendLine();
-
-        if (parentMyDay.Count == 0 && subtaskMyDay.Count == 0)
-        {
-            sb.AppendLine("*No tasks picked for today yet.*");
-        }
-        else
-        {
-            if (parentMyDay.Count > 0)
-            {
-                sb.AppendLine("| Task | Priority | Status | ADO |");
-                sb.AppendLine("|------|----------|--------|-----|");
-                foreach (var t in parentMyDay)
-                {
-                    var ado = t.AdoLink.HasValue ? $"[#{t.AdoLink}] {t.AdoTitle ?? ""}" : "";
-                    sb.AppendLine($"| [[{t.Id}|{t.Title}]] | {t.Priority} | {t.Status} | {ado} |");
-                }
-                sb.AppendLine();
-            }
-
-            if (subtaskMyDay.Count > 0)
-            {
-                sb.AppendLine("## Flagged subtasks");
-                sb.AppendLine();
-                foreach (var t in subtaskMyDay)
-                {
-                    foreach (var sub in t.Subtasks.Where(s => s.IsMyDay))
-                    {
-                        // Anchor link lands on the ### header in Obsidian: [[parent#Title]]
-                        sb.AppendLine($"- [[{t.Id}#{sub.Text}|{t.Title} → {sub.Text}]]");
-                    }
-                }
-                sb.AppendLine();
-            }
-        }
-
-        File.WriteAllText(Path.Combine(_vault.VaultPath, "_today.md"), sb.ToString());
-    }
-
-    private static void WriteStatusSection(StringBuilder sb, string heading, IEnumerable<GlassworkTask> tasks)
-    {
-        var list = tasks.ToList();
-        if (list.Count == 0) return;
-
-        sb.AppendLine($"## {heading}");
-        sb.AppendLine();
-        sb.AppendLine("| Task | Priority | Subtasks | ADO | Created |");
-        sb.AppendLine("|------|----------|----------|-----|---------|");
-        foreach (var t in list)
-        {
-            var ado = t.AdoLink.HasValue ? $"[#{t.AdoLink}] {t.AdoTitle ?? ""}" : "";
-            var progress = SubtaskProgress(t);
-            sb.AppendLine($"| [[{t.Id}|{t.Title}]] | {t.Priority} | {progress} | {ado} | {t.Created:yyyy-MM-dd} |");
-        }
-        sb.AppendLine();
-    }
-
-    private static string SubtaskProgress(GlassworkTask t)
-    {
-        var total = t.Subtasks.Count;
-        if (total == 0) return "";
-        var done = t.Subtasks.Count(s => s.IsEffectivelyDone);
-        return $"{done}/{total} subtasks done";
+        IndexMarkdownWriter.WriteOnce(Tasks, _vault.VaultPath);
     }
 }
