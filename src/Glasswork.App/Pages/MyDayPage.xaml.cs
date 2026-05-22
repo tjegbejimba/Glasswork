@@ -25,16 +25,16 @@ public sealed partial class MyDayPage : Page
     {
         base.OnNavigatedTo(e);
         Refresh();
-        App.TaskFileChangedExternally += OnFileChanged;
+        App.Index.Changed += OnIndexChanged;
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
-        App.TaskFileChangedExternally -= OnFileChanged;
+        App.Index.Changed -= OnIndexChanged;
     }
 
-    private void OnFileChanged(object? sender, string fileName)
+    private void OnIndexChanged(object? sender, Glasswork.Core.Services.TasksChanged e)
     {
         DispatcherQueue.TryEnqueue(Refresh);
     }
