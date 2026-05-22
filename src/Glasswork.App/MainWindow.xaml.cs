@@ -61,7 +61,7 @@ public sealed partial class MainWindow : Window
     private void InitStatusBar()
     {
         RefreshStatusBar();
-        App.TaskFileChangedExternally += (_, _) =>
+        App.Index.TasksChanged += (_, _) =>
         {
             DispatcherQueue.TryEnqueue(() =>
             {

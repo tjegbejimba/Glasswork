@@ -86,7 +86,7 @@ public class IndexMarkdownWriterTests
         // Refresh shim.
         File.Delete(Path.Combine(_tempDir, "_index.md"));
         File.Delete(Path.Combine(_tempDir, "_today.md"));
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
         var refreshIndex = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
         var refreshToday = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
 

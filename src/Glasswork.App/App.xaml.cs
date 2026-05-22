@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using Glasswork.Core.Models;
@@ -38,7 +38,6 @@ public partial class App : Application
     public static IUiStateService UiState { get; private set; } = null!;
     public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
-    private static Debouncer? _indexDebouncer;
     private static Debouncer? _uiStateDebouncer;
 
     /// <summary>
@@ -99,12 +98,6 @@ public partial class App : Application
 
     /// <summary>The active window, exposed so Settings can re-apply theme changes live.</summary>
     public static Window? MainWindow => (Current as App)?._window;
-
-    /// <summary>
-    /// Raised on a thread-pool thread when an external change to a task file is observed.
-    /// Subscribers must marshal to the dispatcher before touching UI.
-    /// </summary>
-    public static event EventHandler<string>? TaskFileChangedExternally;
 
     /// <summary>
     /// Raised on a thread-pool thread when an artifact file under
@@ -275,9 +268,7 @@ public partial class App : Application
         // Issue #186: the IndexMarkdownWriter is the new owner of _index.md /
         // _today.md generation. It subscribes to Index.Changed, owns its own
         // 500ms debouncer, and lands in IndexMarkdownWriter.WriteOnce. The
-        // legacy _indexDebouncer (below) still calls Index.Refresh() which
-        // delegates to the same WriteOnce — both paths are serialised per
-        // vault path so concurrent writes are safe. Dark-launch: identical
+        // writer is serialised per vault path so concurrent writes are safe. Dark-launch: identical
         // observable behaviour as before; this just makes the writer
         // independently testable on Linux.
         //
@@ -304,30 +295,16 @@ public partial class App : Application
             System.Diagnostics.Debug.WriteLine($"UI state GC failed: {ex.Message}");
         }
 
-        // _index.md / _today.md regeneration: debounce TasksChanged across rapid
-        // edits and let Index.Refresh re-pull from disk + rewrite the agent-facing
-        // markdown surfaces. Subscribing to Index.TasksChanged (rather than the
-        // raw watcher) means we naturally pick up both same-process writes and
-        // external edits without duplicating the suppression logic.
-        _indexDebouncer = new Debouncer(TimeSpan.FromMilliseconds(500), () =>
-        {
-            try { Index.Refresh(); }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index refresh failed: {ex.Message}"); }
-        });
-        Index.TasksChanged += (_, _) => _indexDebouncer?.Trigger();
-
         // File watcher: external (Obsidian / agent) edits to task files feed
-        // into Index via the typed event. The legacy string-payload event is
-        // also re-raised on TaskFileChangedExternally so existing page
-        // subscribers (MyDayPage / BacklogPage / TaskDetailPage / MainWindow)
-        // keep working until they migrate to Index.TasksChanged directly.
+        // into Index via the typed event. The Index owns the in-memory aggregate
+        // and emits TasksChanged deltas; pages subscribe to Index.TasksChanged
+        // directly (issue #190 completed the migration).
         Watcher = new FileWatcherService(vaultPath, SelfWrites);
         Watcher.TaskFileChange += (_, change) =>
         {
             try { Index.OnFileChangedOnDisk(change); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.OnFileChangedOnDisk failed: {ex.Message}"); }
         };
-        Watcher.TaskFileChanged += OnTaskFileChanged;
         Watcher.Start();
 
         ArtifactsWatcher = new ArtifactWatcherService(vaultPath);
@@ -431,13 +408,5 @@ public partial class App : Application
         {
             System.Diagnostics.Debug.WriteLine($"glasswork:// URL scheme registration failed: {ex.Message}");
         }
-    }
-
-    private static void OnTaskFileChanged(object? sender, string fileName)
-    {
-        // Index updates are driven via the typed TaskFileChange event handler
-        // (wired in InitVaultServices). This handler only fans out to the
-        // legacy string-payload subscribers (pages) until they migrate.
-        TaskFileChangedExternally?.Invoke(sender, fileName);
     }
 }

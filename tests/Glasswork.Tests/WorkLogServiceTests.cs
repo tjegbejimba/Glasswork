@@ -8,12 +8,15 @@ public class WorkLogServiceTests
 {
     private string _tempDir = null!;
     private VaultService _vault = null!;
+    private IndexService _index = null!;
 
     [TestInitialize]
     public void Setup()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), "glasswork-wl-" + Guid.NewGuid().ToString("N")[..8]);
         _vault = new VaultService(_tempDir);
+        _index = new IndexService(_vault);
+        _index.EnsureLoaded();
     }
 
     [TestCleanup]
@@ -46,7 +49,7 @@ public class WorkLogServiceTests
         _vault.Save(t2);
         _vault.Save(t3);
 
-        var service = new WorkLogService(_vault);
+        var service = new WorkLogService(_vault, _index);
         var weekStart = new DateTime(2026, 4, 13); // Monday
         var log = service.GenerateWeeklyLog(weekStart);
 
@@ -73,7 +76,7 @@ public class WorkLogServiceTests
         _vault.Save(t1);
         _vault.Save(t2);
 
-        var service = new WorkLogService(_vault);
+        var service = new WorkLogService(_vault, _index);
         var log = service.GenerateWeeklyLog(new DateTime(2026, 4, 13));
 
         Assert.IsTrue(log.Contains("This week"));

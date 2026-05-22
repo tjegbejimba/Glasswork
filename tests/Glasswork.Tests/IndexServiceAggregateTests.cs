@@ -303,7 +303,7 @@ public class IndexServiceAggregateTests
             Path.Combine(_tempDir, "ghost.md"),
             "---\nid: ghost\ntitle: Ghost\nstatus: todo\n---\n");
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var indexMd = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
         StringAssert.Contains(indexMd, "Known");

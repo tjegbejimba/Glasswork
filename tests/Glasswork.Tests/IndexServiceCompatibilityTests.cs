@@ -115,7 +115,7 @@ public class IndexServiceCompatibilityTests
         // identical: both _index.md and _today.md exist after the call.
         _vault.Save(new GlassworkTask { Id = "a", Title = "Alpha", Status = "todo" });
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         Assert.IsTrue(File.Exists(Path.Combine(_tempDir, "_index.md")));
         Assert.IsTrue(File.Exists(Path.Combine(_tempDir, "_today.md")));

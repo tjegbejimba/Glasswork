@@ -12,11 +12,9 @@ namespace Glasswork.Core.Services;
 public class TaskService
 {
     private readonly VaultService _vault;
-    private readonly IndexService? _index;
+    private readonly IndexService _index;
 
-    public TaskService(VaultService vault) : this(vault, null) { }
-
-    public TaskService(VaultService vault, IndexService? index)
+    public TaskService(VaultService vault, IndexService index)
     {
         _vault = vault;
         _index = index;
@@ -88,16 +86,7 @@ public class TaskService
     /// </summary>
     public List<GlassworkTask> GetCarryoverTasks()
     {
-        // Prefer the in-memory aggregate (issue #184). Fall back to the disk
-        // scan when no Index was provided (legacy unit-test paths).
-        if (_index is not null)
-            return _index.Carryover(DateTime.Today).ToList();
-
-        return _vault.LoadAll()
-            .Where(t => t.MyDay.HasValue
-                        && t.MyDay.Value.Date < DateTime.Today
-                        && t.Status != GlassworkTask.Statuses.Done)
-            .ToList();
+        return _index.Carryover(DateTime.Today).ToList();
     }
 
     /// <summary>

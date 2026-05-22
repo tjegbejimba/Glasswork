@@ -18,12 +18,6 @@ namespace Glasswork.Core.Services;
 ///
 /// Lives in <c>Glasswork.Core</c>, takes no <c>DispatcherQueue</c> dependency;
 /// the debouncer fires on a thread-pool thread.
-///
-/// Coexistence note: the legacy <c>App._indexDebouncer</c> still calls
-/// <see cref="IndexService.Refresh"/>, which delegates to <see cref="WriteOnce"/>.
-/// Both writer paths therefore land on the same static method, which is
-/// serialised by a per-vault-path lock so concurrent <see cref="File.WriteAllText"/>
-/// calls don't race. The content produced by either path is identical.
 /// </summary>
 public sealed class IndexMarkdownWriter : IDisposable
 {
@@ -87,10 +81,7 @@ public sealed class IndexMarkdownWriter : IDisposable
 
     /// <summary>
     /// Write <c>_index.md</c> and <c>_today.md</c> from the supplied snapshot.
-    /// Serialised per vault path so the legacy <c>_indexDebouncer</c>
-    /// (→ <see cref="IndexService.Refresh"/>) and the new
-    /// <see cref="IndexMarkdownWriter"/> debouncer can both write safely under
-    /// load. Idempotent.
+    /// Serialised per vault path so concurrent writers can write safely under load. Idempotent.
     /// <para>
     /// <b>Note:</b> the caller must capture <paramref name="tasks"/> from the
     /// authoritative snapshot at the call site. When two writers race, the one
@@ -118,12 +109,11 @@ public sealed class IndexMarkdownWriter : IDisposable
 
     /// <summary>
     /// Like <see cref="WriteOnce"/>, but captures the snapshot from
-    /// <paramref name="index"/> <i>inside</i> the per-vault lock. This is what
-    /// both the legacy <c>_indexDebouncer</c> path
-    /// (<see cref="IndexService.Refresh"/>) and the new
-    /// <see cref="IndexMarkdownWriter"/> debouncer use, so when they race the
-    /// loser always reads the latest in-memory state on its second attempt
-    /// rather than rewriting stale data captured before the lock was taken.
+    /// <paramref name="index"/> <i>inside</i> the per-vault lock. The
+    /// <see cref="IndexMarkdownWriter"/> debouncer uses this, so when multiple
+    /// writers race, the loser always reads the latest in-memory state on its
+    /// second attempt rather than rewriting stale data captured before the lock
+    /// was taken.
     /// </summary>
     public static void WriteCurrent(IndexService index, string vaultPath)
     {

@@ -36,9 +36,9 @@ public class BacklogViewModelIndexSubscriptionTests
         _tempDir = Path.Combine(Path.GetTempPath(), "glasswork-bvm-index-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(_tempDir);
         _vault = new VaultService(_tempDir);
-        _taskService = new TaskService(_vault);
         _index = new IndexService(_vault);
         _index.EnsureLoaded();
+        _taskService = new TaskService(_vault, _index);
     }
 
     [TestCleanup]

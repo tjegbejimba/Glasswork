@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 
 namespace Glasswork.Core.Services;
 
@@ -13,11 +14,9 @@ namespace Glasswork.Core.Services;
 public class WorkLogService
 {
     private readonly VaultService _vault;
-    private readonly IndexService? _index;
+    private readonly IndexService _index;
 
-    public WorkLogService(VaultService vault) : this(vault, null) { }
-
-    public WorkLogService(VaultService vault, IndexService? index)
+    public WorkLogService(VaultService vault, IndexService index)
     {
         _vault = vault;
         _index = index;
@@ -29,20 +28,7 @@ public class WorkLogService
     /// </summary>
     public string GenerateWeeklyLog(DateTime weekStart)
     {
-        var weekEnd = weekStart.AddDays(7);
-
-        // Prefer the in-memory aggregate (issue #184). The Index returns the
-        // completed window already filtered + ordered. Fall back to a disk
-        // scan when running in a legacy ctor (e.g. unit tests).
-        var completed = _index is not null
-            ? _index.CompletedBetween(weekStart, weekEnd).ToList()
-            : _vault.LoadAll()
-                .Where(t => t.Status == GlassworkTask.Statuses.Done
-                            && t.CompletedAt.HasValue
-                            && t.CompletedAt.Value >= weekStart
-                            && t.CompletedAt.Value < weekEnd)
-                .OrderBy(t => t.CompletedAt)
-                .ToList();
+        var completed = WorkLogQueries.WeeklyLog(_index.Tasks, weekStart);
 
         var sb = new StringBuilder();
         sb.AppendLine($"# Work Log: Week of {weekStart:yyyy-MM-dd}");
