@@ -13,7 +13,7 @@ using Glasswork.Core.Services;
 
 namespace Glasswork.ViewModels;
 
-public partial class BacklogViewModel : ObservableObject
+public partial class BacklogViewModel : ObservableObject, IDisposable
 {
     private readonly TaskService _taskService;
     private readonly VaultService _vault;
@@ -78,6 +78,9 @@ public partial class BacklogViewModel : ObservableObject
         _taskService = taskService;
         _index = index;
         _parentTitleStore = uiState is null ? null : new AdoParentTitleCacheStore(uiState);
+        
+        // Issue #188: Subscribe to Index.Changed for auto-refresh on external edits
+        _index.Changed += OnIndexChanged;
     }
 
     private static IndexService EnsureSeededIndex(VaultService vault)
@@ -307,12 +310,30 @@ public partial class BacklogViewModel : ObservableObject
     partial void OnIsGroupedChanged(bool value) => Refresh();
     partial void OnViewModeChanged(string value) => Refresh();
 
+    private void OnIndexChanged(object? sender, TasksChanged delta)
+    {
+        // Auto-refresh when Index mutates (issue #188).
+        // Fires on vault writes, file watcher events, etc.
+        Refresh();
+    }
+
+    public void Dispose()
+    {
+        // Unsubscribe from Index.Changed when ViewModel is disposed
+        _index.Changed -= OnIndexChanged;
+        
+        // Cancel any in-flight parent title fetches
+        _parentFetchCts?.Cancel();
+        _parentFetchCts?.Dispose();
+        _parentFetchCts = null;
+    }
+
     [RelayCommand]
     public void SetStatus(string newStatus)
     {
         if (SelectedTask is null) return;
         _taskService.SetStatus(SelectedTask, newStatus);
-        Refresh();
+        // Issue #188: No explicit Refresh() - Index.Changed subscription handles it
     }
 
     [RelayCommand]
@@ -320,6 +341,7 @@ public partial class BacklogViewModel : ObservableObject
     {
         if (SelectedTask is null) return;
         _taskService.ToggleMyDay(SelectedTask);
+        // Issue #188: No explicit Refresh() - Index.Changed subscription handles it
     }
 
     partial void OnFilterStatusChanged(string value) => Refresh();

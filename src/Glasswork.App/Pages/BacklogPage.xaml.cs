@@ -213,7 +213,8 @@ public sealed partial class BacklogPage : Page
     {
         base.OnNavigatedTo(e);
         Refresh();
-        App.TaskFileChangedExternally += OnFileChanged;
+        // Issue #188: BacklogViewModel now auto-refreshes via Index.Changed subscription.
+        // No need to subscribe to App.TaskFileChangedExternally here.
         // Clear undo state when navigating to the page
         ClearUndoState();
     }
@@ -221,15 +222,10 @@ public sealed partial class BacklogPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
-        App.TaskFileChangedExternally -= OnFileChanged;
+        // Issue #188: BacklogViewModel handles its own Index.Changed subscription.
+        // The ViewModel lives as long as the Page (which stays in navigation cache).
         // Clear undo state when navigating away
         ClearUndoState();
-    }
-
-    private void OnFileChanged(object? sender, string fileName)
-    {
-        // Watcher fires on thread-pool thread; marshal to UI thread before refresh.
-        DispatcherQueue.TryEnqueue(Refresh);
     }
 
     private void Refresh()
