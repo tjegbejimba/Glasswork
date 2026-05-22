@@ -196,22 +196,47 @@ public class IndexService
     /// <summary>
     /// String-overload entry point (issue #186 contract). Determines kind by
     /// checking whether the file currently exists: missing ⇒ Deleted, present
-    /// (or untestable) ⇒ CreatedOrChanged. Delegates to the typed
-    /// <see cref="OnFileChangedOnDisk(TaskFileChange)"/> so both
-    /// <see cref="TasksChanged"/> and <see cref="Changed"/> fire from the
-    /// single shared mutation path. Rename precision is unavailable through
-    /// this overload — callers needing it should use the typed overload.
+    /// ⇒ CreatedOrChanged. Both <see cref="TasksChanged"/> and
+    /// <see cref="Changed"/> fire from the single shared mutation path.
+    /// Rename precision is unavailable through this overload — callers needing
+    /// it should use the typed overload.
+    /// <para>
+    /// Handles the existence-check race: if the file is gone by the time we
+    /// try to load it (i.e. <c>File.Exists</c> was true but
+    /// <see cref="VaultService.Load"/> returns null and the file is gone on a
+    /// second check), we emit a removal delta instead of silently leaving the
+    /// stale entry in place. Parse failures (file still present but unparseable)
+    /// continue to preserve the prior snapshot.
+    /// </para>
     /// </summary>
     public void OnFileChangedOnDisk(string taskId)
     {
         if (string.IsNullOrEmpty(taskId)) return;
+        EnsureLoaded();
 
         var path = Path.Combine(_vault.VaultPath, taskId + ".md");
-        var kind = File.Exists(path)
-            ? TaskFileChangeKind.CreatedOrChanged
-            : TaskFileChangeKind.Deleted;
+        var changes = new List<TaskChange>();
 
-        OnFileChangedOnDisk(new TaskFileChange(kind, OldFileName: null, NewFileName: taskId + ".md"));
+        if (!File.Exists(path))
+        {
+            RemoveSnapshot(taskId, changes);
+        }
+        else
+        {
+            ReplaceSnapshotFromDisk(taskId, changes);
+            // Race: file existed when we first checked but vanished before
+            // VaultService.Load could read it. ReplaceSnapshotFromDisk no-ops
+            // on null Load; detect that case and route to remove. (If the file
+            // is still present after the attempt, the no-op is a parse failure
+            // and the prior snapshot must stay intact.)
+            if (changes.Count == 0 && !File.Exists(path))
+            {
+                RemoveSnapshot(taskId, changes);
+            }
+        }
+
+        if (changes.Count > 0)
+            RaiseTasksChanged(changes);
     }
 
     private void OnVaultTaskWritten(object? sender, string taskId)
@@ -360,15 +385,18 @@ public class IndexService
     /// <summary>
     /// Regenerate both <c>_index.md</c> and <c>_today.md</c> from the current
     /// in-memory snapshot. Foundation slice (issue #186) extracted the actual
-    /// writing into <see cref="IndexMarkdownWriter.WriteOnce"/>; this method
-    /// remains as a shim so the legacy <c>App._indexDebouncer</c> path (and
-    /// every <c>App.Index.Refresh()</c> call site in <c>TaskDetailPage</c>)
-    /// keeps working unchanged. New code should rely on
-    /// <see cref="Changed"/> + <see cref="IndexMarkdownWriter"/> instead.
+    /// writing into <see cref="IndexMarkdownWriter"/>; this method remains as
+    /// a shim so the legacy <c>App._indexDebouncer</c> path (and every
+    /// <c>App.Index.Refresh()</c> call site in <c>TaskDetailPage</c>) keeps
+    /// working unchanged. Uses
+    /// <see cref="IndexMarkdownWriter.WriteCurrent"/> (snapshot-inside-lock)
+    /// so a race with the new writer's debouncer can't leave a stale file.
+    /// New code should rely on <see cref="Changed"/> +
+    /// <see cref="IndexMarkdownWriter"/> instead.
     /// </summary>
     public void Refresh()
     {
         EnsureLoaded();
-        IndexMarkdownWriter.WriteOnce(Tasks, _vault.VaultPath);
+        IndexMarkdownWriter.WriteCurrent(this, _vault.VaultPath);
     }
 }

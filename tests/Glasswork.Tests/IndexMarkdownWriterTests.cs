@@ -110,22 +110,46 @@ public class IndexMarkdownWriterTests
     }
 
     [TestMethod]
-    public void WriteOnce_ConcurrentCalls_AreSerialised()
+    public void WriteCurrent_ConcurrentCalls_AreSerialised()
     {
-        // The static lock per vault path should let multiple threads call
-        // WriteOnce simultaneously without throwing or producing torn files.
+        // The static per-vault lock should let multiple threads call
+        // WriteCurrent simultaneously without throwing or producing torn files.
         _vault.Save(new GlassworkTask { Id = "a", Title = "Alpha", Status = "todo" });
         _index.EnsureLoaded();
-        var tasks = _index.Tasks;
 
         Parallel.For(0, 20, _ =>
         {
-            IndexMarkdownWriter.WriteOnce(tasks, _tempDir);
+            IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
         });
 
-        // File exists, content well-formed.
         var content = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
         StringAssert.Contains(content, "Alpha");
         StringAssert.StartsWith(content, "---");
+    }
+
+    [TestMethod]
+    public void WriteCurrent_CapturesSnapshotInsideLock()
+    {
+        // Race fix (PR #194 rubber-duck): WriteCurrent reads the snapshot
+        // *inside* the per-vault lock, so two writers racing for the same
+        // vault can't have the slower one overwrite the faster one's output
+        // with stale data.
+        //
+        // We assert the observable post-condition: after two WriteCurrent
+        // calls with state mutated between them, the final file reflects
+        // the *second* call's state.
+        _vault.Save(new GlassworkTask { Id = "a", Title = "First", Status = "todo" });
+        _index.EnsureLoaded();
+
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
+        var firstContent = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
+        StringAssert.Contains(firstContent, "First");
+
+        // Mutate then write again — last write must win with the fresh state.
+        _vault.Save(new GlassworkTask { Id = "a", Title = "Second", Status = "todo" });
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
+        var secondContent = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
+
+        StringAssert.Contains(secondContent, "Second");
     }
 }

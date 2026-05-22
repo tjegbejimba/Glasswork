@@ -66,7 +66,10 @@ public sealed class IndexMarkdownWriter : IDisposable
         if (_disposed) return;
         try
         {
-            WriteOnce(_index.Tasks, _vaultPath);
+            // Capture the snapshot INSIDE the per-vault lock (WriteCurrent) so
+            // a stale callback can't overwrite the output of a fresher one
+            // when two writer paths race. Rubber-duck PR #194.
+            WriteCurrent(_index, _vaultPath);
         }
         catch (Exception ex)
         {
@@ -85,9 +88,17 @@ public sealed class IndexMarkdownWriter : IDisposable
     /// <summary>
     /// Write <c>_index.md</c> and <c>_today.md</c> from the supplied snapshot.
     /// Serialised per vault path so the legacy <c>_indexDebouncer</c>
-    /// (→ <see cref="IndexService.Refresh"/> → <see cref="WriteOnce"/>) and the
-    /// new <see cref="IndexMarkdownWriter"/> debouncer can both invoke this
-    /// safely under load. Idempotent.
+    /// (→ <see cref="IndexService.Refresh"/>) and the new
+    /// <see cref="IndexMarkdownWriter"/> debouncer can both write safely under
+    /// load. Idempotent.
+    /// <para>
+    /// <b>Note:</b> the caller must capture <paramref name="tasks"/> from the
+    /// authoritative snapshot at the call site. When two writers race, the one
+    /// that wins the lock first writes its snapshot; the loser's snapshot may
+    /// be older and would overwrite the winner's output. Prefer
+    /// <see cref="WriteCurrent"/> instead — it captures the snapshot inside
+    /// the lock so the *last* call always wins with the *freshest* state.
+    /// </para>
     /// </summary>
     public static void WriteOnce(
         IReadOnlyDictionary<string, GlassworkTask> tasks,
@@ -96,9 +107,7 @@ public sealed class IndexMarkdownWriter : IDisposable
         if (tasks is null) throw new ArgumentNullException(nameof(tasks));
         if (vaultPath is null) throw new ArgumentNullException(nameof(vaultPath));
 
-        var lockKey = Path.GetFullPath(vaultPath);
-        var gate = _vaultLocks.GetOrAdd(lockKey, _ => new object());
-
+        var gate = LockFor(vaultPath);
         lock (gate)
         {
             var snapshot = tasks.Values.ToList();
@@ -106,6 +115,32 @@ public sealed class IndexMarkdownWriter : IDisposable
             WriteToday(snapshot, vaultPath);
         }
     }
+
+    /// <summary>
+    /// Like <see cref="WriteOnce"/>, but captures the snapshot from
+    /// <paramref name="index"/> <i>inside</i> the per-vault lock. This is what
+    /// both the legacy <c>_indexDebouncer</c> path
+    /// (<see cref="IndexService.Refresh"/>) and the new
+    /// <see cref="IndexMarkdownWriter"/> debouncer use, so when they race the
+    /// loser always reads the latest in-memory state on its second attempt
+    /// rather than rewriting stale data captured before the lock was taken.
+    /// </summary>
+    public static void WriteCurrent(IndexService index, string vaultPath)
+    {
+        if (index is null) throw new ArgumentNullException(nameof(index));
+        if (vaultPath is null) throw new ArgumentNullException(nameof(vaultPath));
+
+        var gate = LockFor(vaultPath);
+        lock (gate)
+        {
+            var snapshot = index.Tasks.Values.ToList();
+            WriteIndex(snapshot, vaultPath);
+            WriteToday(snapshot, vaultPath);
+        }
+    }
+
+    private static object LockFor(string vaultPath) =>
+        _vaultLocks.GetOrAdd(Path.GetFullPath(vaultPath), _ => new object());
 
     private static void WriteIndex(List<GlassworkTask> tasks, string vaultPath)
     {
