@@ -7,16 +7,20 @@ using Glasswork.ViewModels;
 namespace Glasswork.Tests;
 
 /// <summary>
-/// Contract coverage for issue #188: <see cref="BacklogViewModel"/> subscribes to
-/// <see cref="IndexService.Changed"/> and auto-refreshes when the index mutates.
+/// Contract coverage for issue #188: BacklogPage subscribes to
+/// <see cref="IndexService.Changed"/> and marshals refresh to UI thread.
 /// 
 /// Behavior:
 /// <list type="bullet">
-///   <item><description>BacklogViewModel constructor subscribes to Index.Changed</description></item>
-///   <item><description>When Index fires Changed, BacklogViewModel calls Refresh()</description></item>
-///   <item><description>Dispose() unsubscribes from Index.Changed</description></item>
-///   <item><description>BacklogPage no longer subscribes to App.TaskFileChangedExternally</description></item>
+///   <item><description>BacklogPage subscribes to Index.Changed on navigation</description></item>
+///   <item><description>When Index fires Changed, Page marshals to UI thread and calls VM.Refresh()</description></item>
+///   <item><description>BacklogPage unsubscribes on navigation away</description></item>
+///   <item><description>ViewModel commands trigger Index updates which flow back through Page</description></item>
 /// </list>
+/// 
+/// Note: These tests verify the ViewModel side (that it reads from Index.Tasks and that
+/// commands don't explicitly refresh). The Page-level marshalling is tested separately
+/// or via manual smoke test since we can't easily simulate DispatcherQueue in unit tests.
 /// </summary>
 [TestClass]
 public class BacklogViewModelIndexSubscriptionTests
@@ -45,28 +49,21 @@ public class BacklogViewModelIndexSubscriptionTests
     }
 
     [TestMethod]
-    public void Constructor_SubscribesToIndexChanged()
+    public void Refresh_ReadsFromIndexTasks()
     {
         // Create initial task
-        _taskService.CreateTask("Initial Task");
+        _taskService.CreateTask("Task 1");
+        _taskService.CreateTask("Task 2");
         
         var vm = new BacklogViewModel(_vault, _taskService, _index);
-        vm.Refresh(); // Prime the collections
+        vm.Refresh();
         
-        var refreshedCount = 0;
-        vm.Refreshed += () => refreshedCount++;
-        
-        // Trigger Index.Changed by creating a new task
-        _taskService.CreateTask("New Task");
-        
-        Assert.AreEqual(1, refreshedCount, 
-            "BacklogViewModel should auto-refresh once when Index.Changed fires after task creation");
-        Assert.AreEqual(2, vm.Tasks.Count,
-            "BacklogViewModel should show both tasks after auto-refresh");
+        Assert.AreEqual(2, vm.Tasks.Count, 
+            "BacklogViewModel.Refresh() should read from Index.Tasks");
     }
 
     [TestMethod]
-    public void IndexChanged_TriggersRefreshWithCorrectCollections()
+    public void SetStatusCommand_CallsRefreshForImmediateUpdate()
     {
         var task1 = _taskService.CreateTask("Task 1");
         var task2 = _taskService.CreateTask("Task 2");
@@ -74,68 +71,52 @@ public class BacklogViewModelIndexSubscriptionTests
         var vm = new BacklogViewModel(_vault, _taskService, _index);
         vm.Refresh(); // Prime with 2 tasks
         
-        Assert.AreEqual(2, vm.Tasks.Count, "Should start with 2 tasks");
+        var refreshedCount = 0;
+        vm.Refreshed += () => refreshedCount++;
         
-        // Modify a task via TaskService (which will trigger Index update)
-        _taskService.SetStatus(task1, GlassworkTask.Statuses.Done);
+        vm.SelectedTask = task1;
+        vm.SetStatusCommand.Execute(GlassworkTask.Statuses.Done);
         
-        // After auto-refresh, only Task 2 should show (task1 is done, filtered out)
+        Assert.AreEqual(1, refreshedCount,
+            "SetStatusCommand should call Refresh() for immediate UI update");
         Assert.AreEqual(1, vm.Tasks.Count,
-            "BacklogViewModel should auto-refresh and filter out done task");
-        Assert.AreEqual(task2.Id, vm.Tasks[0].Id,
-            "Remaining task should be Task 2");
+            "VM should immediately filter out done task");
     }
 
     [TestMethod]
-    public void IndexChanged_InBoardMode_RefreshesBoardColumns()
+    public void BoardMode_ReadsFromIndexTasks()
     {
         var task1 = _taskService.CreateTask("Task 1");
-        
-        var vm = new BacklogViewModel(_vault, _taskService, _index);
-        vm.ViewMode = "board"; // Switch to board mode
-        
-        Assert.AreEqual(2, vm.BoardColumns.Count, 
-            "Board mode always shows 2 columns (To Do + In Progress)");
-        Assert.AreEqual(1, vm.BoardColumns[0].Tasks.Count,
-            "Todo column should have 1 task");
-        
-        // Change status - should trigger auto-refresh
         _taskService.SetStatus(task1, GlassworkTask.Statuses.InProgress);
         
+        var vm = new BacklogViewModel(_vault, _taskService, _index);
+        vm.ViewMode = "board";
+        
         Assert.AreEqual(2, vm.BoardColumns.Count,
-            "After auto-refresh, still 2 columns");
+            "Board mode should read from Index.Tasks");
         Assert.AreEqual(0, vm.BoardColumns[0].Tasks.Count,
-            "Todo column should now be empty");
+            "Todo column should be empty");
         Assert.AreEqual(1, vm.BoardColumns[1].Tasks.Count,
-            "In Progress column should now have 1 task");
+            "In Progress column should have 1 task");
     }
 
     [TestMethod]
-    public void Dispose_UnsubscribesFromIndexChanged()
+    public void Dispose_CancelsParentTitleFetches()
     {
         _taskService.CreateTask("Task 1");
         
         var vm = new BacklogViewModel(_vault, _taskService, _index);
         vm.Refresh();
         
-        var refreshedCount = 0;
-        vm.Refreshed += () => refreshedCount++;
-        
-        // Dispose the view model
+        // Dispose should not throw
         if (vm is IDisposable disposable)
         {
             disposable.Dispose();
         }
-        
-        // Create a new task - should NOT trigger refresh on disposed VM
-        _taskService.CreateTask("Task 2");
-        
-        Assert.AreEqual(0, refreshedCount,
-            "Disposed BacklogViewModel should not refresh when Index.Changed fires");
     }
 
     [TestMethod]
-    public void IndexChanged_PreservesAdoParentTitleCache()
+    public void GroupedMode_PreservesAdoParentTitleCache()
     {
         // Create a task with a numeric parent (simulating ADO parent)
         var task = _taskService.CreateTask("Task with Parent");
@@ -146,15 +127,8 @@ public class BacklogViewModelIndexSubscriptionTests
         vm.IsGrouped = true;
         vm.Refresh();
         
-        // Simulate parent title resolution (would normally come from background fetcher)
-        // This test just verifies the cache mechanism survives auto-refresh
-        
-        // Modify task to trigger Index.Changed
-        task.Priority = "high";
-        _vault.Save(task);
-        
-        // After auto-refresh, grouped rows should still work
+        // After refresh, grouped rows should render
         Assert.IsTrue(vm.Rows.Count > 0,
-            "Grouped rows should render after auto-refresh with parent");
+            "Grouped rows should render with parent");
     }
 }

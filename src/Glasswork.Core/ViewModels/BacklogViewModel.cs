@@ -78,9 +78,8 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         _taskService = taskService;
         _index = index;
         _parentTitleStore = uiState is null ? null : new AdoParentTitleCacheStore(uiState);
-        
-        // Issue #188: Subscribe to Index.Changed for auto-refresh on external edits
-        _index.Changed += OnIndexChanged;
+        // Issue #188: Page (BacklogPage) subscribes to Index.Changed and marshals to UI thread.
+        // ViewModel stays on Core and has no dispatcher access.
     }
 
     private static IndexService EnsureSeededIndex(VaultService vault)
@@ -310,18 +309,8 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     partial void OnIsGroupedChanged(bool value) => Refresh();
     partial void OnViewModeChanged(string value) => Refresh();
 
-    private void OnIndexChanged(object? sender, TasksChanged delta)
-    {
-        // Auto-refresh when Index mutates (issue #188).
-        // Fires on vault writes, file watcher events, etc.
-        Refresh();
-    }
-
     public void Dispose()
     {
-        // Unsubscribe from Index.Changed when ViewModel is disposed
-        _index.Changed -= OnIndexChanged;
-        
         // Cancel any in-flight parent title fetches
         _parentFetchCts?.Cancel();
         _parentFetchCts?.Dispose();
@@ -333,7 +322,9 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     {
         if (SelectedTask is null) return;
         _taskService.SetStatus(SelectedTask, newStatus);
-        // Issue #188: No explicit Refresh() - Index.Changed subscription handles it
+        // Issue #188: Explicit refresh here for immediate UI update. Page will also
+        // refresh when Index.Changed fires, but that's async via DispatcherQueue.
+        Refresh();
     }
 
     [RelayCommand]
@@ -341,7 +332,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     {
         if (SelectedTask is null) return;
         _taskService.ToggleMyDay(SelectedTask);
-        // Issue #188: No explicit Refresh() - Index.Changed subscription handles it
+        // Issue #188: No explicit refresh - this is a fire-and-forget toggle
     }
 
     partial void OnFilterStatusChanged(string value) => Refresh();
