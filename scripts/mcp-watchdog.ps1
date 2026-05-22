@@ -40,7 +40,6 @@ $MaxConsecErrors = 10
 # back-to-back test runs. Tracked separately; not a license to ignore real bugs.
 $FlakyTests = @(
     'DebouncesBurstsIntoOneEvent'
-    'Trigger_FiresAgainAfterQuietPeriodElapses'
 )
 
 # Milestone chain. DependsOn = list of issue numbers that must be CLOSED before

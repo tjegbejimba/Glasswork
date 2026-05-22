@@ -50,17 +50,25 @@ public class DebouncerTests
     public void Trigger_FiresAgainAfterQuietPeriodElapses()
     {
         int count = 0;
+        var signal1 = new ManualResetEventSlim(false);
+        var signal2 = new ManualResetEventSlim(false);
         using var debouncer = new Debouncer(TimeSpan.FromMilliseconds(80), () =>
         {
-            Interlocked.Increment(ref count);
+            int c = Interlocked.Increment(ref count);
+            if (c == 1) signal1.Set();
+            if (c == 2) signal2.Set();
         });
 
         debouncer.Trigger();
-        Thread.Sleep(250); // wait for first fire
+        Assert.IsTrue(signal1.Wait(TimeSpan.FromSeconds(2)), "First fire should arrive");
+        
         debouncer.Trigger();
-        Thread.Sleep(250); // wait for second fire
+        Assert.IsTrue(signal2.Wait(TimeSpan.FromSeconds(2)), "Second fire should arrive");
 
         Assert.AreEqual(2, count, "Two distinct trigger bursts should each fire once");
+        
+        signal1.Dispose();
+        signal2.Dispose();
     }
 
     [TestMethod]
