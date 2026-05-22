@@ -45,7 +45,7 @@ public sealed partial class TaskDetailPage : Page
             // Navigated from My Day's "flagged subtasks" section — display the parent task
             // (FocusSubtaskTitle is currently informational; UI affordance for scrolling could
             // be added later).
-            App.Index.TasksChanged += OnIndexTasksChanged;
+            App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(nav.Task);
@@ -53,7 +53,7 @@ public sealed partial class TaskDetailPage : Page
         }
         if (e.Parameter is GlassworkTask task)
         {
-            App.Index.TasksChanged += OnIndexTasksChanged;
+            App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(task);
@@ -525,7 +525,7 @@ public sealed partial class TaskDetailPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
-        App.Index.TasksChanged -= OnIndexTasksChanged;
+        App.Watcher.TaskFileChanged -= OnTaskFileChangedExternally;
         App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.BacklinksChangedExternally -= OnBacklinksChangedExternally;
         App.ObsidianLauncher.NotInstalled -= OnObsidianNotInstalled;
@@ -537,14 +537,12 @@ public sealed partial class TaskDetailPage : Page
         DispatcherQueue.TryEnqueue(() => ObsidianInstallBanner.IsOpen = true);
     }
 
-    private void OnIndexTasksChanged(object? sender, TasksChangedEventArgs e)
+    private void OnTaskFileChangedExternally(object? sender, string fileName)
     {
-        // Check if the current task was changed
-        var id = Task?.Id;
-        if (string.IsNullOrEmpty(id)) return;
-        if (!e.Changes.Any(c => string.Equals(c.New?.Id, id, StringComparison.Ordinal) || 
-                                string.Equals(c.Old?.Id, id, StringComparison.Ordinal))) return;
-        // Marshal to UI thread before touching the model or any banners
+        if (!App.ActiveTask.IsActive(fileName)) return;
+        // Watcher fires on a thread-pool thread; marshal to UI thread before
+        // touching the model or any banners. The watcher is filtered through
+        // SelfWriteCoordinator, so this only fires for external edits (Obsidian, agents).
         DispatcherQueue.TryEnqueue(HandleExternalFileChange);
     }
 
