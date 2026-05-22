@@ -14,8 +14,7 @@ namespace Glasswork.Core.Services;
 /// This is the new "deepened" channel that the per-view <c>Glasswork.Core.Queries</c>
 /// helpers and <see cref="IndexMarkdownWriter"/> consume. The legacy
 /// <see cref="IndexService.TasksChanged"/> event (with <see cref="TasksChangedEventArgs"/>
-/// payload) still fires from the same mutation point for backward compatibility
-/// with existing call sites (notably <c>App._indexDebouncer</c>).
+/// payload) still fires from the same mutation point for backward compatibility.
 /// </summary>
 public sealed record TasksChanged(
     IReadOnlyList<GlassworkTask> Added,

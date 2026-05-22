@@ -22,6 +22,7 @@ public class BacklogViewModelBoardRefreshTests
 {
     private string _tempDir = null!;
     private VaultService _vault = null!;
+    private IndexService _index = null!;
     private TaskService _taskService = null!;
 
     [TestInitialize]
@@ -30,7 +31,9 @@ public class BacklogViewModelBoardRefreshTests
         _tempDir = Path.Combine(Path.GetTempPath(), "glasswork-bvm-board-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(_tempDir);
         _vault = new VaultService(_tempDir);
-        _taskService = new TaskService(_vault);
+        _index = new IndexService(_vault);
+        _index.EnsureLoaded();
+        _taskService = new TaskService(_vault, _index);
     }
 
     [TestCleanup]

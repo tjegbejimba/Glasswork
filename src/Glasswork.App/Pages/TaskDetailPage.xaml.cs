@@ -45,7 +45,7 @@ public sealed partial class TaskDetailPage : Page
             // Navigated from My Day's "flagged subtasks" section — display the parent task
             // (FocusSubtaskTitle is currently informational; UI affordance for scrolling could
             // be added later).
-            App.TaskFileChangedExternally += OnFileChangedExternally;
+            App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(nav.Task);
@@ -53,7 +53,7 @@ public sealed partial class TaskDetailPage : Page
         }
         if (e.Parameter is GlassworkTask task)
         {
-            App.TaskFileChangedExternally += OnFileChangedExternally;
+            App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(task);
@@ -441,7 +441,7 @@ public sealed partial class TaskDetailPage : Page
         App.Vault.SetLinks(Task.Id, updatedLinks);
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
-        try { App.Index.Refresh(); } catch (Exception ex) { Debug.WriteLine($"App.Index.Refresh failed after AddLink: {ex}"); }
+
     }
 
     /// <summary>
@@ -487,7 +487,7 @@ public sealed partial class TaskDetailPage : Page
             App.Vault.SetLinks(Task.Id, updatedLinks);
             var reloaded = App.Vault.Load(Task.Id);
             if (reloaded is not null) ApplyTask(reloaded);
-            try { App.Index.Refresh(); } catch (Exception ex) { Debug.WriteLine($"App.Index.Refresh failed after DeleteLink: {ex}"); }
+
         };
         menu.Items.Add(deleteItem);
 
@@ -525,7 +525,7 @@ public sealed partial class TaskDetailPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
-        App.TaskFileChangedExternally -= OnFileChangedExternally;
+        App.Watcher.TaskFileChanged -= OnTaskFileChangedExternally;
         App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.BacklinksChangedExternally -= OnBacklinksChangedExternally;
         App.ObsidianLauncher.NotInstalled -= OnObsidianNotInstalled;
@@ -537,11 +537,12 @@ public sealed partial class TaskDetailPage : Page
         DispatcherQueue.TryEnqueue(() => ObsidianInstallBanner.IsOpen = true);
     }
 
-    private void OnFileChangedExternally(object? sender, string fileName)
+    private void OnTaskFileChangedExternally(object? sender, string fileName)
     {
         if (!App.ActiveTask.IsActive(fileName)) return;
         // Watcher fires on a thread-pool thread; marshal to UI thread before
-        // touching the model or any banners.
+        // touching the model or any banners. The watcher is filtered through
+        // SelfWriteCoordinator, so this only fires for external edits (Obsidian, agents).
         DispatcherQueue.TryEnqueue(HandleExternalFileChange);
     }
 
@@ -747,7 +748,7 @@ public sealed partial class TaskDetailPage : Page
             Task = reloaded;
             BindSubtasks(reloaded.Subtasks);
         }
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+
     }
 
     private void ToggleSubtaskMyDay_Click(object sender, RoutedEventArgs e)
@@ -764,7 +765,7 @@ public sealed partial class TaskDetailPage : Page
                 Task = reloaded;
                 BindSubtasks(reloaded.Subtasks);
             }
-            try { App.Index.Refresh(); } catch { /* best-effort */ }
+
         }
     }
 
@@ -814,7 +815,7 @@ public sealed partial class TaskDetailPage : Page
             Task = reloaded;
             BindSubtasks(reloaded.Subtasks);
         }
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+
     }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
@@ -996,7 +997,7 @@ public sealed partial class TaskDetailPage : Page
         App.Vault.SetAdoLink(Task.Id, newId, newTitle);
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+
     }
 
     private void OpenParent_Click(object sender, RoutedEventArgs e)
@@ -1037,7 +1038,7 @@ public sealed partial class TaskDetailPage : Page
         App.Vault.SetParent(Task.Id, string.IsNullOrEmpty(trimmed) ? null : trimmed);
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+
     }
 
     private void StartWork_Click(object sender, RoutedEventArgs e)
@@ -1092,7 +1093,7 @@ public sealed partial class TaskDetailPage : Page
                 App.Vault.SetSubtaskDue(Task.Id, sub.Text, null);
                 var reloaded = App.Vault.Load(Task.Id);
                 if (reloaded is not null) ApplyTask(reloaded);
-                try { App.Index.Refresh(); } catch { /* best-effort */ }
+
             };
             menu.Items.Add(clearDueItem);
         }
@@ -1165,7 +1166,7 @@ public sealed partial class TaskDetailPage : Page
             var promoted = App.Tasks.PromoteSubtask(Task, index);
             var refreshed = App.Vault.Load(Task.Id);
             if (refreshed is not null) ApplyTask(refreshed);
-            try { App.Index.Refresh(); } catch { /* best-effort */ }
+
             if (promoted is not null) Frame.Navigate(typeof(TaskDetailPage), promoted);
         }
         catch (Exception ex) { Debug.WriteLine($"PromoteSubtask failed: {ex}"); }
@@ -1198,7 +1199,7 @@ public sealed partial class TaskDetailPage : Page
         App.Vault.Save(fresh);
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+
     }
 
     private async System.Threading.Tasks.Task PromptSetDueAsync(SubTask sub)
@@ -1230,7 +1231,7 @@ public sealed partial class TaskDetailPage : Page
         App.Vault.Save(fresh);
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+
     }
 
     private async System.Threading.Tasks.Task PromptEditTextAsync(SubTask sub)
@@ -1260,7 +1261,7 @@ public sealed partial class TaskDetailPage : Page
         App.Vault.Save(fresh);
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+
     }
 
     private async void SubtaskText_Click(object sender, RoutedEventArgs e)
@@ -1284,7 +1285,7 @@ public sealed partial class TaskDetailPage : Page
             catch (Exception ex) { Debug.WriteLine($"DeleteSubtask failed: {ex}"); return; }
             var afterDel = App.Vault.Load(Task.Id);
             if (afterDel is not null) ApplyTask(afterDel);
-            try { App.Index.Refresh(); } catch { /* best-effort */ }
+
             return;
         }
 
@@ -1295,7 +1296,7 @@ public sealed partial class TaskDetailPage : Page
                 var promoted = App.Tasks.PromoteSubtask(Task, index);
                 var refreshed = App.Vault.Load(Task.Id);
                 if (refreshed is not null) ApplyTask(refreshed);
-                try { App.Index.Refresh(); } catch { /* best-effort */ }
+
                 if (promoted is not null) Frame.Navigate(typeof(TaskDetailPage), promoted);
             }
             catch (Exception ex) { Debug.WriteLine($"PromoteSubtask failed: {ex}"); }
@@ -1332,7 +1333,7 @@ public sealed partial class TaskDetailPage : Page
         App.Vault.Save(fresh);
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+
     }
 
     private void ActiveSubtaskList_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
@@ -1379,7 +1380,7 @@ public sealed partial class TaskDetailPage : Page
 
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
-        try { App.Index.Refresh(); } catch { /* best-effort */ }
+
     }
 
     private static void SetComboByTag(ComboBox combo, string tag)

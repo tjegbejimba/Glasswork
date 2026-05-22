@@ -379,24 +379,4 @@ public class IndexService
                 .ToList();
         }
     }
-
-    // ── Legacy disk-writer surface (preserved for existing callers) ───────
-
-    /// <summary>
-    /// Regenerate both <c>_index.md</c> and <c>_today.md</c> from the current
-    /// in-memory snapshot. Foundation slice (issue #186) extracted the actual
-    /// writing into <see cref="IndexMarkdownWriter"/>; this method remains as
-    /// a shim so the legacy <c>App._indexDebouncer</c> path (and every
-    /// <c>App.Index.Refresh()</c> call site in <c>TaskDetailPage</c>) keeps
-    /// working unchanged. Uses
-    /// <see cref="IndexMarkdownWriter.WriteCurrent"/> (snapshot-inside-lock)
-    /// so a race with the new writer's debouncer can't leave a stale file.
-    /// New code should rely on <see cref="Changed"/> +
-    /// <see cref="IndexMarkdownWriter"/> instead.
-    /// </summary>
-    public void Refresh()
-    {
-        EnsureLoaded();
-        IndexMarkdownWriter.WriteCurrent(this, _vault.VaultPath);
-    }
 }

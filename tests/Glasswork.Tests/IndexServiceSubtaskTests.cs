@@ -41,7 +41,7 @@ public class IndexServiceSubtaskTests
         };
         _vault.Save(task);
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
         Assert.IsTrue(content.Contains("Parent Task"), "Today should include parent of flagged subtask");
@@ -62,7 +62,7 @@ public class IndexServiceSubtaskTests
         };
         _vault.Save(task);
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
         Assert.IsTrue(
@@ -88,7 +88,7 @@ public class IndexServiceSubtaskTests
         };
         _vault.Save(task);
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
         Assert.IsTrue(content.Contains("2/4 subtasks done"),
@@ -106,7 +106,7 @@ public class IndexServiceSubtaskTests
         };
         _vault.Save(task);
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
         Assert.IsFalse(content.Contains("subtasks done"),

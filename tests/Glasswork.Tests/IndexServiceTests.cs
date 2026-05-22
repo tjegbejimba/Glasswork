@@ -30,7 +30,7 @@ public class IndexServiceTests
     {
         _vault.Save(new GlassworkTask { Id = "task-one", Title = "Task One", Status = "todo" });
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         Assert.IsTrue(File.Exists(Path.Combine(_tempDir, "_index.md")));
         Assert.IsTrue(File.Exists(Path.Combine(_tempDir, "_today.md")));
@@ -42,7 +42,7 @@ public class IndexServiceTests
         _vault.Save(new GlassworkTask { Id = "task-a", Title = "Alpha", Status = "todo" });
         _vault.Save(new GlassworkTask { Id = "task-b", Title = "Beta", Status = "in-progress" });
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
         Assert.IsTrue(content.Contains("Alpha"), "Index should contain task Alpha");
@@ -68,7 +68,7 @@ public class IndexServiceTests
             Status = "todo",
         });
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
         Assert.IsTrue(content.Contains("Today Task"), "Today file should contain My Day task");
@@ -78,7 +78,7 @@ public class IndexServiceTests
     [TestMethod]
     public void Refresh_EmptyVault_TodayShowsEmptyMessage()
     {
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
         Assert.IsTrue(content.Contains("No tasks picked for today yet"));
@@ -93,7 +93,7 @@ public class IndexServiceTests
         _vault.Save(new GlassworkTask { Id = "active-task", Title = "Active Task", Status = "todo" });
         _vault.Save(new GlassworkTask { Id = "wrapped-task", Title = "Wrapped Task", Status = "done" });
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
         var before = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
         Assert.IsTrue(before.Contains("Wrapped Task"), "Pre-move sanity: completed task should appear in Done (Recent).");
 
@@ -110,7 +110,7 @@ public class IndexServiceTests
         _index.OnFileChangedOnDisk(new TaskFileChange(
             TaskFileChangeKind.Deleted, OldFileName: null, NewFileName: "wrapped-task.md"));
 
-        _index.Refresh();
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var after = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
         Assert.IsFalse(after.Contains("Wrapped Task"), "Tasks moved to done/ subfolder must not appear in _index.md.");
