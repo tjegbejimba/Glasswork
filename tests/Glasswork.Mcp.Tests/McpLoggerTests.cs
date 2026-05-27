@@ -101,12 +101,15 @@ public class McpLoggerTests
     }
 
     [TestMethod]
-    public void ToolCall_ErrorResult_WhenToolThrows()
+    public void ToolCall_ErrorResult_WhenStructuredErrorReturned()
     {
+        // After the polish pass (issue #133), tools no longer throw ArgumentException
+        // for user-input validation. They return a structured envelope AND emit
+        // result="error" on the log line.
         var sink = new StringBuilder();
         var tools = MakeTools(MakeLogger(sink));
 
-        try { tools.ListTasks(status: "bad"); } catch (ArgumentException) { }
+        tools.ListTasks(status: "bad");
 
         var doc = JsonDocument.Parse(sink.ToString().Trim());
         Assert.AreEqual("error", doc.RootElement.GetProperty("result").GetString());
@@ -308,6 +311,65 @@ public class McpLoggerTests
         Assert.IsTrue(phases.TryGetProperty("load_artifacts", out _), "Must have 'load_artifacts' phase.");
         Assert.IsTrue(phases.TryGetProperty("load_subtasks", out _), "Must have 'load_subtasks' phase.");
         Assert.IsTrue(phases.TryGetProperty("load_backlinks", out _), "Must have 'load_backlinks' phase.");
+    }
+
+    [TestMethod]
+    public void TraceEnabled_GetTask_PhasesContainLoadTaskAndScanArtifacts()
+    {
+        var sink = new StringBuilder();
+        var tools = MakeTools(MakeLogger(sink, traceEnabled: true));
+
+        var addJson = tools.AddTask("Trace GetTask Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        sink.Clear();
+
+        tools.GetTask(taskId);
+
+        var line = FilterToolLine(sink.ToString(), "get_task");
+        var phases = JsonDocument.Parse(line).RootElement.GetProperty("phases");
+
+        Assert.IsTrue(phases.TryGetProperty("load_task", out _),
+            "get_task must record 'load_task' phase.");
+        Assert.IsTrue(phases.TryGetProperty("scan_artifacts", out _),
+            "get_task must record 'scan_artifacts' phase.");
+    }
+
+    [TestMethod]
+    public void TraceEnabled_AddArtifact_IncludesWritePhase()
+    {
+        var sink = new StringBuilder();
+        var tools = MakeTools(MakeLogger(sink, traceEnabled: true));
+
+        var addJson = tools.AddTask("Trace AddArtifact Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        sink.Clear();
+
+        tools.AddArtifact(taskId, "plan.md", "content");
+
+        var line = FilterToolLine(sink.ToString(), "add_artifact");
+        var phases = JsonDocument.Parse(line).RootElement.GetProperty("phases");
+
+        Assert.IsTrue(phases.TryGetProperty("write", out _),
+            "add_artifact must record 'write' phase.");
+    }
+
+    // Filters multi-line JSONL stderr output to the single line whose "tool" field
+    // matches the given name. The MCP tools may emit multiple log lines per test
+    // (e.g. setup AddTask + the call under test).
+    private static string FilterToolLine(string stderr, string toolName)
+    {
+        foreach (var raw in stderr.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                var doc = JsonDocument.Parse(raw);
+                if (doc.RootElement.TryGetProperty("tool", out var t) && t.GetString() == toolName)
+                    return raw;
+            }
+            catch { /* skip non-JSON lines */ }
+        }
+        Assert.Fail($"No log line found for tool '{toolName}'. Stderr was:\n{stderr}");
+        return string.Empty;
     }
 
     // ─────────────────────── helpers ─────────────────────────────────────

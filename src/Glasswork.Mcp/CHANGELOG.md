@@ -5,6 +5,31 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.0] — 2026-05-26
+
+### Breaking
+
+- **Paths in MCP tool output are now todo-relative and use forward slashes** (issue #133). All `path` fields returned by `add_task`, `list_tasks`, `get_task`, `add_artifact`, and every artifact path inside `load_context` (both root and subtree levels) are relative to `<vault>/wiki/todo/` and always use `/` as the separator — `add_task` no longer returns absolute paths like `C:\Users\…\wiki\todo\foo.md` and `get_task`/`add_artifact` no longer emit OS-shaped paths like `foo.artifacts\plan.md` on Windows. **Migration**: prepend `$GLASSWORK_VAULT/wiki/todo/` to recover the previous absolute form. The single exception is `load_context.backlinks[].source_path`, which stays relative to the **vault root** (e.g. `wiki/concepts/foo.md`) because backlinks point at pages outside `wiki/todo/`. Per ADR 0007 §8, this drives the minor-version bump.
+
+### Added
+
+- **Uniform structured error envelope across every tool** (issue #133). No tool throws `ArgumentException` (or any other exception triggered by user input) to the MCP transport. `add_task`, `list_tasks`, and `search_tasks` now return the structured `{ "error": "<code>", "message": "<text>" }` envelope on invalid input — matching the shape `get_task` / `add_artifact` / `load_context` already used.
+  - `add_task` validates an empty title (`invalid_title`) and invalid status (`invalid_status`).
+  - `list_tasks` validates invalid status (`invalid_status`).
+  - `search_tasks` validates empty/too-long query (`invalid_query`), invalid `in` field (`invalid_in_field`), and invalid status filter (`invalid_status`); pre-validation runs in the MCP layer so error codes do not depend on `Glasswork.Core` exception messages.
+  - `add_artifact` validates an empty filename (`invalid_filename`), a null `content` (`invalid_content`), and a `filename` containing a path separator (`path_traversal`). The path-separator check sits above `VaultPathGuard.EnsurePathInVault` because the guard only verifies the resolved path stays inside the artifact folder — a value like `nested/plan.md` passes that check but would then crash `File.WriteAllText` with `DirectoryNotFoundException` and escape the structured envelope.
+- **Trace phase coverage for the remaining tools** (issue #133). Under `GLASSWORK_MCP_TRACE=1`:
+  - `get_task` now emits `load_task` (the vault read) and `scan_artifacts` (the artifact-folder enumeration) phases.
+  - `add_artifact` now emits a `write` phase around `File.WriteAllText`.
+- **`list_tasks.fields[]` projection parameter** (issue #133). Optional `fields: string[]` argument. When omitted, null, or empty, the default summary shape (`id`, `title`, `status`, `parent_id`, `path`) is preserved byte-for-byte. When supplied, the summary contains the listed fields plus `id` (always included). Allowed values: `title`, `status`, `parent_id`, `path`, `created`, `priority`. Field names are case-folded, whitespace-trimmed, and de-duplicated; unknown names are silently dropped. `created` is rendered as `yyyy-MM-dd`.
+
+### Internal
+
+- `MapToInternalStatus` refactored to `TryMapToInternalStatus` with a try-pattern signature so call sites can early-return the structured envelope rather than throwing.
+- All output-path construction now flows through `TodoRelativeTaskPath` / `TodoRelativeArtifactPath` / `NormalizeOutputPath` helpers. `Path.Combine` is reserved for filesystem operations only.
+
+---
+
 ## [0.4.0] — 2026-05-15
 
 ### Added

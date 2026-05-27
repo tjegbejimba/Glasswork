@@ -15,6 +15,12 @@ public class GlassworkToolsTests
     // GlassworkTools resolves the task directory as <vault>/wiki/todo.
     private string TasksDir => Path.Combine(_vaultDir, "wiki", "todo");
 
+    // Converts a todo-relative path returned by an MCP tool into an absolute
+    // filesystem path for test assertions. MCP outputs use forward slashes;
+    // tests need OS-native separators when calling File/Directory APIs.
+    private string ResolveTodoPath(string todoRelativePath) =>
+        Path.Combine(TasksDir, todoRelativePath.Replace('/', Path.DirectorySeparatorChar));
+
     [TestInitialize]
     public void Setup()
     {
@@ -43,8 +49,8 @@ public class GlassworkToolsTests
         var path = doc.RootElement.GetProperty("path").GetString()!;
 
         Assert.IsFalse(string.IsNullOrEmpty(taskId));
-        Assert.IsTrue(File.Exists(path), "Task file must exist on disk after add_task.");
-        StringAssert.Contains(path, TasksDir);
+        Assert.AreEqual($"{taskId}.md", path, "add_task returns a todo-relative path.");
+        Assert.IsTrue(File.Exists(ResolveTodoPath(path)), "Task file must exist on disk after add_task.");
     }
 
     [TestMethod]
@@ -55,7 +61,7 @@ public class GlassworkToolsTests
         var doc = JsonDocument.Parse(json);
         var path = doc.RootElement.GetProperty("path").GetString()!;
 
-        var content = File.ReadAllText(path);
+        var content = File.ReadAllText(ResolveTodoPath(path));
         StringAssert.Contains(content, "This is the description.");
     }
 
@@ -63,11 +69,11 @@ public class GlassworkToolsTests
     public void AddTask_WithoutDescription_FileIsValid()
     {
         var json = _tools.AddTask("Task without description");
-        var doc = JsonDocument.Parse(json);
-        var path = doc.RootElement.GetProperty("path").GetString()!;
+        var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
+        var absPath = ResolveTodoPath(path);
 
-        Assert.IsTrue(File.Exists(path));
-        var content = File.ReadAllText(path);
+        Assert.IsTrue(File.Exists(absPath));
+        var content = File.ReadAllText(absPath);
         StringAssert.Contains(content, "title: Task without description");
     }
 
@@ -80,7 +86,7 @@ public class GlassworkToolsTests
         var childJson = _tools.AddTask("Child Task", parent_task_id: parentId);
         var childPath = JsonDocument.Parse(childJson).RootElement.GetProperty("path").GetString()!;
 
-        var content = File.ReadAllText(childPath);
+        var content = File.ReadAllText(ResolveTodoPath(childPath));
         StringAssert.Contains(content, $"parent: {parentId}");
     }
 
@@ -90,7 +96,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("A todo task");
         var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
 
-        var content = File.ReadAllText(path);
+        var content = File.ReadAllText(ResolveTodoPath(path));
         StringAssert.Contains(content, "status: todo");
     }
 
@@ -100,7 +106,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("An active task", status: "doing");
         var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
 
-        var content = File.ReadAllText(path);
+        var content = File.ReadAllText(ResolveTodoPath(path));
         StringAssert.Contains(content, "status: in-progress");
     }
 
@@ -110,14 +116,42 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("A done task", status: "done");
         var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
 
-        var content = File.ReadAllText(path);
+        var content = File.ReadAllText(ResolveTodoPath(path));
         StringAssert.Contains(content, "status: done");
     }
 
     [TestMethod]
-    public void AddTask_InvalidStatus_Throws()
+    public void AddTask_InvalidStatus_ReturnsStructuredError()
     {
-        Assert.ThrowsExactly<ArgumentException>(() => _tools.AddTask("Task", status: "pending"));
+        var json = _tools.AddTask("Task", status: "pending");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_status", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+    }
+
+    [TestMethod]
+    public void AddTask_EmptyTitle_ReturnsStructuredError()
+    {
+        var json = _tools.AddTask("   ");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_title", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+    }
+
+    [TestMethod]
+    public void AddTask_ReturnsTodoRelativePath()
+    {
+        var json = _tools.AddTask("Path Shape");
+        var doc = JsonDocument.Parse(json);
+        var taskId = doc.RootElement.GetProperty("task_id").GetString()!;
+        var path = doc.RootElement.GetProperty("path").GetString()!;
+
+        Assert.AreEqual($"{taskId}.md", path,
+            "add_task must return a todo-relative path of the form '<id>.md'.");
+        Assert.IsFalse(path.Contains('\\'), "Path must not contain backslashes.");
+        Assert.IsFalse(Path.IsPathRooted(path), "Path must not be absolute.");
     }
 
     [TestMethod]
@@ -259,9 +293,146 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void ListTasks_InvalidStatus_Throws()
+    public void ListTasks_InvalidStatus_ReturnsStructuredError()
     {
-        Assert.ThrowsExactly<ArgumentException>(() => _tools.ListTasks(status: "invalid"));
+        var json = _tools.ListTasks(status: "invalid");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_status", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void ListTasks_SummaryPathIsTodoRelative()
+    {
+        _tools.AddTask("Path Shape One");
+        _tools.AddTask("Path Shape Two");
+
+        var json = _tools.ListTasks();
+        var tasks = JsonDocument.Parse(json).RootElement.GetProperty("tasks");
+
+        for (int i = 0; i < tasks.GetArrayLength(); i++)
+        {
+            var id = tasks[i].GetProperty("id").GetString()!;
+            var path = tasks[i].GetProperty("path").GetString()!;
+            Assert.AreEqual($"{id}.md", path,
+                "list_tasks summary path must be todo-relative.");
+            Assert.IsFalse(path.Contains('\\'), "Path must not contain backslashes.");
+        }
+    }
+
+    [TestMethod]
+    public void ListTasks_DefaultShape_Unchanged()
+    {
+        _tools.AddTask("Default Shape Task");
+
+        var json = _tools.ListTasks();
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
+        CollectionAssert.AreEqual(
+            new[] { "id", "parent_id", "path", "status", "title" },
+            keys,
+            "Default list_tasks shape must be exactly id+title+status+parent_id+path.");
+    }
+
+    [TestMethod]
+    public void ListTasks_FieldsHonored_ReturnsRequestedSubset()
+    {
+        _tools.AddTask("Projection Task");
+
+        var json = _tools.ListTasks(fields: new[] { "created", "priority" });
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
+        CollectionAssert.AreEqual(
+            new[] { "created", "id", "priority" },
+            keys,
+            "fields=[created,priority] must return exactly id+created+priority.");
+    }
+
+    [TestMethod]
+    public void ListTasks_FieldsUnknown_Dropped()
+    {
+        _tools.AddTask("Unknown Field Task");
+
+        var json = _tools.ListTasks(fields: new[] { "bogus", "title" });
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
+        CollectionAssert.AreEqual(
+            new[] { "id", "title" },
+            keys,
+            "Unknown field names must be silently dropped; only id+title remain.");
+    }
+
+    [TestMethod]
+    public void ListTasks_FieldsEmpty_DefaultShape()
+    {
+        _tools.AddTask("Empty Fields Task");
+
+        var json = _tools.ListTasks(fields: Array.Empty<string>());
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
+        CollectionAssert.AreEqual(
+            new[] { "id", "parent_id", "path", "status", "title" },
+            keys,
+            "Empty fields array must preserve default shape.");
+    }
+
+    [TestMethod]
+    public void ListTasks_FieldsAllUnknown_ReturnsIdOnly()
+    {
+        _tools.AddTask("All Unknown Task");
+
+        var json = _tools.ListTasks(fields: new[] { "bogus", "garbage" });
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
+        CollectionAssert.AreEqual(
+            new[] { "id" },
+            keys,
+            "When every requested field is unknown the projection contract still applies: id only.");
+    }
+
+    [TestMethod]
+    public void ListTasks_FieldsProjected_PreservesNullParentId()
+    {
+        _tools.AddTask("Standalone Projected");
+
+        var json = _tools.ListTasks(fields: new[] { "parent_id" });
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        Assert.AreEqual(JsonValueKind.Null, first.GetProperty("parent_id").ValueKind,
+            "Projected parent_id must serialise as JSON null for tasks without a parent.");
+    }
+
+    [TestMethod]
+    public void ListTasks_FieldsNormalized_CaseAndWhitespace()
+    {
+        _tools.AddTask("Normalize Task");
+
+        var json = _tools.ListTasks(fields: new[] { " Created ", "PRIORITY" });
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
+        CollectionAssert.AreEqual(
+            new[] { "created", "id", "priority" },
+            keys,
+            "fields names must be case-folded and whitespace-trimmed.");
+    }
+
+    [TestMethod]
+    public void ListTasks_CreatedIsIsoDate()
+    {
+        _tools.AddTask("Date Format Task");
+
+        var json = _tools.ListTasks(fields: new[] { "created" });
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+        var created = first.GetProperty("created").GetString()!;
+
+        Assert.IsTrue(System.Text.RegularExpressions.Regex.IsMatch(created, @"^\d{4}-\d{2}-\d{2}$"),
+            $"created must be yyyy-MM-dd; got '{created}'.");
     }
 
     [TestMethod]
@@ -333,17 +504,40 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void SearchTasks_InvalidInField_ThrowsArgumentException()
+    public void SearchTasks_InvalidInField_ReturnsStructuredError()
     {
-        Assert.ThrowsExactly<ArgumentException>(() =>
-            _tools.SearchTasks("query", @in: ["artifact"]));
+        var json = _tools.SearchTasks("query", @in: new[] { "artifact" });
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_in_field", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
     }
 
     [TestMethod]
-    public void SearchTasks_EmptyQuery_ThrowsArgumentException()
+    public void SearchTasks_EmptyQuery_ReturnsStructuredError()
     {
-        Assert.ThrowsExactly<ArgumentException>(() =>
-            _tools.SearchTasks("   "));
+        var json = _tools.SearchTasks("   ");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_query", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void SearchTasks_QueryTooLong_ReturnsStructuredError()
+    {
+        var json = _tools.SearchTasks(new string('x', 501));
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_query", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void SearchTasks_InvalidStatusFilter_ReturnsStructuredError()
+    {
+        var json = _tools.SearchTasks("query", status: new[] { "bogus" });
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_status", doc.RootElement.GetProperty("error").GetString());
     }
 
     [TestMethod]
@@ -453,7 +647,7 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void GetTask_ArtifactEntry_HasFilenameAndVaultRelativePath()
+    public void GetTask_ArtifactEntry_HasFilenameAndTodoRelativePath()
     {
         var addJson = _tools.AddTask("Artifact Path Task");
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
@@ -467,8 +661,25 @@ public class GlassworkToolsTests
         var artifact = doc.RootElement.GetProperty("artifacts")[0];
 
         Assert.AreEqual("design.md", artifact.GetProperty("filename").GetString());
-        StringAssert.Contains(artifact.GetProperty("path").GetString()!, taskId + ".artifacts");
-        StringAssert.Contains(artifact.GetProperty("path").GetString()!, "design.md");
+        var path = artifact.GetProperty("path").GetString()!;
+        Assert.AreEqual($"{taskId}.artifacts/design.md", path,
+            "get_task must return a todo-relative artifact path with forward slashes.");
+    }
+
+    [TestMethod]
+    public void GetTask_ArtifactPath_UsesForwardSlashes()
+    {
+        var addJson = _tools.AddTask("Slash Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
+        Directory.CreateDirectory(artifactFolder);
+        File.WriteAllText(Path.Combine(artifactFolder, "plan.md"), "p");
+
+        var json = _tools.GetTask(taskId);
+        var path = JsonDocument.Parse(json).RootElement.GetProperty("artifacts")[0].GetProperty("path").GetString()!;
+
+        Assert.IsFalse(path.Contains('\\'), "Artifact path must not contain backslashes.");
     }
 
     [TestMethod]
@@ -513,7 +724,7 @@ public class GlassworkToolsTests
         var json = _tools.AddArtifact(taskId, "plan.md", "# Plan\n\nContent here.");
         var doc = JsonDocument.Parse(json);
 
-        Assert.IsTrue(doc.RootElement.TryGetProperty("path", out var pathElem),
+        Assert.IsTrue(doc.RootElement.TryGetProperty("path", out _),
             "add_artifact must return a 'path' field on success.");
 
         var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
@@ -523,7 +734,7 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void AddArtifact_ReturnedPath_ContainsArtifactsFolderAndFilename()
+    public void AddArtifact_ReturnedPath_IsTodoRelativeWithForwardSlashes()
     {
         var addJson = _tools.AddTask("Path Return Task");
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
@@ -531,8 +742,64 @@ public class GlassworkToolsTests
         var json = _tools.AddArtifact(taskId, "notes.md", "notes");
         var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
 
-        StringAssert.Contains(path, taskId + ".artifacts");
-        StringAssert.Contains(path, "notes.md");
+        Assert.AreEqual($"{taskId}.artifacts/notes.md", path);
+        Assert.IsFalse(path.Contains('\\'), "Path must not contain backslashes.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_EmptyFilename_ReturnsStructuredError()
+    {
+        var addJson = _tools.AddTask("Empty Filename Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.AddArtifact(taskId, "   ", "content");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_filename", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+    }
+
+    [TestMethod]
+    public void AddArtifact_NullContent_ReturnsInvalidContentError()
+    {
+        var addJson = _tools.AddTask("Null Content Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.AddArtifact(taskId, "plan.md", null!);
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_content", doc.RootElement.GetProperty("error").GetString());
+
+        // And we did not silently create an empty file.
+        var expectedFile = Path.Combine(TasksDir, taskId + ".artifacts", "plan.md");
+        Assert.IsFalse(File.Exists(expectedFile), "Null content must not create an empty artifact.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_ForwardSlashInFilename_ReturnsPathTraversalError()
+    {
+        var addJson = _tools.AddTask("Slash Filename Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.AddArtifact(taskId, "nested/plan.md", "content");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("path_traversal", doc.RootElement.GetProperty("error").GetString());
+
+        var nested = Path.Combine(TasksDir, taskId + ".artifacts", "nested", "plan.md");
+        Assert.IsFalse(File.Exists(nested), "Nested file must not have been written.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_BackslashInFilename_ReturnsPathTraversalError()
+    {
+        var addJson = _tools.AddTask("Backslash Filename Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.AddArtifact(taskId, "nested\\plan.md", "content");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("path_traversal", doc.RootElement.GetProperty("error").GetString());
     }
 
     [TestMethod]
@@ -666,11 +933,47 @@ public class GlassworkToolsTests
 
         // OrdinalIgnoreCase filename order: design.md then plan.md
         Assert.AreEqual("design.md", artifacts[0].GetProperty("filename").GetString());
-        StringAssert.Contains(artifacts[0].GetProperty("path").GetString()!, taskId + ".artifacts");
+        Assert.AreEqual($"{taskId}.artifacts/design.md", artifacts[0].GetProperty("path").GetString());
         Assert.AreEqual("# Design\n\nThe design.", artifacts[0].GetProperty("content").GetString());
 
         Assert.AreEqual("plan.md", artifacts[1].GetProperty("filename").GetString());
         Assert.AreEqual("# Plan\n\nThe plan.", artifacts[1].GetProperty("content").GetString());
+    }
+
+    [TestMethod]
+    public void LoadContext_ArtifactPath_UsesForwardSlashes()
+    {
+        var addJson = _tools.AddTask("LC Slash Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
+        Directory.CreateDirectory(artifactFolder);
+        File.WriteAllText(Path.Combine(artifactFolder, "plan.md"), "p");
+
+        var json = _tools.LoadContext(taskId);
+        var path = JsonDocument.Parse(json).RootElement.GetProperty("artifacts")[0].GetProperty("path").GetString()!;
+
+        Assert.IsFalse(path.Contains('\\'),
+            "load_context artifact path must use forward slashes only.");
+    }
+
+    [TestMethod]
+    public void LoadContext_BacklinkSourcePath_UsesForwardSlashes()
+    {
+        var taskId = JsonDocument.Parse(_tools.AddTask("Slash Backlink Task"))
+            .RootElement.GetProperty("task_id").GetString()!;
+
+        var conceptDir = Path.Combine(_vaultDir, "wiki", "concepts");
+        Directory.CreateDirectory(conceptDir);
+        File.WriteAllText(Path.Combine(conceptDir, "foo.md"),
+            $"# Foo\n\n[[{taskId}]]");
+
+        var json = _tools.LoadContext(taskId);
+        var sourcePath = JsonDocument.Parse(json).RootElement
+            .GetProperty("backlinks")[0].GetProperty("source_path").GetString()!;
+
+        Assert.IsFalse(sourcePath.Contains('\\'),
+            "Backlink source_path must use forward slashes only.");
     }
 
     [TestMethod]
