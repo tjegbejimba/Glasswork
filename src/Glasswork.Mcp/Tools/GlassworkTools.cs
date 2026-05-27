@@ -50,7 +50,18 @@ public sealed class GlassworkTools
         using var scope = _logger?.BeginCall("add_task");
         try
         {
-            var internalStatus = MapToInternalStatus(status);
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_title", "title is required."));
+            }
+
+            if (!TryMapToInternalStatus(status, out var internalStatus, out var statusError))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
+            }
+
             var safeParent = SanitizeId(parent_task_id);
 
             var baseId = VaultService.GenerateId(title);
@@ -74,8 +85,7 @@ public sealed class GlassworkTools
             _vault.Save(task);
             scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
 
-            var path = Path.Combine(_vaultPath, $"{id}.md");
-            return JsonSerializer.Serialize(new AddTaskResult(TaskId: id, Path: path));
+            return JsonSerializer.Serialize(new AddTaskResult(TaskId: id, Path: TodoRelativeTaskPath(id)));
         }
         catch
         {
@@ -89,12 +99,22 @@ public sealed class GlassworkTools
     [Description("List task summaries filtered by status or parent. Re-reads from disk on every call. For topic or keyword search, use search_tasks.")]
     public string ListTasks(
         [Description("Filter by status: todo, doing, or done.")] string? status = null,
-        [Description("Filter by parent task ID.")] string? parent_task_id = null)
+        [Description("Filter by parent task ID.")] string? parent_task_id = null,
+        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values: title, status, parent_id, path, created, priority. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
     {
         using var scope = _logger?.BeginCall("list_tasks");
         try
         {
-            var internalStatus = status is null ? null : MapToInternalStatus(status);
+            string? internalStatus = null;
+            if (status is not null)
+            {
+                if (!TryMapToInternalStatus(status, out var mapped, out var statusError))
+                {
+                    scope?.SetResult("error");
+                    return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
+                }
+                internalStatus = mapped;
+            }
 
             List<GlassworkTask> all;
             if (scope is { IsTracing: true })
@@ -133,20 +153,32 @@ public sealed class GlassworkTools
 
             // Phase: sort
             var sortSw = Stopwatch.StartNew();
-            var tasks = filtered
+            var sortedTasks = filtered
                 .OrderBy(t => t.Created)
                 .ThenBy(t => t.Id)
-                .Select(t => new TaskSummary(
-                    Id: t.Id,
-                    Title: t.Title,
-                    Status: MapToExternalStatus(t.Status),
-                    ParentId: t.Parent,
-                    Path: Path.Combine(_vaultPath, $"{t.Id}.md")))
                 .ToList();
             scope?.RecordPhase("sort", sortSw.ElapsedMilliseconds);
 
-            scope?.SetCount("task_count", tasks.Count);
-            return JsonSerializer.Serialize(new ListTasksResult(tasks));
+            scope?.SetCount("task_count", sortedTasks.Count);
+
+            var requestedFields = NormalizeFieldProjection(fields);
+            if (requestedFields is null)
+            {
+                var summaries = sortedTasks
+                    .Select(t => new TaskSummary(
+                        Id: t.Id,
+                        Title: t.Title,
+                        Status: MapToExternalStatus(t.Status),
+                        ParentId: t.Parent,
+                        Path: TodoRelativeTaskPath(t.Id)))
+                    .ToList();
+                return JsonSerializer.Serialize(new ListTasksResult(summaries));
+            }
+
+            var projected = sortedTasks
+                .Select(t => ProjectTaskSummary(t, requestedFields))
+                .ToList();
+            return JsonSerializer.Serialize(new ListTasksProjectedResult(projected));
         }
         catch
         {
@@ -168,15 +200,33 @@ public sealed class GlassworkTools
         using var scope = _logger?.BeginCall("search_tasks");
         try
         {
-            var hits = _search.Search(query, @in, tags, status, limit)
-                .Select(h => new TaskSearchSummary(
-                    Id: h.Id,
-                    Title: h.Title,
-                    Status: h.Status,
-                    ParentId: h.ParentId,
-                    MatchedIn: h.MatchedIn.ToArray(),
-                    Snippet: h.Snippet))
-                .ToList();
+            if (!TryValidateSearchInputs(query, @in, status, out var inputError))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(inputError);
+            }
+
+            List<TaskSearchSummary> hits;
+            try
+            {
+                hits = _search.Search(query, @in, tags, status, limit)
+                    .Select(h => new TaskSearchSummary(
+                        Id: h.Id,
+                        Title: h.Title,
+                        Status: h.Status,
+                        ParentId: h.ParentId,
+                        MatchedIn: h.MatchedIn.ToArray(),
+                        Snippet: h.Snippet))
+                    .ToList();
+            }
+            catch (ArgumentException ex)
+            {
+                // Defensive net: pre-validation should have caught known cases,
+                // but a future Core validation we didn't mirror still surfaces
+                // as a structured envelope rather than crashing the transport.
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_argument", ex.Message));
+            }
             scope?.SetCount("task_count", hits.Count);
             return JsonSerializer.Serialize(new SearchTasksResult(hits));
         }
@@ -193,37 +243,56 @@ public sealed class GlassworkTools
     public string GetTask(
         [Description("Task ID to look up.")] string task_id)
     {
-        var safeId = SanitizeId(task_id);
-        if (safeId is null)
-            return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
-
-        var task = _vault.Load(safeId);
-        if (task is null)
-            return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
-
-        var artifactFolder = Path.Combine(_vaultPath, safeId + ".artifacts");
-        var artifacts = new List<ArtifactInfo>();
-        if (Directory.Exists(artifactFolder))
+        using var scope = _logger?.BeginCall("get_task");
+        try
         {
-            foreach (var file in Directory.EnumerateFiles(artifactFolder, "*.md", SearchOption.TopDirectoryOnly))
+            var safeId = SanitizeId(task_id);
+            if (safeId is null)
             {
-                var filename = Path.GetFileName(file);
-                var vaultRelative = Path.Combine(safeId + ".artifacts", filename);
-                artifacts.Add(new ArtifactInfo(filename, vaultRelative));
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
             }
-            artifacts.Sort((a, b) => string.Compare(a.Filename, b.Filename, StringComparison.OrdinalIgnoreCase));
+
+            var loadSw = Stopwatch.StartNew();
+            var task = _vault.Load(safeId);
+            scope?.RecordPhase("load_task", loadSw.ElapsedMilliseconds);
+
+            if (task is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            var scanSw = Stopwatch.StartNew();
+            var artifactFolder = Path.Combine(_vaultPath, safeId + ".artifacts");
+            var artifacts = new List<ArtifactInfo>();
+            if (Directory.Exists(artifactFolder))
+            {
+                foreach (var file in Directory.EnumerateFiles(artifactFolder, "*.md", SearchOption.TopDirectoryOnly))
+                {
+                    var filename = Path.GetFileName(file);
+                    artifacts.Add(new ArtifactInfo(filename, TodoRelativeArtifactPath(safeId, filename)));
+                }
+                artifacts.Sort((a, b) => string.Compare(a.Filename, b.Filename, StringComparison.OrdinalIgnoreCase));
+            }
+            scope?.RecordPhase("scan_artifacts", scanSw.ElapsedMilliseconds);
+
+            var result = new GetTaskResult(
+                Id: task.Id,
+                Title: task.Title,
+                Status: MapToExternalStatus(task.Status),
+                ParentId: task.Parent,
+                Description: task.Description,
+                Notes: task.Notes,
+                Artifacts: artifacts);
+
+            return JsonSerializer.Serialize(result);
         }
-
-        var result = new GetTaskResult(
-            Id: task.Id,
-            Title: task.Title,
-            Status: MapToExternalStatus(task.Status),
-            ParentId: task.Parent,
-            Description: task.Description,
-            Notes: task.Notes,
-            Artifacts: artifacts);
-
-        return JsonSerializer.Serialize(result);
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
     }
 
     [McpServerTool(Name = "add_artifact")]
@@ -234,37 +303,63 @@ public sealed class GlassworkTools
         [Description("Filename for the artifact, must end in .md (e.g. 'plan.md'). Simple filenames only — no path separators.")] string filename,
         [Description("Markdown content to write into the artifact file.")] string content)
     {
-        var safeId = SanitizeId(task_id);
-        if (safeId is null || !_vault.Exists(safeId))
-            return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
-
-        if (!filename.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
-            return JsonSerializer.Serialize(new ErrorResult("invalid_filename", "Filename must end in '.md'."));
-
-        var artifactFolder = Path.Combine(_vaultPath, safeId + ".artifacts");
-
-        // Path-traversal guard: ensure the resolved artifact path stays inside the artifact folder.
-        string resolvedPath;
+        using var scope = _logger?.BeginCall("add_artifact");
         try
         {
-            resolvedPath = VaultPathGuard.EnsurePathInVault(artifactFolder, filename);
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            if (string.IsNullOrWhiteSpace(filename))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_filename", "filename is required."));
+            }
+
+            if (!filename.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_filename", "Filename must end in '.md'."));
+            }
+
+            var artifactFolder = Path.Combine(_vaultPath, safeId + ".artifacts");
+
+            string resolvedPath;
+            try
+            {
+                resolvedPath = VaultPathGuard.EnsurePathInVault(artifactFolder, filename);
+            }
+            catch (ArgumentException)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("path_traversal",
+                    $"Filename '{filename}' is not allowed. Use a simple filename without path separators or '..'."));
+            }
+
+            if (File.Exists(resolvedPath))
+            {
+                scope?.SetResult("conflict");
+                return JsonSerializer.Serialize(new ErrorResult("conflict",
+                    $"Artifact '{filename}' already exists for task '{safeId}'."));
+            }
+
+            Directory.CreateDirectory(artifactFolder);
+            _selfWrites.RegisterWrite(resolvedPath);
+            var writeSw = Stopwatch.StartNew();
+            File.WriteAllText(resolvedPath, content ?? string.Empty);
+            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+
+            var resultPath = TodoRelativeArtifactPath(safeId, Path.GetFileName(resolvedPath));
+            return JsonSerializer.Serialize(new AddArtifactResult(Path: resultPath));
         }
-        catch (ArgumentException)
+        catch
         {
-            return JsonSerializer.Serialize(new ErrorResult("path_traversal",
-                $"Filename '{filename}' is not allowed. Use a simple filename without path separators or '..'."));
+            scope?.SetResult("error");
+            throw;
         }
-
-        if (File.Exists(resolvedPath))
-            return JsonSerializer.Serialize(new ErrorResult("conflict",
-                $"Artifact '{filename}' already exists for task '{safeId}'."));
-
-        Directory.CreateDirectory(artifactFolder);
-        _selfWrites.RegisterWrite(resolvedPath);
-        File.WriteAllText(resolvedPath, content);
-
-        var vaultRelative = Path.Combine(safeId + ".artifacts", Path.GetFileName(resolvedPath));
-        return JsonSerializer.Serialize(new AddArtifactResult(Path: vaultRelative));
     }
 
     [McpServerTool(Name = "load_context")]
@@ -385,11 +480,10 @@ public sealed class GlassworkTools
         foreach (var file in Directory.EnumerateFiles(artifactFolder, "*.md", SearchOption.TopDirectoryOnly))
         {
             var filename = Path.GetFileName(file);
-            var vaultRelative = Path.Combine(safeId + ".artifacts", filename);
             string content;
             try { content = File.ReadAllText(file); }
             catch { content = string.Empty; }
-            artifacts.Add(new ArtifactWithBody(filename, vaultRelative, content));
+            artifacts.Add(new ArtifactWithBody(filename, TodoRelativeArtifactPath(safeId, filename), content));
         }
         artifacts.Sort((a, b) => string.Compare(a.Filename, b.Filename, StringComparison.OrdinalIgnoreCase));
         return artifacts;
@@ -407,11 +501,11 @@ public sealed class GlassworkTools
     {
         try
         {
-            return Path.GetRelativePath(_vaultRoot, fullPath);
+            return NormalizeOutputPath(Path.GetRelativePath(_vaultRoot, fullPath));
         }
         catch
         {
-            return fullPath;
+            return NormalizeOutputPath(fullPath);
         }
     }
 
@@ -426,13 +520,129 @@ public sealed class GlassworkTools
         return n;
     }
 
-    private static string MapToInternalStatus(string? status) => status switch
+    private static bool TryMapToInternalStatus(string? status, out string internalStatus, out string? errMessage)
     {
-        "todo" or null => GlassworkTask.Statuses.Todo,
-        "doing" => GlassworkTask.Statuses.InProgress,
-        "done" => GlassworkTask.Statuses.Done,
-        _ => throw new ArgumentException($"Invalid status '{status}'. Valid values: todo, doing, done."),
+        switch (status)
+        {
+            case null:
+            case "todo":
+                internalStatus = GlassworkTask.Statuses.Todo;
+                errMessage = null;
+                return true;
+            case "doing":
+                internalStatus = GlassworkTask.Statuses.InProgress;
+                errMessage = null;
+                return true;
+            case "done":
+                internalStatus = GlassworkTask.Statuses.Done;
+                errMessage = null;
+                return true;
+            default:
+                internalStatus = string.Empty;
+                errMessage = $"Invalid status '{status}'. Valid values: todo, doing, done.";
+                return false;
+        }
+    }
+
+    private static readonly HashSet<string> ValidSearchFields = new(StringComparer.Ordinal)
+    {
+        "title", "description", "notes", "subtasks", "tags",
     };
+
+    private static bool TryValidateSearchInputs(
+        string query,
+        string[]? @in,
+        string[]? status,
+        out ErrorResult? error)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            error = new ErrorResult("invalid_query", "query is required.");
+            return false;
+        }
+        if (query.Length > 500)
+        {
+            error = new ErrorResult("invalid_query", "query must be 500 characters or fewer.");
+            return false;
+        }
+        if (@in is not null)
+        {
+            foreach (var raw in @in)
+            {
+                var field = (raw ?? string.Empty).Trim().ToLowerInvariant();
+                if (!ValidSearchFields.Contains(field))
+                {
+                    error = new ErrorResult(
+                        "invalid_in_field",
+                        $"Invalid in field '{raw}'. Valid values: title, description, notes, subtasks, tags.");
+                    return false;
+                }
+            }
+        }
+        if (status is not null)
+        {
+            foreach (var raw in status)
+            {
+                var s = (raw ?? string.Empty).Trim().ToLowerInvariant();
+                if (s is not ("todo" or "doing" or "done"))
+                {
+                    error = new ErrorResult(
+                        "invalid_status",
+                        $"Invalid status '{raw}'. Valid values: todo, doing, done.");
+                    return false;
+                }
+            }
+        }
+        error = null;
+        return true;
+    }
+
+    private static readonly HashSet<string> AllowedSummaryFields = new(StringComparer.Ordinal)
+    {
+        "title", "status", "parent_id", "path", "created", "priority",
+    };
+
+    /// <summary>
+    /// Normalises and whitelists the requested fields[] for list_tasks projection.
+    /// Returns null when the caller did NOT request a projection (null or empty input,
+    /// or every requested name was unknown). In that case the default typed shape is used.
+    /// </summary>
+    private static HashSet<string>? NormalizeFieldProjection(string[]? fields)
+    {
+        if (fields is null || fields.Length == 0) return null;
+
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in fields)
+        {
+            if (raw is null) continue;
+            var normalized = raw.Trim().ToLowerInvariant();
+            if (normalized.Length == 0) continue;
+            if (AllowedSummaryFields.Contains(normalized))
+                set.Add(normalized);
+        }
+        return set.Count == 0 ? null : set;
+    }
+
+    private Dictionary<string, object?> ProjectTaskSummary(GlassworkTask task, HashSet<string> fields)
+    {
+        var dict = new Dictionary<string, object?> { ["id"] = task.Id };
+        if (fields.Contains("title")) dict["title"] = task.Title;
+        if (fields.Contains("status")) dict["status"] = MapToExternalStatus(task.Status);
+        if (fields.Contains("parent_id")) dict["parent_id"] = task.Parent;
+        if (fields.Contains("path")) dict["path"] = TodoRelativeTaskPath(task.Id);
+        if (fields.Contains("created")) dict["created"] = task.Created.ToString("yyyy-MM-dd");
+        if (fields.Contains("priority")) dict["priority"] = task.Priority;
+        return dict;
+    }
+
+    // ────── output path helpers (slash-normalized, always forward slashes) ──────
+
+    private static string TodoRelativeTaskPath(string id) => $"{id}.md";
+
+    private static string TodoRelativeArtifactPath(string id, string filename)
+        => $"{id}.artifacts/{filename}";
+
+    private static string NormalizeOutputPath(string path) => path.Replace('\\', '/');
 
     private static string MapToExternalStatus(string internalStatus) => internalStatus switch
     {
@@ -464,6 +674,9 @@ public sealed class GlassworkTools
 
     private sealed record ListTasksResult(
         [property: JsonPropertyName("tasks")] List<TaskSummary> Tasks);
+
+    private sealed record ListTasksProjectedResult(
+        [property: JsonPropertyName("tasks")] List<Dictionary<string, object?>> Tasks);
 
     private sealed record TaskSearchSummary(
         [property: JsonPropertyName("id")] string Id,

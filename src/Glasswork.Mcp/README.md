@@ -2,7 +2,7 @@
 
 `glasswork-mcp` is a standalone [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI agents typed read/write access to a [Glasswork](https://github.com/tjegbejimba/Glasswork) task vault. It communicates over stdio and requires no running Glasswork app instance.
 
-> **v0.5.0 — M5**: `search_tasks` is now implemented — topic-driven task discovery across title, description, notes, subtasks, and tags with ranked results and per-hit snippets. See [Tool reference](#tool-reference) for the schema.
+> **v0.5.0**: cross-cutting polish pass — uniform structured error envelope across every tool (no more `ArgumentException` to the MCP transport), todo-relative paths with forward-slash normalization (breaking — see [CHANGELOG](./CHANGELOG.md)), trace phase coverage extended to `get_task` and `add_artifact`, and `list_tasks` gains an optional `fields[]` projection parameter. See [Tool reference](#tool-reference) for the updated schemas.
 
 ---
 
@@ -134,7 +134,7 @@ Topic-driven task discovery. Splits the query on whitespace and requires **all t
 }
 ```
 
-- **`in`** (optional): restrict which fields are searched. Omit to search all five. Invalid values cause an `ArgumentException`.
+- **`in`** (optional): restrict which fields are searched. Omit to search all five.
 - **`tags`** (optional): AND filter — every listed tag must be present on the task.
 - **`status`** (optional): include only tasks with one of the listed statuses.
 - **`limit`** (optional): max results. Values outside `[1, 100]` are silently clamped.
@@ -158,14 +158,14 @@ Topic-driven task discovery. Splits the query on whitespace and requires **all t
 
 Results are ranked: tasks with a title match score higher than body-only matches. Tiebreak: newest first, then by ID. Artifact body content is **not** searched in v1.
 
-**Errors** — propagated as `ArgumentException`:
+**Errors** — returned as the structured `{ "error": "<code>", "message": "<text>" }` envelope:
 
-| Condition | Message |
+| `error` value | When |
 |---|---|
-| Empty / whitespace query | `query is required.` |
-| Query longer than 500 chars | `query must be 500 characters or fewer.` |
-| Unknown `in` field | `Invalid in field '<name>'. Valid values: title, description, notes, subtasks, tags.` |
-| Unknown `status` value | `Invalid status '<value>'. Valid values: todo, doing, done.` |
+| `invalid_query` | Empty/whitespace query or query longer than 500 characters |
+| `invalid_in_field` | Unknown value in `in[]` (allowed: `title`, `description`, `notes`, `subtasks`, `tags`) |
+| `invalid_status` | Unknown value in `status[]` (allowed: `todo`, `doing`, `done`) |
+| `invalid_argument` | Defensive fallback for any other input-validation failure surfaced from `Glasswork.Core` |
 
 ---
 
@@ -182,14 +182,21 @@ Results are ranked: tasks with a title match score higher than body-only matches
 }
 ```
 
-**Output**
+**Output (success)**
 
 ```json
 {
   "task_id": "string — the generated task ID (slug from title)",
-  "path": "string — absolute path to the created task file"
+  "path": "string — todo-relative path to the created task file, e.g. fix-the-bug.md"
 }
 ```
+
+**Output (errors)**
+
+| `error` value | When |
+|---|---|
+| `invalid_title` | `title` is null, empty, or whitespace |
+| `invalid_status` | `status` is not one of `todo`, `doing`, `done` |
 
 ### `list_tasks`
 
@@ -198,11 +205,14 @@ Results are ranked: tasks with a title match score higher than body-only matches
 ```json
 {
   "status": "\"todo\" | \"doing\" | \"done\" (optional)",
-  "parent_task_id": "string (optional)"
+  "parent_task_id": "string (optional)",
+  "fields": ["string", "..."]
 }
 ```
 
-**Output**
+- **`fields`** (optional): when provided, each returned summary contains only the requested fields plus `id` (always included). Allowed values: `title`, `status`, `parent_id`, `path`, `created`, `priority`. Field names are case-folded, whitespace-trimmed, and de-duplicated; unknown names are silently dropped. Omitting `fields` (or passing `null` / `[]`) preserves the default shape below.
+
+**Output (default — no `fields`)**
 
 ```json
 {
@@ -212,13 +222,29 @@ Results are ranked: tasks with a title match score higher than body-only matches
       "title": "string",
       "status": "\"todo\" | \"doing\" | \"done\"",
       "parent_id": "string | null",
-      "path": "string — absolute path to the task file"
+      "path": "string — todo-relative path to the task file, e.g. fix-the-bug.md"
     }
   ]
 }
 ```
 
+**Output (with `fields: ["created", "priority"]`)**
+
+```json
+{
+  "tasks": [
+    { "id": "string", "created": "yyyy-MM-dd", "priority": "medium" }
+  ]
+}
+```
+
 Results are sorted by created date ascending, then by ID for stability.
+
+**Output (error)**
+
+| `error` value | When |
+|---|---|
+| `invalid_status` | `status` is not one of `todo`, `doing`, `done` |
 
 ---
 
@@ -245,7 +271,7 @@ Results are sorted by created date ascending, then by ID for stability.
   "artifacts": [
     {
       "filename": "string — e.g. plan.md",
-      "path": "string — vault-relative path, e.g. task-id.artifacts/plan.md"
+      "path": "string — todo-relative path, e.g. task-id.artifacts/plan.md"
     }
   ]
 }
@@ -260,7 +286,7 @@ Results are sorted by created date ascending, then by ID for stability.
 }
 ```
 
-Re-reads the vault and artifact folder on every call (no cache). The `artifacts` array lists filenames and vault-relative paths but does not include artifact body content.
+Re-reads the vault and artifact folder on every call (no cache). The `artifacts` array lists filenames and todo-relative paths but does not include artifact body content.
 
 ---
 
@@ -280,7 +306,7 @@ Re-reads the vault and artifact folder on every call (no cache). The `artifacts`
 
 ```json
 {
-  "path": "string — vault-relative path to the created file, e.g. task-id.artifacts/plan.md"
+  "path": "string — todo-relative path to the created file, e.g. task-id.artifacts/plan.md"
 }
 ```
 
@@ -289,7 +315,7 @@ Re-reads the vault and artifact folder on every call (no cache). The `artifacts`
 | `error` value | When |
 |---|---|
 | `not_found` | The task ID does not exist in the vault |
-| `invalid_filename` | `filename` does not end in `.md` |
+| `invalid_filename` | `filename` is null, empty, whitespace, or does not end in `.md` |
 | `path_traversal` | `filename` contains `..`, is absolute, or resolves outside the artifact folder |
 | `conflict` | A file with that name already exists — `add_artifact` is create-only in v1 |
 
@@ -327,7 +353,7 @@ Returns a task's complete context bundle — task content, every artifact's body
   "artifacts": [
     {
       "filename": "string — e.g. plan.md",
-      "path": "string — vault-relative, e.g. task-id.artifacts/plan.md",
+      "path": "string — todo-relative, e.g. task-id.artifacts/plan.md",
       "content": "string — full file body"
     }
   ],
@@ -340,7 +366,7 @@ Returns a task's complete context bundle — task content, every artifact's body
   ],
   "backlinks": [
     {
-      "source_path": "string — vault-relative path to the linking page",
+      "source_path": "string — vault-root-relative path to the linking page, e.g. wiki/concepts/foo.md (always forward slashes). NOTE: this is the one path field that is vault-root-relative, not todo-relative — backlinks point at pages outside wiki/todo/.",
       "source_title": "string — H1 or first non-empty line",
       "page_type": "\"concept\" | \"decision\" | \"incident\" | \"system\" | \"other\""
     }
@@ -422,7 +448,7 @@ Every MCP tool call emits one structured JSON line (JSONL) to **stderr**. An opt
 | Variable | Value | Effect |
 |---|---|---|
 | `GLASSWORK_MCP_LOG` | `1` | Also write each log line to `<vault>/.glasswork/mcp.log`. The file is capped at ~1 MB; when the cap is exceeded the oldest half of entries is automatically pruned. |
-| `GLASSWORK_MCP_TRACE` | `1` | Adds a `phases` object to each log line with per-phase wall-clock times (glob, yaml_parse, filter, sort, write). Off by default — zero overhead in normal use. |
+| `GLASSWORK_MCP_TRACE` | `1` | Adds a `phases` object to each log line with per-phase wall-clock times. Off by default — zero overhead in normal use. |
 
 ### JSONL log-line shape
 
@@ -456,7 +482,12 @@ Phases instrumented in v1:
 | `yaml_parse` | `list_tasks` | Reading and parsing each file's YAML frontmatter |
 | `filter` | `list_tasks` | Applying status / parent_task_id filters |
 | `sort` | `list_tasks` | Sorting results by created date and ID |
-| `write` | `add_task` | Writing the new task file to disk |
+| `write` | `add_task`, `add_artifact` | Writing the file to disk |
+| `load_task` | `get_task`, `load_context` | Loading the root task from disk |
+| `scan_artifacts` | `get_task` | Enumerating the task's artifact folder |
+| `load_artifacts` | `load_context` | Reading every artifact body for the root task |
+| `load_subtasks` | `load_context` | Bounded BFS over the subtask tree |
+| `load_backlinks` | `load_context` | Building the backlink index against the vault root |
 
 ### Enabling the file sink (PowerShell)
 
