@@ -381,7 +381,7 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void ListTasks_FieldsAllUnknown_DropsToDefaultShape()
+    public void ListTasks_FieldsAllUnknown_ReturnsIdOnly()
     {
         _tools.AddTask("All Unknown Task");
 
@@ -390,9 +390,21 @@ public class GlassworkToolsTests
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
         CollectionAssert.AreEqual(
-            new[] { "id", "parent_id", "path", "status", "title" },
+            new[] { "id" },
             keys,
-            "When every requested field is unknown the default shape applies.");
+            "When every requested field is unknown the projection contract still applies: id only.");
+    }
+
+    [TestMethod]
+    public void ListTasks_FieldsProjected_PreservesNullParentId()
+    {
+        _tools.AddTask("Standalone Projected");
+
+        var json = _tools.ListTasks(fields: new[] { "parent_id" });
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        Assert.AreEqual(JsonValueKind.Null, first.GetProperty("parent_id").ValueKind,
+            "Projected parent_id must serialise as JSON null for tasks without a parent.");
     }
 
     [TestMethod]
@@ -745,6 +757,49 @@ public class GlassworkToolsTests
 
         Assert.AreEqual("invalid_filename", doc.RootElement.GetProperty("error").GetString());
         Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+    }
+
+    [TestMethod]
+    public void AddArtifact_NullContent_ReturnsInvalidContentError()
+    {
+        var addJson = _tools.AddTask("Null Content Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.AddArtifact(taskId, "plan.md", null!);
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_content", doc.RootElement.GetProperty("error").GetString());
+
+        // And we did not silently create an empty file.
+        var expectedFile = Path.Combine(TasksDir, taskId + ".artifacts", "plan.md");
+        Assert.IsFalse(File.Exists(expectedFile), "Null content must not create an empty artifact.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_ForwardSlashInFilename_ReturnsPathTraversalError()
+    {
+        var addJson = _tools.AddTask("Slash Filename Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.AddArtifact(taskId, "nested/plan.md", "content");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("path_traversal", doc.RootElement.GetProperty("error").GetString());
+
+        var nested = Path.Combine(TasksDir, taskId + ".artifacts", "nested", "plan.md");
+        Assert.IsFalse(File.Exists(nested), "Nested file must not have been written.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_BackslashInFilename_ReturnsPathTraversalError()
+    {
+        var addJson = _tools.AddTask("Backslash Filename Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.AddArtifact(taskId, "nested\\plan.md", "content");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("path_traversal", doc.RootElement.GetProperty("error").GetString());
     }
 
     [TestMethod]

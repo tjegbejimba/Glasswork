@@ -9,7 +9,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Breaking
 
-- **Paths in MCP tool output are now todo-relative and use forward slashes** (issue #133). All `path` fields returned by `add_task`, `list_tasks`, `get_task`, `add_artifact`, and `load_context.artifacts[]` are relative to `<vault>/wiki/todo/` and always use `/` as the separator — `add_task` no longer returns absolute paths like `C:\Users\…\wiki\todo\foo.md` and `get_task`/`add_artifact` no longer emit OS-shaped paths like `foo.artifacts\plan.md` on Windows. **Migration**: prepend `$GLASSWORK_VAULT/wiki/todo/` to recover the previous absolute form. The single exception is `load_context.backlinks[].source_path`, which stays relative to the **vault root** (e.g. `wiki/concepts/foo.md`) because backlinks point at pages outside `wiki/todo/`. Per ADR 0007 §8, this drives the minor-version bump.
+- **Paths in MCP tool output are now todo-relative and use forward slashes** (issue #133). All `path` fields returned by `add_task`, `list_tasks`, `get_task`, `add_artifact`, and every artifact path inside `load_context` (both root and subtree levels) are relative to `<vault>/wiki/todo/` and always use `/` as the separator — `add_task` no longer returns absolute paths like `C:\Users\…\wiki\todo\foo.md` and `get_task`/`add_artifact` no longer emit OS-shaped paths like `foo.artifacts\plan.md` on Windows. **Migration**: prepend `$GLASSWORK_VAULT/wiki/todo/` to recover the previous absolute form. The single exception is `load_context.backlinks[].source_path`, which stays relative to the **vault root** (e.g. `wiki/concepts/foo.md`) because backlinks point at pages outside `wiki/todo/`. Per ADR 0007 §8, this drives the minor-version bump.
 
 ### Added
 
@@ -17,7 +17,7 @@ This project follows [Semantic Versioning](https://semver.org/).
   - `add_task` validates an empty title (`invalid_title`) and invalid status (`invalid_status`).
   - `list_tasks` validates invalid status (`invalid_status`).
   - `search_tasks` validates empty/too-long query (`invalid_query`), invalid `in` field (`invalid_in_field`), and invalid status filter (`invalid_status`); pre-validation runs in the MCP layer so error codes do not depend on `Glasswork.Core` exception messages.
-  - `add_artifact` validates an empty filename (`invalid_filename`).
+  - `add_artifact` validates an empty filename (`invalid_filename`), a null `content` (`invalid_content`), and a `filename` containing a path separator (`path_traversal`). The path-separator check sits above `VaultPathGuard.EnsurePathInVault` because the guard only verifies the resolved path stays inside the artifact folder — a value like `nested/plan.md` passes that check but would then crash `File.WriteAllText` with `DirectoryNotFoundException` and escape the structured envelope.
 - **Trace phase coverage for the remaining tools** (issue #133). Under `GLASSWORK_MCP_TRACE=1`:
   - `get_task` now emits `load_task` (the vault read) and `scan_artifacts` (the artifact-folder enumeration) phases.
   - `add_artifact` now emits a `write` phase around `File.WriteAllText`.

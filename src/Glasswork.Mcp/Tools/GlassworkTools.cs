@@ -161,8 +161,8 @@ public sealed class GlassworkTools
 
             scope?.SetCount("task_count", sortedTasks.Count);
 
-            var requestedFields = NormalizeFieldProjection(fields);
-            if (requestedFields is null)
+            var projection = NormalizeFieldProjection(fields);
+            if (projection.Mode == FieldProjectionMode.UseDefault)
             {
                 var summaries = sortedTasks
                     .Select(t => new TaskSummary(
@@ -176,7 +176,7 @@ public sealed class GlassworkTools
             }
 
             var projected = sortedTasks
-                .Select(t => ProjectTaskSummary(t, requestedFields))
+                .Select(t => ProjectTaskSummary(t, projection.Fields))
                 .ToList();
             return JsonSerializer.Serialize(new ListTasksProjectedResult(projected));
         }
@@ -206,27 +206,31 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(inputError);
             }
 
-            List<TaskSearchSummary> hits;
+            // Defensive net: pre-validation should have caught known cases, but a
+            // future Core validation we didn't mirror still surfaces as a structured
+            // envelope rather than crashing the transport. Wraps ONLY the Search
+            // call so that genuine bugs in the projection / serialization paths
+            // below propagate normally.
+            IReadOnlyList<TaskSearchHit> searchHits;
             try
             {
-                hits = _search.Search(query, @in, tags, status, limit)
-                    .Select(h => new TaskSearchSummary(
-                        Id: h.Id,
-                        Title: h.Title,
-                        Status: h.Status,
-                        ParentId: h.ParentId,
-                        MatchedIn: h.MatchedIn.ToArray(),
-                        Snippet: h.Snippet))
-                    .ToList();
+                searchHits = _search.Search(query, @in, tags, status, limit);
             }
             catch (ArgumentException ex)
             {
-                // Defensive net: pre-validation should have caught known cases,
-                // but a future Core validation we didn't mirror still surfaces
-                // as a structured envelope rather than crashing the transport.
                 scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_argument", ex.Message));
             }
+
+            var hits = searchHits
+                .Select(h => new TaskSearchSummary(
+                    Id: h.Id,
+                    Title: h.Title,
+                    Status: h.Status,
+                    ParentId: h.ParentId,
+                    MatchedIn: h.MatchedIn.ToArray(),
+                    Snippet: h.Snippet))
+                .ToList();
             scope?.SetCount("task_count", hits.Count);
             return JsonSerializer.Serialize(new SearchTasksResult(hits));
         }
@@ -301,7 +305,7 @@ public sealed class GlassworkTools
     public string AddArtifact(
         [Description("Task ID that owns the artifact.")] string task_id,
         [Description("Filename for the artifact, must end in .md (e.g. 'plan.md'). Simple filenames only — no path separators.")] string filename,
-        [Description("Markdown content to write into the artifact file.")] string content)
+        [Description("Markdown content to write into the artifact file.")] string? content)
     {
         using var scope = _logger?.BeginCall("add_artifact");
         try
@@ -317,6 +321,25 @@ public sealed class GlassworkTools
             {
                 scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_filename", "filename is required."));
+            }
+
+            if (content is null)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_content", "content is required."));
+            }
+
+            // Reject anything that is not a simple filename. VaultPathGuard only
+            // checks that the resolved path stays inside the artifact folder — a
+            // value like "nested/plan.md" passes that check but then crashes
+            // File.WriteAllText with DirectoryNotFoundException because we only
+            // CreateDirectory the artifact folder itself. Catch it here so the
+            // structured envelope owns the failure.
+            if (filename.Contains('/') || filename.Contains('\\'))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("path_traversal",
+                    $"Filename '{filename}' is not allowed. Use a simple filename without path separators or '..'."));
             }
 
             if (!filename.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
@@ -349,7 +372,7 @@ public sealed class GlassworkTools
             Directory.CreateDirectory(artifactFolder);
             _selfWrites.RegisterWrite(resolvedPath);
             var writeSw = Stopwatch.StartNew();
-            File.WriteAllText(resolvedPath, content ?? string.Empty);
+            File.WriteAllText(resolvedPath, content);
             scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
 
             var resultPath = TodoRelativeArtifactPath(safeId, Path.GetFileName(resolvedPath));
@@ -603,13 +626,19 @@ public sealed class GlassworkTools
     };
 
     /// <summary>
-    /// Normalises and whitelists the requested fields[] for list_tasks projection.
-    /// Returns null when the caller did NOT request a projection (null or empty input,
-    /// or every requested name was unknown). In that case the default typed shape is used.
+    /// Three-state result of normalising the requested fields[] for list_tasks:
+    /// <list type="bullet">
+    /// <item><c>UseDefault</c>: caller did not request a projection — null or empty input. Use the typed 5-field shape.</item>
+    /// <item><c>EmptyProjection</c>: caller requested a projection but every name was unknown after normalisation. Return id-only summaries.</item>
+    /// <item><c>Projection</c>: at least one valid field was requested. Project on the returned set.</item>
+    /// </list>
     /// </summary>
-    private static HashSet<string>? NormalizeFieldProjection(string[]? fields)
+    private enum FieldProjectionMode { UseDefault, EmptyProjection, Projection }
+
+    private static (FieldProjectionMode Mode, HashSet<string> Fields) NormalizeFieldProjection(string[]? fields)
     {
-        if (fields is null || fields.Length == 0) return null;
+        if (fields is null || fields.Length == 0)
+            return (FieldProjectionMode.UseDefault, new HashSet<string>(StringComparer.Ordinal));
 
         var set = new HashSet<string>(StringComparer.Ordinal);
         foreach (var raw in fields)
@@ -620,7 +649,9 @@ public sealed class GlassworkTools
             if (AllowedSummaryFields.Contains(normalized))
                 set.Add(normalized);
         }
-        return set.Count == 0 ? null : set;
+        return set.Count == 0
+            ? (FieldProjectionMode.EmptyProjection, set)
+            : (FieldProjectionMode.Projection, set);
     }
 
     private Dictionary<string, object?> ProjectTaskSummary(GlassworkTask task, HashSet<string> fields)

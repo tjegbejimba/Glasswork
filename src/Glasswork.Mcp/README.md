@@ -316,10 +316,11 @@ Re-reads the vault and artifact folder on every call (no cache). The `artifacts`
 |---|---|
 | `not_found` | The task ID does not exist in the vault |
 | `invalid_filename` | `filename` is null, empty, whitespace, or does not end in `.md` |
-| `path_traversal` | `filename` contains `..`, is absolute, or resolves outside the artifact folder |
+| `invalid_content` | `content` is null |
+| `path_traversal` | `filename` contains a path separator (`/` or `\`), `..`, is absolute, or resolves outside the artifact folder |
 | `conflict` | A file with that name already exists — `add_artifact` is create-only in v1 |
 
-Artifacts are stored under `<vault>/<task-id>.artifacts/<filename>`. The write is registered with `SelfWriteCoordinator` so the running Glasswork app does not raise a spurious "external change" banner.
+Artifacts are stored under `<vault>/wiki/todo/<task-id>.artifacts/<filename>`. The write is registered with `SelfWriteCoordinator` so the running Glasswork app does not raise a spurious "external change" banner.
 
 ---
 
