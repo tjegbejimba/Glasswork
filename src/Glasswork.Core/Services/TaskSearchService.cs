@@ -7,15 +7,6 @@ namespace Glasswork.Core.Services;
 /// </summary>
 public sealed class TaskSearchService
 {
-    private static readonly HashSet<string> ValidFields = new(StringComparer.Ordinal)
-    {
-        "title",
-        "description",
-        "notes",
-        "subtasks",
-        "tags",
-    };
-
     private readonly VaultService _vault;
 
     public TaskSearchService(VaultService vault)
@@ -36,13 +27,10 @@ public sealed class TaskSearchService
             throw new ArgumentException("query must be 500 characters or fewer.");
 
         var clampedLimit = Math.Clamp(limit, 1, 100);
-        var scope = NormalizeScope(fields);
-        var requiredTagSet = NormalizeTags(requiredTags);
-        var allowedStatuses = NormalizeStatuses(statuses);
-        var tokens = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(t => t.ToLowerInvariant())
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var scope = TaskSearchText.NormalizeScope(fields);
+        var requiredTagSet = TaskSearchText.NormalizeTags(requiredTags);
+        var allowedStatuses = TaskSearchText.NormalizeStatuses(statuses);
+        var tokens = TaskSearchText.Tokenize(query);
 
         var all = _vault.LoadAll();
         var hits = new List<ScoredHit>();
@@ -59,22 +47,17 @@ public sealed class TaskSearchService
                     continue;
             }
 
-            var searchable = BuildSearchableFields(task, scope);
-            if (!AllTokensMatch(tokens, searchable))
+            var searchable = TaskSearchText.BuildSearchableFields(task, scope);
+            if (!TaskSearchText.AllTokensMatch(tokens, searchable))
                 continue;
 
-            var matchedFields = new List<string>();
-            foreach (var pair in searchable)
-            {
-                if (tokens.Any(t => pair.Value.Contains(t, StringComparison.OrdinalIgnoreCase)))
-                    matchedFields.Add(pair.Key);
-            }
+            var matchedFields = TaskSearchText.MatchedFields(searchable, tokens);
 
             if (matchedFields.Count == 0)
                 continue;
 
-            var snippet = BuildSnippet(searchable, matchedFields, tokens);
-            var score = ComputeScore(matchedFields);
+            var snippet = TaskSearchText.BuildSnippet(searchable, matchedFields, tokens);
+            var score = TaskSearchText.ComputeScore(matchedFields);
             var effectiveStatus = task.Status == GlassworkTask.Statuses.InProgress ? "doing" : task.Status;
             hits.Add(new ScoredHit(
                 new TaskSearchHit(
@@ -97,7 +80,40 @@ public sealed class TaskSearchService
             .ToArray();
     }
 
-    private static Dictionary<string, string> BuildSearchableFields(GlassworkTask task, HashSet<string> scope)
+    private sealed record ScoredHit(TaskSearchHit Hit, int Score, DateTime Created);
+}
+
+internal static class TaskSearchText
+{
+    private static readonly HashSet<string> ValidFields = new(StringComparer.Ordinal)
+    {
+        "title",
+        "description",
+        "notes",
+        "subtasks",
+        "tags",
+    };
+
+    internal static bool Matches(GlassworkTask task, string? query, IReadOnlyList<string>? fields = null)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return true;
+
+        var scope = NormalizeScope(fields);
+        var tokens = Tokenize(query);
+        var searchable = BuildSearchableFields(task, scope);
+        return AllTokensMatch(tokens, searchable);
+    }
+
+    internal static string[] Tokenize(string query)
+    {
+        return query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    internal static Dictionary<string, string> BuildSearchableFields(GlassworkTask task, HashSet<string> scope)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         if (scope.Contains("title")) result["title"] = task.Title ?? string.Empty;
@@ -114,7 +130,7 @@ public sealed class TaskSearchService
         return result;
     }
 
-    private static HashSet<string> NormalizeScope(IReadOnlyList<string>? fields)
+    internal static HashSet<string> NormalizeScope(IReadOnlyList<string>? fields)
     {
         if (fields is null || fields.Count == 0)
             return new HashSet<string>(ValidFields, StringComparer.Ordinal);
@@ -131,7 +147,7 @@ public sealed class TaskSearchService
         return scope;
     }
 
-    private static HashSet<string>? NormalizeTags(IReadOnlyList<string>? tags)
+    internal static HashSet<string>? NormalizeTags(IReadOnlyList<string>? tags)
     {
         if (tags is null || tags.Count == 0)
             return null;
@@ -146,7 +162,7 @@ public sealed class TaskSearchService
         return set.Count == 0 ? null : set;
     }
 
-    private static HashSet<string>? NormalizeStatuses(IReadOnlyList<string>? statuses)
+    internal static HashSet<string>? NormalizeStatuses(IReadOnlyList<string>? statuses)
     {
         if (statuses is null || statuses.Count == 0)
             return null;
@@ -167,7 +183,7 @@ public sealed class TaskSearchService
         return set;
     }
 
-    private static bool AllTokensMatch(IReadOnlyList<string> tokens, Dictionary<string, string> searchable)
+    internal static bool AllTokensMatch(IReadOnlyList<string> tokens, Dictionary<string, string> searchable)
     {
         foreach (var token in tokens)
         {
@@ -177,7 +193,20 @@ public sealed class TaskSearchService
         return true;
     }
 
-    private static string BuildSnippet(
+    internal static List<string> MatchedFields(
+        Dictionary<string, string> searchable,
+        IReadOnlyList<string> tokens)
+    {
+        var matchedFields = new List<string>();
+        foreach (var pair in searchable)
+        {
+            if (tokens.Any(t => pair.Value.Contains(t, StringComparison.OrdinalIgnoreCase)))
+                matchedFields.Add(pair.Key);
+        }
+        return matchedFields;
+    }
+
+    internal static string BuildSnippet(
         Dictionary<string, string> searchable,
         IReadOnlyList<string> matchedFields,
         IReadOnlyList<string> tokens)
@@ -202,15 +231,13 @@ public sealed class TaskSearchService
         return segment;
     }
 
-    private static int ComputeScore(IReadOnlyCollection<string> matchedFields)
+    internal static int ComputeScore(IReadOnlyCollection<string> matchedFields)
     {
         var score = matchedFields.Count;
         if (matchedFields.Contains("title"))
             score += 10;
         return score;
     }
-
-    private sealed record ScoredHit(TaskSearchHit Hit, int Score, DateTime Created);
 }
 
 public sealed record TaskSearchHit(

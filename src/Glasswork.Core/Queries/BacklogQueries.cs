@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Glasswork.Core.Models;
+using Glasswork.Core.Services;
 
 namespace Glasswork.Core.Queries;
 
@@ -23,14 +24,27 @@ public static class BacklogQueries
     /// </summary>
     public static IReadOnlyList<GlassworkTask> Filter(
         IReadOnlyDictionary<string, GlassworkTask> tasks,
-        string filterStatus)
+        string filterStatus,
+        string? searchText = null)
+    {
+        if (tasks is null) throw new ArgumentNullException(nameof(tasks));
+        return Filter(tasks.Values, filterStatus, searchText);
+    }
+
+    public static IReadOnlyList<GlassworkTask> Filter(
+        IEnumerable<GlassworkTask> tasks,
+        string filterStatus,
+        string? searchText = null)
     {
         if (tasks is null) throw new ArgumentNullException(nameof(tasks));
         if (filterStatus is null) throw new ArgumentNullException(nameof(filterStatus));
 
         IEnumerable<GlassworkTask> filtered = filterStatus == "all"
-            ? tasks.Values.Where(t => t.Status != GlassworkTask.Statuses.Done)
-            : tasks.Values.Where(t => t.Status == filterStatus);
+            ? tasks.Where(t => t.Status != GlassworkTask.Statuses.Done)
+            : tasks.Where(t => t.Status == filterStatus);
+
+        if (!string.IsNullOrWhiteSpace(searchText))
+            filtered = filtered.Where(t => TaskSearchText.Matches(t, searchText));
 
         return filtered.Select(t => t.Clone()).ToList();
     }

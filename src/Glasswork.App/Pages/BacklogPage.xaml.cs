@@ -25,10 +25,11 @@ public sealed partial class BacklogPage : Page
     // applied (with bounded retry) after ViewModel.Refreshed. Null when no restore
     // is queued (e.g. fresh page, or after AddTask which explicitly discards).
     private ScrollSnapshot? _pendingRestore;
+    private bool _skipNextScrollCapture;
 
     /// <summary>
     /// Captured scroll state for a single Refresh() round-trip. Includes the
-    /// layout context (ViewMode/IsGrouped/FilterStatus) so the restore callback
+    /// layout context (ViewMode/IsGrouped/FilterStatus/SearchText) so the restore callback
     /// can detect when an intentional layout change has invalidated the snapshot
     /// and drop it instead of restoring a now-meaningless offset.
     /// </summary>
@@ -36,6 +37,7 @@ public sealed partial class BacklogPage : Page
         string ViewMode,
         bool IsGrouped,
         string FilterStatus,
+        string SearchText,
         double ListOffset,
         double BoardHorizontalOffset,
         Dictionary<string, double> BoardColumnOffsets);
@@ -71,6 +73,13 @@ public sealed partial class BacklogPage : Page
         {
             // Visual-tree walks must be on the UI thread.
             if (!DispatcherQueue.HasThreadAccess) return;
+            if (_skipNextScrollCapture)
+            {
+                _skipNextScrollCapture = false;
+                _pendingRestore = null;
+                return;
+            }
+
             // ??= preserves the ORIGINAL pre-refresh offset across back-to-back
             // refreshes (e.g. status command followed by file watcher echo) — without
             // this, the second Refreshing would capture the post-clear scroll-zero
@@ -261,7 +270,8 @@ public sealed partial class BacklogPage : Page
         var hasContent = isBoard
             ? ViewModel.BoardColumns.Any(c => c.Tasks.Count > 0)
             : ViewModel.Tasks.Count > 0;
-        
+        var isSearching = !string.IsNullOrWhiteSpace(ViewModel.SearchText);
+
         // Only manage TaskList visibility in list mode
         if (isList)
         {
@@ -272,7 +282,11 @@ public sealed partial class BacklogPage : Page
         {
             BoardView.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
         }
-        
+
+        EmptyStateView.Headline = isSearching ? "No matching tasks." : "Nothing in the Backlog yet.";
+        EmptyStateView.Body = isSearching
+            ? "Try a different search, or clear the search box to see every Backlog task."
+            : "Capture a task to get started. You can pull anything you add here into My Day later.";
         EmptyStateView.Visibility = hasContent ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -284,6 +298,14 @@ public sealed partial class BacklogPage : Page
         {
             ViewModel.FilterStatus = item.Tag?.ToString() ?? "all";
         }
+    }
+
+    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (sender is not TextBox tb) return;
+        if (ViewModel.SearchText == tb.Text) return;
+        _skipNextScrollCapture = true;
+        ViewModel.SearchText = tb.Text;
     }
 
     private async void AddTask_Click(object sender, RoutedEventArgs e)
@@ -754,6 +776,7 @@ public sealed partial class BacklogPage : Page
             ViewMode: ViewModel.ViewMode,
             IsGrouped: ViewModel.IsGrouped,
             FilterStatus: ViewModel.FilterStatus,
+            SearchText: ViewModel.SearchText,
             ListOffset: listOffset,
             BoardHorizontalOffset: boardHorizontal,
             BoardColumnOffsets: columnOffsets);
@@ -766,10 +789,11 @@ public sealed partial class BacklogPage : Page
         if (_pendingRestore != snapshot) return;
 
         // Layout context changed since capture (user toggled view-mode, group,
-        // or filter)? The captured offset is meaningless now. Drop the snapshot.
+        // status filter, or search)? The captured offset is meaningless now. Drop it.
         if (snapshot.ViewMode    != ViewModel.ViewMode    ||
             snapshot.IsGrouped   != ViewModel.IsGrouped   ||
-            snapshot.FilterStatus != ViewModel.FilterStatus)
+            snapshot.FilterStatus != ViewModel.FilterStatus ||
+            snapshot.SearchText   != ViewModel.SearchText)
         {
             _pendingRestore = null;
             return;
