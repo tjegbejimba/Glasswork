@@ -289,6 +289,12 @@
                 <ComboBoxItem Tag="done" Content="Done" />
             </ComboBox>
 
+            <TextBox x:Name="SearchBox"
+                     Width="240"
+                     PlaceholderText="Search tasks"
+                     AutomationProperties.Name="Search Backlog tasks"
+                     TextChanged="SearchBox_TextChanged" />
+
             <ToggleButton x:Name="GroupToggle"
                           IsChecked="{x:Bind ViewModel.IsGrouped, Mode=TwoWay}"
                           ToolTipService.ToolTip="Group by parent">

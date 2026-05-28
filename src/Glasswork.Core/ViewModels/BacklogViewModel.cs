@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 
 namespace Glasswork.ViewModels;
@@ -66,6 +67,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial GlassworkTask? SelectedTask { get; set; }
     [ObservableProperty] public partial bool IsGrouped { get; set; } = true;
     [ObservableProperty] public partial string ViewMode { get; set; } = "list"; // "list" | "board"
+    [ObservableProperty] public partial string SearchText { get; set; } = string.Empty;
 
     private readonly IndexService _index;
 
@@ -101,7 +103,8 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         if (ViewMode == "board")
         {
             // Board mode: use BacklogBoardGrouper, ignore FilterStatus and IsGrouped
-            var columns = BacklogBoardGrouper.GroupByStatus(all);
+            var searched = BacklogQueries.Filter(all, "all", SearchText);
+            var columns = BacklogBoardGrouper.GroupByStatus(searched);
             foreach (var col in columns)
             {
                 BoardColumns.Add(col);
@@ -118,11 +121,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         else
         {
             // List mode: existing logic
-            var filtered = FilterStatus switch
-            {
-                "all" => all.Where(t => t.Status != GlassworkTask.Statuses.Done),
-                _ => all.Where(t => t.Status == FilterStatus)
-            };
+            var filtered = BacklogQueries.Filter(all, FilterStatus, SearchText);
 
             var ordered = filtered.OrderByDescending(t => t.Priority == "urgent")
                                   .ThenByDescending(t => t.Priority == "high")
@@ -139,6 +138,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
                 // Hydrate cache from persisted store before grouping so headers render
                 // resolved titles on the first frame instead of flashing the bare ID.
                 HydrateParentTitleCache(ordered);
+                var liveBacklogTasks = BacklogQueries.Filter(all, "all");
 
                 var collapseState = GroupCollapseStateProvider?.Invoke()
                                     ?? new Dictionary<string, bool>();
@@ -149,7 +149,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
                 }
 
                 // GC stale entries no longer referenced by any task in the current set.
-                CompactParentTitleStore(ordered);
+                CompactParentTitleStore(liveBacklogTasks);
 
                 // Kick off background fetches for any numeric parents we haven't resolved yet.
                 KickOffParentTitleFetches(ordered);
@@ -308,6 +308,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
 
     partial void OnIsGroupedChanged(bool value) => Refresh();
     partial void OnViewModeChanged(string value) => Refresh();
+    partial void OnSearchTextChanged(string value) => Refresh();
 
     public void Dispose()
     {

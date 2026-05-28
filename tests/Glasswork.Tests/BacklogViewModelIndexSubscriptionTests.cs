@@ -63,6 +63,70 @@ public class BacklogViewModelIndexSubscriptionTests
     }
 
     [TestMethod]
+    public void SearchText_FiltersListModeBacklogTasks()
+    {
+        _taskService.CreateTask("Improve backlog search");
+        _taskService.CreateTask("Polish My Day cards");
+
+        var vm = new BacklogViewModel(_vault, _taskService, _index);
+        vm.Refresh();
+
+        vm.SearchText = "search";
+
+        Assert.AreEqual(1, vm.Tasks.Count);
+        Assert.AreEqual("Improve backlog search", vm.Tasks[0].Title);
+        Assert.AreEqual(1, vm.Rows.OfType<GlassworkTask>().Count());
+    }
+
+    [TestMethod]
+    public void SearchText_FiltersBoardModeBacklogTasks()
+    {
+        _taskService.CreateTask("Improve backlog search");
+        var inProgress = _taskService.CreateTask("Polish My Day cards");
+        _taskService.SetStatus(inProgress, GlassworkTask.Statuses.InProgress);
+
+        var vm = new BacklogViewModel(_vault, _taskService, _index);
+        vm.ViewMode = "board";
+
+        vm.SearchText = "cards";
+
+        Assert.AreEqual(1, vm.BoardColumns.Sum(c => c.Tasks.Count));
+        Assert.AreEqual("Polish My Day cards", vm.BoardColumns.SelectMany(c => c.Tasks).Single().Title);
+    }
+
+    [TestMethod]
+    public void Refresh_CompactsParentTitleCacheAgainstAllActiveBacklogTasks()
+    {
+        var todo = _taskService.CreateTask("Todo child");
+        todo.Parent = "1";
+        _vault.Save(todo);
+        var inProgress = _taskService.CreateTask("In-progress child");
+        inProgress.Parent = "2";
+        _vault.Save(inProgress);
+        _taskService.SetStatus(inProgress, GlassworkTask.Statuses.InProgress);
+
+        var uiStatePath = Path.Combine(_tempDir, "ui-state.json");
+        var ui = new JsonFileUiStateService(uiStatePath);
+        var store = new AdoParentTitleCacheStore(ui);
+        store.Set(1, "Todo parent");
+        store.Set(2, "In-progress parent");
+        store.Save();
+
+        var vm = new BacklogViewModel(_vault, _taskService, _index, ui)
+        {
+            FilterStatus = GlassworkTask.Statuses.Todo
+        };
+
+        vm.Refresh();
+
+        var loaded = new AdoParentTitleCacheStore(new JsonFileUiStateService(uiStatePath))
+            .LoadFresh(new[] { 1, 2 });
+        Assert.AreEqual(2, loaded.Count);
+        Assert.AreEqual("Todo parent", loaded[1]);
+        Assert.AreEqual("In-progress parent", loaded[2]);
+    }
+
+    [TestMethod]
     public void SetStatusCommand_CallsRefreshForImmediateUpdate()
     {
         var task1 = _taskService.CreateTask("Task 1");

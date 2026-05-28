@@ -31,6 +31,67 @@ public class BacklogQueriesTests
     }
 
     [TestMethod]
+    public void Filter_SearchText_MatchesTaskContentWithinBacklog()
+    {
+        var dict = Snapshot(
+            new GlassworkTask
+            {
+                Id = "title",
+                Title = "Fix backlog search",
+                Status = GlassworkTask.Statuses.Todo
+            },
+            new GlassworkTask
+            {
+                Id = "notes",
+                Title = "Unrelated",
+                Status = GlassworkTask.Statuses.Todo,
+                Notes = "Search should inspect planning notes."
+            },
+            new GlassworkTask
+            {
+                Id = "tag",
+                Title = "Another task",
+                Status = GlassworkTask.Statuses.InProgress,
+                Tags = ["search"]
+            },
+            new GlassworkTask
+            {
+                Id = "done",
+                Title = "Search completed task",
+                Status = GlassworkTask.Statuses.Done
+            });
+
+        var result = BacklogQueries.Filter(dict, "all", "search");
+
+        CollectionAssert.AreEquivalent(
+            new[] { "title", "notes", "tag" },
+            result.Select(t => t.Id).ToArray());
+    }
+
+    [TestMethod]
+    public void Filter_SearchText_ComposesWithStatusFilter()
+    {
+        var dict = Snapshot(
+            new GlassworkTask
+            {
+                Id = "todo",
+                Title = "Search candidate",
+                Status = GlassworkTask.Statuses.Todo
+            },
+            new GlassworkTask
+            {
+                Id = "doing",
+                Title = "Search candidate",
+                Status = GlassworkTask.Statuses.InProgress
+            });
+
+        var result = BacklogQueries.Filter(dict, GlassworkTask.Statuses.InProgress, "search");
+
+        Assert.AreEqual(1, result.Count);
+        Assert.AreEqual("doing", result[0].Id);
+    }
+
+    [TestMethod]
     public void Filter_NamedStatus_ReturnsOnlyMatching()
     {
         var dict = Snapshot(
