@@ -149,6 +149,22 @@ inside Ubuntu.
      `false` on an element that's already in the live tree. Check
      `element.Parent != null` instead.
 
+7. **Visual verification before declaring a local task done.** After any
+   change touching `src\Glasswork.App\` (XAML, code-behind, ViewModels,
+   `App.xaml.cs`, services that affect what's drawn), you **must** run
+   [`scripts\verify-app.ps1`](../scripts/verify-app.ps1) and view the
+   resulting PNG before signing off. The test suite cannot catch XAML
+   parse errors, layout regressions, blank screens, or the silent
+   `STOWED_EXCEPTION` crashes from hard rule 6 — only a real render can.
+   The script does Debug build → launch dev-build exe → wait for window →
+   screenshot via `PrintWindow(PW_RENDERFULLCONTENT)` → kill the spawned
+   instance → print the PNG path. It only touches the exe under
+   `src\Glasswork.App\bin\`, so the user's installed Glasswork (from
+   `publish.ps1`) is left alone. Pure `Glasswork.Core` changes (no UI
+   surface affected) may skip this. **Cloud / Linux agents cannot run
+   this** — they must flag UI-touching work for local re-verification
+   before merge.
+
 ## Investigation guidance (for issue triage & root-cause analysis)
 
 When assigned a user-reported issue (label `user-report`):
