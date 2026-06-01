@@ -1,3 +1,4 @@
+using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -56,6 +57,8 @@ public partial class MyDayViewModel : ObservableObject
     [RelayCommand]
     public void Refresh()
     {
+        Refreshing?.Invoke();
+
         TodayTasks.Clear();
         RecentlyCompletedTasks.Clear();
         Suggestions.Clear();
@@ -107,7 +110,55 @@ public partial class MyDayViewModel : ObservableObject
         {
             Suggestions.Add(s);
         }
+
+        Refreshed?.Invoke();
     }
+
+    /// <summary>
+    /// Raised synchronously at the very top of <see cref="Refresh"/>, BEFORE
+    /// any of <see cref="TodayTasks"/>, <see cref="RecentlyCompletedTasks"/>, or
+    /// <see cref="Suggestions"/> are cleared. Subscribers can read the pre-refresh
+    /// state of those collections (e.g. to snapshot UI state that depends on them,
+    /// like <c>ScrollViewer.VerticalOffset</c> of the bound My Day <c>ListView</c>).
+    ///
+    /// Contract (mirrors <see cref="Refreshed"/>):
+    /// <list type="bullet">
+    ///   <item><description>Fires synchronously on whichever thread called
+    ///     <see cref="Refresh"/>. All current call sites invoke <see cref="Refresh"/>
+    ///     on the UI thread; subscribers that touch XAML controls should still
+    ///     verify <c>HasThreadAccess</c> defensively.</description></item>
+    ///   <item><description>Fires exactly once per <see cref="Refresh"/> call,
+    ///     and always BEFORE <see cref="Refreshed"/>.</description></item>
+    ///   <item><description>Subscribers must not throw — an exception will propagate
+    ///     out of <see cref="Refresh"/> and prevent the refresh from running.</description></item>
+    ///   <item><description>Subscribers must not call <see cref="Refresh"/> re-entrantly.</description></item>
+    /// </list>
+    /// </summary>
+    public event Action? Refreshing;
+
+    /// <summary>
+    /// Raised exactly once at the end of <see cref="Refresh"/> after all collections
+    /// (<see cref="TodayTasks"/>, <see cref="RecentlyCompletedTasks"/>,
+    /// <see cref="Suggestions"/>) have been fully populated. Page hosts subscribe to
+    /// this instead of individual <c>CollectionChanged</c> events so post-refresh work
+    /// (empty-state UI, per-task collapse-state hydration, scroll restore) is computed
+    /// against the final state, not the transient empty state that exists between the
+    /// internal <c>Clear()</c> and <c>Add()</c> calls.
+    ///
+    /// Contract:
+    /// <list type="bullet">
+    ///   <item><description>Fires synchronously on whichever thread called
+    ///     <see cref="Refresh"/>. All current call sites invoke <see cref="Refresh"/>
+    ///     on the UI thread (commands and watcher callbacks dispatched via
+    ///     <c>DispatcherQueue.TryEnqueue</c>); subscribers that touch XAML controls
+    ///     should still verify <c>HasThreadAccess</c> defensively.</description></item>
+    ///   <item><description>Subscribers must not throw — an exception will propagate
+    ///     out of <see cref="Refresh"/> and skip any later subscribers.</description></item>
+    ///   <item><description>Subscribers must not call <see cref="Refresh"/> re-entrantly —
+    ///     <see cref="Refresh"/> is not designed for recursion.</description></item>
+    /// </list>
+    /// </summary>
+    public event Action? Refreshed;
 
     /// <summary>
     /// A task is "recently completed today" if it's done, was completed today, AND was on

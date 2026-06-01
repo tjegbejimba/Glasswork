@@ -6,6 +6,7 @@ using Glasswork.Services;
 using Glasswork.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 
 namespace Glasswork.Pages;
@@ -15,10 +16,60 @@ public sealed partial class MyDayPage : Page
     public MyDayViewModel ViewModel { get; }
     public string TodayDate => DateTime.Today.ToString("dddd, MMMM d");
 
+    // Pending scroll-restore snapshot for TodayList. Captured in ViewModel.Refreshing
+    // (before the destructive Clear+Add inside MyDayViewModel.Refresh tears the
+    // ListView's ScrollViewer down to offset 0), applied with bounded retry after
+    // ViewModel.Refreshed once layout has caught up. Null when no restore is queued.
+    // Mirrors the Backlog fix (issue #182). TodayList is the primary (and tallest,
+    // MinHeight 320) scroll surface and the user-reported pain; the short secondary
+    // lists (recently-completed / suggestions, MaxHeight 140-400) are left as-is.
+    private ScrollSnapshot? _pendingRestore;
+
+    private sealed record ScrollSnapshot(double ListOffset);
+
     public MyDayPage()
     {
         ViewModel = new MyDayViewModel(App.Vault, App.Tasks, App.Index, App.UiState);
         InitializeComponent();
+
+        // Snapshot TodayList's scroll position before VM.Refresh() destroys it, then
+        // restore it after Refreshed once layout has caught up. Subscribed AFTER
+        // InitializeComponent so the handlers never dereference XAML controls during
+        // the parse pass (copilot-instructions hard rule 6).
+        ViewModel.Refreshing += () =>
+        {
+            // Visual-tree walks must be on the UI thread.
+            if (!DispatcherQueue.HasThreadAccess) return;
+
+            // ??= preserves the ORIGINAL pre-refresh offset across back-to-back
+            // refreshes (e.g. the 'x' command's Refresh() followed immediately by the
+            // file-watcher echo's Refresh()) — without it the second Refreshing would
+            // capture the post-clear scroll-zero state and clobber the real position.
+            // Defensive try/catch: scroll preservation must never break Refresh().
+            try
+            {
+                _pendingRestore ??= CaptureScrollState();
+            }
+            catch
+            {
+                _pendingRestore = null;
+            }
+        };
+        ViewModel.Refreshed += () =>
+        {
+            // Refreshed fires on whichever thread called VM.Refresh(); all current call
+            // sites are on the UI thread, but marshal to it defensively in case that
+            // changes — hydration, the empty-state decision, and the restore scheduling
+            // all read/touch UI + _pendingRestore and must run together on the UI thread.
+            if (DispatcherQueue.HasThreadAccess)
+            {
+                HandleRefreshed();
+            }
+            else
+            {
+                DispatcherQueue.TryEnqueue(HandleRefreshed);
+            }
+        };
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -41,7 +92,41 @@ public sealed partial class MyDayPage : Page
 
     private void Refresh()
     {
+        // VM.Refresh() raises Refreshing (scroll capture) then Refreshed (collapse
+        // hydration + empty-state + scroll restore). Keeping all post-refresh work in
+        // the Refreshed handler means every path that refreshes — OnNavigatedTo, the
+        // refresh button, the file-watcher echo, AND the command paths that call
+        // VM.XxxCommand.Execute() directly — gets identical treatment.
         ViewModel.Refresh();
+    }
+
+    private void HandleRefreshed()
+    {
+        HydrateAndUpdateAfterRefresh();
+
+        // Empty My Day: nothing scrollable to restore to. Drop any pending snapshot
+        // so a stale retry can't fire against a collapsed/non-scrollable list.
+        if (ViewModel.TodayTasks.Count == 0)
+        {
+            _pendingRestore = null;
+            return;
+        }
+
+        // Dispatch the restore at Low priority so layout can realize containers +
+        // recompute extent before ChangeView lands (UpdateEmptyState above has already
+        // made TodayList visible); bounded retry handles the cases where Low alone
+        // isn't enough (virtualized ListView still measuring).
+        if (_pendingRestore is not null)
+        {
+            var snapshot = _pendingRestore;
+            DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                () => TryRestoreWithRetry(snapshot, attempts: 0));
+        }
+    }
+
+    private void HydrateAndUpdateAfterRefresh()
+    {
         // Hydrate per-task manual-collapse state from UI state (persists across nav + restarts).
         foreach (var t in ViewModel.TodayTasks)
         {
@@ -202,6 +287,82 @@ public sealed partial class MyDayPage : Page
         var vaultRelative = VaultPageHelper.ToVaultRelativePath(absolutePath);
         if (vaultRelative is null) return;
         await App.ObsidianLauncher.Open(vaultRelative);
+    }
+
+    // ---------------------------------------------------------------------
+    // Issue #182 (extended to My Day): scroll-position capture/restore around
+    // VM.Refresh(). The destructive Clear+Add inside MyDayViewModel.Refresh
+    // tears down TodayList's internal ScrollViewer, snapping it back to offset 0.
+    // We capture in VM.Refreshing (before Clear) and restore in VM.Refreshed via
+    // Low-priority dispatch with bounded retry. Simpler than Backlog's equivalent:
+    // a single list surface, no view-mode/filter/search context to invalidate.
+    // ---------------------------------------------------------------------
+
+    private ScrollSnapshot CaptureScrollState()
+    {
+        double listOffset = 0;
+        var sv = FindDescendantScrollViewer(TodayList);
+        if (sv is not null) listOffset = sv.VerticalOffset;
+        return new ScrollSnapshot(listOffset);
+    }
+
+    private void TryRestoreWithRetry(ScrollSnapshot snapshot, int attempts)
+    {
+        // Stale callback (snapshot was dropped on empty My Day, or superseded by a
+        // newer refresh that overwrote _pendingRestore)? Bail. Reference identity, not
+        // value equality — two distinct cycles can share the same offset value.
+        if (!ReferenceEquals(_pendingRestore, snapshot)) return;
+
+        if (ApplySnapshot(snapshot))
+        {
+            _pendingRestore = null;
+            return;
+        }
+
+        // Layout not yet ready (e.g. ScrollableHeight == 0 but target > 0). Re-queue at
+        // Low up to 5 times; bounded so a degenerate state can't loop forever.
+        if (attempts >= 5)
+        {
+            _pendingRestore = null;
+            return;
+        }
+        DispatcherQueue.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            () => TryRestoreWithRetry(snapshot, attempts + 1));
+    }
+
+    private bool ApplySnapshot(ScrollSnapshot s)
+    {
+        var sv = FindDescendantScrollViewer(TodayList);
+        if (sv is null) return false;
+        // If we want a non-zero offset but the extent hasn't been measured yet, the
+        // request would silently land at 0. Defer and retry.
+        if (s.ListOffset > 0 && sv.ScrollableHeight <= 0) return false;
+        sv.ChangeView(
+            horizontalOffset: null,
+            verticalOffset: Math.Max(0, Math.Min(s.ListOffset, sv.ScrollableHeight)),
+            zoomFactor: null,
+            disableAnimation: true);
+        return true;
+    }
+
+    /// <summary>
+    /// VisualTreeHelper DFS to find the first <see cref="ScrollViewer"/> descendant of
+    /// <paramref name="root"/>. Returns null if none exists or <paramref name="root"/>
+    /// is null. Used to dig the implicit ScrollViewer out of TodayList's template.
+    /// </summary>
+    private static ScrollViewer? FindDescendantScrollViewer(DependencyObject? root)
+    {
+        if (root is null) return null;
+        if (root is ScrollViewer sv) return sv;
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            var found = FindDescendantScrollViewer(child);
+            if (found is not null) return found;
+        }
+        return null;
     }
 }
 
