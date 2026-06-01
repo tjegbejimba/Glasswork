@@ -69,7 +69,7 @@
             </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate>
-                    <Grid Padding="10,8" RowDefinitions="Auto,Auto"
+                    <Grid Padding="10,8" RowDefinitions="Auto,Auto,Auto"
                           DoubleTapped="TaskRow_DoubleTapped"
                           ContextRequested="TaskRow_ContextRequested"
                           Background="Transparent">
@@ -191,8 +191,9 @@
                         <!-- Today's subtasks (ADR 0008): flagged or due-today subtasks rendered
                              inline beneath the parent. Visible whenever any qualify, even when
                              the parent's card details are collapsed, since these subtasks are
-                             the reason this parent appears in My Day. -->
-                        <ItemsControl Grid.Row="1" ItemsSource="{Binding TodaysSubtasks}"
+                             the reason this parent appears in My Day. Placed in its own row so
+                             it stacks below card details rather than overlapping them. -->
+                        <ItemsControl Grid.Row="2" ItemsSource="{Binding TodaysSubtasks}"
                                       Visibility="{Binding HasTodaysSubtasks, Converter={StaticResource BoolVis}}"
                                       Margin="32,4,0,0">
                             <ItemsControl.ItemTemplate>
