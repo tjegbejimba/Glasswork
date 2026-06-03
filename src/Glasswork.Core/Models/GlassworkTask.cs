@@ -16,13 +16,25 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDone))]
     public partial string Status { get; set; } = "todo";
-    [ObservableProperty] public partial string Priority { get; set; } = "medium";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPriorityChip))]
+    public partial string Priority { get; set; } = "medium";
     [ObservableProperty] public partial DateTime Created { get; set; } = DateTime.Today;
     [ObservableProperty] public partial DateTime? CompletedAt { get; set; }
-    [ObservableProperty] public partial DateTime? Due { get; set; }
-    [ObservableProperty] public partial DateTime? MyDay { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DueUrgency))]
+    [NotifyPropertyChangedFor(nameof(DueChipText))]
+    [NotifyPropertyChangedFor(nameof(HasDue))]
+    public partial DateTime? Due { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsMyDay))]
+    public partial DateTime? MyDay { get; set; }
     
-    [ObservableProperty] public partial List<TaskLink> Links { get; set; } = [];
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AdoLink))]
+    [NotifyPropertyChangedFor(nameof(AdoTitle))]
+    [NotifyPropertyChangedFor(nameof(HasAdo))]
+    public partial List<TaskLink> Links { get; set; } = [];
     
     [ObservableProperty] public partial string? Parent { get; set; }
     [ObservableProperty]
@@ -35,7 +47,21 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial string Notes { get; set; } = string.Empty;
     [ObservableProperty] public partial List<string> ContextLinks { get; set; } = [];
     [ObservableProperty] public partial List<string> Tags { get; set; } = [];
-    [ObservableProperty] public partial List<SubTask> Subtasks { get; set; } = [];
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsActive))]
+    [NotifyPropertyChangedFor(nameof(IsQuiet))]
+    [NotifyPropertyChangedFor(nameof(ShowCardDetails))]
+    [NotifyPropertyChangedFor(nameof(TotalSubtaskCount))]
+    [NotifyPropertyChangedFor(nameof(DoneSubtaskCount))]
+    [NotifyPropertyChangedFor(nameof(ProgressFraction))]
+    [NotifyPropertyChangedFor(nameof(ProgressLabel))]
+    [NotifyPropertyChangedFor(nameof(UseSegmentedBar))]
+    [NotifyPropertyChangedFor(nameof(UseContinuousBar))]
+    [NotifyPropertyChangedFor(nameof(CurrentStepText))]
+    [NotifyPropertyChangedFor(nameof(HasCurrentStep))]
+    [NotifyPropertyChangedFor(nameof(HasBlocker))]
+    [NotifyPropertyChangedFor(nameof(FirstBlockerText))]
+    public partial List<SubTask> Subtasks { get; set; } = [];
     [ObservableProperty] public partial List<RelatedLink> RelatedLinks { get; set; } = [];
 
     /// <summary>
@@ -335,6 +361,7 @@ public partial class GlassworkTask : ObservableObject
             }
             OnPropertyChanged(nameof(AdoLink));
             OnPropertyChanged(nameof(AdoTitle));
+            OnPropertyChanged(nameof(HasAdo));
             OnPropertyChanged(nameof(Links));
         }
     }
@@ -366,6 +393,7 @@ public partial class GlassworkTask : ObservableObject
             }
             OnPropertyChanged(nameof(AdoTitle));
             OnPropertyChanged(nameof(AdoLink));
+            OnPropertyChanged(nameof(HasAdo));
             OnPropertyChanged(nameof(Links));
         }
     }

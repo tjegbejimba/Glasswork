@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -59,10 +60,6 @@ public partial class MyDayViewModel : ObservableObject
     {
         Refreshing?.Invoke();
 
-        TodayTasks.Clear();
-        RecentlyCompletedTasks.Clear();
-        Suggestions.Clear();
-
         var all = _index.Tasks;
         var today = System.DateOnly.FromDateTime(System.DateTime.Today);
 
@@ -72,6 +69,7 @@ public partial class MyDayViewModel : ObservableObject
 
         // Today's tasks via MyDayQueries.Today (issue #186/189)
         var todayTasks = MyDayQueries.Today(all, today, dismissed);
+        var targetTodayTasks = new List<GlassworkTask>();
         foreach (var task in todayTasks)
         {
             // Attach TodaysSubtasks for virtually-promoted tasks per ADR 0008
@@ -83,20 +81,22 @@ public partial class MyDayViewModel : ObservableObject
             task.TodaysSubtasks = directlyPromoted
                 ? null
                 : MyDayPromotionPolicy.TodaysSubtasks(task, today);
-            TodayTasks.Add(task);
+            targetTodayTasks.Add(task);
         }
+        ReconcileTaskCollection(TodayTasks, targetTodayTasks);
 
         // Recently completed: tasks completed today that were on My Day today (real or virtual).
-        foreach (var task in all.Values.Where(IsRecentlyCompleted).OrderByDescending(t => t.CompletedAt))
-        {
-            RecentlyCompletedTasks.Add(task);
-        }
+        var recentlyCompleted = all.Values
+            .Where(IsRecentlyCompleted)
+            .OrderByDescending(t => t.CompletedAt)
+            .ToList();
+        ReconcileTaskCollection(RecentlyCompletedTasks, recentlyCompleted);
 
         // Suggestions: yesterday's incomplete + high priority not on My Day (and not already shown).
         // Note: due-today/overdue tasks are no longer in suggestions because they're virtually
         // included in TodayTasks above.
         var yesterday = System.DateTime.Today.AddDays(-1);
-        var alreadyToday = TodayTasks.Select(t => t.Id).ToHashSet();
+        var alreadyToday = targetTodayTasks.Select(t => t.Id).ToHashSet();
         var suggestions = all.Values.Where(t =>
             t.Status != GlassworkTask.Statuses.Done &&
             !alreadyToday.Contains(t.Id) &&
@@ -104,20 +104,90 @@ public partial class MyDayViewModel : ObservableObject
                 (t.MyDay.HasValue && t.MyDay.Value.Date < System.DateTime.Today) || // carryover
                 t.Priority is "high" or "urgent"                                      // high priority
             ))
-            .Take(10);
-
-        foreach (var s in suggestions)
-        {
-            Suggestions.Add(s);
-        }
+            .Take(10)
+            .ToList();
+        ReconcileTaskCollection(Suggestions, suggestions);
 
         Refreshed?.Invoke();
+    }
+
+    private static void ReconcileTaskCollection(
+        ObservableCollection<GlassworkTask> collection,
+        IReadOnlyList<GlassworkTask> target)
+    {
+        var liveIds = target.Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
+        for (var i = collection.Count - 1; i >= 0; i--)
+        {
+            if (!liveIds.Contains(collection[i].Id))
+            {
+                collection.RemoveAt(i);
+            }
+        }
+
+        for (var targetIndex = 0; targetIndex < target.Count; targetIndex++)
+        {
+            var desired = target[targetIndex];
+            var existingIndex = IndexOfTask(collection, desired.Id, targetIndex);
+            if (existingIndex < 0)
+            {
+                collection.Insert(targetIndex, desired);
+                continue;
+            }
+
+            if (existingIndex != targetIndex)
+            {
+                collection.Move(existingIndex, targetIndex);
+            }
+
+            CopyTaskState(collection[targetIndex], desired);
+        }
+    }
+
+    private static int IndexOfTask(
+        ObservableCollection<GlassworkTask> collection,
+        string taskId,
+        int startIndex)
+    {
+        for (var i = startIndex; i < collection.Count; i++)
+        {
+            if (string.Equals(collection[i].Id, taskId, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static void CopyTaskState(GlassworkTask target, GlassworkTask source)
+    {
+        var isManuallyCollapsed = target.IsManuallyCollapsed;
+
+        target.Id = source.Id;
+        target.Title = source.Title;
+        target.Status = source.Status;
+        target.Priority = source.Priority;
+        target.Created = source.Created;
+        target.CompletedAt = source.CompletedAt;
+        target.Due = source.Due;
+        target.MyDay = source.MyDay;
+        target.Links = [.. source.Links];
+        target.Parent = source.Parent;
+        target.Description = source.Description;
+        target.Notes = source.Notes;
+        target.ContextLinks = [.. source.ContextLinks];
+        target.Tags = [.. source.Tags];
+        target.Subtasks = source.Subtasks;
+        target.RelatedLinks = source.RelatedLinks;
+        target.IsV1Format = source.IsV1Format;
+        target.TodaysSubtasks = source.TodaysSubtasks;
+        target.IsManuallyCollapsed = isManuallyCollapsed;
     }
 
     /// <summary>
     /// Raised synchronously at the very top of <see cref="Refresh"/>, BEFORE
     /// any of <see cref="TodayTasks"/>, <see cref="RecentlyCompletedTasks"/>, or
-    /// <see cref="Suggestions"/> are cleared. Subscribers can read the pre-refresh
+    /// <see cref="Suggestions"/> are reconciled. Subscribers can read the pre-refresh
     /// state of those collections (e.g. to snapshot UI state that depends on them,
     /// like <c>ScrollViewer.VerticalOffset</c> of the bound My Day <c>ListView</c>).
     ///
@@ -142,8 +212,7 @@ public partial class MyDayViewModel : ObservableObject
     /// <see cref="Suggestions"/>) have been fully populated. Page hosts subscribe to
     /// this instead of individual <c>CollectionChanged</c> events so post-refresh work
     /// (empty-state UI, per-task collapse-state hydration, scroll restore) is computed
-    /// against the final state, not the transient empty state that exists between the
-    /// internal <c>Clear()</c> and <c>Add()</c> calls.
+    /// against the final state after any inserts, removes, moves, or item updates.
     ///
     /// Contract:
     /// <list type="bullet">
