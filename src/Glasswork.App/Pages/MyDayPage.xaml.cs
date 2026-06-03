@@ -17,9 +17,8 @@ public sealed partial class MyDayPage : Page
     public string TodayDate => DateTime.Today.ToString("dddd, MMMM d");
 
     // Pending scroll-restore snapshot for TodayList. Captured in ViewModel.Refreshing
-    // (before the destructive Clear+Add inside MyDayViewModel.Refresh tears the
-    // ListView's ScrollViewer down to offset 0), applied with bounded retry after
-    // ViewModel.Refreshed once layout has caught up. Null when no restore is queued.
+    // before MyDayViewModel.Refresh reconciles the bound collection, applied with
+    // bounded retry after ViewModel.Refreshed once layout has caught up. Null when no restore is queued.
     // Mirrors the Backlog fix (issue #182). TodayList is the primary (and tallest,
     // MinHeight 320) scroll surface and the user-reported pain; the short secondary
     // lists (recently-completed / suggestions, MaxHeight 140-400) are left as-is.
@@ -291,9 +290,9 @@ public sealed partial class MyDayPage : Page
 
     // ---------------------------------------------------------------------
     // Issue #182 (extended to My Day): scroll-position capture/restore around
-    // VM.Refresh(). The destructive Clear+Add inside MyDayViewModel.Refresh
-    // tears down TodayList's internal ScrollViewer, snapping it back to offset 0.
-    // We capture in VM.Refreshing (before Clear) and restore in VM.Refreshed via
+    // VM.Refresh(). Refresh now preserves unchanged row instances, but inserts,
+    // removals, and moves can still change ListView layout. We capture in
+    // VM.Refreshing and restore in VM.Refreshed via
     // Low-priority dispatch with bounded retry. Simpler than Backlog's equivalent:
     // a single list surface, no view-mode/filter/search context to invalidate.
     // ---------------------------------------------------------------------

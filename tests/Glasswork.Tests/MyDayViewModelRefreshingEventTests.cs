@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using Glasswork.Core.Models;
@@ -13,15 +14,15 @@ namespace Glasswork.Tests;
 /// event pair (mirrors the Backlog fix for issue #182).
 ///
 /// The page hooks <c>Refreshing</c> to snapshot the <c>TodayList</c> scroll offset
-/// BEFORE the destructive <c>Clear()</c> inside <see cref="MyDayViewModel.Refresh"/>
-/// tears down the ListView's ScrollViewer, and <c>Refreshed</c> to restore it (and
-/// run empty-state / collapse hydration) against the fully-populated collections.
+/// before <see cref="MyDayViewModel.Refresh"/> reconciles the bound collections, and
+/// <c>Refreshed</c> to restore it (and run empty-state / collapse hydration) against
+/// the fully-populated collections.
 /// The contract these tests pin down:
 ///
 /// <list type="bullet">
 ///   <item><description><c>Refreshing</c> fires exactly once per
 ///     <see cref="MyDayViewModel.Refresh"/> call.</description></item>
-///   <item><description><c>Refreshing</c> fires BEFORE <c>TodayTasks.Clear()</c> et al,
+///   <item><description><c>Refreshing</c> fires BEFORE collection reconciliation,
 ///     so subscribers can read the pre-refresh collection state.</description></item>
 ///   <item><description><c>Refreshing</c> fires BEFORE <c>Refreshed</c>.</description></item>
 ///   <item><description>The cycle fires regardless of how <see cref="MyDayViewModel.Refresh"/>
@@ -99,7 +100,7 @@ public class MyDayViewModelRefreshingEventTests
     }
 
     [TestMethod]
-    public void Refresh_Refreshing_FiresBeforeTodayTasksAreCleared()
+    public void Refresh_Refreshing_FiresBeforeTodayTasksAreReconciled()
     {
         CreateMyDayTask("Task A");
         CreateMyDayTask("Task B");
@@ -115,7 +116,7 @@ public class MyDayViewModelRefreshingEventTests
         vm.Refresh();
 
         Assert.AreEqual(2, observedTodayCount,
-            "Refreshing must fire before TodayTasks.Clear() — subscriber should still see the 2 pre-refresh tasks");
+            "Refreshing must fire before TodayTasks is reconciled — subscriber should still see the 2 pre-refresh tasks");
     }
 
     [TestMethod]
@@ -192,5 +193,46 @@ public class MyDayViewModelRefreshingEventTests
         vm.Refresh();
 
         Assert.AreEqual(1, count, "Refreshing must fire on every Refresh() call, even when the vault is empty");
+    }
+
+    [TestMethod]
+    public void Refresh_WithSameTasks_DoesNotResetTodayTasks()
+    {
+        CreateMyDayTask("Task A");
+        CreateMyDayTask("Task B");
+
+        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        vm.Refresh();
+        var firstRow = vm.TodayTasks[0];
+        var actions = new List<NotifyCollectionChangedAction>();
+        vm.TodayTasks.CollectionChanged += (_, e) => actions.Add(e.Action);
+
+        vm.Refresh();
+
+        CollectionAssert.DoesNotContain(actions, NotifyCollectionChangedAction.Reset,
+            "A stable refresh should not clear the bound My Day list and force the ListView to rebuild.");
+        Assert.AreSame(firstRow, vm.TodayTasks[0],
+            "A stable refresh should preserve unchanged task row instances so realized containers stay warm.");
+    }
+
+    [TestMethod]
+    public void Refresh_WithUpdatedTask_UpdatesExistingTodayTaskInstance()
+    {
+        var task = CreateMyDayTask("Original title");
+        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        vm.Refresh();
+        var row = vm.TodayTasks.Single();
+        row.IsManuallyCollapsed = true;
+
+        task.Title = "Updated title";
+        _vault.Save(task);
+
+        vm.Refresh();
+
+        Assert.AreSame(row, vm.TodayTasks.Single(),
+            "Refreshing changed task data should update the existing row instead of replacing it.");
+        Assert.AreEqual("Updated title", row.Title);
+        Assert.IsTrue(row.IsManuallyCollapsed,
+            "Domain refresh must not wipe per-page transient collapse state before the page hydrates it.");
     }
 }
