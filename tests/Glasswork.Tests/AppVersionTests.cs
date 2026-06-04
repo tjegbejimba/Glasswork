@@ -71,6 +71,33 @@ public class AppVersionTests
     }
 
     [TestMethod]
+    public void Parse_NegativeVersion_ReturnsFalse()
+    {
+        var result = AppVersion.TryParse("-1.2.3", out var version);
+        
+        Assert.IsFalse(result);
+        Assert.IsNull(version);
+    }
+
+    [TestMethod]
+    public void Parse_TooManyComponents_ReturnsFalse()
+    {
+        var result = AppVersion.TryParse("1.2.3.4.5", out var version);
+        
+        Assert.IsFalse(result);
+        Assert.IsNull(version);
+    }
+
+    [TestMethod]
+    public void Parse_FourthComponentGarbage_ReturnsFalse()
+    {
+        var result = AppVersion.TryParse("1.2.3.garbage", out var version);
+        
+        Assert.IsFalse(result);
+        Assert.IsNull(version);
+    }
+
+    [TestMethod]
     public void Compare_EqualVersions_ReturnsZero()
     {
         AppVersion.TryParse("1.3.0", out var v1);

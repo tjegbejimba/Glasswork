@@ -22,12 +22,18 @@ public sealed class AppVersion : IComparable<AppVersion>
         var versionString = input.TrimStart('v', 'V');
         var parts = versionString.Split('.');
         
-        if (parts.Length < 3)
+        // Require exactly 3 or 4 components
+        if (parts.Length < 3 || parts.Length > 4)
             return false;
 
-        if (!int.TryParse(parts[0], out var major) ||
-            !int.TryParse(parts[1], out var minor) ||
-            !int.TryParse(parts[2], out var patch))
+        // Parse and validate first three components (reject negative)
+        if (!int.TryParse(parts[0], out var major) || major < 0 ||
+            !int.TryParse(parts[1], out var minor) || minor < 0 ||
+            !int.TryParse(parts[2], out var patch) || patch < 0)
+            return false;
+
+        // If 4th component exists, it must be valid numeric (but we ignore its value)
+        if (parts.Length == 4 && !int.TryParse(parts[3], out _))
             return false;
 
         version = new AppVersion(major, minor, patch);
