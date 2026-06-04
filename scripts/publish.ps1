@@ -95,5 +95,14 @@ if (Test-Path $skillsSrc) {
     }
 }
 
+# 7. Stamp repo path into UI state for self-update
+Write-Host ""
+Write-Host "Stamping repo path into UI state..." -ForegroundColor Cyan
+$stampScript = Join-Path $PSScriptRoot "Stamp-RepoPathToUiState.ps1"
+. $stampScript
+$uiStateFile = Join-Path $env:LOCALAPPDATA "Glasswork\ui-state.json"
+Stamp-RepoPathToUiState -UiStateFilePath $uiStateFile -RepoPath $RepoRoot
+Write-Host "  [OK] Repo path: $RepoRoot" -ForegroundColor Green
+
 Write-Host ""
 Write-Host "To update after code changes, run this script again." -ForegroundColor Yellow
