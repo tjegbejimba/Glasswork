@@ -20,6 +20,6 @@ internal sealed class UiStateRepoPathProvider : IRepoPathProvider
 
     public string? GetRepoPath()
     {
-        return _uiState.Get(_repoPathKey);
+        return _uiState.Get<string>(_repoPathKey);
     }
 }
