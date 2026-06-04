@@ -114,6 +114,33 @@ no domain logic — composes the other contexts into screens.
   wiki, but Glasswork only renders task `.md` files. A future Home Dashboard
   may surface non-task wiki notes — that's a deliberate extension point.
 
+### 6. App Update
+
+Keeps the installed app current with its GitHub releases. Owns nothing in the
+vault and nothing in the task model — it is a self-contained capability that
+spans Core (pure version logic) and App (network, process orchestration, UI).
+See ADR 0011.
+
+- **Owns**:
+  - **Detection** — an unauthenticated HTTPS client that reads the latest
+    release `tag_name` from the public GitHub API, plus the pure SemVer
+    comparison in `Glasswork.Core` that yields whether an **Update Check**
+    found a newer **Available Version** than the **Installed Version**.
+  - **Apply** — the **Self-Update** orchestration: resolve the stamped
+    **Repo Path**, spawn the detached **Updater** (`scripts\self-update.ps1`),
+    self-close, and let the updater run `git pull` → `publish.ps1` → relaunch
+    behind an "Updating Glasswork…" progress window.
+  - The Settings "Updates" section (the action surface) and the My Day
+    update-available **InfoBar** + Settings nav dot (the announce surface).
+- **Speaks to**: UI State (reads the **Repo Path** stamped by `publish.ps1`),
+  Presentation (renders the badge + Settings section).
+- **Does not own**: the vault, the task model, or any task data. The updater
+  writes only outside the vault (UI State + install dir), so it does **not**
+  interact with `FileWatcherService` / `SelfWriteCoordinator`.
+- **Boundary rule**: detection must never block launch or fail loudly; apply
+  must never leave the user without a working app — every failure degrades to
+  opening the GitHub release page. See the failure matrix in ADR 0011.
+
 ## Cross-cutting
 
 - **Service locator pattern** — `App.Vault`, `App.Tasks`, `App.Index`,
