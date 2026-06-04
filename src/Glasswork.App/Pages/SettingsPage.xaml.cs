@@ -3,6 +3,7 @@
 
 using System;
 using System.IO;
+using Glasswork.Core.AppUpdate;
 using Glasswork.Core.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -26,6 +27,7 @@ public sealed partial class SettingsPage : Page
         };
 
         RefreshVaultInfo();
+        RefreshUpdateInfo();
     }
 
     // ── Vault ────────────────────────────────────────────────────────────────
@@ -145,6 +147,35 @@ public sealed partial class SettingsPage : Page
             App.UiState.Set(App.AdoBaseUrlKey, trimmed);
         }
         App.ScheduleUiStateSave();
+    }
+
+    // ── Updates ──────────────────────────────────────────────────────────────
+
+    private void RefreshUpdateInfo()
+    {
+        InstalledVersionText.Text = $"Installed version: {App.Updater.InstalledVersion}";
+        UpdateStatusText.Text = UpdateStatusPresenter.Describe(App.Updater.LastResult);
+    }
+
+    private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        CheckForUpdatesButton.IsEnabled = false;
+        UpdateStatusText.Text = "Checking for updates…";
+
+        try
+        {
+            var result = await App.Updater.CheckForUpdatesAsync();
+            UpdateStatusText.Text = UpdateStatusPresenter.Describe(result);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Update check failed: {ex.Message}");
+            UpdateStatusText.Text = UpdateStatusPresenter.CheckFailedMessage;
+        }
+        finally
+        {
+            CheckForUpdatesButton.IsEnabled = true;
+        }
     }
 }
 

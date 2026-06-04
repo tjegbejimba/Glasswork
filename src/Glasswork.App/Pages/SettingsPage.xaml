@@ -93,6 +93,38 @@
                     FontSize="12"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             </StackPanel>
+
+            <!-- Updates -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="Updates"
+                    Style="{ThemeResource SubtitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Glasswork checks GitHub for new releases. Applying an update rebuilds the app from source and is delivered in a later update."
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                <TextBlock
+                    x:Name="InstalledVersionText"
+                    Text="Installed version: …" />
+
+                <TextBlock
+                    x:Name="UpdateStatusText"
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button
+                        x:Name="CheckForUpdatesButton"
+                        Content="Check for updates"
+                        Click="CheckForUpdatesButton_Click" />
+                    <Button
+                        x:Name="RestartToUpdateButton"
+                        Content="Restart to update"
+                        IsEnabled="False"
+                        ToolTipService.ToolTip="Coming soon" />
+                </StackPanel>
+            </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </Page>

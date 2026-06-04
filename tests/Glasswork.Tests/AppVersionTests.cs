@@ -161,4 +161,12 @@ public class AppVersionTests
         Assert.AreEqual(3, version.Minor);
         Assert.AreEqual(0, version.Patch);
     }
+
+    [TestMethod]
+    public void ToString_FormatsAsMajorMinorPatch()
+    {
+        AppVersion.TryParse("1.4.0", out var version);
+
+        Assert.AreEqual("1.4.0", version!.ToString());
+    }
 }
