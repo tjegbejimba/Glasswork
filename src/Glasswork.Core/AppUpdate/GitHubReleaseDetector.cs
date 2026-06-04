@@ -29,11 +29,16 @@ public sealed class GitHubReleaseDetector
             }
             
             var content = await response.Content.ReadAsStringAsync();
-            var jsonDoc = JsonDocument.Parse(content);
+            using var jsonDoc = JsonDocument.Parse(content);
             
             if (!jsonDoc.RootElement.TryGetProperty("tag_name", out var tagNameElement))
             {
                 return ReleaseDetectionResult.Failed("Missing tag_name in response");
+            }
+            
+            if (tagNameElement.ValueKind != JsonValueKind.String)
+            {
+                return ReleaseDetectionResult.Failed("tag_name is not a string");
             }
             
             var tagName = tagNameElement.GetString();

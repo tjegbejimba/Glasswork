@@ -52,6 +52,28 @@ public class GitHubReleaseDetectorTests
     }
     
     [TestMethod]
+    public async Task GetLatestReleaseAsync_NonStringTagName_ReturnsFailedWithTypeError()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        handler.SetResponse(HttpStatusCode.OK, """
+            {
+                "tag_name": 123
+            }
+            """);
+        
+        var detector = new GitHubReleaseDetector(handler);
+        
+        // Act
+        var result = await detector.GetLatestReleaseAsync();
+        
+        // Assert
+        Assert.IsFalse(result.IsSuccess);
+        Assert.IsTrue(result.FailureReason.Contains("not a string"), 
+            $"Expected 'not a string' in failure reason but got: {result.FailureReason}");
+    }
+    
+    [TestMethod]
     public async Task GetLatestReleaseAsync_ServerError_ReturnsFailedWithErrorCode()
     {
         // Arrange
