@@ -38,6 +38,7 @@ public partial class App : Application
     public static IUiStateService UiState { get; private set; } = null!;
     public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
+    public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
     private static Debouncer? _uiStateDebouncer;
 
     /// <summary>
@@ -79,6 +80,13 @@ public partial class App : Application
     /// the desktop app and the MCP server read from the same location.
     /// </summary>
     public const string VaultPathKey = "vault.path";
+
+    /// <summary>
+    /// UI state key for the local Glasswork source repository path.
+    /// Used by the update checker to determine if a local build is available.
+    /// Empty/missing means no repo path is configured; update availability is still checked.
+    /// </summary>
+    public const string RepoPathKey = "app.repoPath";
 
     /// <summary>
     /// Apply the persisted theme (or default System) to the given window's root content.
@@ -192,6 +200,26 @@ public partial class App : Application
         {
             try { uiStateImpl.Save(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"UI state save failed: {ex.Message}"); }
+        });
+
+        // Initialize update checker. Read installed version from AssemblyInformationalVersion,
+        // which matches the version shown in the status bar. Fire-and-forget startup check
+        // runs in the background without blocking launch.
+        var installedVersion = typeof(App).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+            .FirstOrDefault()
+            ?.InformationalVersion ?? "0.0.0";
+        
+        var detector = new Glasswork.Core.AppUpdate.GitHubReleaseDetector();
+        var repoPathProvider = new Services.UiStateRepoPathProvider(uiStateImpl, RepoPathKey);
+        Updater = new Glasswork.Core.AppUpdate.UpdateCheckService(detector, installedVersion, repoPathProvider);
+        
+        // Fire-and-forget startup check: runs in background, failures cached/never surfaced at startup (ADR 0011).
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            try { await Updater.CheckForUpdatesAsync(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Startup update check failed: {ex.Message}"); }
         });
 
         // Resolve vault path: persisted setting wins; fall back to the hard-coded default

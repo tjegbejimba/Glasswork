@@ -8,6 +8,8 @@ public sealed class GitHubReleaseDetector
     private readonly HttpClient _httpClient;
     private const string LatestReleaseUrl = "https://api.github.com/repos/tjegbejimba/Glasswork/releases/latest";
     
+    public GitHubReleaseDetector() : this(new HttpClientHandler()) { }
+    
     public GitHubReleaseDetector(HttpMessageHandler handler)
     {
         _httpClient = new HttpClient(handler)
