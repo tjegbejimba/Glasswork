@@ -124,4 +124,41 @@ public class AppVersionTests
         
         Assert.IsTrue(v1!.CompareTo(v2) > 0);
     }
+
+    [TestMethod]
+    public void Parse_VersionWithBuildMetadata_StripsBuildMetadata()
+    {
+        // AssemblyInformationalVersion includes +<commit-sha> by default
+        var result = AppVersion.TryParse("1.3.0+8f3a1b2", out var version);
+        
+        Assert.IsTrue(result);
+        Assert.IsNotNull(version);
+        Assert.AreEqual(1, version.Major);
+        Assert.AreEqual(3, version.Minor);
+        Assert.AreEqual(0, version.Patch);
+    }
+
+    [TestMethod]
+    public void Parse_VersionWithPreReleaseTag_StripsPreReleaseTag()
+    {
+        var result = AppVersion.TryParse("1.3.0-beta", out var version);
+        
+        Assert.IsTrue(result);
+        Assert.IsNotNull(version);
+        Assert.AreEqual(1, version.Major);
+        Assert.AreEqual(3, version.Minor);
+        Assert.AreEqual(0, version.Patch);
+    }
+
+    [TestMethod]
+    public void Parse_VersionWithPreReleaseAndMetadata_StripsBoth()
+    {
+        var result = AppVersion.TryParse("1.3.0-beta+abc123", out var version);
+        
+        Assert.IsTrue(result);
+        Assert.IsNotNull(version);
+        Assert.AreEqual(1, version.Major);
+        Assert.AreEqual(3, version.Minor);
+        Assert.AreEqual(0, version.Patch);
+    }
 }

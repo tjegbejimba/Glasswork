@@ -20,6 +20,17 @@ public sealed class AppVersion : IComparable<AppVersion>
             return false;
 
         var versionString = input.TrimStart('v', 'V');
+        
+        // Strip SemVer metadata (+...) and pre-release tags (-...)
+        // Examples: "1.3.0+8f3a1b2" → "1.3.0", "1.3.0-beta+abc" → "1.3.0"
+        var metadataIndex = versionString.IndexOf('+');
+        if (metadataIndex >= 0)
+            versionString = versionString.Substring(0, metadataIndex);
+        
+        var preReleaseIndex = versionString.IndexOf('-');
+        if (preReleaseIndex >= 0)
+            versionString = versionString.Substring(0, preReleaseIndex);
+        
         var parts = versionString.Split('.');
         
         // Require exactly 3 or 4 components
