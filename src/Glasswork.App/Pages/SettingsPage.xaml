@@ -95,7 +95,7 @@
             </StackPanel>
 
             <!-- Updates -->
-            <StackPanel Spacing="8">
+            <StackPanel x:Name="UpdatesSection" Spacing="8">
                 <TextBlock
                     Text="Updates"
                     Style="{ThemeResource SubtitleTextBlockStyle}" />

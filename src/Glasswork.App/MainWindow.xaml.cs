@@ -16,6 +16,10 @@ namespace Glasswork;
 
 public sealed partial class MainWindow : Window
 {
+    // Guards NavView_SelectionChanged from performing a parameter-less navigation while
+    // NavigateToSettingsUpdates() syncs the Settings chrome selection (issue #241).
+    private bool _suppressSettingsNav;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -31,6 +35,13 @@ public sealed partial class MainWindow : Window
         // Land on My Day. The XAML IsSelected="True" sets the chrome state but does not
         // reliably navigate the Frame on first launch — be explicit.
         NavFrame.Navigate(typeof(MyDayPage));
+
+        // Update-available announce surface: badge the built-in Settings nav item whenever
+        // App.Updater reports an update is available (issue #241). SettingsItem isn't
+        // available until the NavigationView template applies, so initialise on Loaded.
+        // ResultChanged covers the fire-and-forget startup check landing after construction.
+        NavView.Loaded += (_, _) => RefreshUpdateBadge();
+        App.Updater.ResultChanged += OnUpdaterResultChanged;
 
         // Status bar: vault path + task count + watcher dot + last-reload time.
         InitStatusBar();
@@ -122,6 +133,11 @@ public sealed partial class MainWindow : Window
 
     private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
+        // Suppress the selection-driven navigation while NavigateToSettingsUpdates() is
+        // syncing chrome — it navigates directly with a parameter and must not be clobbered
+        // by a second, parameter-less navigation from this handler.
+        if (_suppressSettingsNav) return;
+
         // Selection-driven nav still handles the "click a different section" case where
         // SelectedItem actually changed. The ItemInvoked handler covers re-clicking the
         // already-selected item (e.g. returning from Task Detail to Backlog).
@@ -135,7 +151,7 @@ public sealed partial class MainWindow : Window
         // "user wants to go back to this section from a child page" path.
         if (args.IsSettingsInvoked)
         {
-            NavigateToTopLevel(typeof(SettingsPage));
+            NavigateToSettings(null);
             return;
         }
         if (args.InvokedItemContainer is not NavigationViewItem item) return;
@@ -161,7 +177,7 @@ public sealed partial class MainWindow : Window
     {
         if (isSettings)
         {
-            NavigateToTopLevel(typeof(SettingsPage));
+            NavigateToSettings(null);
             return;
         }
         if (item is null) return;
@@ -197,6 +213,68 @@ public sealed partial class MainWindow : Window
         // back stack so "back" doesn't keep cycling through old detail pages.
         NavFrame.Navigate(pageType);
         NavFrame.BackStack.Clear();
+    }
+
+    private void NavigateToSettings(object? parameter)
+    {
+        if (NavFrame is null) return;
+        NavFrame.Navigate(typeof(SettingsPage), parameter);
+        NavFrame.BackStack.Clear();
+    }
+
+    /// <summary>
+    /// Navigate to the Settings page and surface its "Updates" section. Used by the
+    /// update-available announce surfaces' "Go to Settings" routes (issue #241).
+    /// Navigates directly (with the parameter) and syncs the NavView chrome selection
+    /// behind <see cref="_suppressSettingsNav"/> so the selection change doesn't trigger
+    /// a second, parameter-less navigation.
+    /// </summary>
+    public void NavigateToSettingsUpdates()
+    {
+        if (NavFrame is null) return;
+
+        if (NavView?.SettingsItem is NavigationViewItem settingsItem)
+        {
+            _suppressSettingsNav = true;
+            try { NavView.SelectedItem = settingsItem; }
+            finally { _suppressSettingsNav = false; }
+        }
+
+        NavigateToSettings(SettingsPage.UpdatesSectionParameter);
+    }
+
+    private void OnUpdaterResultChanged(object? sender, EventArgs e)
+    {
+        // ResultChanged may fire on the background startup-check thread; marshal to UI.
+        DispatcherQueue.TryEnqueue(RefreshUpdateBadge);
+    }
+
+    /// <summary>
+    /// Shows a dot <see cref="InfoBadge"/> on the built-in Settings nav item while an
+    /// update is available, and clears it otherwise. Null-guards the built-in
+    /// <c>SettingsItem</c>, which isn't materialised until the template applies.
+    /// </summary>
+    private void RefreshUpdateBadge()
+    {
+        if (NavView?.SettingsItem is not NavigationViewItem settingsItem) return;
+
+        var result = App.Updater.LastResult;
+        // A transient check failure must not retract a prior "update available" cue — the
+        // spec clears the dot only when we positively learn we're up to date (issue #241).
+        if (result?.IsCheckFailed == true) return;
+
+        settingsItem.InfoBadge = result?.IsUpdateAvailable == true ? CreateDotBadge() : null;
+    }
+
+    private static InfoBadge CreateDotBadge()
+    {
+        var badge = new InfoBadge();
+        if (Application.Current.Resources.TryGetValue("AttentionDotInfoBadgeStyle", out var style)
+            && style is Style dotStyle)
+        {
+            badge.Style = dotStyle;
+        }
+        return badge;
     }
 
     /// <summary>

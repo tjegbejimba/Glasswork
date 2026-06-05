@@ -7,12 +7,20 @@ using Glasswork.Core.AppUpdate;
 using Glasswork.Core.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Navigation;
 using Windows.Storage.Pickers;
 
 namespace Glasswork.Pages;
 
 public sealed partial class SettingsPage : Page
 {
+    /// <summary>
+    /// Navigation parameter that asks the page to surface the "Updates" section
+    /// (bring it into view + focus the check button). Used by the announce
+    /// surfaces' "Go to Settings" routes (issue #241).
+    /// </summary>
+    public const string UpdatesSectionParameter = "updates";
+
     public SettingsPage()
     {
         InitializeComponent();
@@ -28,6 +36,22 @@ public sealed partial class SettingsPage : Page
 
         RefreshVaultInfo();
         RefreshUpdateInfo();
+    }
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+
+        if (e.Parameter as string == UpdatesSectionParameter)
+        {
+            // Defer until layout is ready: StartBringIntoView/Focus from OnNavigatedTo can
+            // run before the ScrollViewer has measured, making the scroll a no-op.
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                UpdatesSection?.StartBringIntoView();
+                CheckForUpdatesButton?.Focus(FocusState.Programmatic);
+            });
+        }
     }
 
     // ── Vault ────────────────────────────────────────────────────────────────

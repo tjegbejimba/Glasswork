@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using Glasswork.Core.AppUpdate;
 using Glasswork.Core.Models;
 using Glasswork.Services;
 using Glasswork.ViewModels;
@@ -25,6 +26,11 @@ public sealed partial class MyDayPage : Page
     private ScrollSnapshot? _pendingRestore;
 
     private sealed record ScrollSnapshot(double ListOffset);
+
+    // Session-scoped dismissal of the update-available InfoBar (#241). Static so the cue
+    // stays dismissed for the rest of the session even though MyDayPage is cached/recreated.
+    // Dismissing only hides the InfoBar — the Settings nav dot is unaffected.
+    private static bool _updateHintDismissedThisSession;
 
     public MyDayPage()
     {
@@ -74,6 +80,10 @@ public sealed partial class MyDayPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        // Subscribe before the first refresh so the fire-and-forget startup update check
+        // can't land in the gap between reading the cache and wiring the handler (#241).
+        App.Updater.ResultChanged += OnUpdaterResultChanged;
+        RefreshUpdateHint();
         Refresh();
         App.Index.Changed += OnIndexChanged;
     }
@@ -81,12 +91,51 @@ public sealed partial class MyDayPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        App.Updater.ResultChanged -= OnUpdaterResultChanged;
         App.Index.Changed -= OnIndexChanged;
     }
 
     private void OnIndexChanged(object? sender, Glasswork.Core.Services.TasksChanged e)
     {
         DispatcherQueue.TryEnqueue(Refresh);
+    }
+
+    private void OnUpdaterResultChanged(object? sender, EventArgs e)
+    {
+        // May fire on the background startup-check thread; marshal to UI.
+        DispatcherQueue.TryEnqueue(RefreshUpdateHint);
+    }
+
+    private void RefreshUpdateHint()
+    {
+        if (UpdateHint is null) return;
+
+        var result = App.Updater.LastResult;
+        // A transient check failure must not retract a shown hint — only a positive
+        // up-to-date result clears it (issue #241).
+        if (result?.IsCheckFailed == true) return;
+
+        if (result?.IsUpdateAvailable == true && !_updateHintDismissedThisSession)
+        {
+            UpdateHint.Message = UpdateStatusPresenter.Describe(result);
+            UpdateHint.IsOpen = true;
+        }
+        else
+        {
+            UpdateHint.IsOpen = false;
+        }
+    }
+
+    private void UpdateHint_CloseButtonClick(InfoBar sender, object args)
+    {
+        // User-initiated dismissal only (CloseButtonClick, not Closed) — hides the bar for
+        // the session without clearing the Settings nav dot.
+        _updateHintDismissedThisSession = true;
+    }
+
+    private void UpdateHintGoToSettings_Click(object sender, RoutedEventArgs e)
+    {
+        (App.MainWindow as MainWindow)?.NavigateToSettingsUpdates();
     }
 
     private void Refresh()
