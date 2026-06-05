@@ -45,7 +45,8 @@ public sealed partial class TaskDetailPage : Page
             // Navigated from My Day's "flagged subtasks" section — display the parent task
             // (FocusSubtaskTitle is currently informational; UI affordance for scrolling could
             // be added later).
-            App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
+            if (App.Watcher is not null)
+                App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(nav.Task);
@@ -53,7 +54,8 @@ public sealed partial class TaskDetailPage : Page
         }
         if (e.Parameter is GlassworkTask task)
         {
-            App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
+            if (App.Watcher is not null)
+                App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(task);
@@ -525,7 +527,8 @@ public sealed partial class TaskDetailPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
-        App.Watcher.TaskFileChanged -= OnTaskFileChangedExternally;
+        if (App.Watcher is not null)
+            App.Watcher.TaskFileChanged -= OnTaskFileChangedExternally;
         App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.BacklinksChangedExternally -= OnBacklinksChangedExternally;
         App.ObsidianLauncher.NotInstalled -= OnObsidianNotInstalled;
@@ -548,7 +551,9 @@ public sealed partial class TaskDetailPage : Page
 
     private void HandleExternalFileChange()
     {
-        var id = Task?.Id;
+        var task = Task;
+        if (task is null) return;
+        var id = task.Id;
         if (string.IsNullOrEmpty(id)) return;
 
         // Reload to compare. We never blanket-replace Task here — that would
@@ -568,7 +573,7 @@ public sealed partial class TaskDetailPage : Page
         {
             case NotesExternalChangeAction.SilentRefresh:
                 _notesEdit.ApplySilentRefresh(newDiskNotes);
-                Task.Notes = newDiskNotes;
+                task.Notes = newDiskNotes;
                 if (_notesEdit.Mode == NotesEditMode.Edit)
                     NotesBox.Text = newDiskNotes;
                 else
@@ -671,7 +676,7 @@ public sealed partial class TaskDetailPage : Page
     private void Field_LostFocus(object sender, RoutedEventArgs e)
     {
         if (_isLoading) return;
-        if (sender == NotesBox && _suppressNextNotesSave)
+        if ((TextBox)sender == NotesBox && _suppressNextNotesSave)
         {
             _suppressNextNotesSave = false;
             return;
