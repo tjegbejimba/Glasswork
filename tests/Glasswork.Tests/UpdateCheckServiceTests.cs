@@ -104,6 +104,58 @@ public class UpdateCheckServiceTests
     }
 
     [TestMethod]
+    public async Task CheckForUpdatesAsync_RaisesResultChanged_OnUpdateAvailable()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        handler.SetResponse(HttpStatusCode.OK, """
+            {
+                "tag_name": "v1.4.0"
+            }
+            """);
+
+        var detector = new GitHubReleaseDetector(handler);
+        var service = new UpdateCheckService(detector, "1.3.0", new FakeRepoPathProvider("/repo"));
+
+        var raised = 0;
+        UpdateCheckResult? observed = null;
+        service.ResultChanged += (_, _) =>
+        {
+            raised++;
+            observed = service.LastResult;
+        };
+
+        // Act
+        var result = await service.CheckForUpdatesAsync();
+
+        // Assert
+        Assert.AreEqual(1, raised);
+        Assert.AreSame(result, observed);
+        Assert.IsTrue(observed!.IsUpdateAvailable);
+    }
+
+    [TestMethod]
+    public async Task CheckForUpdatesAsync_RaisesResultChanged_OnCheckFailed()
+    {
+        // Arrange
+        var handler = new FakeHttpMessageHandler();
+        handler.SetResponse(HttpStatusCode.InternalServerError, "Server error");
+
+        var detector = new GitHubReleaseDetector(handler);
+        var service = new UpdateCheckService(detector, "1.3.0", new FakeRepoPathProvider("/repo"));
+
+        var raised = 0;
+        service.ResultChanged += (_, _) => raised++;
+
+        // Act
+        await service.CheckForUpdatesAsync();
+
+        // Assert
+        Assert.AreEqual(1, raised);
+        Assert.IsTrue(service.LastResult!.IsCheckFailed);
+    }
+
+    [TestMethod]
     public void MissingRepoPath_DoesNotThrow()
     {
         // Arrange

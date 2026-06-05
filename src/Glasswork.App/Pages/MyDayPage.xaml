@@ -19,21 +19,36 @@
 
     <Grid Padding="32" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
 
-        <!-- Header -->
-        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
-            <StackPanel Grid.Column="0">
-                <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="My Day" />
-                <TextBlock Text="{x:Bind TodayDate}" Opacity="0.6" Margin="0,4,0,0" />
-            </StackPanel>
-            <Button Grid.Column="1" Click="RefreshButton_Click"
-                    VerticalAlignment="Top" Margin="0,4,0,0"
-                    ToolTipService.ToolTip="Refresh from vault">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE72C;" FontSize="14" />
-                    <TextBlock Text="Refresh" />
+        <!-- Header (with update-available announce InfoBar above it) -->
+        <StackPanel Grid.Row="0">
+            <!-- Update-available announce: dismissible Informational bar routing to Settings (issue #241) -->
+            <InfoBar x:Name="UpdateHint"
+                     IsOpen="False"
+                     IsClosable="True"
+                     Severity="Informational"
+                     Title="Update available"
+                     Margin="0,0,0,12"
+                     CloseButtonClick="UpdateHint_CloseButtonClick">
+                <InfoBar.ActionButton>
+                    <Button Content="Go to Settings" Click="UpdateHintGoToSettings_Click" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0">
+                    <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="My Day" />
+                    <TextBlock Text="{x:Bind TodayDate}" Opacity="0.6" Margin="0,4,0,0" />
                 </StackPanel>
-            </Button>
-        </Grid>
+                <Button Grid.Column="1" Click="RefreshButton_Click"
+                        VerticalAlignment="Top" Margin="0,4,0,0"
+                        ToolTipService.ToolTip="Refresh from vault">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE72C;" FontSize="14" />
+                        <TextBlock Text="Refresh" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </StackPanel>
 
         <!-- Today's tasks header -->
         <TextBlock x:Name="TodayHeader" Grid.Row="1" Text="Today's tasks"
