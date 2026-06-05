@@ -66,4 +66,6 @@ public sealed class AppVersion : IComparable<AppVersion>
 
         return Patch.CompareTo(other.Patch);
     }
+
+    public override string ToString() => $"{Major}.{Minor}.{Patch}";
 }
