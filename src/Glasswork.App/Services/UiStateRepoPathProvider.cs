@@ -1,7 +1,8 @@
+using System;
 using Glasswork.Core.AppUpdate;
 using Glasswork.Core.Services;
 
-namespace Glasswork.App.Services;
+namespace Glasswork.Services;
 
 /// <summary>
 /// Reads the Glasswork source repository path from UI State.
