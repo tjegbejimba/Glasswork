@@ -133,13 +133,52 @@ See ADR 0011.
   - The Settings "Updates" section (the action surface) and the My Day
     update-available **InfoBar** + Settings nav dot (the announce surface).
 - **Speaks to**: UI State (reads the **Repo Path** stamped by `publish.ps1`),
-  Presentation (renders the badge + Settings section).
+  Presentation (renders the badge + Settings section), and **Release
+  publication** (consumes the GitHub Release tag it creates).
 - **Does not own**: the vault, the task model, or any task data. The updater
   writes only outside the vault (UI State + install dir), so it does **not**
-  interact with `FileWatcherService` / `SelfWriteCoordinator`.
+  interact with `FileWatcherService` / `SelfWriteCoordinator`. It also does
+  not decide when a merged PR becomes an app-visible update; that is owned by
+  **Release publication**.
 - **Boundary rule**: detection must never block launch or fail loudly; apply
   must never leave the user without a working app — every failure degrades to
   opening the GitHub release page. See the failure matrix in ADR 0011.
+
+### 7. Release publication
+
+Turns an intentionally chosen commit on `main` into the GitHub Release tag that
+App Update consumes as the **Available version**.
+
+- **Owns**: the agent-prepared **Release PR** that bumps the app version in
+  `src\Glasswork.App\Glasswork.csproj` and commits **Release notes** at
+  `docs\releases\vX.Y.Z.md`, and the
+  **Release workflow** whose only input is `version` in `X.Y.Z` form. The
+  workflow derives tag `vX.Y.Z`, validates the requested tag matches the
+  committed version, reads `docs\releases\vX.Y.Z.md`, and creates the GitHub
+  Release for the current `main` HEAD with those notes.
+  The workflow also runs Core tests and a Windows Release x64 app build before
+  tagging, so `/releases/latest` never advertises a version that cannot build.
+- **Speaks to**: App Update by publishing the release tag read during an
+  **Update check**.
+- **Does not own**: rebuilding or installing the app on the user's machine;
+  that remains **Self-update** / `publish.ps1`.
+- **Boundary rule**: merging a normal PR to `main` is not an app-visible update.
+  Only an explicit **Release publication** creates a new **Available version**.
+  Existing release tags are immutable: the **Release workflow** fails if the
+  requested tag or release already exists, rather than moving a tag or
+  rewriting the app-visible version. When a user asks an agent to release
+  without specifying a version, the agent prepares a patch bump by default;
+  minor or major bumps require explicit user instruction. The agent may
+  auto-merge a clean **Release PR** after required checks; it must stop if
+  checks fail or the PR diff contains anything beyond version and Release
+  notes changes. If there are no substantive changes since the latest release
+  tag, the agent stops with "nothing to release" instead of creating a no-op
+  app-visible update. **Release notes** summarize the range from the latest
+  published release tag to `main`, preferring merged PRs and linked issues when
+  available and falling back to commit messages for direct commits; the Release
+  PR itself is excluded. The notes file uses a concise template: release title,
+  short summary, grouped `Changes`, and `Validation`; raw commit dumps are
+  avoided.
 
 ## Cross-cutting
 
