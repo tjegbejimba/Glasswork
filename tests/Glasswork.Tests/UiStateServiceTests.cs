@@ -115,6 +115,41 @@ public class UiStateServiceTests
     }
 
     [TestMethod]
+    public void RemoveKeysWhere_RemovesMatching_KeepsRest()
+    {
+        var dir = NewTempDir();
+        var svc = new JsonFileUiStateService(Path.Combine(dir, "ui-state.json"));
+        svc.Set("a.1", true);
+        svc.Set("a.2", true);
+        svc.Set("b.1", true);
+
+        svc.RemoveKeysWhere(k => k.StartsWith("a.", System.StringComparison.Ordinal));
+
+        Assert.IsFalse(svc.Get<bool>("a.1"));
+        Assert.IsFalse(svc.Get<bool>("a.2"));
+        Assert.IsTrue(svc.Get<bool>("b.1"), "non-matching keys must survive");
+    }
+
+    [TestMethod]
+    public void RemoveKeysWhere_PrunesStaleDismissals_KeepsTodaysAndUnrelated()
+    {
+        var today = new System.DateOnly(2026, 6, 6);
+        var dir = NewTempDir();
+        var svc = new JsonFileUiStateService(Path.Combine(dir, "ui-state.json"));
+        svc.Set(MyDayDismissals.KeyFor("task-1", new System.DateOnly(2026, 4, 25)), true); // stale
+        svc.Set(MyDayDismissals.KeyFor("task-2", new System.DateOnly(2026, 6, 1)), true);  // stale
+        svc.Set(MyDayDismissals.KeyFor("task-3", today), true);                            // today — keep
+        svc.Set("collapsed.task-9", true);                                                 // unrelated — keep
+
+        svc.RemoveKeysWhere(k => MyDayDismissals.IsStale(k, today));
+
+        Assert.IsFalse(svc.Get<bool>(MyDayDismissals.KeyFor("task-1", new System.DateOnly(2026, 4, 25))));
+        Assert.IsFalse(svc.Get<bool>(MyDayDismissals.KeyFor("task-2", new System.DateOnly(2026, 6, 1))));
+        Assert.IsTrue(svc.Get<bool>(MyDayDismissals.KeyFor("task-3", today)), "today's dismissal must survive");
+        Assert.IsTrue(svc.Get<bool>("collapsed.task-9"), "unrelated keys must survive");
+    }
+
+    [TestMethod]
     public void BacklogViewMode_DefaultsToList_WhenNotSet()
     {
         var dir = NewTempDir();

@@ -50,7 +50,7 @@ public partial class MyDayViewModel : ObservableObject
         => MyDayPromotionPolicy.IsTaskInMyDayToday(t, today, dismissed);
 
     private static string DismissKey(string taskId) =>
-        $"dismissed.{System.DateTime.Today:yyyy-MM-dd}.{taskId}";
+        MyDayDismissals.KeyFor(taskId, System.DateOnly.FromDateTime(System.DateTime.Today));
 
     private bool IsDismissedToday(string taskId) =>
         _uiState?.Get<bool>(DismissKey(taskId)) ?? false;

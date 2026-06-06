@@ -317,6 +317,14 @@ public partial class App : Application
                 Index.Tasks.Keys,
                 StringComparer.Ordinal);
             uiStateImpl.RemoveKeysNotIn(CollapsedTaskKeyPrefix, liveIds);
+
+            // Also drop dismissed.{date}.{taskId} entries from past days: a My Day
+            // dismissal only ever applies to the day it was created, so stale-dated
+            // keys are dead weight that otherwise accumulate forever (issue: day-view
+            // stale dismissals). Today's and (defensively) future-dated keys are kept.
+            var today = System.DateOnly.FromDateTime(System.DateTime.Today);
+            uiStateImpl.RemoveKeysWhere(k => Glasswork.Core.Services.MyDayDismissals.IsStale(k, today));
+
             uiStateImpl.Save();
         }
         catch (Exception ex)
