@@ -41,6 +41,9 @@ depends on local tooling (`git`, `pwsh`, `publish.ps1`).
 
 This means the common path — just checking — stays maximally robust, and the
 rare path — actually updating — is the only thing that needs the source repo.
+ADR 0012 defines the separate **Release publication** process that creates the
+GitHub Release tag consumed here; a normal PR merge is not itself an update
+signal.
 
 ### 2. The install stamps its own Repo Path
 
