@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using Glasswork.Core.AppUpdate;
 using Glasswork.Core.Services;
+using Glasswork.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
@@ -177,6 +179,9 @@ public sealed partial class SettingsPage : Page
     {
         InstalledVersionText.Text = $"Installed version: {App.Updater.InstalledVersion}";
         UpdateStatusText.Text = UpdateStatusPresenter.Describe(App.Updater.LastResult);
+        RestartToUpdateButton.IsEnabled =
+            App.Updater.LastResult?.IsUpdateAvailable == true &&
+            !string.IsNullOrWhiteSpace(App.Updater.RepoPath);
     }
 
     private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
@@ -188,6 +193,8 @@ public sealed partial class SettingsPage : Page
         {
             var result = await App.Updater.CheckForUpdatesAsync();
             UpdateStatusText.Text = UpdateStatusPresenter.Describe(result);
+            // Re-evaluate the restart button so it lights up once an update is found.
+            RefreshUpdateInfo();
         }
         catch (Exception ex)
         {
@@ -197,6 +204,61 @@ public sealed partial class SettingsPage : Page
         finally
         {
             CheckForUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    private void RestartToUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        var plan = new SelfUpdateLauncher().CreatePlan(
+            isUpdateAvailable: App.Updater.LastResult?.IsUpdateAvailable == true,
+            repoPath: App.Updater.RepoPath,
+            installExePath: Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty,
+            processId: Environment.ProcessId,
+            executableResolver: new PwshExecutableResolver(),
+            directoryExists: Directory.Exists);
+
+        if (plan.IsOpenReleasePage || plan.ProcessSpec is null)
+        {
+            OpenReleasePage();
+            return;
+        }
+
+        try
+        {
+            var spec = plan.ProcessSpec;
+            var psi = new ProcessStartInfo
+            {
+                FileName = spec.FileName,
+                CreateNoWindow = spec.CreateNoWindow,
+                UseShellExecute = spec.UseShellExecute,
+                WorkingDirectory = spec.WorkingDirectory,
+            };
+            foreach (var arg in spec.ArgumentList)
+                psi.ArgumentList.Add(arg);
+
+            Process.Start(psi);
+
+            // Exit only after the detached updater has started: it waits on this PID
+            // before pulling+rebuilding, so the app must stay alive until the spawn succeeds.
+            Application.Current.Exit();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Self-update spawn failed: {ex.Message}");
+            OpenReleasePage();
+        }
+    }
+
+    private static void OpenReleasePage()
+    {
+        const string url = "https://github.com/tjegbejimba/Glasswork/releases/latest";
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to open release page: {ex.Message}");
         }
     }
 }
