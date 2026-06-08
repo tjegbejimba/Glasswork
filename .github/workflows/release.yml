@@ -41,14 +41,18 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
+          # Inspect git's exit code manually; do not let a non-zero native exit
+          # auto-throw (PS 7.4 defaults $PSNativeCommandUseErrorActionPreference
+          # to $true, which would promote ls-remote's "no match" into a fault).
+          $PSNativeCommandUseErrorActionPreference = $false
           $tag = "v$env:RELEASE_VERSION"
 
-          & git ls-remote --exit-code --tags origin "refs/tags/$tag" *> $null
-          if ($LASTEXITCODE -eq 0) {
-              throw "Release tag already exists: $tag"
-          }
-          if ($LASTEXITCODE -ne 2) {
+          $matchingRefs = & git ls-remote --tags origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
               throw "Unable to check release tag '$tag' (git exited $LASTEXITCODE)."
+          }
+          if (-not [string]::IsNullOrWhiteSpace($matchingRefs)) {
+              throw "Release tag already exists: $tag"
           }
 
           $releaseUrl = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
