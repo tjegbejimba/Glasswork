@@ -8,12 +8,15 @@ namespace Glasswork.Core.Services;
 /// <summary>
 /// JSON-file backed implementation of <see cref="IUiStateService"/>.
 /// Default location is <c>%LocalAppData%\Glasswork\ui-state.json</c>.
-/// Not thread-safe across processes; single-instance app assumption (see App.OnLaunched).
+/// Uses merge-on-save to avoid cross-process clobber: each process tracks only
+/// the keys it mutated, then merges those changes on top of the current disk state.
 /// </summary>
 public sealed class JsonFileUiStateService : IUiStateService
 {
     private readonly string _filePath;
     private readonly Dictionary<string, JsonElement> _state;
+    private readonly HashSet<string> _dirtyKeys = new();
+    private readonly HashSet<string> _deletedKeys = new();
     private readonly object _lock = new();
 
     public JsonFileUiStateService(string filePath)
@@ -43,6 +46,8 @@ public sealed class JsonFileUiStateService : IUiStateService
         lock (_lock)
         {
             _state[key] = JsonSerializer.SerializeToElement(value);
+            _dirtyKeys.Add(key);
+            _deletedKeys.Remove(key); // If we set it, it's not deleted
         }
     }
 
@@ -51,26 +56,47 @@ public sealed class JsonFileUiStateService : IUiStateService
         lock (_lock)
         {
             _state.Remove(key);
+            _deletedKeys.Add(key);
+            _dirtyKeys.Remove(key); // If we deleted it, it's not dirty (no value to merge)
         }
     }
 
     public void Save()
     {
-        Dictionary<string, JsonElement> snapshot;
         lock (_lock)
         {
-            snapshot = new Dictionary<string, JsonElement>(_state);
+            // Merge-on-save: re-read current disk state, apply our changes on top
+            var diskState = Load(_filePath);
+            
+            // Apply this instance's dirty keys
+            foreach (var key in _dirtyKeys)
+            {
+                if (_state.TryGetValue(key, out var value))
+                {
+                    diskState[key] = value;
+                }
+            }
+            
+            // Apply this instance's deletions
+            foreach (var key in _deletedKeys)
+            {
+                diskState.Remove(key);
+            }
+            
+            // Write merged state atomically
+            var dir = Path.GetDirectoryName(_filePath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            
+            var json = JsonSerializer.Serialize(diskState, new JsonSerializerOptions { WriteIndented = true });
+            var tmp = _filePath + ".tmp";
+            File.WriteAllText(tmp, json);
+            if (File.Exists(_filePath)) File.Replace(tmp, _filePath, null);
+            else File.Move(tmp, _filePath);
+            
+            // Clear dirty tracking after successful save
+            _dirtyKeys.Clear();
+            _deletedKeys.Clear();
         }
-
-        var dir = Path.GetDirectoryName(_filePath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-
-        var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
-        // Atomic-ish write: temp file + rename
-        var tmp = _filePath + ".tmp";
-        File.WriteAllText(tmp, json);
-        if (File.Exists(_filePath)) File.Replace(tmp, _filePath, null);
-        else File.Move(tmp, _filePath);
     }
 
     public void RemoveKeysNotIn(string keyPrefix, IReadOnlyCollection<string> liveSuffixes)
@@ -85,7 +111,12 @@ public sealed class JsonFileUiStateService : IUiStateService
                 var suffix = key.Substring(keyPrefix.Length);
                 if (!live.Contains(suffix)) toRemove.Add(key);
             }
-            foreach (var k in toRemove) _state.Remove(k);
+            foreach (var k in toRemove)
+            {
+                _state.Remove(k);
+                _deletedKeys.Add(k);
+                _dirtyKeys.Remove(k);
+            }
         }
     }
 
@@ -104,7 +135,12 @@ public sealed class JsonFileUiStateService : IUiStateService
             {
                 if (shouldRemove(key)) toRemove.Add(key);
             }
-            foreach (var k in toRemove) _state.Remove(k);
+            foreach (var k in toRemove)
+            {
+                _state.Remove(k);
+                _deletedKeys.Add(k);
+                _dirtyKeys.Remove(k);
+            }
         }
     }
 

@@ -173,4 +173,104 @@ public class UiStateServiceTests
 
         Assert.AreEqual("board", svc2.Get<string>("backlog.viewMode"));
     }
+
+    // Cross-process merge-on-save tests (Slice 8 - Issue #255)
+
+    [TestMethod]
+    public void MergeOnSave_PreservesForeignKeys_WhenTwoProcessesSaveDifferentKeys()
+    {
+        var dir = NewTempDir();
+        var path = Path.Combine(dir, "ui-state.json");
+        
+        // BOTH processes start before any save (simulates two app instances)
+        var processA = new JsonFileUiStateService(path);
+        var processB = new JsonFileUiStateService(path);
+        
+        // Process A sets x and saves
+        processA.Set("x", 1);
+        processA.Save();
+        
+        // Process B (never loaded A's changes) sets y and saves
+        // Without merge-on-save, this will CLOBBER x
+        processB.Set("y", 2);
+        processB.Save();
+        
+        // After B's save, disk should have BOTH x and y
+        var verify = new JsonFileUiStateService(path);
+        Assert.AreEqual(1, verify.Get<int>("x"), "Process A's key must survive Process B's save");
+        Assert.AreEqual(2, verify.Get<int>("y"), "Process B's key must be present");
+    }
+
+    [TestMethod]
+    public void MergeOnSave_PreservesDismissal_WhenAnotherProcessSavesUnrelatedKey()
+    {
+        var dir = NewTempDir();
+        var path = Path.Combine(dir, "ui-state.json");
+        
+        var processA = new JsonFileUiStateService(path);
+        var processB = new JsonFileUiStateService(path);
+        
+        // Process A writes a dismissal key and saves
+        processA.Set("dismissed.2025-01-01.task-1", true);
+        processA.Save();
+        
+        // Process B (never saw the dismissal) sets unrelated key and saves
+        processB.Set("collapsed.task-9", true);
+        processB.Save();
+        
+        // Dismissal must still be present after B's save
+        var verify = new JsonFileUiStateService(path);
+        Assert.IsTrue(verify.Get<bool>("dismissed.2025-01-01.task-1"), "Dismissal must survive foreign save");
+        Assert.IsTrue(verify.Get<bool>("collapsed.task-9"), "Unrelated key must be present");
+    }
+
+    [TestMethod]
+    public void MergeOnSave_AppliesDeletions_AcrossMerge()
+    {
+        var dir = NewTempDir();
+        var path = Path.Combine(dir, "ui-state.json");
+        
+        // Both processes start with a pre-existing key
+        var setupSvc = new JsonFileUiStateService(path);
+        setupSvc.Set("k", "initial");
+        setupSvc.Save();
+        
+        var processA = new JsonFileUiStateService(path);
+        var processB = new JsonFileUiStateService(path);
+        
+        // Process A removes the key and saves
+        processA.Remove("k");
+        processA.Save();
+        
+        // Process B sets another key and saves (would re-read disk with k deleted)
+        processB.Set("other", "value");
+        processB.Save();
+        
+        // After merge, k should still be gone
+        var verify = new JsonFileUiStateService(path);
+        Assert.IsNull(verify.Get<string>("k"), "Deleted key must stay deleted after merge");
+        Assert.AreEqual("value", verify.Get<string>("other"));
+    }
+
+    [TestMethod]
+    public void MergeOnSave_LastWriterWinsPerKey_WhenSameKeyModifiedByBothProcesses()
+    {
+        var dir = NewTempDir();
+        var path = Path.Combine(dir, "ui-state.json");
+        
+        var processA = new JsonFileUiStateService(path);
+        var processB = new JsonFileUiStateService(path);
+        
+        // Process A sets k=1 and saves
+        processA.Set("k", 1);
+        processA.Save();
+        
+        // Process B sets k=2 and saves (overwrites A's value)
+        processB.Set("k", 2);
+        processB.Save();
+        
+        // Last writer (B) wins for the same key
+        var verify = new JsonFileUiStateService(path);
+        Assert.AreEqual(2, verify.Get<int>("k"), "Last writer must win for the same key");
+    }
 }
