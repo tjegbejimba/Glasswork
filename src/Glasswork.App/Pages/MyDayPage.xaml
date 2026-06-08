@@ -52,6 +52,7 @@
 
         <!-- Today's tasks header -->
         <TextBlock x:Name="TodayHeader" Grid.Row="1" Text="Today's tasks"
+                   AutomationProperties.AutomationId="MyDayTodayHeader"
                    Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,16,0,8" />
 
         <!-- Clipboard hint: brief feedback when an agent-command line is copied -->
@@ -67,6 +68,7 @@
         <ListView
             Grid.Row="2"
             x:Name="TodayList"
+            AutomationProperties.AutomationId="MyDayTaskList"
             ItemsSource="{x:Bind ViewModel.TodayTasks}"
             SelectionMode="Single"
             IsItemClickEnabled="False"
@@ -234,6 +236,7 @@
         <!-- Empty state: shown when My Day has no tasks. -->
         <controls:EmptyState
             x:Name="EmptyStateView"
+            AutomationProperties.AutomationId="MyDayEmptyState"
             Grid.Row="2"
             Margin="0,16,0,0"
             Glyph="&#xE706;"

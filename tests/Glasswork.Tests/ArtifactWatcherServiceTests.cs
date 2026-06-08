@@ -98,7 +98,12 @@ public class ArtifactWatcherServiceTests
 
         using var watcher = new ArtifactWatcherService(_tempDir, TimeSpan.FromMilliseconds(150));
         int count = 0;
-        watcher.ArtifactChanged += (_, _) => Interlocked.Increment(ref count);
+        var signal = new ManualResetEventSlim(false);
+        watcher.ArtifactChanged += (_, _) =>
+        {
+            Interlocked.Increment(ref count);
+            signal.Set();
+        };
 
         watcher.Start();
         var path = Path.Combine(artifactsDir, "plan.md");
@@ -107,7 +112,8 @@ public class ArtifactWatcherServiceTests
             File.WriteAllText(path, $"# Plan v{i}");
         }
 
-        Thread.Sleep(700); // > quiet period
+        Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "At least one event must fire");
+        Thread.Sleep(500); // allow any duplicate debounced tick to arrive
         Assert.IsTrue(count >= 1, "At least one event must fire");
         Assert.IsTrue(count <= 2, $"Burst must coalesce — got {count} events");
     }

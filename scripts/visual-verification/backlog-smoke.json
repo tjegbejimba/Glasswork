@@ -1,0 +1,44 @@
+{
+  "name": "Backlog smoke",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "visual-backlog-card",
+      "title": "Visual verification backlog card",
+      "description": "This seeded task proves agents can launch Glasswork against an isolated Vault and verify a deterministic Backlog screen.",
+      "status": "todo",
+      "priority": "high",
+      "subtasks": [
+        {
+          "text": "Rendered by the visual verification runner",
+          "status": "in_progress"
+        },
+        {
+          "text": "Captured without touching the real Vault"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "BacklogHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Visual verification backlog card",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "backlog"
+    }
+  ]
+}

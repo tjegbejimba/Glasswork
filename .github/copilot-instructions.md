@@ -151,19 +151,31 @@ inside Ubuntu.
 
 7. **Visual verification before declaring a local task done.** After any
    change touching `src\Glasswork.App\` (XAML, code-behind, ViewModels,
-   `App.xaml.cs`, services that affect what's drawn), you **must** run
-   [`scripts\verify-app.ps1`](../scripts/verify-app.ps1) and view the
-   resulting PNG before signing off. The test suite cannot catch XAML
-   parse errors, layout regressions, blank screens, or the silent
-   `STOWED_EXCEPTION` crashes from hard rule 6 — only a real render can.
-   The script does Debug build → launch dev-build exe → wait for window →
-   screenshot via `PrintWindow(PW_RENDERFULLCONTENT)` → kill the spawned
-   instance → print the PNG path. It only touches the exe under
-   `src\Glasswork.App\bin\`, so the user's installed Glasswork (from
-   `publish.ps1`) is left alone. Pure `Glasswork.Core` changes (no UI
-   surface affected) may skip this. **Cloud / Linux agents cannot run
-   this** — they must flag UI-touching work for local re-verification
-   before merge.
+   `App.xaml.cs`, services that affect what's drawn), you **must** run a
+   real render and view the resulting PNG before signing off. The test suite
+   cannot catch XAML parse errors, layout regressions, blank screens, or the
+   silent `STOWED_EXCEPTION` crashes from hard rule 6 — only a real render can.
+
+   Use [`scripts\invoke-visual-verification.ps1`](../scripts/invoke-visual-verification.ps1)
+   for behavior-specific changes. It runs a JSON scenario from
+   [`scripts\visual-verification\`](../scripts/visual-verification/), seeds an
+   isolated temporary Vault + UI state file, launches a unique dev-build app
+   instance, optionally drives UI Automation actions, captures named PNGs, and
+   rejects blank/uniform screenshots. Add or update a scenario that covers the
+   behavior you changed, then inspect the captured PNG(s). Example:
+
+   ```powershell
+   pwsh -File scripts\invoke-visual-verification.ps1 -Scenario scripts\visual-verification\backlog-smoke.json
+   ```
+
+   Use [`scripts\verify-app.ps1`](../scripts/verify-app.ps1) for a generic
+   startup smoke test when no scenario exists yet. Both scripts launch the
+   Debug build with a verification-only AppInstance key and skip protocol
+   registration/update checks, so they do not touch the user's installed
+   Glasswork, real Vault, normal UI state, or `glasswork://` handler. Pure
+   `Glasswork.Core` changes (no UI surface affected) may skip this. **Cloud /
+   Linux agents cannot run this** — they must flag UI-touching work for local
+   re-verification before merge.
 
 ## Investigation guidance (for issue triage & root-cause analysis)
 

@@ -309,7 +309,12 @@ public class BacklinksWatcherTests
 
         using var w = new BacklinksWatcher(_vault, idx, TimeSpan.FromMilliseconds(150));
         int count = 0;
-        w.BacklinksChanged += (_, _) => Interlocked.Increment(ref count);
+        var signal = new ManualResetEventSlim(false);
+        w.BacklinksChanged += (_, _) =>
+        {
+            Interlocked.Increment(ref count);
+            signal.Set();
+        };
         w.Start();
 
         for (int i = 0; i < 5; i++)
@@ -318,7 +323,8 @@ public class BacklinksWatcherTests
             Thread.Sleep(20);
         }
 
-        Thread.Sleep(800); // > quiet period
+        Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), $"At least one event must fire (got {count})");
+        Thread.Sleep(500); // allow any duplicate debounced tick to arrive
         Assert.IsTrue(count >= 1, $"At least one event must fire (got {count})");
         Assert.IsTrue(count <= 2, $"Burst must coalesce — got {count} events");
     }
