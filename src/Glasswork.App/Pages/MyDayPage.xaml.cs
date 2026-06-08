@@ -224,7 +224,6 @@ public sealed partial class MyDayPage : Page
             // Toggle manual collapse and persist.
             task.IsManuallyCollapsed = !task.IsManuallyCollapsed;
             App.UiState.Set($"{App.CollapsedTaskKeyPrefix}{task.Id}", task.IsManuallyCollapsed);
-            App.ScheduleUiStateSave();
             e.Handled = true;
         }
         else
@@ -256,9 +255,6 @@ public sealed partial class MyDayPage : Page
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
             ViewModel.RemoveFromMyDayCommand.Execute(task);
-            // The command mutates the dismiss key in IUiStateService in memory;
-            // schedule a debounced persist so it survives restart (mirrors TaskRow_DoubleTapped).
-            App.ScheduleUiStateSave();
         }
     }
 
@@ -267,9 +263,6 @@ public sealed partial class MyDayPage : Page
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
             ViewModel.AddToMyDayCommand.Execute(task);
-            // The command clears the dismiss key in IUiStateService in memory;
-            // schedule a debounced persist so it survives restart (mirrors TaskRow_DoubleTapped).
-            App.ScheduleUiStateSave();
         }
     }
 

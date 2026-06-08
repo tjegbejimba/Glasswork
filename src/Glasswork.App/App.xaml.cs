@@ -19,10 +19,12 @@ public partial class App : Application
     public const string AppUserModelId = "Glasswork.Desktop";
 
     /// <summary>
-    /// Triggers a debounced save of <see cref="UiState"/> to disk (~500ms quiet period).
-    /// Call this whenever you mutate UI state (e.g. toggle a collapse override).
+    /// [OBSOLETE] Debounced save is now handled automatically by <see cref="AutoSavingUiStateService"/>.
+    /// This method is retained temporarily for backwards compatibility but is a no-op.
+    /// All <see cref="UiState"/> mutations now auto-schedule a save (ADR 0014).
     /// </summary>
-    public static void ScheduleUiStateSave() => _uiStateDebouncer?.Trigger();
+    [Obsolete("UiState mutations now auto-save. This method is a no-op.")]
+    public static void ScheduleUiStateSave() { /* no-op: AutoSavingUiStateService handles it */ }
 
     // Simple service locator for v1
     public static VaultService Vault { get; private set; } = null!;
@@ -40,7 +42,6 @@ public partial class App : Application
     public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
-    private static Debouncer? _uiStateDebouncer;
 
     /// <summary>
     /// Key prefix used to store per-task manual collapse overrides.
@@ -196,12 +197,12 @@ public partial class App : Application
 
         // UI state must be initialised first so that vault path can be read from it.
         var uiStateImpl = new JsonFileUiStateService(JsonFileUiStateService.DefaultFilePath());
-        UiState = uiStateImpl;
-        _uiStateDebouncer = new Debouncer(TimeSpan.FromMilliseconds(500), () =>
+        var uiStateDebouncer = new Debouncer(TimeSpan.FromMilliseconds(500), () =>
         {
             try { uiStateImpl.Save(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"UI state save failed: {ex.Message}"); }
         });
+        UiState = new AutoSavingUiStateService(uiStateImpl, uiStateDebouncer);
 
         // Initialize update checker. Read installed version from AssemblyInformationalVersion,
         // which matches the version shown in the status bar. Fire-and-forget startup check

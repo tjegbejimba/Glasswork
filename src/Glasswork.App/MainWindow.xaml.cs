@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Glasswork.Core.Feedback;
 using Glasswork.Core.Models;
+using Glasswork.Core.Services;
 using Glasswork.Pages;
 
 // To learn more about WinUI, the WinUI project structure,
@@ -52,6 +53,16 @@ public sealed partial class MainWindow : Window
         {
             root.PointerPressed += Root_PointerPressed;
         }
+
+        // Flush ui-state on shutdown to close the rapid-exit data-loss window (ADR 0014).
+        Closed += (_, _) =>
+        {
+            if (App.UiState is AutoSavingUiStateService autoSaving)
+            {
+                try { autoSaving.Flush(); }
+                catch { /* Flush failure must not block shutdown */ }
+            }
+        };
     }
 
     private void Root_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)

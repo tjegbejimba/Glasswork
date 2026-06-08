@@ -10,7 +10,7 @@ namespace Glasswork.Core.Services;
 /// Thread-safe. The action runs on a thread-pool thread; callers needing UI
 /// affinity must marshal to the dispatcher themselves.
 /// </summary>
-public sealed class Debouncer : IDisposable
+public sealed class Debouncer : IDebouncer, IDisposable
 {
     private readonly TimeSpan _quietPeriod;
     private readonly Action _action;

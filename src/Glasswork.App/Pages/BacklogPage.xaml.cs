@@ -135,12 +135,10 @@ public sealed partial class BacklogPage : Page
             if (args.PropertyName == nameof(BacklogViewModel.IsGrouped))
             {
                 App.UiState.Set(App.BacklogGroupByParentKey, ViewModel.IsGrouped);
-                App.ScheduleUiStateSave();
             }
             if (args.PropertyName == nameof(BacklogViewModel.ViewMode))
             {
                 App.UiState.Set(App.BacklogViewModeKey, ViewModel.ViewMode);
-                App.ScheduleUiStateSave();
                 UpdateViewModeUI();
             }
         };
@@ -375,7 +373,6 @@ public sealed partial class BacklogPage : Page
         {
             task.IsManuallyCollapsed = !task.IsManuallyCollapsed;
             App.UiState.Set($"{App.CollapsedTaskKeyPrefix}{task.Id}", task.IsManuallyCollapsed);
-            App.ScheduleUiStateSave();
             e.Handled = true;
         }
         else
@@ -442,7 +439,6 @@ public sealed partial class BacklogPage : Page
         var key = $"{App.BacklogGroupCollapsedKeyPrefix}{header.Key}";
         var newCollapsed = !header.IsCollapsed;
         App.UiState.Set(key, newCollapsed);
-        App.ScheduleUiStateSave();
         // Rebuild rows to reflect new collapse state.
         ViewModel.Refresh();
         e.Handled = true;

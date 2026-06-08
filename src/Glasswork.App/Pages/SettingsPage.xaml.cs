@@ -150,7 +150,6 @@ public sealed partial class SettingsPage : Page
             App.UiState.Remove(App.ThemeKey);
         else
             App.UiState.Set(App.ThemeKey, value);
-        App.ScheduleUiStateSave();
 
         if (App.MainWindow is not null) App.ApplyTheme(App.MainWindow);
     }
@@ -170,7 +169,6 @@ public sealed partial class SettingsPage : Page
         {
             App.UiState.Set(App.AdoBaseUrlKey, trimmed);
         }
-        App.ScheduleUiStateSave();
     }
 
     // ── Updates ──────────────────────────────────────────────────────────────
