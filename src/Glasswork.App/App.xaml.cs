@@ -4,6 +4,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
+using Glasswork.Core.VisualVerification;
 using Glasswork.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
@@ -183,8 +184,9 @@ public partial class App : Application
         // URIs from a second instance to the already-running primary instance.
         var currentInstance = AppInstance.GetCurrent();
         var activationArgs = currentInstance.GetActivatedEventArgs();
+        var launchOptions = VerificationLaunchOptions.FromProcessEnvironment();
 
-        _mainAppInstance = AppInstance.FindOrRegisterForKey("main");
+        _mainAppInstance = AppInstance.FindOrRegisterForKey(launchOptions.InstanceKey);
         if (!_mainAppInstance.IsCurrent)
         {
             // Already running — forward the activation (carries the glasswork:// URI)
@@ -199,7 +201,8 @@ public partial class App : Application
         _mainAppInstance.Activated += OnAppInstanceActivated;
 
         // UI state must be initialised first so that vault path can be read from it.
-        _uiStateImpl = new JsonFileUiStateService(JsonFileUiStateService.DefaultFilePath());
+        _uiStateImpl = new JsonFileUiStateService(
+            launchOptions.UiStatePath ?? JsonFileUiStateService.DefaultFilePath());
         var uiStateDebouncer = new Debouncer(TimeSpan.FromMilliseconds(500), () =>
         {
             try { _uiStateImpl.Save(); }
@@ -220,17 +223,22 @@ public partial class App : Application
         var repoPathProvider = new Services.UiStateRepoPathProvider(_uiStateImpl, RepoPathKey);
         Updater = new Glasswork.Core.AppUpdate.UpdateCheckService(detector, installedVersion, repoPathProvider);
         
-        // Fire-and-forget startup check: runs in background, failures cached/never surfaced at startup (ADR 0011).
-        _ = System.Threading.Tasks.Task.Run(async () =>
+        if (!launchOptions.SkipUpdateCheck)
         {
-            try { await Updater.CheckForUpdatesAsync(); }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Startup update check failed: {ex.Message}"); }
-        });
+            // Fire-and-forget startup check: runs in background, failures cached/never surfaced at startup (ADR 0011).
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                try { await Updater.CheckForUpdatesAsync(); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Startup update check failed: {ex.Message}"); }
+            });
+        }
 
         // Resolve vault path: persisted setting wins; fall back to the hard-coded default
         // so first-run behaviour is unchanged until the user picks a different vault.
         var persistedVaultPath = _uiStateImpl.Get<string>(VaultPathKey);
-        var vaultPath = !string.IsNullOrWhiteSpace(persistedVaultPath) && Directory.Exists(persistedVaultPath)
+        var vaultPath = !string.IsNullOrWhiteSpace(launchOptions.VaultPath)
+            ? launchOptions.VaultPath
+            : !string.IsNullOrWhiteSpace(persistedVaultPath) && Directory.Exists(persistedVaultPath)
             ? persistedVaultPath
             : Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -241,7 +249,8 @@ public partial class App : Application
         // Register glasswork:// URL scheme for this executable so links work even
         // without MSIX packaging. Idempotent: re-running on every launch is cheap
         // and ensures the path stays correct after the binary is moved.
-        RegisterUrlScheme();
+        if (!launchOptions.SkipProtocolRegistration)
+            RegisterUrlScheme();
 
         _window = new MainWindow();
         ApplyTheme(_window);

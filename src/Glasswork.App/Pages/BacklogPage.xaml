@@ -234,6 +234,7 @@
         <!-- Header -->
         <TextBlock
             Grid.Row="0"
+            AutomationProperties.AutomationId="BacklogHeader"
             Style="{StaticResource TitleTextBlockStyle}"
             Text="Backlog" />
 
@@ -259,6 +260,7 @@
                     Padding="1">
                 <StackPanel Orientation="Horizontal" Spacing="1">
                     <ToggleButton x:Name="ListViewToggle"
+                                  AutomationProperties.AutomationId="BacklogListViewToggle"
                                   IsChecked="True"
                                   Checked="ListViewToggle_Checked"
                                   Width="40" Height="32"
@@ -268,6 +270,7 @@
                         <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8FD;" FontSize="13" />
                     </ToggleButton>
                     <ToggleButton x:Name="BoardViewToggle"
+                                  AutomationProperties.AutomationId="BacklogBoardViewToggle"
                                   IsChecked="False"
                                   Checked="BoardViewToggle_Checked"
                                   Width="40" Height="32"
@@ -280,6 +283,7 @@
             </Border>
 
             <ComboBox x:Name="StatusFilter"
+                      AutomationProperties.AutomationId="BacklogStatusFilter"
                       SelectedIndex="0"
                       SelectionChanged="StatusFilter_Changed"
                       Width="160">
@@ -290,12 +294,14 @@
             </ComboBox>
 
             <TextBox x:Name="SearchBox"
+                     AutomationProperties.AutomationId="BacklogSearchBox"
                      Width="240"
                      PlaceholderText="Search tasks"
                      AutomationProperties.Name="Search Backlog tasks"
                      TextChanged="SearchBox_TextChanged" />
 
             <ToggleButton x:Name="GroupToggle"
+                          AutomationProperties.AutomationId="BacklogGroupToggle"
                           IsChecked="{x:Bind ViewModel.IsGrouped, Mode=TwoWay}"
                           ToolTipService.ToolTip="Group by parent">
                 <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE71D;" FontSize="13" />
@@ -316,6 +322,7 @@
         <ListView
             Grid.Row="3"
             x:Name="TaskList"
+            AutomationProperties.AutomationId="BacklogTaskList"
             ItemsSource="{x:Bind ViewModel.Rows}"
             ItemTemplateSelector="{StaticResource BacklogRowSelector}"
             SelectionMode="None"
@@ -335,6 +342,7 @@
         <!-- Board view (two columns: To Do | In Progress) -->
         <ScrollViewer
             x:Name="BoardView"
+            AutomationProperties.AutomationId="BacklogBoardView"
             Grid.Row="3"
             Visibility="Collapsed"
             HorizontalScrollBarVisibility="Auto"
@@ -392,6 +400,7 @@
         <!-- Empty state: shown when the filtered Backlog has no tasks -->
         <controls:EmptyState
             x:Name="EmptyStateView"
+            AutomationProperties.AutomationId="BacklogEmptyState"
             Grid.Row="3"
             Glyph="&#xE8FD;"
             Headline="Nothing in the Backlog yet."
