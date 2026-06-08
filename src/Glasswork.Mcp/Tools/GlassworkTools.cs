@@ -100,7 +100,7 @@ public sealed class GlassworkTools
     public string ListTasks(
         [Description("Filter by status: todo, doing, or done.")] string? status = null,
         [Description("Filter by parent task ID.")] string? parent_task_id = null,
-        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values: title, status, parent_id, path, created, priority. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
+        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values: title, status, parent_id, path, created, priority, due, my_day, in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
     {
         using var scope = _logger?.BeginCall("list_tasks");
         try
@@ -385,6 +385,55 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "set_my_day")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Direct-pin an existing task into My Day for a specific date. Defaults to today's local date when my_day is omitted.")]
+    public string SetMyDay(
+        [Description("Task ID to pin into My Day.")] string task_id,
+        [Description("Date to set as yyyy-MM-dd. Defaults to today's local date.")] string? my_day = null)
+    {
+        using var scope = _logger?.BeginCall("set_my_day");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            DateTime myDay;
+            if (string.IsNullOrWhiteSpace(my_day))
+            {
+                myDay = DateTime.Today;
+            }
+            else if (!DateTime.TryParseExact(
+                         my_day.Trim(),
+                         "yyyy-MM-dd",
+                         System.Globalization.CultureInfo.InvariantCulture,
+                         System.Globalization.DateTimeStyles.None,
+                         out myDay))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_my_day", "my_day must be a date in yyyy-MM-dd format."));
+            }
+
+            var writeSw = Stopwatch.StartNew();
+            _vault.SetMyDay(safeId, myDay);
+            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+
+            return JsonSerializer.Serialize(new SetMyDayResult(
+                TaskId: safeId,
+                MyDay: myDay.ToString("yyyy-MM-dd"),
+                Path: TodoRelativeTaskPath(safeId)));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
     [McpServerTool(Name = "load_context")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Return a task's complete context bundle: task content + artifact bodies + recursive subtasks (to depth) + backlinks. Single-call replacement for chaining get_task + N artifact reads + list_tasks + backlink discovery. Read-only.")]
@@ -622,7 +671,7 @@ public sealed class GlassworkTools
 
     private static readonly HashSet<string> AllowedSummaryFields = new(StringComparer.Ordinal)
     {
-        "title", "status", "parent_id", "path", "created", "priority",
+        "title", "status", "parent_id", "path", "created", "priority", "due", "my_day", "in_my_day_today",
     };
 
     /// <summary>
@@ -663,6 +712,13 @@ public sealed class GlassworkTools
         if (fields.Contains("path")) dict["path"] = TodoRelativeTaskPath(task.Id);
         if (fields.Contains("created")) dict["created"] = task.Created.ToString("yyyy-MM-dd");
         if (fields.Contains("priority")) dict["priority"] = task.Priority;
+        if (fields.Contains("due")) dict["due"] = task.Due?.ToString("yyyy-MM-dd");
+        if (fields.Contains("my_day")) dict["my_day"] = task.MyDay?.ToString("yyyy-MM-dd");
+        if (fields.Contains("in_my_day_today"))
+            dict["in_my_day_today"] = MyDayPromotionPolicy.IsTaskInMyDayToday(
+                task,
+                DateOnly.FromDateTime(DateTime.Today),
+                new HashSet<string>(StringComparer.Ordinal));
         return dict;
     }
 
@@ -734,6 +790,11 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("artifacts")] List<ArtifactInfo> Artifacts);
 
     private sealed record AddArtifactResult(
+        [property: JsonPropertyName("path")] string Path);
+
+    private sealed record SetMyDayResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("my_day")] string MyDay,
         [property: JsonPropertyName("path")] string Path);
 
     private sealed record ErrorResult(
