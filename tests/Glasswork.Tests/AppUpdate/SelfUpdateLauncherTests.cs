@@ -173,7 +173,7 @@ public class SelfUpdateLauncherTests
         Assert.AreEqual(8, args.Count);
         Assert.AreEqual("-File", args[0]);
         Assert.AreEqual(@"C:\repo\scripts\self-update.ps1", args[1]);
-        Assert.AreEqual("-AppPid", args[2]);
+        Assert.AreEqual("-AppProcessId", args[2]);
         Assert.AreEqual("1234", args[3]);
         Assert.AreEqual("-RepoPath", args[4]);
         Assert.AreEqual(@"C:\repo", args[5]);

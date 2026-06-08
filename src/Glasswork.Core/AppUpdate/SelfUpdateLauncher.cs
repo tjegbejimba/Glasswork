@@ -60,7 +60,7 @@ public sealed class SelfUpdateLauncher
         {
             "-File",
             scriptPath,
-            "-AppPid",
+            "-AppProcessId",
             processId.ToString(),
             "-RepoPath",
             repoPath,

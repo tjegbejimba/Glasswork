@@ -43,14 +43,14 @@ function Invoke-SelfUpdate {
 
         [string]$PublishScript = (Join-Path $RepoPath "scripts\publish.ps1"),
 
-        [scriptblock]$GitInvoker = { param($args) & git @args },
+        [scriptblock]$GitInvoker = { param($argsList) & git @argsList },
 
         [scriptblock]$PublishInvoker = { param($script) & $script },
 
         [scriptblock]$ProcessWaiter = { 
-            param($pid, $timeoutSec)
+            param($processId, $timeoutSec)
             try {
-                $p = Get-Process -Id $pid -ErrorAction SilentlyContinue
+                $p = Get-Process -Id $processId -ErrorAction SilentlyContinue
                 if ($p) {
                     $p | Wait-Process -Timeout $timeoutSec -ErrorAction SilentlyContinue
                     return $true
