@@ -290,6 +290,12 @@ public partial class App : Application
         try { Vault.MigrateAllToV2(); }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"V2 migration failed: {ex.Message}"); }
 
+        // One-shot my_day date-scoped migration (ADR 0013, issue #260). Rolls forward
+        // any past-dated my_day pins to today so they aren't mass-evicted on upgrade.
+        // Flag-guarded: runs exactly once, then never again.
+        try { MyDayPinMigrationRunner.ApplyMigration(Vault, uiStateImpl, DateOnly.FromDateTime(DateTime.Today)); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"My Day migration failed: {ex.Message}"); }
+
         // In-memory aggregate (issue #184). Subscribe to vault domain events
         // BEFORE EnsureLoaded so we still capture writes that happen on the seed
         // pass (defensive — none expected in practice). EnsureLoaded does not
