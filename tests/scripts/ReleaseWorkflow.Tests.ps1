@@ -47,7 +47,8 @@ Describe "Release workflow" {
     It "treats missing tags and releases as success paths" {
         $workflow = Get-Content $script:WorkflowPath -Raw
 
-        $workflow | Should -Match "LASTEXITCODE -ne 2"
+        $workflow | Should -Match 'PSNativeCommandUseErrorActionPreference = \$false'
+        $workflow | Should -Match 'IsNullOrWhiteSpace\(\$matchingRefs\)'
         $workflow | Should -Match "SkipHttpErrorCheck"
         $workflow | Should -Match "StatusCode -eq 200"
         $workflow | Should -Match "StatusCode -ne 404"
