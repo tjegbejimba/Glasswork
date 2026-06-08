@@ -122,7 +122,8 @@
                         x:Name="RestartToUpdateButton"
                         Content="Restart to update"
                         IsEnabled="False"
-                        ToolTipService.ToolTip="Coming soon" />
+                        Click="RestartToUpdateButton_Click"
+                        ToolTipService.ToolTip="Rebuild from source and restart" />
                 </StackPanel>
             </StackPanel>
         </StackPanel>
