@@ -14,7 +14,7 @@ public class MyDayPromotionPolicyTests
     // ===== IsTaskInMyDayToday =====
 
     [TestMethod]
-    public void IsTaskInMyDayToday_PinnedTask_NoOtherSignals_ReturnsTrue()
+    public void IsTaskInMyDayToday_PinnedToday_NoOtherSignals_ReturnsTrue()
     {
         var task = new GlassworkTask
         {
@@ -22,6 +22,43 @@ public class MyDayPromotionPolicyTests
             MyDay = DateTime.Today,
         };
         Assert.IsTrue(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_PinnedYesterday_ReturnsFalse()
+    {
+        // Past-dated pin does not promote (ADR 0013)
+        var task = new GlassworkTask
+        {
+            Id = "t-past",
+            MyDay = DateTime.Today.AddDays(-1),
+        };
+        Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_PinnedTomorrow_ReturnsFalse()
+    {
+        // Future-dated pin is scheduled for its day, not today (ADR 0013)
+        var task = new GlassworkTask
+        {
+            Id = "t-future",
+            MyDay = DateTime.Today.AddDays(1),
+        };
+        Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_PinnedToday_Dismissed_ReturnsFalse()
+    {
+        // dismissedToday still overrides same-day pin
+        var task = new GlassworkTask
+        {
+            Id = "t-dismissed",
+            MyDay = DateTime.Today,
+        };
+        var dismissed = new HashSet<string> { "t-dismissed" };
+        Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, dismissed));
     }
 
     [TestMethod]

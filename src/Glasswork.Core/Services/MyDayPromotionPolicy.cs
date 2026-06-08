@@ -21,8 +21,9 @@ public static class MyDayPromotionPolicy
         // Done tasks belong in Recently Completed, never Today's tasks.
         if (task.Status == GlassworkTask.Statuses.Done) return false;
 
-        // Direct pin: MyDay frontmatter is set (any non-null value).
-        if (task.MyDay.HasValue) return true;
+        // Direct pin: my_day == today (ADR 0013 - date-scoped promotion).
+        if (task.MyDay.HasValue
+            && DateOnly.FromDateTime(task.MyDay.Value.Date) == today) return true;
 
         // Task is due today or overdue and not done.
         if (task.Due.HasValue
