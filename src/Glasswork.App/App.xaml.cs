@@ -43,6 +43,9 @@ public partial class App : Application
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
 
+    // Inner concrete service for SwitchVault to rebuild the decorator with a new vault.
+    private static JsonFileUiStateService _uiStateImpl = null!;
+
     /// <summary>
     /// Key prefix used to store per-task manual collapse overrides.
     /// Persisted via <see cref="UiState"/>; stale entries garbage-collected on launch.
@@ -196,13 +199,13 @@ public partial class App : Application
         _mainAppInstance.Activated += OnAppInstanceActivated;
 
         // UI state must be initialised first so that vault path can be read from it.
-        var uiStateImpl = new JsonFileUiStateService(JsonFileUiStateService.DefaultFilePath());
+        _uiStateImpl = new JsonFileUiStateService(JsonFileUiStateService.DefaultFilePath());
         var uiStateDebouncer = new Debouncer(TimeSpan.FromMilliseconds(500), () =>
         {
-            try { uiStateImpl.Save(); }
+            try { _uiStateImpl.Save(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"UI state save failed: {ex.Message}"); }
         });
-        UiState = new AutoSavingUiStateService(uiStateImpl, uiStateDebouncer);
+        UiState = new AutoSavingUiStateService(_uiStateImpl, uiStateDebouncer);
 
         // Initialize update checker. Read installed version from AssemblyInformationalVersion,
         // which matches the version shown in the status bar. Fire-and-forget startup check
@@ -214,7 +217,7 @@ public partial class App : Application
             ?.InformationalVersion ?? "0.0.0";
         
         var detector = new Glasswork.Core.AppUpdate.GitHubReleaseDetector();
-        var repoPathProvider = new Services.UiStateRepoPathProvider(uiStateImpl, RepoPathKey);
+        var repoPathProvider = new Services.UiStateRepoPathProvider(_uiStateImpl, RepoPathKey);
         Updater = new Glasswork.Core.AppUpdate.UpdateCheckService(detector, installedVersion, repoPathProvider);
         
         // Fire-and-forget startup check: runs in background, failures cached/never surfaced at startup (ADR 0011).
@@ -226,14 +229,14 @@ public partial class App : Application
 
         // Resolve vault path: persisted setting wins; fall back to the hard-coded default
         // so first-run behaviour is unchanged until the user picks a different vault.
-        var persistedVaultPath = uiStateImpl.Get<string>(VaultPathKey);
+        var persistedVaultPath = _uiStateImpl.Get<string>(VaultPathKey);
         var vaultPath = !string.IsNullOrWhiteSpace(persistedVaultPath) && Directory.Exists(persistedVaultPath)
             ? persistedVaultPath
             : Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "Wiki", "wiki", "todo");
 
-        InitVaultServices(vaultPath, uiStateImpl);
+        InitVaultServices(vaultPath, _uiStateImpl);
 
         // Register glasswork:// URL scheme for this executable so links work even
         // without MSIX packaging. Idempotent: re-running on every launch is cheap
@@ -372,8 +375,8 @@ public partial class App : Application
         UiState.RemoveKeysNotIn(CollapsedTaskKeyPrefix, System.Array.Empty<string>());
         UiState.Save();
 
-        var uiStateImpl = (JsonFileUiStateService)UiState;
-        InitVaultServices(newVaultPath, uiStateImpl);
+        // Use the inner concrete service for vault switching (decorator references it).
+        InitVaultServices(newVaultPath, _uiStateImpl);
     }
 
     private static void OnAppInstanceActivated(object? sender, AppActivationArguments args)
