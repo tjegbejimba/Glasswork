@@ -95,6 +95,8 @@ public class BoardDragStatusWriterTests
 
         // Force two consecutive conflicts by intercepting the retry
         var attemptCount = 0;
+        var conflictPath = Path.Combine(_tempDir, "conflict-twice.md");
+        var stampBase = DateTime.UtcNow;
         _writer.OnBeforeWrite = () =>
         {
             attemptCount++;
@@ -103,6 +105,10 @@ public class BoardDragStatusWriterTests
                 var ext = _vault.Load("conflict-twice")!;
                 ext.Description = $"Change {attemptCount}";
                 _vault.Save(ext);
+                // Stamp a strictly-increasing mtime so the writer's mtime-based
+                // conflict check fires deterministically, independent of the
+                // filesystem's timestamp granularity (coarse on some CI runners).
+                File.SetLastWriteTimeUtc(conflictPath, stampBase.AddSeconds(attemptCount));
             }
         };
 
