@@ -436,6 +436,54 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void ListTasks_FieldsDueAndMyDay_ReturnsIsoDates()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "dated-task",
+            Title = "Dated task",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 6, 1),
+            Due = new DateTime(2026, 6, 8),
+            MyDay = new DateTime(2026, 6, 9),
+        };
+        _vault.Save(task);
+
+        var json = _tools.ListTasks(fields: new[] { "due", "my_day" });
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        Assert.AreEqual("2026-06-08", first.GetProperty("due").GetString());
+        Assert.AreEqual("2026-06-09", first.GetProperty("my_day").GetString());
+    }
+
+    [TestMethod]
+    public void ListTasks_FieldsInMyDayToday_UsesPromotionPolicy()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "today-pin",
+            Title = "Today pin",
+            Status = GlassworkTask.Statuses.Todo,
+            MyDay = DateTime.Today,
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "not-today",
+            Title = "Not today",
+            Status = GlassworkTask.Statuses.Todo,
+        });
+
+        var json = _tools.ListTasks(fields: new[] { "title", "in_my_day_today" });
+        var tasks = JsonDocument.Parse(json).RootElement.GetProperty("tasks");
+        var byTitle = tasks.EnumerateArray().ToDictionary(
+            t => t.GetProperty("title").GetString()!,
+            t => t.GetProperty("in_my_day_today").GetBoolean());
+
+        Assert.IsTrue(byTitle["Today pin"]);
+        Assert.IsFalse(byTitle["Not today"]);
+    }
+
+    [TestMethod]
     public void ListTasks_ParentIdInOutput_IsNullWhenNoParent()
     {
         _tools.AddTask("Standalone Task");
@@ -894,6 +942,74 @@ public class GlassworkToolsTests
 
         Assert.AreEqual(1, artifacts.GetArrayLength());
         Assert.AreEqual("research.md", artifacts[0].GetProperty("filename").GetString());
+    }
+
+    // ───────────────────────────── set_my_day ────────────────────────────
+
+    [TestMethod]
+    public void SetMyDay_DefaultDate_DirectPinsTaskForToday()
+    {
+        var addJson = _tools.AddTask("Plan Today");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.SetMyDay(taskId);
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual(taskId, doc.RootElement.GetProperty("task_id").GetString());
+        Assert.AreEqual(DateTime.Today.ToString("yyyy-MM-dd"), doc.RootElement.GetProperty("my_day").GetString());
+
+        var task = _vault.Load(taskId)!;
+        Assert.AreEqual(DateTime.Today, task.MyDay);
+    }
+
+    [TestMethod]
+    public void SetMyDay_ExplicitDate_StoresRequestedDate()
+    {
+        var addJson = _tools.AddTask("Plan Later");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.SetMyDay(taskId, "2026-06-10");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("2026-06-10", doc.RootElement.GetProperty("my_day").GetString());
+        Assert.AreEqual(new DateTime(2026, 6, 10), _vault.Load(taskId)!.MyDay);
+    }
+
+    [TestMethod]
+    public void SetMyDay_InvalidDate_ReturnsStructuredError()
+    {
+        var addJson = _tools.AddTask("Invalid Date Pin");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.SetMyDay(taskId, "06/10/2026");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_my_day", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(_vault.Load(taskId)!.MyDay.HasValue);
+    }
+
+    [TestMethod]
+    public void SetMyDay_NotFound_ReturnsStructuredError()
+    {
+        var json = _tools.SetMyDay("missing-task");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("not_found", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void SetMyDay_RegistersSelfWrite_MarkerFileContainsTaskPath()
+    {
+        var addJson = _tools.AddTask("SelfWrite My Day Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.SetMyDay(taskId, "2026-06-10");
+
+        var markerFile = Path.Combine(TasksDir, ".glasswork", "recent-writes.json");
+        Assert.IsTrue(File.Exists(markerFile), "SelfWriteCoordinator must write its marker file when set_my_day updates a task.");
+        var markerContent = File.ReadAllText(markerFile);
+        StringAssert.Contains(markerContent, $"{taskId}.md",
+            "Marker file must reference the written task path.");
     }
 
     // ───────────────────────────── load_context ──────────────────────────

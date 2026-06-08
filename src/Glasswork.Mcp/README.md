@@ -108,6 +108,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | `add_artifact` | v0.3.0 | Create a task artifact file |
 | `load_context` | v0.4.0 | One-call full-context fetch: task + artifact bodies + recursive subtasks + backlinks |
 | `search_tasks` | v0.5.0 | Topic-driven task discovery — ranked, scoped, with per-hit snippets |
+| `set_my_day` | v0.6.0 | Direct-pin an existing task into My Day for a date |
 
 ### When to use which tool
 
@@ -116,6 +117,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | Know which tasks exist right now | `list_tasks` |
 | Fetch a specific task you already know by ID | `get_task` or `load_context` |
 | Discover tasks related to a concept or keyword | `search_tasks` |
+| Add an existing task to My Day | `set_my_day` |
 | Orient before starting work on a new issue | `search_tasks` (find prior art), then `load_context` (deep-dive) |
 
 ### `search_tasks`
@@ -210,7 +212,7 @@ Results are ranked: tasks with a title match score higher than body-only matches
 }
 ```
 
-- **`fields`** (optional): when provided, each returned summary contains only the requested fields plus `id` (always included). Allowed values: `title`, `status`, `parent_id`, `path`, `created`, `priority`. Field names are case-folded, whitespace-trimmed, and de-duplicated; unknown names are silently dropped. Omitting `fields` (or passing `null` / `[]`) preserves the default shape below.
+- **`fields`** (optional): when provided, each returned summary contains only the requested fields plus `id` (always included). Allowed values: `title`, `status`, `parent_id`, `path`, `created`, `priority`, `due`, `my_day`, `in_my_day_today`. Field names are case-folded, whitespace-trimmed, and de-duplicated; unknown names are silently dropped. Omitting `fields` (or passing `null` / `[]`) preserves the default shape below.
 
 **Output (default — no `fields`)**
 
@@ -234,6 +236,21 @@ Results are ranked: tasks with a title match score higher than body-only matches
 {
   "tasks": [
     { "id": "string", "created": "yyyy-MM-dd", "priority": "medium" }
+  ]
+}
+```
+
+**Output (with `fields: ["due", "my_day", "in_my_day_today"]`)**
+
+```json
+{
+  "tasks": [
+    {
+      "id": "string",
+      "due": "yyyy-MM-dd | null",
+      "my_day": "yyyy-MM-dd | null",
+      "in_my_day_today": true
+    }
   ]
 }
 ```
@@ -321,6 +338,40 @@ Re-reads the vault and artifact folder on every call (no cache). The `artifacts`
 | `conflict` | A file with that name already exists — `add_artifact` is create-only in v1 |
 
 Artifacts are stored under `<vault>/wiki/todo/<task-id>.artifacts/<filename>`. The write is registered with `SelfWriteCoordinator` so the running Glasswork app does not raise a spurious "external change" banner.
+
+---
+
+### `set_my_day`
+
+Direct-pins an existing task into **My Day** by setting task-level `my_day` frontmatter to a date. This follows ADR 0013's date-scoped pin model: the task promotes into My Day only when `my_day` equals the user's current local date. The tool does not change due dates, priority, status, subtasks, Description, Notes, or artifacts.
+
+**Input**
+
+```json
+{
+  "task_id": "string (required) — task ID to pin",
+  "my_day": "yyyy-MM-dd (optional) — defaults to today's local date"
+}
+```
+
+**Output (success)**
+
+```json
+{
+  "task_id": "string",
+  "my_day": "yyyy-MM-dd",
+  "path": "string — todo-relative path to the updated task file, e.g. task-id.md"
+}
+```
+
+**Output (errors)**
+
+| `error` value | When |
+|---|---|
+| `not_found` | The task ID does not exist in the vault |
+| `invalid_my_day` | `my_day` is not in `yyyy-MM-dd` format |
+
+The write is registered with `SelfWriteCoordinator` so the running Glasswork app does not raise a spurious "external change" banner.
 
 ---
 
@@ -483,7 +534,7 @@ Phases instrumented in v1:
 | `yaml_parse` | `list_tasks` | Reading and parsing each file's YAML frontmatter |
 | `filter` | `list_tasks` | Applying status / parent_task_id filters |
 | `sort` | `list_tasks` | Sorting results by created date and ID |
-| `write` | `add_task`, `add_artifact` | Writing the file to disk |
+| `write` | `add_task`, `add_artifact`, `set_my_day` | Writing the file to disk |
 | `load_task` | `get_task`, `load_context` | Loading the root task from disk |
 | `scan_artifacts` | `get_task` | Enumerating the task's artifact folder |
 | `load_artifacts` | `load_context` | Reading every artifact body for the root task |
