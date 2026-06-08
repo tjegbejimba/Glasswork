@@ -89,6 +89,25 @@ public sealed class JsonFileUiStateService : IUiStateService
         }
     }
 
+    /// <summary>
+    /// Removes every key for which <paramref name="shouldRemove"/> returns true.
+    /// Generic key-level prune used by startup GC (e.g. stale dismissals). Mutates
+    /// the in-memory store only; call <see cref="Save"/> to persist.
+    /// </summary>
+    public void RemoveKeysWhere(Func<string, bool> shouldRemove)
+    {
+        ArgumentNullException.ThrowIfNull(shouldRemove);
+        lock (_lock)
+        {
+            var toRemove = new List<string>();
+            foreach (var key in _state.Keys)
+            {
+                if (shouldRemove(key)) toRemove.Add(key);
+            }
+            foreach (var k in toRemove) _state.Remove(k);
+        }
+    }
+
     private static Dictionary<string, JsonElement> Load(string filePath)
     {
         if (!File.Exists(filePath)) return new Dictionary<string, JsonElement>();
