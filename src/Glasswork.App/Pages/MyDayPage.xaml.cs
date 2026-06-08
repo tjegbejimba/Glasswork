@@ -256,6 +256,9 @@ public sealed partial class MyDayPage : Page
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
             ViewModel.RemoveFromMyDayCommand.Execute(task);
+            // The command mutates the dismiss key in IUiStateService in memory;
+            // schedule a debounced persist so it survives restart (mirrors TaskRow_DoubleTapped).
+            App.ScheduleUiStateSave();
         }
     }
 
@@ -264,6 +267,9 @@ public sealed partial class MyDayPage : Page
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
             ViewModel.AddToMyDayCommand.Execute(task);
+            // The command clears the dismiss key in IUiStateService in memory;
+            // schedule a debounced persist so it survives restart (mirrors TaskRow_DoubleTapped).
+            App.ScheduleUiStateSave();
         }
     }
 
