@@ -42,8 +42,10 @@ my_day: {yesterday:yyyy-MM-dd}
             Assert.IsNotNull(reloaded.MyDay);
             Assert.AreEqual(Today, DateOnly.FromDateTime(reloaded.MyDay.Value.Date));
 
-            // Assert: flag is set
-            Assert.IsTrue(uiState.Get<bool>(MyDayPinMigrationRunner.MigrationFlagKey));
+            // Assert: flag is set (vault-scoped)
+            var vaultHash = Math.Abs(vault.VaultPath.GetHashCode()).ToString("X8");
+            var expectedFlagKey = $"{MyDayPinMigrationRunner.MigrationFlagKeyPrefix}.{vaultHash}";
+            Assert.IsTrue(uiState.Get<bool>(expectedFlagKey));
         }
         finally
         {
@@ -143,6 +145,68 @@ my_day: {tomorrow:yyyy-MM-dd}
         {
             if (Directory.Exists(tempVault))
                 Directory.Delete(tempVault, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void ApplyMigration_TwoVaults_IndependentFlags()
+    {
+        // Regression test for GPT code review finding: vault-scoped flags
+        // Arrange: create two temp vaults with past-dated pins
+        var vault1Path = Path.Combine(Path.GetTempPath(), $"glasswork-test-{Guid.NewGuid()}");
+        var vault2Path = Path.Combine(Path.GetTempPath(), $"glasswork-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(vault1Path);
+        Directory.CreateDirectory(vault2Path);
+        try
+        {
+            var yesterday = DateTime.Today.AddDays(-1);
+
+            // Vault 1: past-dated pin
+            var task1Path = Path.Combine(vault1Path, "past-pin.md");
+            File.WriteAllText(task1Path, $@"---
+id: past-pin
+title: Past pin
+my_day: {yesterday:yyyy-MM-dd}
+---
+");
+
+            // Vault 2: past-dated pin
+            var task2Path = Path.Combine(vault2Path, "past-pin.md");
+            File.WriteAllText(task2Path, $@"---
+id: past-pin
+title: Past pin
+my_day: {yesterday:yyyy-MM-dd}
+---
+");
+
+            var vault1 = new VaultService(vault1Path, new SelfWriteCoordinator(vault1Path));
+            var vault2 = new VaultService(vault2Path, new SelfWriteCoordinator(vault2Path));
+            var sharedUiState = new InMemoryUiStateService(); // same ui-state, different vaults
+
+            // Act: migrate vault1
+            MyDayPinMigrationRunner.ApplyMigration(vault1, sharedUiState, Today);
+
+            // Assert: vault1 migrated
+            var vault1Task = vault1.Load("past-pin");
+            Assert.AreEqual(Today, DateOnly.FromDateTime(vault1Task!.MyDay!.Value.Date));
+
+            // Assert: vault2 NOT migrated yet (different vault, independent flag)
+            var vault2TaskBefore = vault2.Load("past-pin");
+            Assert.AreEqual(Today.AddDays(-1), DateOnly.FromDateTime(vault2TaskBefore!.MyDay!.Value.Date));
+
+            // Act: migrate vault2
+            MyDayPinMigrationRunner.ApplyMigration(vault2, sharedUiState, Today);
+
+            // Assert: vault2 now migrated
+            var vault2TaskAfter = vault2.Load("past-pin");
+            Assert.AreEqual(Today, DateOnly.FromDateTime(vault2TaskAfter!.MyDay!.Value.Date));
+        }
+        finally
+        {
+            if (Directory.Exists(vault1Path))
+                Directory.Delete(vault1Path, recursive: true);
+            if (Directory.Exists(vault2Path))
+                Directory.Delete(vault2Path, recursive: true);
         }
     }
 

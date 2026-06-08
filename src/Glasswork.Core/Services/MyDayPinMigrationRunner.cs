@@ -11,22 +11,29 @@ namespace Glasswork.Core.Services;
 public static class MyDayPinMigrationRunner
 {
     /// <summary>
-    /// UI state flag key. When true, the migration has already run and must not run again.
+    /// UI state flag key prefix. The full key is vault-scoped:
+    /// "migration.myDayDateScoped.{vault-path-hash}".
+    /// When true, the migration has already run for that vault and must not run again.
     /// </summary>
-    public const string MigrationFlagKey = "migration.myDayDateScoped";
+    public const string MigrationFlagKeyPrefix = "migration.myDayDateScoped";
 
     /// <summary>
     /// Apply the one-time my_day date-scoped migration if the flag is unset.
     /// For each task with my_day &lt; today, rewrites my_day = today.
     /// Sets the flag after completion so the migration never runs twice.
+    /// Vault-scoped: switching vaults runs the migration independently for each vault.
     /// </summary>
     /// <param name="vault">Vault service for loading/saving tasks.</param>
     /// <param name="uiState">UI state service for the idempotency flag.</param>
     /// <param name="today">Current date (today).</param>
     public static void ApplyMigration(VaultService vault, IUiStateService uiState, DateOnly today)
     {
-        // Idempotency guard: if flag is set, migration already ran — do nothing
-        if (uiState.Get<bool>(MigrationFlagKey))
+        // Vault-scoped flag key: hash the vault path to make the flag unique per vault
+        var vaultHash = Math.Abs(vault.VaultPath.GetHashCode()).ToString("X8");
+        var flagKey = $"{MigrationFlagKeyPrefix}.{vaultHash}";
+
+        // Idempotency guard: if flag is set, migration already ran for this vault — do nothing
+        if (uiState.Get<bool>(flagKey))
             return;
 
         // Load all tasks
@@ -44,7 +51,7 @@ public static class MyDayPinMigrationRunner
             vault.Save(task);
         }
 
-        // Set the flag so migration never runs again
-        uiState.Set(MigrationFlagKey, true);
+        // Set the flag so migration never runs again for this vault
+        uiState.Set(flagKey, true);
     }
 }
