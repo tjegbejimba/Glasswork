@@ -305,7 +305,8 @@ public sealed class GlassworkTools
     public string AddArtifact(
         [Description("Task ID that owns the artifact.")] string task_id,
         [Description("Filename for the artifact, must end in .md (e.g. 'plan.md'). Simple filenames only — no path separators.")] string filename,
-        [Description("Markdown content to write into the artifact file.")] string? content)
+        [Description("Markdown content to write into the artifact file.")] string? content,
+        [Description("Write mode: \"create\" (default, fails if file exists) or \"overwrite\" (create-or-replace).")] string? mode = null)
     {
         using var scope = _logger?.BeginCall("add_artifact");
         try
@@ -362,7 +363,15 @@ public sealed class GlassworkTools
                     $"Filename '{filename}' is not allowed. Use a simple filename without path separators or '..'."));
             }
 
-            if (File.Exists(resolvedPath))
+            var effectiveMode = mode?.Trim().ToLowerInvariant() ?? "create";
+            if (effectiveMode != "create" && effectiveMode != "overwrite")
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_mode",
+                    $"Invalid mode '{mode}'. Valid values: create, overwrite."));
+            }
+
+            if (effectiveMode == "create" && File.Exists(resolvedPath))
             {
                 scope?.SetResult("conflict");
                 return JsonSerializer.Serialize(new ErrorResult("conflict",
