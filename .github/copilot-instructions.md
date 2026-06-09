@@ -177,6 +177,13 @@ inside Ubuntu.
    Linux agents cannot run this** — they must flag UI-touching work for local
    re-verification before merge.
 
+   > **Skill:** the step-by-step playbook for this rule — verifying changes,
+   > writing scenarios, and discovering/scaffolding `AutomationId` selectors by
+   > inspecting the live UI Automation tree (`scripts\inspect-app.ps1`) — lives
+   > in [`.github/skills/visual-verification.md`](skills/visual-verification.md).
+   > It also feeds rule 6: a real render is what surfaces the silent
+   > `STOWED_EXCEPTION` crash that init-time cross-references cause.
+
 ## Investigation guidance (for issue triage & root-cause analysis)
 
 When assigned a user-reported issue (label `user-report`):
