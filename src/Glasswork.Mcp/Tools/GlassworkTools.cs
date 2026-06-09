@@ -892,7 +892,7 @@ public sealed class GlassworkTools
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Return structured data about what happened in a time period. Foundation for auto-generated work logs.")]
     public string GetActivity(
-        [Description("Time period: 'today', 'yesterday', 'week', 'month', or JSON with {from, to} (ISO8601)")] string period)
+        [Description("Time period: 'today', 'yesterday', 'week', or 'month'")] string period)
     {
         using var scope = _logger?.BeginCall("get_activity");
         try
@@ -905,9 +905,10 @@ public sealed class GlassworkTools
 
             var allTasks = _vault.LoadAll();
             
-            // Filter tasks completed in the period
+            // Filter tasks completed in the period (must have status=done AND completed_at in range)
             var completedInPeriod = allTasks
-                .Where(t => t.CompletedAt.HasValue && 
+                .Where(t => t.Status == GlassworkTask.Statuses.Done &&
+                            t.CompletedAt.HasValue && 
                             t.CompletedAt.Value >= from && 
                             t.CompletedAt.Value <= to)
                 .OrderBy(t => t.CompletedAt)
@@ -975,7 +976,7 @@ public sealed class GlassworkTools
             default:
                 from = default;
                 to = default;
-                error = $"Invalid period '{period}'. Valid values: today, yesterday, week, month, or JSON with {{from, to}}.";
+                error = $"Invalid period '{period}'. Valid values: today, yesterday, week, month.";
                 return false;
         }
     }

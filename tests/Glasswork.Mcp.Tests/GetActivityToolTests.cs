@@ -112,4 +112,32 @@ public class GetActivityToolTests
         Assert.AreEqual(yesterday, from.Date);
         Assert.AreEqual(yesterday.AddDays(1).AddTicks(-1), to);
     }
+
+    [TestMethod]
+    public void GetActivity_TaskWithCompletedAtButNotDoneStatus_IsNotIncluded()
+    {
+        // Arrange - create task with completed_at but status != done (stale/manual edit scenario)
+        _tools.AddTask("Stale task");
+        
+        var vault = new VaultService(_testVaultPath, new SelfWriteCoordinator(_testVaultPath));
+        var task = vault.LoadAll().First(t => t.Title == "Stale task");
+        
+        // Simulate stale state: has completed_at but status is still "todo"
+        task.CompletedAt = DateTime.Today.AddHours(10);
+        task.Status = "todo"; // Not done!
+        vault.Save(task);
+        
+        // Act
+        var resultJson = _tools.GetActivity(period: "today");
+        var result = JsonSerializer.Deserialize<JsonElement>(resultJson);
+        
+        // Assert - should NOT appear in completed_tasks
+        Assert.IsTrue(result.TryGetProperty("completed_tasks", out var completedTasksElem));
+        var completedTasks = completedTasksElem.EnumerateArray().ToList();
+        
+        Assert.AreEqual(0, completedTasks.Count, "Task with completed_at but status != done should not appear");
+        
+        Assert.IsTrue(result.TryGetProperty("stats", out var statsElem));
+        Assert.AreEqual(0, statsElem.GetProperty("tasks_completed").GetInt32());
+    }
 }
