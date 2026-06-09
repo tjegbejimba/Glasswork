@@ -339,6 +339,7 @@ Re-reads the vault and artifact folder on every call (no cache). The `artifacts`
 | `not_found` | The task ID does not exist in the vault |
 | `invalid_filename` | `filename` is null, empty, whitespace, or does not end in `.md` |
 | `invalid_content` | `content` is null |
+| `invalid_mode` | `mode` is not null, `"create"`, or `"overwrite"` (case-insensitive, whitespace-trimmed) |
 | `path_traversal` | `filename` contains a path separator (`/` or `\`), `..`, is absolute, or resolves outside the artifact folder |
 | `conflict` | A file with that name already exists and `mode` is `"create"` (or omitted). Pass `mode: "overwrite"` to replace existing files |
 

@@ -363,7 +363,14 @@ public sealed class GlassworkTools
                     $"Filename '{filename}' is not allowed. Use a simple filename without path separators or '..'."));
             }
 
-            var effectiveMode = mode?.ToLowerInvariant() ?? "create";
+            var effectiveMode = mode?.Trim().ToLowerInvariant() ?? "create";
+            if (effectiveMode != "create" && effectiveMode != "overwrite")
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_mode",
+                    $"Invalid mode '{mode}'. Valid values: create, overwrite."));
+            }
+
             if (effectiveMode == "create" && File.Exists(resolvedPath))
             {
                 scope?.SetResult("conflict");

@@ -1032,6 +1032,31 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void AddArtifact_InvalidMode_ReturnsInvalidModeError()
+    {
+        var addJson = _tools.AddTask("Invalid Mode Test");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "original.md", "ORIGINAL_CONTENT");
+
+        // Act: try to overwrite with an invalid mode value (typo)
+        var resultJson = _tools.AddArtifact(taskId, "original.md", "TYPO_REPLACED", mode: "creat");
+
+        // Assert: must return invalid_mode error
+        var doc = JsonDocument.Parse(resultJson);
+        Assert.IsTrue(doc.RootElement.TryGetProperty("error", out var errorProp),
+            "AddArtifact with invalid mode must return an error envelope.");
+        Assert.AreEqual("invalid_mode", errorProp.GetString(),
+            "Error code must be 'invalid_mode' for unrecognized mode values.");
+
+        // Assert: existing artifact must not be overwritten
+        var artifactPath = ResolveTodoPath(Path.Combine(taskId + ".artifacts", "original.md"));
+        var actualContent = File.ReadAllText(artifactPath);
+        Assert.AreEqual("ORIGINAL_CONTENT", actualContent,
+            "Existing artifact must not be overwritten when an invalid mode is passed.");
+    }
+
+    [TestMethod]
     public void AddArtifact_VisibleViaGetTask()
     {
         var addJson = _tools.AddTask("End To End Task");
