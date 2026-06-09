@@ -518,6 +518,55 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "list_backlinks")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Return incoming wiki-links to a task from pages outside wiki/todo. Returns task summaries for every task that links to task_id via [[task_id]].")]
+    public string ListBacklinks(
+        [Description("Task ID to find backlinks for.")] string task_id)
+    {
+        using var scope = _logger?.BeginCall("list_backlinks");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            // Phase: backlinks_scan — fresh build per call (ADR 0007 §6 stateless).
+            // Built against the *vault root*, not _vaultPath (which is wiki/todo).
+            var backlinksSw = Stopwatch.StartNew();
+            var backlinkIndex = new BacklinkIndex();
+            backlinkIndex.Build(_vaultRoot);
+            var backlinks = backlinkIndex.GetBacklinks(safeId);
+            scope?.RecordPhase("backlinks_scan", backlinksSw.ElapsedMilliseconds);
+
+            var result = new ListBacklinksResult(
+                Backlinks: backlinks.Select(b => new BacklinkEntry(
+                    LinkingPagePath: ToVaultRelative(b.LinkingPagePath),
+                    LinkingPageTitle: b.LinkingPageTitle,
+                    PageType: MapPageTypeToString(b.PageType),
+                    LastModifiedUtc: b.LastModifiedUtc)).ToArray());
+
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    private static string MapPageTypeToString(BacklinkPageType pageType) => pageType switch
+    {
+        BacklinkPageType.Concept => "concept",
+        BacklinkPageType.Decision => "decision",
+        BacklinkPageType.Incident => "incident",
+        BacklinkPageType.System => "system",
+        _ => "other",
+    };
+
     private List<LoadContextSubtree> BuildSubtrees(
         string parentId,
         int remainingDepth,
@@ -829,4 +878,13 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("artifacts")] List<ArtifactWithBody> Artifacts,
         [property: JsonPropertyName("subtasks")] List<LoadContextSubtree> Subtasks,
         [property: JsonPropertyName("backlinks")] List<BacklinkInfo> Backlinks);
+
+    private sealed record BacklinkEntry(
+        [property: JsonPropertyName("linking_page_path")] string LinkingPagePath,
+        [property: JsonPropertyName("linking_page_title")] string LinkingPageTitle,
+        [property: JsonPropertyName("page_type")] string PageType,
+        [property: JsonPropertyName("last_modified_utc")] DateTime LastModifiedUtc);
+
+    private sealed record ListBacklinksResult(
+        [property: JsonPropertyName("backlinks")] BacklinkEntry[] Backlinks);
 }

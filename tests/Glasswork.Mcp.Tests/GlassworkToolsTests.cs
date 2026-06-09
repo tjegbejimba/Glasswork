@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
@@ -1242,4 +1243,117 @@ public class GlassworkToolsTests
         Assert.IsFalse(child.TryGetProperty("backlinks", out _),
             "Subtask payloads must not carry a 'backlinks' field (root-only in v1).");
     }
+
+    // ───────────────────────────── list_backlinks ─────────────────────────────
+
+    [TestMethod]
+    public void ListBacklinks_NoBacklinks_ReturnsEmptyArray()
+    {
+        var taskId = JsonDocument.Parse(_tools.AddTask("No Links")).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.ListBacklinks(taskId);
+        var doc = JsonDocument.Parse(json);
+
+        Assert.IsTrue(doc.RootElement.TryGetProperty("backlinks", out var backlinks),
+            "list_backlinks must return a 'backlinks' field.");
+        Assert.AreEqual(0, backlinks.GetArrayLength(),
+            "When no backlinks exist, must return empty array, not error.");
+    }
+
+    [TestMethod]
+    public void ListBacklinks_SingleBacklink_ReturnsOneRow()
+    {
+        // Arrange: create task + concept page that links to it
+        var taskId = JsonDocument.Parse(_tools.AddTask("Task A")).RootElement.GetProperty("task_id").GetString()!;
+
+        var conceptDir = Path.Combine(_vaultDir, "wiki", "concepts");
+        Directory.CreateDirectory(conceptDir);
+        var conceptFile = Path.Combine(conceptDir, "foo.md");
+        File.WriteAllText(conceptFile, $@"---
+title: Foo Concept
+---
+This concept references [[{taskId}]].
+");
+
+        // Act — ListBacklinks will build index fresh per call
+        var json = _tools.ListBacklinks(taskId);
+        var doc = JsonDocument.Parse(json);
+
+        // Assert
+        var backlinks = doc.RootElement.GetProperty("backlinks");
+        Assert.AreEqual(1, backlinks.GetArrayLength());
+
+        var first = backlinks[0];
+        Assert.IsTrue(first.TryGetProperty("linking_page_path", out var path));
+        Assert.IsTrue(path.GetString()!.Contains("wiki/concepts/foo.md"));
+        Assert.IsTrue(first.TryGetProperty("linking_page_title", out var title));
+        Assert.AreEqual("Foo Concept", title.GetString());
+        Assert.IsTrue(first.TryGetProperty("page_type", out var pageType));
+        Assert.AreEqual("concept", pageType.GetString());
+        Assert.IsTrue(first.TryGetProperty("last_modified_utc", out _));
+    }
+
+    [TestMethod]
+    public void ListBacklinks_NonExistentTask_ReturnsNotFoundError()
+    {
+        var json = _tools.ListBacklinks("nonexistent-task");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.IsTrue(doc.RootElement.TryGetProperty("error", out var error));
+        Assert.AreEqual("not_found", error.GetString());
+    }
+
+    [TestMethod]
+    public void ListBacklinks_DisplayText_WorksCorrectly()
+    {
+        // Arrange: task + page with display-text wikilink
+        var taskId = JsonDocument.Parse(_tools.AddTask("Task B")).RootElement.GetProperty("task_id").GetString()!;
+
+        var conceptDir = Path.Combine(_vaultDir, "wiki", "concepts");
+        Directory.CreateDirectory(conceptDir);
+        File.WriteAllText(Path.Combine(conceptDir, "bar.md"), $@"---
+title: Bar Concept
+---
+References [[{taskId}|Custom Label]].
+");
+
+        // Act — ListBacklinks will build index fresh per call
+        var json = _tools.ListBacklinks(taskId);
+        var doc = JsonDocument.Parse(json);
+
+        // Assert
+        var backlinks = doc.RootElement.GetProperty("backlinks");
+        Assert.AreEqual(1, backlinks.GetArrayLength());
+    }
+
+    [TestMethod]
+    public void ListBacklinks_WithTrace_EmitsBacklinksScanPhase()
+    {
+        // Arrange: task + concept page to ensure some work happens
+        var taskId = JsonDocument.Parse(_tools.AddTask("Task C")).RootElement.GetProperty("task_id").GetString()!;
+
+        var conceptDir = Path.Combine(_vaultDir, "wiki", "concepts");
+        Directory.CreateDirectory(conceptDir);
+        File.WriteAllText(Path.Combine(conceptDir, "trace-test.md"), $@"---
+title: Trace Test
+---
+References [[{taskId}]].
+");
+
+        var sink = new StringBuilder();
+        var logger = new McpLogger(_vaultDir, new StringWriter(sink), fileEnabled: false, traceEnabled: true);
+        _tools = new GlassworkTools(new VaultContext(_vaultDir), logger);
+
+        // Act
+        _tools.ListBacklinks(taskId);
+
+        // Assert
+        var doc = JsonDocument.Parse(sink.ToString().Trim());
+        var phases = doc.RootElement.GetProperty("phases");
+        Assert.IsTrue(phases.TryGetProperty("backlinks_scan", out _),
+            "list_backlinks must record 'backlinks_scan' phase when GLASSWORK_MCP_TRACE=1.");
+    }
 }
+
+
+

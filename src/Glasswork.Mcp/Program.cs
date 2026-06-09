@@ -15,6 +15,7 @@ Console.Error.WriteLine(vaultDiscoveryDiagnostic);
 // implementations and tests can resolve them.
 var vaultContext = new Glasswork.Mcp.VaultContext(vaultPath);
 var mcpLogger = new Glasswork.Mcp.McpLogger(vaultContext);
+
 var preconditions = new IToolPrecondition[]
 {
     new VaultPathReadablePrecondition(vaultContext),

@@ -30,8 +30,10 @@ public class McpLoggerTests
         return new McpLogger(_vaultDir, writer, fileEnabled, traceEnabled);
     }
 
-    private GlassworkTools MakeTools(McpLogger logger) =>
-        new GlassworkTools(new VaultContext(_vaultDir), logger);
+    private GlassworkTools MakeTools(McpLogger logger)
+    {
+        return new GlassworkTools(new VaultContext(_vaultDir), logger);
+    }
 
     // ─────────────────────── Layer 1: stderr log line ────────────────────
 

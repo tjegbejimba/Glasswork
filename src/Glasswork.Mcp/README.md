@@ -109,6 +109,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | `load_context` | v0.4.0 | One-call full-context fetch: task + artifact bodies + recursive subtasks + backlinks |
 | `search_tasks` | v0.5.0 | Topic-driven task discovery — ranked, scoped, with per-hit snippets |
 | `set_my_day` | v0.6.0 | Direct-pin an existing task into My Day for a date |
+| `list_backlinks` | v0.7.0 | List wiki pages that reference a task via `[[task-id]]` |
 
 ### When to use which tool
 
@@ -488,6 +489,54 @@ For task `issue-137-mcp-load-context` with one artifact `plan.md`, one direct ch
 ```
 
 Under `GLASSWORK_MCP_TRACE=1`, the log line for a `load_context` call includes per-phase timings: `load_task`, `load_artifacts`, `load_subtasks`, `load_backlinks`.
+
+---
+
+### `list_backlinks`
+
+Returns metadata for every wiki page that references a task via `[[task-id]]` wikilinks. Reuses the same `BacklinkIndex` from ADR 0005 that powers the App's Backlinks section on TaskDetail. Task→task references are **not** returned (per ADR 0005, the index excludes `wiki/todo/` — backlinks are strictly incoming references from non-task wiki pages like concepts, decisions, incidents, systems).
+
+**Input**
+
+```json
+{
+  "task_id": "string (required) — task ID to look up backlinks for"
+}
+```
+
+**Output (success)**
+
+```json
+{
+  "backlinks": [
+    {
+      "linking_page_path": "string — vault-root-relative path, e.g. wiki/concepts/foo.md (always forward slashes)",
+      "linking_page_title": "string — H1 or first non-empty line from the linking page",
+      "page_type": "\"concept\" | \"decision\" | \"incident\" | \"system\" | \"other\"",
+      "last_modified_utc": "string — ISO 8601 datetime, e.g. 2024-06-01T12:34:56Z"
+    }
+  ]
+}
+```
+
+Returns an empty `backlinks` array (not an error) when the task exists but has no incoming references.
+
+**Output (not found)**
+
+```json
+{
+  "error": "not_found",
+  "message": "string"
+}
+```
+
+**Design notes**
+
+- **Per-page deduplication**: If a page mentions the task multiple times, only one entry appears (per ADR 0005).
+- **Display text is stripped**: `[[task-id|My Label]]` counts as a backlink; the display text is ignored.
+- **Stateless read (ADR 0007 §6)**: The backlink index is built fresh on every `list_backlinks` call. No caching, no stale results.
+
+Under `GLASSWORK_MCP_TRACE=1`, the log line for a `list_backlinks` call includes the `backlinks_scan` phase.
 
 ---
 
