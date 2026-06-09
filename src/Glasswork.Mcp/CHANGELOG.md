@@ -5,6 +5,20 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.7.0] — 2026-06-03
+
+### Added
+
+- **`list_backlinks` tool** (issue #139): exposes backlink metadata for a given task to agents. Returns `{ backlinks[] }` where each entry contains `linking_page_path` (vault-root-relative with forward slashes), `linking_page_title`, `page_type` (`concept`|`decision`|`incident`|`system`|`other`), and `last_modified_utc` (ISO 8601). Reuses `Glasswork.Core.Services.BacklinkIndex` from ADR 0005 — the same scanner that powers the App's Backlinks section on TaskDetail. The index is built once at MCP process startup over the vault root (not per call), so short-lived agent sessions pay the scan cost once.
+  - Returns an empty `backlinks` array (not an error) when the task exists but has no incoming references.
+  - Returns `{ "error": "not_found", "message": ... }` when `task_id` does not exist.
+  - Per ADR 0005, the index excludes `wiki/todo/` — backlinks are **strictly incoming references from non-task wiki pages**. Task→task references are not returned (if wanted later, that belongs in a separate tool with a separate index tied to #172/#173's Children work).
+  - Per-page deduplication: if a wiki page mentions a task 5 times, only 1 entry appears. Display text in wikilinks (`[[id|label]]`) is stripped by `WikiLinkParser` — the link still counts.
+  - Under `GLASSWORK_MCP_TRACE=1`, emits the `backlinks_scan` trace phase.
+- **`GlassworkToolsTests.ListBacklinks_*`** — MSTest coverage: empty backlinks, single backlink from a concept page, nonexistent task returning `not_found`, wikilinks with display text (`[[id|label]]`), and `ListBacklinks_WithTrace_EmitsBacklinksScanPhase` verifying the trace phase under `GLASSWORK_MCP_TRACE=1`.
+
+---
+
 ## [0.5.0] — 2026-05-26
 
 ### Breaking

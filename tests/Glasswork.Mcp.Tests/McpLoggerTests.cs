@@ -30,8 +30,12 @@ public class McpLoggerTests
         return new McpLogger(_vaultDir, writer, fileEnabled, traceEnabled);
     }
 
-    private GlassworkTools MakeTools(McpLogger logger) =>
-        new GlassworkTools(new VaultContext(_vaultDir), logger);
+    private GlassworkTools MakeTools(McpLogger logger)
+    {
+        var backlinkIndex = new Glasswork.Core.Services.BacklinkIndex();
+        backlinkIndex.Build(_vaultDir);
+        return new GlassworkTools(new VaultContext(_vaultDir), backlinkIndex, logger);
+    }
 
     // ─────────────────────── Layer 1: stderr log line ────────────────────
 
@@ -118,7 +122,9 @@ public class McpLoggerTests
     [TestMethod]
     public void ToolCall_WithoutLogger_DoesNotThrow()
     {
-        var tools = new GlassworkTools(new VaultContext(_vaultDir)); // no logger
+        var backlinkIndex = new Glasswork.Core.Services.BacklinkIndex();
+        backlinkIndex.Build(_vaultDir);
+        var tools = new GlassworkTools(new VaultContext(_vaultDir), backlinkIndex); // no logger
         // Should work normally without any logger attached.
         var json = tools.ListTasks();
         Assert.IsNotNull(json);
