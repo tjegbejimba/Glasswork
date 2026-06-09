@@ -20,12 +20,11 @@ public sealed class GlassworkTools
     private readonly VaultService _vault;
     private readonly TaskSearchService _search;
     private readonly SelfWriteCoordinator _selfWrites;
-    private readonly IBacklinkIndex _backlinkIndex;
     private readonly string _vaultPath;
     private readonly string _vaultRoot;
     private readonly McpLogger? _logger;
 
-    public GlassworkTools(VaultContext vaultContext, IBacklinkIndex backlinkIndex, McpLogger? logger = null)
+    public GlassworkTools(VaultContext vaultContext, McpLogger? logger = null)
     {
         var vaultPath = vaultContext.VaultPath
             ?? throw new InvalidOperationException(
@@ -36,7 +35,6 @@ public sealed class GlassworkTools
         _selfWrites = new SelfWriteCoordinator(_vaultPath);
         _vault = new VaultService(_vaultPath, _selfWrites);
         _search = new TaskSearchService(_vault);
-        _backlinkIndex = backlinkIndex;
         _logger = logger;
     }
 
@@ -536,8 +534,12 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
             }
 
+            // Phase: backlinks_scan — fresh build per call (ADR 0007 §6 stateless).
+            // Built against the *vault root*, not _vaultPath (which is wiki/todo).
             var backlinksSw = Stopwatch.StartNew();
-            var backlinks = _backlinkIndex.GetBacklinks(safeId);
+            var backlinkIndex = new BacklinkIndex();
+            backlinkIndex.Build(_vaultRoot);
+            var backlinks = backlinkIndex.GetBacklinks(safeId);
             scope?.RecordPhase("backlinks_scan", backlinksSw.ElapsedMilliseconds);
 
             var result = new ListBacklinksResult(

@@ -16,15 +16,6 @@ Console.Error.WriteLine(vaultDiscoveryDiagnostic);
 var vaultContext = new Glasswork.Mcp.VaultContext(vaultPath);
 var mcpLogger = new Glasswork.Mcp.McpLogger(vaultContext);
 
-// Build the backlink index once at process startup. Per ADR 0005, this scans
-// the vault root (not wiki/todo) for [[task-id]] references. The index is
-// singleton-scoped so every tool call sees the same index without rebuilding.
-var backlinkIndex = new Glasswork.Core.Services.BacklinkIndex();
-if (vaultPath is not null)
-{
-    backlinkIndex.Build(vaultPath);
-}
-
 var preconditions = new IToolPrecondition[]
 {
     new VaultPathReadablePrecondition(vaultContext),
@@ -42,7 +33,6 @@ builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
 builder.Services.AddSingleton(vaultContext);
 builder.Services.AddSingleton(mcpLogger);
-builder.Services.AddSingleton<Glasswork.Core.Services.IBacklinkIndex>(backlinkIndex);
 builder.Services.AddSingleton(preconditionRegistry);
 builder.Services.AddTransient<Glasswork.Mcp.Tools.GlassworkTools>();
 

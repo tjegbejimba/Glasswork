@@ -9,7 +9,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **`list_backlinks` tool** (issue #139): exposes backlink metadata for a given task to agents. Returns `{ backlinks[] }` where each entry contains `linking_page_path` (vault-root-relative with forward slashes), `linking_page_title`, `page_type` (`concept`|`decision`|`incident`|`system`|`other`), and `last_modified_utc` (ISO 8601). Reuses `Glasswork.Core.Services.BacklinkIndex` from ADR 0005 — the same scanner that powers the App's Backlinks section on TaskDetail. The index is built once at MCP process startup over the vault root (not per call), so short-lived agent sessions pay the scan cost once.
+- **`list_backlinks` tool** (issue #139): exposes backlink metadata for a given task to agents. Returns `{ backlinks[] }` where each entry contains `linking_page_path` (vault-root-relative with forward slashes), `linking_page_title`, `page_type` (`concept`|`decision`|`incident`|`system`|`other`), and `last_modified_utc` (ISO 8601). Reuses `Glasswork.Core.Services.BacklinkIndex` from ADR 0005 — the same scanner that powers the App's Backlinks section on TaskDetail. The index is built fresh on every call (stateless, per ADR 0007 §6).
   - Returns an empty `backlinks` array (not an error) when the task exists but has no incoming references.
   - Returns `{ "error": "not_found", "message": ... }` when `task_id` does not exist.
   - Per ADR 0005, the index excludes `wiki/todo/` — backlinks are **strictly incoming references from non-task wiki pages**. Task→task references are not returned (if wanted later, that belongs in a separate tool with a separate index tied to #172/#173's Children work).

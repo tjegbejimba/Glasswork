@@ -534,7 +534,7 @@ Returns an empty `backlinks` array (not an error) when the task exists but has n
 
 - **Per-page deduplication**: If a page mentions the task multiple times, only one entry appears (per ADR 0005).
 - **Display text is stripped**: `[[task-id|My Label]]` counts as a backlink; the display text is ignored.
-- **Stateless rebuild**: The backlink index is built once per MCP process startup over the vault root (not on every call). Short-lived agent sessions pay the scan cost once; no live updates.
+- **Stateless read (ADR 0007 §6)**: The backlink index is built fresh on every `list_backlinks` call. No caching, no stale results.
 
 Under `GLASSWORK_MCP_TRACE=1`, the log line for a `list_backlinks` call includes the `backlinks_scan` phase.
 

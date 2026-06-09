@@ -27,9 +27,7 @@ public class GlassworkToolsTests
     {
         _vaultDir = Path.Combine(Path.GetTempPath(), "glasswork-mcp-tools-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_vaultDir);
-        var backlinkIndex = new BacklinkIndex();
-        backlinkIndex.Build(_vaultDir);
-        _tools = new GlassworkTools(new VaultContext(_vaultDir), backlinkIndex);
+        _tools = new GlassworkTools(new VaultContext(_vaultDir));
         _vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
     }
 
@@ -1277,12 +1275,7 @@ title: Foo Concept
 This concept references [[{taskId}]].
 ");
 
-        // Rebuild index after adding content
-        var backlinkIndex = new Glasswork.Core.Services.BacklinkIndex();
-        backlinkIndex.Build(_vaultDir);
-        _tools = new GlassworkTools(new VaultContext(_vaultDir), backlinkIndex);
-
-        // Act
+        // Act — ListBacklinks will build index fresh per call
         var json = _tools.ListBacklinks(taskId);
         var doc = JsonDocument.Parse(json);
 
@@ -1324,11 +1317,7 @@ title: Bar Concept
 References [[{taskId}|Custom Label]].
 ");
 
-        var backlinkIndex = new Glasswork.Core.Services.BacklinkIndex();
-        backlinkIndex.Build(_vaultDir);
-        _tools = new GlassworkTools(new VaultContext(_vaultDir), backlinkIndex);
-
-        // Act
+        // Act — ListBacklinks will build index fresh per call
         var json = _tools.ListBacklinks(taskId);
         var doc = JsonDocument.Parse(json);
 
@@ -1351,12 +1340,9 @@ title: Trace Test
 References [[{taskId}]].
 ");
 
-        var backlinkIndex = new Glasswork.Core.Services.BacklinkIndex();
-        backlinkIndex.Build(_vaultDir);
-
         var sink = new StringBuilder();
         var logger = new McpLogger(_vaultDir, new StringWriter(sink), fileEnabled: false, traceEnabled: true);
-        _tools = new GlassworkTools(new VaultContext(_vaultDir), backlinkIndex, logger);
+        _tools = new GlassworkTools(new VaultContext(_vaultDir), logger);
 
         // Act
         _tools.ListBacklinks(taskId);
