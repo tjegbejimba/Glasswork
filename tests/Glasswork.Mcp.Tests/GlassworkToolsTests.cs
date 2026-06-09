@@ -1140,6 +1140,156 @@ public class GlassworkToolsTests
             "Marker file must reference the written task path.");
     }
 
+    // ───────────────────────────── update_task ──────────────────────────
+
+    [TestMethod]
+    public void UpdateTask_PartialUpdate_PreservesUntouchedFields()
+    {
+        // Create a task with multiple fields set
+        var addJson = _tools.AddTask("Original Title", description: "Original description", status: "todo");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        
+        // Manually add Notes via VaultService to have baseline state
+        var task = _vault.Load(taskId)!;
+        task.Notes = "Original notes";
+        _vault.Save(task);
+        
+        // Read the file content before update
+        var beforePath = Path.Combine(TasksDir, taskId + ".md");
+        var beforeContent = File.ReadAllText(beforePath);
+        
+        // Update only status
+        var updateJson = _tools.UpdateTask(taskId, status: "doing");
+        
+        // Reload from disk
+        var afterContent = File.ReadAllText(beforePath);
+        var updatedTask = _vault.Load(taskId)!;
+        
+        // Assert status changed
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, updatedTask.Status);
+        
+        // Assert other fields are byte-identical
+        Assert.AreEqual("Original Title", updatedTask.Title);
+        Assert.AreEqual("Original description", updatedTask.Description);
+        Assert.AreEqual("Original notes", updatedTask.Notes);
+        
+        // Verify updated_fields in response
+        var doc = JsonDocument.Parse(updateJson);
+        Assert.AreEqual(taskId, doc.RootElement.GetProperty("task_id").GetString());
+        var updatedFields = doc.RootElement.GetProperty("updated_fields").EnumerateArray()
+            .Select(e => e.GetString()).ToList();
+        CollectionAssert.Contains(updatedFields, "status");
+        Assert.AreEqual(1, updatedFields.Count, "Only status should be in updated_fields");
+    }
+
+    [TestMethod]
+    public void UpdateTask_NotesAppend_InsertsBlankLineSeparator()
+    {
+        var addJson = _tools.AddTask("Task for append");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        
+        var task = _vault.Load(taskId)!;
+        task.Notes = "Existing notes";
+        _vault.Save(task);
+        
+        var updateJson = _tools.UpdateTask(taskId, notes: "Appended text", notes_append: true);
+        
+        var updated = _vault.Load(taskId)!;
+        Assert.AreEqual("Existing notes\n\nAppended text", updated.Notes);
+        
+        var doc = JsonDocument.Parse(updateJson);
+        var updatedFields = doc.RootElement.GetProperty("updated_fields").EnumerateArray()
+            .Select(e => e.GetString()).ToList();
+        CollectionAssert.Contains(updatedFields, "notes");
+    }
+
+    [TestMethod]
+    public void UpdateTask_NotesReplace_OverwritesBody()
+    {
+        var addJson = _tools.AddTask("Task for replace");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        
+        var task = _vault.Load(taskId)!;
+        task.Notes = "Old notes";
+        _vault.Save(task);
+        
+        var updateJson = _tools.UpdateTask(taskId, notes: "New notes", notes_append: false);
+        
+        var updated = _vault.Load(taskId)!;
+        Assert.AreEqual("New notes", updated.Notes);
+    }
+
+    [TestMethod]
+    public void UpdateTask_InvalidStatus_ReturnsError()
+    {
+        var addJson = _tools.AddTask("Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        
+        var updateJson = _tools.UpdateTask(taskId, status: "wat");
+        var doc = JsonDocument.Parse(updateJson);
+        
+        Assert.AreEqual("invalid_status", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+    }
+
+    [TestMethod]
+    public void UpdateTask_InvalidParent_ReturnsError()
+    {
+        var addJson = _tools.AddTask("Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        
+        var updateJson = _tools.UpdateTask(taskId, parent_task_id: "ghost");
+        var doc = JsonDocument.Parse(updateJson);
+        
+        Assert.AreEqual("invalid_parent", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+    }
+
+    [TestMethod]
+    public void UpdateTask_NonExistent_ReturnsNotFound()
+    {
+        var updateJson = _tools.UpdateTask("does-not-exist", title: "New title");
+        var doc = JsonDocument.Parse(updateJson);
+        
+        Assert.AreEqual("not_found", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+    }
+
+    [TestMethod]
+    public void UpdateTask_ClearsParent()
+    {
+        var parentJson = _tools.AddTask("Parent");
+        var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
+        
+        var childJson = _tools.AddTask("Child", parent_task_id: parentId);
+        var childId = JsonDocument.Parse(childJson).RootElement.GetProperty("task_id").GetString()!;
+        
+        var updateJson = _tools.UpdateTask(childId, parent_task_id: "");
+        
+        var updated = _vault.Load(childId)!;
+        Assert.IsNull(updated.Parent);
+        
+        var doc = JsonDocument.Parse(updateJson);
+        var updatedFields = doc.RootElement.GetProperty("updated_fields").EnumerateArray()
+            .Select(e => e.GetString()).ToList();
+        CollectionAssert.Contains(updatedFields, "parent_task_id");
+    }
+
+    [TestMethod]
+    public void UpdateTask_RegistersSelfWrite_MarkerFileContainsTaskPath()
+    {
+        var addJson = _tools.AddTask("SelfWrite Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        
+        _tools.UpdateTask(taskId, status: "doing");
+        
+        var markerFile = Path.Combine(TasksDir, ".glasswork", "recent-writes.json");
+        Assert.IsTrue(File.Exists(markerFile), "SelfWriteCoordinator must write its marker file when update_task modifies a task.");
+        var markerContent = File.ReadAllText(markerFile);
+        StringAssert.Contains(markerContent, $"{taskId}.md",
+            "Marker file must reference the written task path.");
+    }
+
     // ───────────────────────────── load_context ──────────────────────────
 
     [TestMethod]

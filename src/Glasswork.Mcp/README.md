@@ -106,6 +106,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | Tool | Status | Description |
 |---|---|---|
 | `add_task` | v0.2.0 | Create a new task file |
+| `update_task` | v0.8.0 | Update an existing task (partial updates supported) |
 | `list_tasks` | v0.2.0 | List task summaries (structural enumeration — filter by status or parent) |
 | `get_task` | v0.3.0 | Return full task content |
 | `add_artifact` | v0.3.0 | Create a task artifact file |
@@ -203,6 +204,51 @@ Results are ranked: tasks with a title match score higher than body-only matches
 |---|---|
 | `invalid_title` | `title` is null, empty, or whitespace |
 | `invalid_status` | `status` is not one of `todo`, `doing`, `done` |
+
+### `update_task`
+
+Update an existing task. Only provided fields are written; omitted fields remain untouched on disk.
+
+**Input**
+
+```json
+{
+  "task_id": "string (required)",
+  "title": "string (optional)",
+  "status": "\"todo\" | \"doing\" | \"done\" (optional)",
+  "description": "string (optional)",
+  "notes": "string (optional)",
+  "notes_append": "boolean (optional) — when true, appends notes with blank line separator instead of replacing",
+  "priority": "string (optional)",
+  "parent_task_id": "string (optional) — pass empty string or null to clear parent",
+  "ado_link": "integer (optional) — ADO work item ID",
+  "ado_title": "string (optional) — ADO work item title"
+}
+```
+
+**Output (success)**
+
+```json
+{
+  "task_id": "string",
+  "updated_fields": ["status", "notes"]
+}
+```
+
+The `updated_fields` array lists field names that actually changed. Fields provided but already equal to the current value are omitted (no-op updates don't appear here).
+
+**Notes append semantics:**
+- When `notes_append` is `true` and existing Notes is non-empty: inserts a blank line separator (`existing.TrimEnd() + "\n\n" + new`)
+- When `notes_append` is `true` and existing Notes is empty: writes the new value directly
+- When `notes_append` is `false` or omitted: replaces the entire Notes body
+
+**Output (errors)**
+
+| `error` value | When |
+|---|---|
+| `not_found` | Task with `task_id` doesn't exist |
+| `invalid_status` | `status` is not one of `todo`, `doing`, `done` |
+| `invalid_parent` | `parent_task_id` doesn't exist in the vault |
 
 ### `list_tasks`
 

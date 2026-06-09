@@ -443,6 +443,150 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "update_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Update an existing task. Only provided fields are written; omitted fields remain untouched.")]
+    public string UpdateTask(
+        [Description("Task ID to update.")] string task_id,
+        [Description("Optional new title.")] string? title = null,
+        [Description("Optional new status: todo, doing, or done.")] string? status = null,
+        [Description("Optional new description.")] string? description = null,
+        [Description("Optional new notes. Pass as string to replace, or use notes_append parameter.")] string? notes = null,
+        [Description("When true, appends notes instead of replacing.")] bool? notes_append = null,
+        [Description("Optional new priority.")] string? priority = null,
+        [Description("Optional new parent task ID. Pass empty string or null to clear.")] string? parent_task_id = null,
+        [Description("Optional new ADO work item ID.")] int? ado_link = null,
+        [Description("Optional new ADO work item title.")] string? ado_title = null)
+    {
+        using var scope = _logger?.BeginCall("update_task");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            var task = _vault.Load(safeId);
+            if (task is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            var updatedFields = new List<string>();
+
+            // Update title if provided
+            if (title is not null && task.Title != title)
+            {
+                task.Title = title;
+                updatedFields.Add("title");
+            }
+
+            // Update status if provided
+            if (status is not null)
+            {
+                if (!TryMapToInternalStatus(status, out var internalStatus, out var statusError))
+                {
+                    scope?.SetResult("error");
+                    return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
+                }
+                if (task.Status != internalStatus)
+                {
+                    task.Status = internalStatus;
+                    updatedFields.Add("status");
+                }
+            }
+
+            // Update description if provided
+            if (description is not null && task.Description != description)
+            {
+                task.Description = description;
+                updatedFields.Add("description");
+            }
+
+            // Update notes if provided
+            if (notes is not null)
+            {
+                if (notes_append == true)
+                {
+                    var existingNotes = task.Notes?.TrimEnd() ?? string.Empty;
+                    var newNotes = string.IsNullOrEmpty(existingNotes)
+                        ? notes
+                        : existingNotes + "\n\n" + notes;
+                    if (task.Notes != newNotes)
+                    {
+                        task.Notes = newNotes;
+                        updatedFields.Add("notes");
+                    }
+                }
+                else
+                {
+                    if (task.Notes != notes)
+                    {
+                        task.Notes = notes;
+                        updatedFields.Add("notes");
+                    }
+                }
+            }
+
+            // Update priority if provided
+            if (priority is not null && task.Priority != priority)
+            {
+                task.Priority = priority;
+                updatedFields.Add("priority");
+            }
+
+            // Update parent if provided (empty string or explicit null clears it)
+            if (parent_task_id is not null)
+            {
+                var safeParent = SanitizeId(parent_task_id);
+                if (!string.IsNullOrEmpty(safeParent) && !_vault.Exists(safeParent))
+                {
+                    scope?.SetResult("error");
+                    return JsonSerializer.Serialize(new ErrorResult("invalid_parent", $"Parent task '{parent_task_id}' not found."));
+                }
+                if (task.Parent != safeParent)
+                {
+                    task.Parent = safeParent;
+                    updatedFields.Add("parent_task_id");
+                }
+            }
+
+            // Update ADO link if provided
+            if (ado_link is not null && task.AdoLink != ado_link)
+            {
+                task.AdoLink = ado_link;
+                updatedFields.Add("ado_link");
+            }
+
+            // Update ADO title if provided
+            if (ado_title is not null && task.AdoTitle != ado_title)
+            {
+                task.AdoTitle = ado_title;
+                updatedFields.Add("ado_title");
+            }
+
+            // Save if anything changed
+            if (updatedFields.Count > 0)
+            {
+                var writeSw = Stopwatch.StartNew();
+                _vault.Save(task);
+                scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+            }
+
+            return JsonSerializer.Serialize(new UpdateTaskResult(
+                TaskId: safeId,
+                UpdatedFields: updatedFields.ToArray()));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
     [McpServerTool(Name = "load_context")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Return a task's complete context bundle: task content + artifact bodies + recursive subtasks (to depth) + backlinks. Single-call replacement for chaining get_task + N artifact reads + list_tasks + backlink discovery. Read-only.")]
@@ -854,6 +998,10 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("my_day")] string MyDay,
         [property: JsonPropertyName("path")] string Path);
+
+    private sealed record UpdateTaskResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("updated_fields")] string[] UpdatedFields);
 
     private sealed record ErrorResult(
         [property: JsonPropertyName("error")] string Error,
