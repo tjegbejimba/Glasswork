@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +24,13 @@ internal static partial class VisualVerificationRunner
 
     public static async Task<int> RunAsync(string[] args)
     {
+        // Declare Per-Monitor-V2 DPI awareness before any window/UIA/DWM call so
+        // GetWindowRect/DwmGetWindowAttribute report physical pixels that match
+        // UIA's BoundingRectangle and the PrintWindow capture. Without this, a
+        // DPI-unaware process gets virtualized window rects on >100% displays and
+        // the inspection catalog's bounds would not line up with the screenshot.
+        EnsureDpiAware();
+
         try
         {
             var options = RunnerOptions.Parse(args);
@@ -86,6 +94,10 @@ internal static partial class VisualVerificationRunner
                 PerformAction(hwnd, action);
             }
 
+            var inspection = options.Inspect
+                ? EmitInspection(hwnd, scenario, options.OutDir)
+                : null;
+
             var captures = new List<CaptureResult>();
             foreach (var capture in scenario.Captures)
             {
@@ -107,7 +119,9 @@ internal static partial class VisualVerificationRunner
                 todoPath,
                 uiStatePath,
                 instanceKey,
-                captures);
+                captures,
+                inspection?.InspectionPath,
+                inspection?.SuggestedScenarioPath);
         }
         finally
         {
@@ -202,6 +216,149 @@ internal static partial class VisualVerificationRunner
                 throw new FormatException($"Unsupported visual verification action type '{action.Type}'.");
         }
     }
+
+    private static InspectionPaths EmitInspection(IntPtr hwnd, VisualVerificationScenario scenario, string outDir)
+    {
+        // Capture the paired screenshot and walk the tree back-to-back so the
+        // catalog and the PNG describe the same UI state.
+        const string screenshotFile = "inspection.png";
+        CaptureWindow(hwnd, Path.Combine(outDir, screenshotFile));
+
+        var (rawElements, warnings) = WalkUiaTree(hwnd);
+
+        var snapshot = UiInspectionBuilder.Build(new UiInspectionInput
+        {
+            ScreenName = scenario.Name,
+            StartUri = scenario.StartUri,
+            WindowTitle = TryGet(() => AutomationElement.FromHandle(hwnd).Current.Name),
+            ScreenshotFile = screenshotFile,
+            WindowBounds = GetWindowBounds(hwnd),
+            DpiScale = GetDpiScale(hwnd),
+            Warnings = warnings,
+            RawElements = rawElements,
+        });
+
+        var inspectionPath = Path.Combine(outDir, "inspection.json");
+        File.WriteAllText(inspectionPath, JsonSerializer.Serialize(snapshot, InspectionJsonOptions));
+
+        var suggestedPath = Path.Combine(outDir, "scenario.suggested.json");
+        File.WriteAllText(suggestedPath, ScenarioScaffolder.ToScenarioJson(ScenarioScaffolder.FromInspection(snapshot)));
+
+        return new InspectionPaths(inspectionPath, suggestedPath);
+    }
+
+    private static (List<RawInspectedElement> Elements, List<string> Warnings) WalkUiaTree(IntPtr hwnd)
+    {
+        const int maxDepth = 40;
+        const int maxNodes = 4000;
+        var walker = TreeWalker.ControlViewWalker;
+        var elements = new List<RawInspectedElement>();
+        var skipped = 0;
+        var hitMaxDepth = false;
+        var hitMaxNodes = false;
+
+        void Visit(AutomationElement element, int depth)
+        {
+            if (elements.Count >= maxNodes)
+            {
+                hitMaxNodes = true;
+                return;
+            }
+            if (depth > maxDepth)
+            {
+                hitMaxDepth = true;
+                return;
+            }
+
+            try { elements.Add(ToRawElement(element, depth)); }
+            catch { skipped++; }
+
+            AutomationElement? child;
+            try { child = walker.GetFirstChild(element); }
+            catch { skipped++; return; }
+
+            while (child is not null && elements.Count < maxNodes)
+            {
+                Visit(child, depth + 1);
+                try { child = walker.GetNextSibling(child); }
+                catch { skipped++; break; }
+            }
+        }
+
+        try { Visit(AutomationElement.FromHandle(hwnd), 0); }
+        catch { skipped++; }
+
+        var warnings = new List<string>();
+        if (skipped > 0)
+            warnings.Add($"{skipped} UI element(s) were skipped due to UI Automation errors.");
+        if (hitMaxNodes)
+            warnings.Add($"UI Automation traversal stopped at maxNodes={maxNodes}; some elements were omitted.");
+        if (hitMaxDepth)
+            warnings.Add($"UI Automation traversal reached maxDepth={maxDepth}; deeper descendants were omitted.");
+
+        return (elements, warnings);
+    }
+
+    private static RawInspectedElement ToRawElement(AutomationElement element, int depth)
+    {
+        var patterns = new List<string>();
+        try
+        {
+            foreach (var pattern in element.GetSupportedPatterns())
+                patterns.Add(pattern.ProgrammaticName);
+        }
+        catch { /* enumeration can fail on transient elements; keep what we have. */ }
+
+        return new RawInspectedElement
+        {
+            AutomationId = TryGet(() => element.Current.AutomationId),
+            Name = TryGet(() => element.Current.Name),
+            ControlType = TryGet(() => element.Current.ControlType?.ProgrammaticName?.Replace("ControlType.", string.Empty)),
+            Depth = depth,
+            IsOffscreen = TryGet(() => (bool?)element.Current.IsOffscreen) ?? false,
+            IsEnabled = TryGet(() => (bool?)element.Current.IsEnabled) ?? true,
+            PatternNames = patterns,
+            ScreenBounds = TryGet<ElementBounds?>(() =>
+            {
+                var rect = element.Current.BoundingRectangle;
+                return rect.IsEmpty ? null : new ElementBounds(rect.X, rect.Y, rect.Width, rect.Height);
+            }),
+        };
+    }
+
+    private static ElementBounds GetWindowBounds(IntPtr hwnd)
+    {
+        if (DwmGetWindowAttribute(hwnd, DwmWindowAttributeExtendedFrameBounds, out var rect, Marshal.SizeOf<Rect>()) != 0)
+        {
+            if (!GetWindowRect(hwnd, out rect))
+                throw new InvalidOperationException("GetWindowRect failed.");
+        }
+
+        return new ElementBounds(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+    }
+
+    private static double GetDpiScale(IntPtr hwnd)
+    {
+        try
+        {
+            var dpi = GetDpiForWindow(hwnd);
+            return dpi > 0 ? dpi / 96.0 : 1.0;
+        }
+        catch { return 1.0; }
+    }
+
+    private static T? TryGet<T>(Func<T?> getter)
+    {
+        try { return getter(); }
+        catch { return default; }
+    }
+
+    private static readonly JsonSerializerOptions InspectionJsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     private static AutomationElement WaitForElement(IntPtr hwnd, VisualVerificationAction action)
     {
@@ -346,6 +503,13 @@ internal static partial class VisualVerificationRunner
     [GeneratedRegex(@"[\\/:*?""<>|]+")]
     private static partial Regex InvalidFileNameCharsRegex();
 
+    private static void EnsureDpiAware()
+    {
+        // Best-effort: fails harmlessly if awareness was already set by a host/manifest.
+        try { SetProcessDpiAwarenessContext(DpiAwarenessContextPerMonitorAwareV2); }
+        catch { /* older OS without the API — fall back to process default. */ }
+    }
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
@@ -356,6 +520,16 @@ internal static partial class VisualVerificationRunner
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out Rect pvAttribute, int cbAttribute);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
+    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == (HANDLE)-4.
+    private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
 
     private const uint PrintWindowRenderFullContent = 2;
     private const int DwmWindowAttributeExtendedFrameBounds = 9;
@@ -375,7 +549,8 @@ internal sealed record RunnerOptions(
     string RepoRoot,
     string OutDir,
     bool NoBuild,
-    bool KeepWorkingDirectory)
+    bool KeepWorkingDirectory,
+    bool Inspect)
 {
     public static RunnerOptions Parse(string[] args)
     {
@@ -384,6 +559,7 @@ internal sealed record RunnerOptions(
         string? outDir = null;
         var noBuild = false;
         var keepWorkingDir = false;
+        var inspect = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -404,13 +580,16 @@ internal sealed record RunnerOptions(
                 case "--keep-working-directory":
                     keepWorkingDir = true;
                     break;
+                case "--inspect":
+                    inspect = true;
+                    break;
                 default:
                     throw new FormatException($"Unknown argument '{args[i]}'.");
             }
         }
 
         if (string.IsNullOrWhiteSpace(scenario))
-            throw new FormatException("Usage: Glasswork.VisualVerification --scenario <path> [--repo-root <path>] [--out-dir <path>] [--no-build]");
+            throw new FormatException("Usage: Glasswork.VisualVerification --scenario <path> [--repo-root <path>] [--out-dir <path>] [--no-build] [--inspect]");
 
         repoRoot ??= FindRepoRoot(Environment.CurrentDirectory);
         outDir ??= Path.Combine(
@@ -422,7 +601,8 @@ internal sealed record RunnerOptions(
             Path.GetFullPath(repoRoot),
             Path.GetFullPath(outDir),
             noBuild,
-            keepWorkingDir);
+            keepWorkingDir,
+            inspect);
     }
 
     private static string RequireValue(string[] args, ref int index, string name)
@@ -453,7 +633,11 @@ internal sealed record VerificationResult(
     string VaultPath,
     string UiStatePath,
     string InstanceKey,
-    IReadOnlyList<CaptureResult> Captures);
+    IReadOnlyList<CaptureResult> Captures,
+    string? InspectionPath = null,
+    string? SuggestedScenarioPath = null);
+
+internal sealed record InspectionPaths(string InspectionPath, string SuggestedScenarioPath);
 
 internal sealed record CaptureResult(
     string Name,
