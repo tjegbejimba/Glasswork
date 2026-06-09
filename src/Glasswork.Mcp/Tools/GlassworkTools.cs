@@ -887,4 +887,137 @@ public sealed class GlassworkTools
 
     private sealed record ListBacklinksResult(
         [property: JsonPropertyName("backlinks")] BacklinkEntry[] Backlinks);
+
+    [McpServerTool(Name = "get_activity")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Return structured data about what happened in a time period. Foundation for auto-generated work logs.")]
+    public string GetActivity(
+        [Description("Time period: 'today', 'yesterday', 'week', 'month', or JSON with {from, to} (ISO8601)")] string period)
+    {
+        using var scope = _logger?.BeginCall("get_activity");
+        try
+        {
+            if (!TryParsePeriod(period, out var from, out var to, out var parseError))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_period", parseError!));
+            }
+
+            var allTasks = _vault.LoadAll();
+            
+            // Filter tasks completed in the period
+            var completedInPeriod = allTasks
+                .Where(t => t.CompletedAt.HasValue && 
+                            t.CompletedAt.Value >= from && 
+                            t.CompletedAt.Value <= to)
+                .OrderBy(t => t.CompletedAt)
+                .Select(t =>
+                {
+                    var adoLink = t.Links.FirstOrDefault(l => l.Type == TaskLink.Types.Ado);
+                    return new CompletedTaskInfo(
+                        Id: t.Id,
+                        Title: t.Title,
+                        CompletedAt: t.CompletedAt!.Value.ToString("O"),
+                        Priority: t.Priority,
+                        Links: t.Links.ToArray(),
+                        AdoLink: adoLink?.Value); // Just the ID, not a constructed URL
+                })
+                .ToArray();
+
+            var result = new GetActivityResult(
+                Period: new PeriodInfo(from.ToString("O"), to.ToString("O")),
+                Stats: new ActivityStats(
+                    TasksCompleted: completedInPeriod.Length,
+                    TasksCreated: 0,
+                    TasksUpdated: 0,
+                    ArtifactsCreated: 0),
+                CompletedTasks: completedInPeriod,
+                InProgressAtPeriodEnd: [],
+                Artifacts: [],
+                ByParent: new Dictionary<string, ParentGroup>());
+
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    private static bool TryParsePeriod(string period, out DateTime from, out DateTime to, out string? error)
+    {
+        var now = DateTime.Now;
+        var today = DateTime.Today;
+
+        switch (period?.ToLowerInvariant())
+        {
+            case "today":
+                from = today;
+                to = today.AddDays(1).AddTicks(-1);
+                error = null;
+                return true;
+            case "yesterday":
+                from = today.AddDays(-1);
+                to = today.AddTicks(-1);
+                error = null;
+                return true;
+            case "week":
+                from = now.AddDays(-7);
+                to = now;
+                error = null;
+                return true;
+            case "month":
+                from = now.AddMonths(-1);
+                to = now;
+                error = null;
+                return true;
+            default:
+                from = default;
+                to = default;
+                error = $"Invalid period '{period}'. Valid values: today, yesterday, week, month, or JSON with {{from, to}}.";
+                return false;
+        }
+    }
+
+    private sealed record GetActivityResult(
+        [property: JsonPropertyName("period")] PeriodInfo Period,
+        [property: JsonPropertyName("stats")] ActivityStats Stats,
+        [property: JsonPropertyName("completed_tasks")] CompletedTaskInfo[] CompletedTasks,
+        [property: JsonPropertyName("in_progress_at_period_end")] InProgressTaskInfo[] InProgressAtPeriodEnd,
+        [property: JsonPropertyName("artifacts")] ArtifactCreatedInfo[] Artifacts,
+        [property: JsonPropertyName("by_parent")] Dictionary<string, ParentGroup> ByParent);
+
+    private sealed record PeriodInfo(
+        [property: JsonPropertyName("from")] string From,
+        [property: JsonPropertyName("to")] string To);
+
+    private sealed record ActivityStats(
+        [property: JsonPropertyName("tasks_completed")] int TasksCompleted,
+        [property: JsonPropertyName("tasks_created")] int TasksCreated,
+        [property: JsonPropertyName("tasks_updated")] int TasksUpdated,
+        [property: JsonPropertyName("artifacts_created")] int ArtifactsCreated);
+
+    private sealed record CompletedTaskInfo(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("completed_at")] string CompletedAt,
+        [property: JsonPropertyName("priority")] string Priority,
+        [property: JsonPropertyName("links")] TaskLink[] Links,
+        [property: JsonPropertyName("ado_link")] string? AdoLink);
+
+    private sealed record InProgressTaskInfo(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("last_note")] string? LastNote);
+
+    private sealed record ArtifactCreatedInfo(
+        [property: JsonPropertyName("filename")] string Filename,
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("created_at")] string CreatedAt);
+
+    private sealed record ParentGroup(
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("completed")] string[] Completed,
+        [property: JsonPropertyName("in_progress")] string[] InProgress);
 }
