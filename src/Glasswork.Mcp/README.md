@@ -41,8 +41,11 @@ dotnet tool update -g glasswork-mcp --add-source ./nupkg
 `glasswork-mcp` discovers the vault directory in this order on startup:
 
 1. **`GLASSWORK_VAULT` environment variable** — set this to the **Obsidian vault root** (the top-level folder you opened in Obsidian, e.g. `~/Wiki`). The server resolves the task directory internally as `<GLASSWORK_VAULT>/wiki/todo/`.
-2. **App state file** — the path stored by the Glasswork desktop app in `%LocalAppData%\Glasswork\ui-state.json` (key `vault.path`). Opening the Glasswork app and selecting a vault populates this automatically.
-3. **Boot with empty tool list** — if neither source resolves to an existing directory, the server still starts but advertises **zero tools** via `ListTools`. A diagnostic naming both attempted sources is written to stderr. See [Tool preconditions](#tool-preconditions) for the pattern.
+2. **App state file** — the path stored by the Glasswork desktop app in `%LocalAppData%\Glasswork\ui-state.json` (key `vault.path`). Opening the Glasswork app and selecting a vault populates this automatically. The persisted key also refers to the **vault root** (not the task directory).
+3. **Exit with clear error** — if neither source resolves to an existing directory, **or if the task directory `<vault root>/wiki/todo` does not exist**, the server exits with a diagnostic naming the attempted paths. This prevents silent task-misplacement.
+
+**Contract (Issue #132 fix):**  
+Both `GLASSWORK_VAULT` and `vault.path` always refer to the **vault root**. The task directory is always `<vault root>/wiki/todo`. If your vault uses a different structure, create the `wiki/todo` subdirectory — MCP will not auto-create it.
 
 ### Setting the env var
 
