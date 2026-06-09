@@ -99,10 +99,14 @@ public partial class WorkLogParser
 
     private static DateTime ParseDateTimeUtc(string dateTimeStr)
     {
-        if (DateTime.TryParse(dateTimeStr, System.Globalization.CultureInfo.InvariantCulture,
-                             System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
-                             out var dateTime))
-            return DateTime.SpecifyKind(dateTime, DateTimeKind.Utc);
+        if (DateTimeOffset.TryParse(dateTimeStr, System.Globalization.CultureInfo.InvariantCulture,
+                                     System.Globalization.DateTimeStyles.None,
+                                     out var offset))
+        {
+            if (offset.Offset == TimeSpan.Zero)
+                return offset.UtcDateTime;
+            throw new FormatException($"Timestamp must be UTC (Z suffix or +00:00 offset): {dateTimeStr}");
+        }
         throw new FormatException($"Invalid datetime format: {dateTimeStr}");
     }
 

@@ -195,4 +195,29 @@ This is not a valid work log format.
         var ex = Assert.ThrowsExactly<FormatException>(() => parser.Parse(markdown));
         Assert.IsTrue(ex.Message.Contains("frontmatter delimiters"));
     }
+
+    [TestMethod]
+    public void Parse_GeneratedAtWithoutTimezone_ThrowsFormatException()
+    {
+        // Arrange - generated_at without Z suffix
+        var markdown = @"---
+type: work-log
+period: week
+week: 2026-W21
+date_from: 2026-05-18
+date_to: 2026-05-24
+generated_at: 2026-05-26T14:00:00
+generated_by: copilot
+---
+
+## Summary
+Content.
+";
+
+        var parser = new WorkLogParser();
+
+        // Act & Assert
+        var ex = Assert.ThrowsExactly<FormatException>(() => parser.Parse(markdown));
+        Assert.IsTrue(ex.Message.Contains("UTC"));
+    }
 }
