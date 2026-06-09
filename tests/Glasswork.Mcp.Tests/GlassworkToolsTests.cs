@@ -906,6 +906,92 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void AddArtifact_OverwriteMode_ReplacesExistingFile()
+    {
+        var addJson = _tools.AddTask("Overwrite Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "plan.md", "v1");
+        var json = _tools.AddArtifact(taskId, "plan.md", "v2", mode: "overwrite");
+        var doc = JsonDocument.Parse(json);
+
+        var path = doc.RootElement.GetProperty("path").GetString()!;
+        Assert.IsFalse(string.IsNullOrEmpty(path), "Overwrite must succeed and return path.");
+
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
+        var content = File.ReadAllText(Path.Combine(artifactFolder, "plan.md"));
+        Assert.AreEqual("v2", content, "Overwrite mode must replace file content.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_OverwriteMode_CreatesNewFile()
+    {
+        var addJson = _tools.AddTask("Overwrite Create Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.AddArtifact(taskId, "new.md", "content", mode: "overwrite");
+        var doc = JsonDocument.Parse(json);
+
+        var path = doc.RootElement.GetProperty("path").GetString()!;
+        Assert.IsFalse(string.IsNullOrEmpty(path), "Overwrite must succeed for new file.");
+
+        var artifactFolder = Path.Combine(TasksDir, taskId + ".artifacts");
+        var content = File.ReadAllText(Path.Combine(artifactFolder, "new.md"));
+        Assert.AreEqual("content", content, "Overwrite mode creates new file when it doesn't exist.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_CreateModeDefault_StillReturnsConflict()
+    {
+        var addJson = _tools.AddTask("Default Mode Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "plan.md", "first");
+        var json = _tools.AddArtifact(taskId, "plan.md", "second");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("conflict", doc.RootElement.GetProperty("error").GetString(),
+            "Default mode (omitted) must still return conflict for existing files.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_CreateModeExplicit_ReturnsConflict()
+    {
+        var addJson = _tools.AddTask("Explicit Create Mode Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "plan.md", "first");
+        var json = _tools.AddArtifact(taskId, "plan.md", "second", mode: "create");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("conflict", doc.RootElement.GetProperty("error").GetString(),
+            "Explicit mode=\"create\" must return conflict for existing files.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_OverwriteMode_PathTraversal_StillBlocked()
+    {
+        var addJson = _tools.AddTask("Overwrite Path Traversal Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.AddArtifact(taskId, "../escape.md", "bad", mode: "overwrite");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("path_traversal", doc.RootElement.GetProperty("error").GetString(),
+            "Overwrite mode must still block path traversal.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_OverwriteMode_MissingTask_ReturnsNotFound()
+    {
+        var json = _tools.AddArtifact("does-not-exist", "plan.md", "content", mode: "overwrite");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("not_found", doc.RootElement.GetProperty("error").GetString(),
+            "Overwrite mode must return not_found for missing task.");
+    }
+
+    [TestMethod]
     public void AddArtifact_NotFoundTask_ReturnsNotFoundError()
     {
         var json = _tools.AddArtifact("does-not-exist", "plan.md", "content");
@@ -927,6 +1013,22 @@ public class GlassworkToolsTests
         var markerContent = File.ReadAllText(markerFile);
         StringAssert.Contains(markerContent, "artifact.md",
             "Marker file must reference the written artifact path.");
+    }
+
+    [TestMethod]
+    public void AddArtifact_OverwriteMode_RegistersSelfWrite_MarkerFileContainsArtifactPath()
+    {
+        var addJson = _tools.AddTask("SelfWrite Overwrite Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "overwrite.md", "v1");
+        _tools.AddArtifact(taskId, "overwrite.md", "v2", mode: "overwrite");
+
+        var markerFile = Path.Combine(TasksDir, ".glasswork", "recent-writes.json");
+        Assert.IsTrue(File.Exists(markerFile), "SelfWriteCoordinator must write its marker file when add_artifact overwrites an artifact.");
+        var markerContent = File.ReadAllText(markerFile);
+        StringAssert.Contains(markerContent, "overwrite.md",
+            "Marker file must reference the overwritten artifact path.");
     }
 
     [TestMethod]

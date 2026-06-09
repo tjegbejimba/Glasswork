@@ -5,6 +5,14 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`add_artifact` overwrite mode** (issue #134): optional `mode` parameter (`"create"` | `"overwrite"`). When `mode: "overwrite"`, the tool replaces the content of an existing artifact file instead of returning `{error: "conflict"}`. Defaults to `"create"` (create-only) for backward compatibility. Use `"overwrite"` for iterative agent workflows that refine artifacts (e.g., `plan.md`) across multiple turns without inventing `plan-v2.md` filenames. Path-traversal guards, `SelfWriteCoordinator` registration, and write-phase trace instrumentation still apply.
+
+---
+
 ## [0.7.0] — 2026-06-03
 
 ### Added

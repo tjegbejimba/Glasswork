@@ -319,7 +319,8 @@ Re-reads the vault and artifact folder on every call (no cache). The `artifacts`
 {
   "task_id": "string (required) — owning task ID",
   "filename": "string (required) — must end in .md, no path separators",
-  "content": "string (required) — full markdown content"
+  "content": "string (required) — full markdown content",
+  "mode": "string (optional) — \"create\" (default) | \"overwrite\""
 }
 ```
 
@@ -339,7 +340,11 @@ Re-reads the vault and artifact folder on every call (no cache). The `artifacts`
 | `invalid_filename` | `filename` is null, empty, whitespace, or does not end in `.md` |
 | `invalid_content` | `content` is null |
 | `path_traversal` | `filename` contains a path separator (`/` or `\`), `..`, is absolute, or resolves outside the artifact folder |
-| `conflict` | A file with that name already exists — `add_artifact` is create-only in v1 |
+| `conflict` | A file with that name already exists and `mode` is `"create"` (or omitted). Pass `mode: "overwrite"` to replace existing files |
+
+**Mode behavior:**
+- `mode: "create"` (or omitted) — create-only semantics. Returns `{error: "conflict"}` if the file already exists.
+- `mode: "overwrite"` — create-or-replace semantics. If the file exists, replaces its content. If it doesn't exist, creates it. Use this for iterative agent workflows that refine artifacts across multiple turns.
 
 Artifacts are stored under `<vault>/wiki/todo/<task-id>.artifacts/<filename>`. The write is registered with `SelfWriteCoordinator` so the running Glasswork app does not raise a spurious "external change" banner.
 
