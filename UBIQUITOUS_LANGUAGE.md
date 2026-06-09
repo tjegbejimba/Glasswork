@@ -6,7 +6,7 @@
 
 | Term | Definition | Aliases to avoid |
 |---|---|---|
-| **Vault** | The Obsidian folder Glasswork reads tasks from. Source of truth for all task data. Currently `%UserProfile%\Wiki\wiki\todo`. | folder, directory, repo, store |
+| **Vault** | The Obsidian folder Glasswork reads tasks from — specifically, the **vault root**, the top-level directory Obsidian opens when selecting that vault. The task directory lives at `<vault root>/wiki/todo`. The `vault.path` persisted UI state key and the `GLASSWORK_VAULT` environment variable both refer to the vault root. Currently defaults to `%UserProfile%\Wiki`. | folder, directory, repo, store |
 | **Task** | A work item represented by one `.md` file in the vault. May have subtasks, notes, Links, due date, and legacy ADO frontmatter during migration. | item, work item (work item is overloaded — use only when explicitly referring to ADO) |
 | **Subtask** | A child step inside a task. Has its own status (`todo`, `in_progress`, `blocked`, `done`, `dropped`), title, optional notes. Lives inline in the parent's `.md` body. | step, todo (step is fine in user copy; subtask is canonical in code) |
 | **Subtask row** | The list-item template that renders one subtask in TaskDetail **and** in the today's-subtasks list beneath each promoted parent on My Day. Two interactive hit zones: the **circle glyph** (single-click toggles done) and the **subtask text** (single-click opens `SubtaskDetailDialog`). Hand cursor on the text advertises the affordance. Same model in active and completed lists. See ADR 0004 (interaction) and ADR 0008 (My Day surface). | subtask line, subtask item |

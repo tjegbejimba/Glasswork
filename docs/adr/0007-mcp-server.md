@@ -55,6 +55,9 @@ Lookup order on startup:
 2. Fall back to reading the app's `IUiStateService` persisted vault path (`%LocalAppData%\Glasswork\` on Windows; equivalents on other OSes).
 3. If neither resolves to an existing directory, exit with a clear error message naming both attempted sources.
 
+**`vault.path` semantic (Issue #132 fix):**  
+Both `GLASSWORK_VAULT` and `vault.path` refer to the **vault root** — the top-level directory Obsidian opens when selecting that vault. The task directory is always `<vault root>/wiki/todo`. MCP validates that the task directory exists at startup and exits with a clear diagnostic if it does not, preventing silent task-misplacement.
+
 This works zero-config in the common case (user picked a vault in the app), and supports cross-machine / cross-OS / no-app scenarios via the env var. When #84 (configurable vault setting) ships, the "app state file" leg gets updated to read the new location — single-line change.
 
 ### 5. Concurrent edit semantics: optimistic concurrency via mtime

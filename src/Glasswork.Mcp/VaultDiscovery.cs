@@ -47,8 +47,18 @@ internal static class VaultDiscovery
         {
             if (Directory.Exists(envVar))
             {
-                diagnostic = $"vault resolved from GLASSWORK_VAULT='{envVar}'.";
-                return Path.GetFullPath(envVar);
+                var taskDir = Path.Combine(envVar, "wiki", "todo");
+                if (Directory.Exists(taskDir))
+                {
+                    diagnostic = $"vault resolved from GLASSWORK_VAULT='{envVar}'.";
+                    return Path.GetFullPath(envVar);
+                }
+                else
+                {
+                    diagnostic =
+                        $"glasswork-mcp: GLASSWORK_VAULT is set to '{envVar}' but task directory '{taskDir}' does not exist.";
+                    return null;
+                }
             }
 
             diagnostic =
@@ -61,8 +71,18 @@ internal static class VaultDiscovery
         var persisted = svc.Get<string>(VaultPathKey);
         if (!string.IsNullOrWhiteSpace(persisted) && Directory.Exists(persisted))
         {
-            diagnostic = $"vault resolved from app state file '{stateFilePath}'.";
-            return Path.GetFullPath(persisted);
+            var taskDir = Path.Combine(persisted, "wiki", "todo");
+            if (Directory.Exists(taskDir))
+            {
+                diagnostic = $"vault resolved from app state file '{stateFilePath}'.";
+                return Path.GetFullPath(persisted);
+            }
+            else
+            {
+                diagnostic =
+                    $"glasswork-mcp: vault root '{persisted}' from app state exists, but task directory '{taskDir}' does not exist.";
+                return null;
+            }
         }
 
         var stateFileDescription = string.IsNullOrWhiteSpace(persisted)
