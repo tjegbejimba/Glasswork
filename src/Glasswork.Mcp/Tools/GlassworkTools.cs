@@ -245,7 +245,8 @@ public sealed class GlassworkTools
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Return full task content (frontmatter + Description + Notes + artifact filenames). Re-reads from disk on every call.")]
     public string GetTask(
-        [Description("Task ID to look up.")] string task_id)
+        [Description("Task ID to look up.")] string task_id,
+        [Description("When true, include artifact body content in each artifacts[] entry. Default: false.")] bool include_artifact_bodies = false)
     {
         using var scope = _logger?.BeginCall("get_task");
         try
@@ -275,7 +276,23 @@ public sealed class GlassworkTools
                 foreach (var file in Directory.EnumerateFiles(artifactFolder, "*.md", SearchOption.TopDirectoryOnly))
                 {
                     var filename = Path.GetFileName(file);
-                    artifacts.Add(new ArtifactInfo(filename, TodoRelativeArtifactPath(safeId, filename)));
+                    string? content = null;
+                    
+                    if (include_artifact_bodies)
+                    {
+                        try
+                        {
+                            VaultPathGuard.EnsurePathInVault(artifactFolder, filename);
+                            content = File.ReadAllText(file);
+                        }
+                        catch (ArgumentException)
+                        {
+                            // Skip files that fail path traversal check
+                            continue;
+                        }
+                    }
+                    
+                    artifacts.Add(new ArtifactInfo(filename, TodoRelativeArtifactPath(safeId, filename), content));
                 }
                 artifacts.Sort((a, b) => string.Compare(a.Filename, b.Filename, StringComparison.OrdinalIgnoreCase));
             }
@@ -386,6 +403,64 @@ public sealed class GlassworkTools
 
             var resultPath = TodoRelativeArtifactPath(safeId, Path.GetFileName(resolvedPath));
             return JsonSerializer.Serialize(new AddArtifactResult(Path: resultPath));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "get_artifact")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Read a single artifact's content and path.")]
+    public string GetArtifact(
+        [Description("Task ID that owns the artifact.")] string task_id,
+        [Description("Filename for the artifact (e.g. 'plan.md').")] string filename)
+    {
+        using var scope = _logger?.BeginCall("get_artifact");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            if (string.IsNullOrWhiteSpace(filename))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_filename", "filename is required."));
+            }
+
+            var artifactFolder = Path.Combine(_vaultPath, safeId + ".artifacts");
+
+            string resolvedPath;
+            try
+            {
+                resolvedPath = VaultPathGuard.EnsurePathInVault(artifactFolder, filename);
+            }
+            catch (ArgumentException)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("path_traversal",
+                    $"Filename '{filename}' is not allowed. Use a simple filename without path separators or '..'."));
+            }
+
+            if (!File.Exists(resolvedPath))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found",
+                    $"Artifact '{filename}' not found for task '{safeId}'."));
+            }
+
+            var readSw = Stopwatch.StartNew();
+            var content = File.ReadAllText(resolvedPath);
+            scope?.RecordPhase("read_artifact", readSw.ElapsedMilliseconds);
+
+            var resultPath = TodoRelativeArtifactPath(safeId, Path.GetFileName(resolvedPath));
+            return JsonSerializer.Serialize(new GetArtifactResult(Content: content, Path: resultPath));
         }
         catch
         {
@@ -1088,7 +1163,8 @@ public sealed class GlassworkTools
 
     private sealed record ArtifactInfo(
         [property: JsonPropertyName("filename")] string Filename,
-        [property: JsonPropertyName("path")] string Path);
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("content"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Content = null);
 
     private sealed record GetTaskResult(
         [property: JsonPropertyName("id")] string Id,
@@ -1100,6 +1176,10 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("artifacts")] List<ArtifactInfo> Artifacts);
 
     private sealed record AddArtifactResult(
+        [property: JsonPropertyName("path")] string Path);
+
+    private sealed record GetArtifactResult(
+        [property: JsonPropertyName("content")] string Content,
         [property: JsonPropertyName("path")] string Path);
 
     private sealed record SetMyDayResult(

@@ -2,7 +2,7 @@
 
 `glasswork-mcp` is a standalone [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI agents typed read/write access to a [Glasswork](https://github.com/tjegbejimba/Glasswork) task vault. It communicates over stdio and requires no running Glasswork app instance.
 
-> **v0.5.0**: cross-cutting polish pass — uniform structured error envelope across every tool (no more `ArgumentException` to the MCP transport), todo-relative paths with forward-slash normalization (breaking — see [CHANGELOG](./CHANGELOG.md)), trace phase coverage extended to `get_task` and `add_artifact`, and `list_tasks` gains an optional `fields[]` projection parameter. See [Tool reference](#tool-reference) for the updated schemas.
+> **v0.4.0**: adds `get_artifact` tool for single-artifact reads and `include_artifact_bodies` parameter on `get_task` — enables agent-to-agent handoff by allowing resuming agents to read prior artifacts directly through MCP. Both features honor path-traversal guards and emit `read_artifact` trace phase. See [Tool reference](#tool-reference) for schemas and [CHANGELOG](./CHANGELOG.md) for migration notes.
 
 ---
 
@@ -108,7 +108,8 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | `add_task` | v0.2.0 | Create a new task file |
 | `update_task` | v0.8.0 | Update an existing task (partial updates supported) |
 | `list_tasks` | v0.2.0 | List task summaries (structural enumeration — filter by status or parent) |
-| `get_task` | v0.3.0 | Return full task content |
+| `get_task` | v0.3.0 | Return full task content (v0.4.0: +artifact bodies) |
+| `get_artifact` | v0.4.0 | Read a single artifact by task_id + filename |
 | `add_artifact` | v0.3.0 | Create a task artifact file |
 | `load_context` | v0.4.0 | One-call full-context fetch: task + artifact bodies + recursive subtasks + backlinks |
 | `search_tasks` | v0.5.0 | Topic-driven task discovery — ranked, scoped, with per-hit snippets |
@@ -121,6 +122,8 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 |---|---|
 | Know which tasks exist right now | `list_tasks` |
 | Fetch a specific task you already know by ID | `get_task` or `load_context` |
+| Read one artifact's content | `get_artifact` |
+| Read all artifacts for a task | `load_context` or `get_task(include_artifact_bodies=true)` |
 | Discover tasks related to a concept or keyword | `search_tasks` |
 | Add an existing task to My Day | `set_my_day` |
 | Orient before starting work on a new issue | `search_tasks` (find prior art), then `load_context` (deep-dive) |
@@ -325,11 +328,12 @@ Results are sorted by created date ascending, then by ID for stability.
 
 ```json
 {
-  "task_id": "string (required) — task ID to look up"
+  "task_id": "string (required) — task ID to look up",
+  "include_artifact_bodies": "boolean (optional, default false) — when true, embed artifact content in each artifacts[] entry"
 }
 ```
 
-**Output (success)**
+**Output (success — default)**
 
 ```json
 {
@@ -348,6 +352,26 @@ Results are sorted by created date ascending, then by ID for stability.
 }
 ```
 
+**Output (success — with `include_artifact_bodies: true`)**
+
+```json
+{
+  "id": "string",
+  "title": "string",
+  "status": "\"todo\" | \"doing\" | \"done\"",
+  "parent_id": "string | null",
+  "description": "string",
+  "notes": "string",
+  "artifacts": [
+    {
+      "filename": "string — e.g. plan.md",
+      "path": "string — todo-relative path, e.g. task-id.artifacts/plan.md",
+      "content": "string — full markdown content"
+    }
+  ]
+}
+```
+
 **Output (not found)**
 
 ```json
@@ -357,7 +381,40 @@ Results are sorted by created date ascending, then by ID for stability.
 }
 ```
 
-Re-reads the vault and artifact folder on every call (no cache). The `artifacts` array lists filenames and todo-relative paths but does not include artifact body content.
+Re-reads the vault and artifact folder on every call (no cache). When `include_artifact_bodies` is omitted or `false`, behaviour is byte-identical to v0.3.0.
+
+---
+
+### `get_artifact`
+
+Read a single artifact's content by task ID and filename. Built for agent-to-agent handoff when only one artifact needs to be read.
+
+**Input**
+
+```json
+{
+  "task_id": "string (required) — owning task ID",
+  "filename": "string (required) — artifact filename, e.g. plan.md"
+}
+```
+
+**Output (success)**
+
+```json
+{
+  "content": "string — full markdown content",
+  "path": "string — todo-relative path, e.g. task-id.artifacts/plan.md"
+}
+```
+
+**Output (errors)**
+
+| `error` value | When |
+|---|---|
+| `not_found` | Task or artifact file does not exist |
+| `path_traversal` | `filename` contains `..`, is absolute, or resolves outside the artifact folder |
+
+Re-reads from disk on every call (no cache). `filename` must be a simple name with no path separators. Under `GLASSWORK_MCP_TRACE=1`, the log line includes a `read_artifact` phase.
 
 ---
 
