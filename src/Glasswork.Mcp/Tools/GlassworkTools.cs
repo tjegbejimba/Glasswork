@@ -215,7 +215,7 @@ public sealed class GlassworkTools
                     Links: t.Links.Select(link => new MyDayLink(
                         Type: link.Type,
                         Url: link.Value,
-                        Title: link.Title ?? link.Value
+                        Title: link.Label ?? link.Value
                     )).ToList()))
                 .ToList();
 
@@ -556,6 +556,48 @@ public sealed class GlassworkTools
                 TaskId: safeId,
                 MyDay: myDay.ToString("yyyy-MM-dd"),
                 Path: TodoRelativeTaskPath(safeId)));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "toggle_my_day")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Add or remove a task from My Day. When in_my_day is true, sets my_day to today; when false, removes the field.")]
+    public string ToggleMyDay(
+        [Description("Task ID to toggle.")] string task_id,
+        [Description("True to add to My Day (today), false to remove.")] bool in_my_day)
+    {
+        using var scope = _logger?.BeginCall("toggle_my_day");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            var writeSw = Stopwatch.StartNew();
+            _vault.ToggleMyDay(safeId, in_my_day);
+            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+
+            var task = _vault.Load(safeId);
+            var today = DateOnly.FromDateTime(DateTime.Today);
+            var actualInMyDay = task is not null 
+                && MyDayPromotionPolicy.IsTaskInMyDayToday(task, today, new HashSet<string>());
+            
+            var result = new ToggleMyDayResult(
+                TaskId: safeId,
+                Title: task?.Title ?? "",
+                InMyDay: actualInMyDay,
+                UpdatedAt: DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"));
+
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(result);
         }
         catch
         {
@@ -1232,6 +1274,12 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("my_day")] string MyDay,
         [property: JsonPropertyName("path")] string Path);
+
+    private sealed record ToggleMyDayResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("in_my_day")] bool InMyDay,
+        [property: JsonPropertyName("updated_at")] string UpdatedAt);
 
     private sealed record UpdateTaskResult(
         [property: JsonPropertyName("task_id")] string TaskId,
