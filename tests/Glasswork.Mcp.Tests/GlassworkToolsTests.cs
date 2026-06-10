@@ -1832,6 +1832,116 @@ References [[{taskId}]].
         Assert.IsTrue(phases.TryGetProperty("backlinks_scan", out _),
             "list_backlinks must record 'backlinks_scan' phase when GLASSWORK_MCP_TRACE=1.");
     }
+
+    // ───────────────────────────── move_task ─────────────────────────────
+
+    [TestMethod]
+    public void MoveTask_FromOneParentToAnother_UpdatesParentAndReturnsOldAndNew()
+    {
+        // Create: grandparent -> parent1 -> child
+        //         grandparent -> parent2
+        var grandparentJson = _tools.AddTask("Grandparent");
+        var grandparentId = JsonDocument.Parse(grandparentJson).RootElement.GetProperty("task_id").GetString()!;
+        
+        var parent1Json = _tools.AddTask("Parent 1", parent_task_id: grandparentId);
+        var parent1Id = JsonDocument.Parse(parent1Json).RootElement.GetProperty("task_id").GetString()!;
+        
+        var parent2Json = _tools.AddTask("Parent 2", parent_task_id: grandparentId);
+        var parent2Id = JsonDocument.Parse(parent2Json).RootElement.GetProperty("task_id").GetString()!;
+        
+        var childJson = _tools.AddTask("Child", parent_task_id: parent1Id);
+        var childId = JsonDocument.Parse(childJson).RootElement.GetProperty("task_id").GetString()!;
+
+        // Move child from parent1 to parent2
+        var moveJson = _tools.MoveTask(childId, parent2Id);
+        var doc = JsonDocument.Parse(moveJson);
+
+        Assert.AreEqual(childId, doc.RootElement.GetProperty("task_id").GetString());
+        Assert.AreEqual("Child", doc.RootElement.GetProperty("title").GetString());
+        Assert.AreEqual(parent1Id, doc.RootElement.GetProperty("old_parent_id").GetString());
+        Assert.AreEqual(parent2Id, doc.RootElement.GetProperty("new_parent_id").GetString());
+
+        // Verify the file was actually updated
+        var task = _vault.Load(childId)!;
+        Assert.AreEqual(parent2Id, task.Parent);
+    }
+
+    [TestMethod]
+    public void MoveTask_CircularReparenting_ReturnsError()
+    {
+        // Arrange: Create hierarchy grandparent -> parent -> child
+        var grandparentJson = _tools.AddTask("Grandparent Task");
+        var grandparentId = JsonDocument.Parse(grandparentJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var parentJson = _tools.AddTask("Parent Task", parent_task_id: grandparentId);
+        var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var childJson = _tools.AddTask("Child Task", parent_task_id: parentId);
+        var childId = JsonDocument.Parse(childJson).RootElement.GetProperty("task_id").GetString()!;
+
+        // Act: Try to make grandparent a child of child (circular)
+        var json = _tools.MoveTask(grandparentId, childId);
+        var result = JsonDocument.Parse(json);
+
+        // Assert: Should reject with circular_parent error
+        Assert.AreEqual("circular_parent", result.RootElement.GetProperty("error").GetString());
+        Assert.IsTrue(result.RootElement.GetProperty("message").GetString()!.Contains("circular"));
+
+        // Verify parent wasn't changed
+        var grandparent = _vault.Load(grandparentId)!;
+        Assert.IsNull(grandparent.Parent);
+    }
+
+    [TestMethod]
+    public void MoveTask_PromoteToTopLevel_ClearsParent()
+    {
+        // Arrange: Create parent -> child
+        var parentJson = _tools.AddTask("Parent Task");
+        var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var childJson = _tools.AddTask("Child Task", parent_task_id: parentId);
+        var childId = JsonDocument.Parse(childJson).RootElement.GetProperty("task_id").GetString()!;
+
+        // Act: Promote child to top-level (null parent)
+        var moveJson = _tools.MoveTask(childId, null);
+        var doc = JsonDocument.Parse(moveJson);
+
+        // Assert: Success with null new_parent_id
+        Assert.AreEqual(childId, doc.RootElement.GetProperty("task_id").GetString());
+        Assert.AreEqual("Child Task", doc.RootElement.GetProperty("title").GetString());
+        Assert.AreEqual(parentId, doc.RootElement.GetProperty("old_parent_id").GetString());
+        Assert.AreEqual(JsonValueKind.Null, doc.RootElement.GetProperty("new_parent_id").ValueKind);
+
+        // Verify file was updated (parent cleared)
+        var task = _vault.Load(childId)!;
+        Assert.IsNull(task.Parent);
+    }
+
+    [TestMethod]
+    public void MoveTask_TaskNotFound_ReturnsError()
+    {
+        // Act: Try to move non-existent task
+        var json = _tools.MoveTask("nonexistent", "anyparent");
+        var result = JsonDocument.Parse(json);
+
+        // Assert: Should return not_found error
+        Assert.AreEqual("not_found", result.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void MoveTask_ParentNotFound_ReturnsError()
+    {
+        // Arrange: Create a task
+        var taskJson = _tools.AddTask("Some Task");
+        var taskId = JsonDocument.Parse(taskJson).RootElement.GetProperty("task_id").GetString()!;
+
+        // Act: Try to move to non-existent parent
+        var json = _tools.MoveTask(taskId, "nonexistent-parent");
+        var result = JsonDocument.Parse(json);
+
+        // Assert: Should return invalid_parent error
+        Assert.AreEqual("invalid_parent", result.RootElement.GetProperty("error").GetString());
+    }
 }
 
 
