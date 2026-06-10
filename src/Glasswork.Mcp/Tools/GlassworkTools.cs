@@ -187,6 +187,52 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "get_my_day")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Get ordered list of My Day tasks for daily-planning agent flows. Returns tasks promoted via direct pin, due date, or subtask-based rules (ADR 0008).")]
+    public string GetMyDay(
+        [Description("Include done tasks. Defaults to false.")] bool include_done = false,
+        [Description("Expand subtasks of My Day items. Defaults to false.")] bool include_subtasks = false)
+    {
+        using var scope = _logger?.BeginCall("get_my_day");
+        try
+        {
+            var index = new IndexService(_vault);
+            index.EnsureLoaded();
+            var taskService = new TaskService(_vault, index);
+
+            var myDayTasks = taskService.GetMyDay(include_done, include_subtasks);
+
+            var tasks = myDayTasks
+                .Select(t => new MyDayTask(
+                    Id: t.Id,
+                    Title: t.Title,
+                    Status: MapToExternalStatus(t.Status),
+                    Priority: t.Priority,
+                    DueDate: t.Due?.ToString("yyyy-MM-dd"),
+                    Scheduled: t.MyDay?.ToString("yyyy-MM-dd"),
+                    ParentId: t.Parent,
+                    Links: t.Links.Select(link => new MyDayLink(
+                        Type: link.Type,
+                        Url: link.Value,
+                        Title: link.Title ?? link.Value
+                    )).ToList()))
+                .ToList();
+
+            var result = new GetMyDayResult(
+                Tasks: tasks,
+                Count: tasks.Count,
+                AsOf: DateTime.Today.ToString("yyyy-MM-dd"));
+
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
     [McpServerTool(Name = "search_tasks")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Search task content by topic across title, description, notes, subtasks, and tags. Returns ranked task summaries with matched fields and a snippet.")]
@@ -1366,4 +1412,24 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("title")] string Title,
         [property: JsonPropertyName("completed")] string[] Completed,
         [property: JsonPropertyName("in_progress")] string[] InProgress);
+
+    private sealed record MyDayTask(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("priority")] string Priority,
+        [property: JsonPropertyName("due_date")] string? DueDate,
+        [property: JsonPropertyName("scheduled")] string? Scheduled,
+        [property: JsonPropertyName("parent_id")] string? ParentId,
+        [property: JsonPropertyName("links")] List<MyDayLink> Links);
+
+    private sealed record MyDayLink(
+        [property: JsonPropertyName("type")] string Type,
+        [property: JsonPropertyName("url")] string Url,
+        [property: JsonPropertyName("title")] string Title);
+
+    private sealed record GetMyDayResult(
+        [property: JsonPropertyName("tasks")] List<MyDayTask> Tasks,
+        [property: JsonPropertyName("count")] int Count,
+        [property: JsonPropertyName("as_of")] string AsOf);
 }

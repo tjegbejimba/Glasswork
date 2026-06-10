@@ -134,4 +134,74 @@ public class TaskService
         parent.Subtasks.RemoveAt(subtaskIndex);
         _vault.Save(parent);
     }
+
+    /// <summary>
+    /// Get tasks in My Day for today, applying the four-condition promotion rule from ADR 0008:
+    /// 1. Direct pin: task.MyDay == today
+    /// 2. Task due: task.Due <= today && Status != Done
+    /// 3. Flagged subtask: any subtask has IsMyDay == true
+    /// 4. Due subtask: any subtask has Due <= today && Status != Done
+    /// </summary>
+    public List<GlassworkTask> GetMyDay(bool includeDone, bool includeSubtasks)
+    {
+        var today = DateTime.Today;
+        var tasks = new List<GlassworkTask>();
+
+        foreach (var task in _index.All)
+        {
+            bool promoted = false;
+
+            // Condition 1: Direct pin
+            if (task.MyDay.HasValue && task.MyDay.Value.Date == today)
+            {
+                promoted = true;
+            }
+
+            // Condition 2: Task due (not done)
+            if (!promoted && task.Due.HasValue && task.Due.Value.Date <= today && task.Status != GlassworkTask.Statuses.Done)
+            {
+                promoted = true;
+            }
+
+            // Conditions 3 & 4: Subtask-based promotion
+            if (!promoted)
+            {
+                foreach (var subtask in task.Subtasks)
+                {
+                    // Condition 3: Flagged subtask
+                    if (subtask.IsMyDay)
+                    {
+                        promoted = true;
+                        break;
+                    }
+
+                    // Condition 4: Due subtask (not done)
+                    if (subtask.Due.HasValue && subtask.Due.Value.Date <= today && !subtask.IsEffectivelyDone)
+                    {
+                        promoted = true;
+                        break;
+                    }
+                }
+            }
+
+            // Apply includeDone filter
+            if (promoted)
+            {
+                if (includeDone || task.Status != GlassworkTask.Statuses.Done)
+                {
+                    var clone = task.Clone();
+                    
+                    // Apply includeSubtasks filter
+                    if (!includeSubtasks)
+                    {
+                        clone.Subtasks.Clear();
+                    }
+                    
+                    tasks.Add(clone);
+                }
+            }
+        }
+
+        return tasks;
+    }
 }
