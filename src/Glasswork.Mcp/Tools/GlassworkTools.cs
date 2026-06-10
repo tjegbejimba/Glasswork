@@ -2183,4 +2183,107 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("tasks")] List<OverdueTask> Tasks,
         [property: JsonPropertyName("count")] int Count,
         [property: JsonPropertyName("as_of")] string AsOf);
+
+    [McpServerTool(Name = "get_task_context")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Get a compact handoff packet for one task: Description, Notes, active Subtasks, Links, latest Artifacts, Backlinks, open blockers, and relevant Vault paths. Designed for agent handoff — includes enough context to resume work without re-discovering the task manually.")]
+    public string GetTaskContext(
+        [Description("Task ID to retrieve context for.")] string task_id)
+    {
+        using var scope = _logger?.BeginCall("get_task_context");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_id", 
+                    $"task_id '{task_id}' is invalid."));
+            }
+
+            // Build artifact store and backlink index
+            var artifactStore = new FileSystemArtifactStore(_vaultRoot);
+            var backlinkIndex = new BacklinkIndex();
+            backlinkIndex.Build(_vaultRoot);
+
+            var contextService = new TaskContextService(_vault, artifactStore, backlinkIndex);
+            var bundle = contextService.BuildContextBundle(safeId);
+
+            if (bundle is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", 
+                    $"Task '{task_id}' not found."));
+            }
+
+            var result = new GetTaskContextResult(
+                TaskId: bundle.TaskId,
+                Title: bundle.Title,
+                Status: MapToExternalStatus(bundle.Status),
+                Description: bundle.Description,
+                Notes: bundle.Notes,
+                ActiveSubtasks: bundle.ActiveSubtasks.Select(s => new ContextSubtaskInfo(
+                    Text: s.Text,
+                    Status: s.Status,
+                    Notes: s.Notes)).ToArray(),
+                Links: bundle.Links.Select(l => new LinkResult(l.Type, l.Value, l.Label)).ToArray(),
+                LatestArtifacts: bundle.LatestArtifacts.Select(a => new ContextArtifactInfo(
+                    Path: TodoRelativeArtifactPath(bundle.TaskId, Path.GetFileName(a.Path)),
+                    Title: a.Title,
+                    Kind: a.Kind.ToString(),
+                    ModifiedUtc: a.ModifiedUtc.ToString("O"),
+                    SizeBytes: a.SizeBytes)).ToArray(),
+                Backlinks: bundle.Backlinks.Select(b => new ContextBacklinkInfo(
+                    LinkingPagePath: b.LinkingPagePath,
+                    LinkingPageTitle: b.LinkingPageTitle,
+                    PageType: b.PageType.ToString())).ToArray(),
+                OpenBlockers: bundle.OpenBlockers.Select(s => new ContextSubtaskInfo(
+                    Text: s.Text,
+                    Status: s.Status,
+                    Notes: s.Notes)).ToArray(),
+                TaskFilePath: TodoRelativeTaskPath(bundle.TaskId),
+                ArtifactsPath: bundle.ArtifactsPath != null 
+                    ? TodoRelativeTaskPath(bundle.TaskId).Replace(".md", ".artifacts")
+                    : null);
+
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    private sealed record GetTaskContextResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("description")] string? Description,
+        [property: JsonPropertyName("notes")] string? Notes,
+        [property: JsonPropertyName("active_subtasks")] ContextSubtaskInfo[] ActiveSubtasks,
+        [property: JsonPropertyName("links")] LinkResult[] Links,
+        [property: JsonPropertyName("latest_artifacts")] ContextArtifactInfo[] LatestArtifacts,
+        [property: JsonPropertyName("backlinks")] ContextBacklinkInfo[] Backlinks,
+        [property: JsonPropertyName("open_blockers")] ContextSubtaskInfo[] OpenBlockers,
+        [property: JsonPropertyName("task_file_path")] string TaskFilePath,
+        [property: JsonPropertyName("artifacts_path")] string? ArtifactsPath);
+
+    private sealed record ContextSubtaskInfo(
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("notes")] string? Notes);
+
+    private sealed record ContextArtifactInfo(
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("kind")] string Kind,
+        [property: JsonPropertyName("modified_utc")] string ModifiedUtc,
+        [property: JsonPropertyName("size_bytes")] long SizeBytes);
+
+    private sealed record ContextBacklinkInfo(
+        [property: JsonPropertyName("linking_page_path")] string LinkingPagePath,
+        [property: JsonPropertyName("linking_page_title")] string LinkingPageTitle,
+        [property: JsonPropertyName("page_type")] string PageType);
 }
