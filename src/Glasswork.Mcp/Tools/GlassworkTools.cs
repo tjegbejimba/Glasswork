@@ -586,11 +586,15 @@ public sealed class GlassworkTools
             scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
 
             var task = _vault.Load(safeId);
+            var today = DateOnly.FromDateTime(DateTime.Today);
+            var actualInMyDay = task is not null 
+                && MyDayPromotionPolicy.IsTaskInMyDayToday(task, today, new HashSet<string>());
+            
             var result = new ToggleMyDayResult(
                 TaskId: safeId,
                 Title: task?.Title ?? "",
-                InMyDay: in_my_day,
-                UpdatedAt: DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssZ"));
+                InMyDay: actualInMyDay,
+                UpdatedAt: DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"));
 
             scope?.SetResult("success");
             return JsonSerializer.Serialize(result);
