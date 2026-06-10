@@ -14,6 +14,45 @@
         <local:BoolToVisibilityConverter x:Key="BoolToVis" />
         <local:HexToBrushConverter x:Key="HexToBrush" />
         <conv:MyDayBrushConverter x:Key="MyDayBrush" />
+        <conv:ArtifactAutomationIdConverter x:Key="ArtifactAutoId" />
+
+        <!-- Per-ArtifactKind body templates (ADR 0015). Declared before the
+             selector that references them (StaticResource needs prior order). -->
+        <DataTemplate x:Key="ArtifactMarkdownTemplate">
+            <controls:VaultMarkdownView
+                Markdown="{Binding Body}"
+                Loaded="OnArtifactMarkdownLoaded"
+                Unloaded="OnArtifactMarkdownUnloaded" />
+        </DataTemplate>
+        <DataTemplate x:Key="ArtifactTextTemplate">
+            <ScrollViewer
+                HorizontalScrollBarVisibility="Auto"
+                MaxHeight="400"
+                VerticalScrollBarVisibility="Auto">
+                <TextBlock
+                    FontFamily="Consolas"
+                    FontSize="13"
+                    IsTextSelectionEnabled="True"
+                    Text="{Binding Body}"
+                    TextWrapping="Wrap" />
+            </ScrollViewer>
+        </DataTemplate>
+        <DataTemplate x:Key="ArtifactImageTemplate">
+            <controls:ImageArtifactBody />
+        </DataTemplate>
+        <DataTemplate x:Key="ArtifactHtmlTemplate">
+            <controls:HtmlArtifactBody />
+        </DataTemplate>
+        <DataTemplate x:Key="ArtifactReferenceTemplate">
+            <controls:ArtifactReferenceCard />
+        </DataTemplate>
+        <controls:ArtifactBodyTemplateSelector
+            x:Key="ArtifactBodySelector"
+            HtmlTemplate="{StaticResource ArtifactHtmlTemplate}"
+            ImageTemplate="{StaticResource ArtifactImageTemplate}"
+            MarkdownTemplate="{StaticResource ArtifactMarkdownTemplate}"
+            ReferenceTemplate="{StaticResource ArtifactReferenceTemplate}"
+            TextTemplate="{StaticResource ArtifactTextTemplate}" />
     </Page.Resources>
 
     <!-- Issue #174: banners live above the ScrollViewer so they stay
@@ -442,7 +481,10 @@
                                 <Expander HorizontalAlignment="Stretch"
                                           HorizontalContentAlignment="Stretch"
                                           Margin="0,0,0,4"
-                                          IsExpanded="{Binding IsExpanded}">
+                                          AutomationProperties.AutomationId="{Binding Title, Converter={StaticResource ArtifactAutoId}, ConverterParameter='row:'}"
+                                          IsExpanded="{Binding IsExpanded}"
+                                          Expanding="OnArtifactExpanding"
+                                          Collapsed="OnArtifactCollapsed">
                                     <Expander.Header>
                                         <Grid HorizontalAlignment="Stretch">
                                             <Grid.ColumnDefinitions>
@@ -457,15 +499,17 @@
                                                              Content="Open in Obsidian"
                                                              Tag="{Binding Path}"
                                                              Click="OpenArtifactInObsidian_Click"
+                                                             Visibility="{Binding ShowOpenInObsidian, Converter={StaticResource BoolToVis}}"
                                                              FontSize="12"
                                                              Padding="8,2"
                                                              VerticalAlignment="Center"
                                                              Margin="8,0,8,0" />
                                         </Grid>
                                     </Expander.Header>
-                                    <controls:VaultMarkdownView Markdown="{Binding Body}"
-                                                                Loaded="OnArtifactMarkdownLoaded"
-                                                                Unloaded="OnArtifactMarkdownUnloaded" />
+                                    <ContentControl HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Stretch"
+                                                    Content="{Binding}"
+                                                    ContentTemplateSelector="{StaticResource ArtifactBodySelector}" />
                                 </Expander>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

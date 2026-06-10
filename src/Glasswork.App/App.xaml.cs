@@ -44,6 +44,12 @@ public partial class App : Application
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
 
+    /// <summary>
+    /// Single app-wide owner of the live HTML-preview WebView2 (#324).
+    /// UI-thread only; constructed eagerly since it holds no startup state.
+    /// </summary>
+    public static HtmlPreviewService HtmlPreview { get; } = new();
+
     // Inner concrete service for SwitchVault to rebuild the decorator with a new vault.
     private static JsonFileUiStateService _uiStateImpl = null!;
 

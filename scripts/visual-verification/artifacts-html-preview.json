@@ -1,0 +1,28 @@
+{
+  "name": "artifacts-html-preview",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "artifact-html",
+      "title": "HTML artifact preview",
+      "status": "todo",
+      "artifacts": [
+        {
+          "name": "report.html",
+          "content": "<!DOCTYPE html>\n<html>\n<head><title>Report</title>\n<style>body{font-family:Segoe UI,Arial;margin:24px;color:#222} h1{color:#0F6CBD} .box{background:#eef;padding:12px;border-radius:6px}</style>\n</head>\n<body>\n<h1>Quarterly Report</h1>\n<p>This HTML artifact renders inside a sandboxed WebView2 preview.</p>\n<div class=\"box\">Inline CSS works. No external resources are loaded.</div>\n<ul><li>Item A</li><li>Item B</li></ul>\n</body>\n</html>\n"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    { "type": "select", "automationId": "NavBacklog", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "BacklogHeader", "timeoutMilliseconds": 10000 },
+    { "type": "invoke", "name": "HTML artifact preview", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "row:report.html", "timeoutMilliseconds": 15000 },
+    { "type": "wait-for", "name": "Preview", "timeoutMilliseconds": 6000 },
+    { "type": "invoke", "name": "Preview" }
+  ],
+  "captures": [
+    { "name": "html-preview", "waitMilliseconds": 4000 }
+  ]
+}

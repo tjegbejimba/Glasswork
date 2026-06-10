@@ -87,6 +87,7 @@ internal static partial class VisualVerificationRunner
         try
         {
             var hwnd = WaitForWindow(process, TimeSpan.FromSeconds(scenario.LaunchTimeoutSeconds));
+            ResizeWindowTall(hwnd);
             await Task.Delay(scenario.InitialWaitMilliseconds);
 
             foreach (var action in scenario.Actions)
@@ -150,10 +151,23 @@ internal static partial class VisualVerificationRunner
                 if (string.IsNullOrWhiteSpace(artifact.Name))
                     throw new FormatException($"Artifact on task '{task.Id}' requires a non-empty name.");
 
-                var fileName = artifact.Name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+                // Use the name verbatim so scenarios can seed any extension
+                // (.md/.html/.txt/.svg/.png/...). Names with no extension default
+                // to .md to preserve the original markdown-only behavior.
+                var fileName = Path.HasExtension(artifact.Name)
                     ? artifact.Name
                     : artifact.Name + ".md";
-                File.WriteAllText(Path.Combine(artifactsDir, SanitizeFileName(fileName)), artifact.Markdown);
+                var fullPath = Path.Combine(artifactsDir, SanitizeFileName(fileName));
+
+                if (!string.IsNullOrEmpty(artifact.Base64))
+                {
+                    File.WriteAllBytes(fullPath, Convert.FromBase64String(artifact.Base64));
+                }
+                else
+                {
+                    var text = artifact.Content ?? artifact.Markdown;
+                    File.WriteAllText(fullPath, text);
+                }
             }
         }
     }
@@ -211,6 +225,12 @@ internal static partial class VisualVerificationRunner
                 return;
             case "select":
                 SelectElement(WaitForElement(hwnd, action));
+                return;
+            case "expand":
+                ExpandElement(WaitForElement(hwnd, action));
+                return;
+            case "delay":
+                System.Threading.Thread.Sleep(Math.Max(0, action.TimeoutMilliseconds));
                 return;
             default:
                 throw new FormatException($"Unsupported visual verification action type '{action.Type}'.");
@@ -382,20 +402,87 @@ internal static partial class VisualVerificationRunner
 
     private static AutomationElement? FindElement(AutomationElement root, VisualVerificationAction action)
     {
-        if (!string.IsNullOrWhiteSpace(action.AutomationId))
+        var hasAutomationId = !string.IsNullOrWhiteSpace(action.AutomationId);
+        var hasName = !string.IsNullOrWhiteSpace(action.Name);
+        if (!hasAutomationId && !hasName)
+            throw new FormatException("UI action requires automationId or name.");
+
+        if (hasAutomationId)
         {
             var condition = new PropertyCondition(AutomationElement.AutomationIdProperty, action.AutomationId);
             var match = root.FindFirst(TreeScope.Descendants, condition);
             if (match is not null) return match;
         }
 
-        if (!string.IsNullOrWhiteSpace(action.Name))
+        if (hasName)
         {
             var condition = new PropertyCondition(AutomationElement.NameProperty, action.Name);
-            return root.FindFirst(TreeScope.Descendants, condition);
+            var match = root.FindFirst(TreeScope.Descendants, condition);
+            if (match is not null) return match;
         }
 
-        throw new FormatException("UI action requires automationId or name.");
+        // FindFirst(Descendants) does a synchronous cross-process descendant walk
+        // that can stall on (and fail to traverse past) a live out-of-process
+        // WebView2 subtree (#324). Fall back to a manual sibling-by-sibling
+        // ControlView traversal, which reliably steps over such nodes.
+        return ManualFind(root, action);
+    }
+
+    private static AutomationElement? ManualFind(AutomationElement root, VisualVerificationAction action)
+    {
+        const int maxDepth = 40;
+        var walker = TreeWalker.ControlViewWalker;
+
+        bool Matches(AutomationElement element)
+        {
+            if (!string.IsNullOrWhiteSpace(action.AutomationId)
+                && string.Equals(TryGet(() => element.Current.AutomationId), action.AutomationId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(action.Name)
+                && string.Equals(TryGet(() => element.Current.Name), action.Name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        AutomationElement? Search(AutomationElement element, int depth)
+        {
+            if (depth > maxDepth)
+            {
+                return null;
+            }
+
+            if (Matches(element))
+            {
+                return element;
+            }
+
+            AutomationElement? child;
+            try { child = walker.GetFirstChild(element); }
+            catch { return null; }
+
+            while (child is not null)
+            {
+                var found = Search(child, depth + 1);
+                if (found is not null)
+                {
+                    return found;
+                }
+
+                try { child = walker.GetNextSibling(child); }
+                catch { break; }
+            }
+
+            return null;
+        }
+
+        try { return Search(root, 0); }
+        catch { return null; }
     }
 
     private static void InvokeElement(AutomationElement element)
@@ -434,6 +521,19 @@ internal static partial class VisualVerificationRunner
         InvokeElement(element);
     }
 
+    private static void ExpandElement(AutomationElement element)
+    {
+        if (element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var pattern) &&
+            pattern is ExpandCollapsePattern expand)
+        {
+            if (expand.Current.ExpandCollapseState != ExpandCollapseState.Expanded)
+                expand.Expand();
+            return;
+        }
+
+        throw new InvalidOperationException($"Element '{element.Current.Name}' does not support ExpandCollapsePattern.");
+    }
+
     private static async Task RunProcessAsync(string fileName, string arguments, string workingDirectory)
     {
         var psi = new ProcessStartInfo(fileName, arguments)
@@ -465,8 +565,18 @@ internal static partial class VisualVerificationRunner
             throw new InvalidOperationException("Window has zero size.");
 
         using var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-        using (var graphics = Graphics.FromImage(bitmap))
+
+        // PrintWindow (even with PW_RENDERFULLCONTENT) cannot rasterize this app's
+        // WinUI 3 client content: it is hosted in a DesktopChildSiteBridge
+        // DirectComposition surface that PrintWindow leaves blank, yielding only the
+        // non-client caption chrome. Prefer a screen-region BitBlt of the foregrounded
+        // window, which captures the already-composited desktop (real WinUI pixels)
+        // when the session is interactive and the window is unobscured. Fall back to
+        // PrintWindow if the screen grab is unavailable or uniform (e.g. locked or
+        // non-interactive session, or the window is occluded).
+        if (!TryCaptureFromScreen(hwnd, rect, width, height, bitmap))
         {
+            using var graphics = Graphics.FromImage(bitmap);
             var hdc = graphics.GetHdc();
             try
             {
@@ -480,6 +590,85 @@ internal static partial class VisualVerificationRunner
         }
 
         bitmap.Save(path, ImageFormat.Png);
+    }
+
+    private static bool TryCaptureFromScreen(IntPtr hwnd, Rect rect, int width, int height, Bitmap bitmap)
+    {
+        try
+        {
+            ForegroundWindowBestEffort(hwnd);
+            // Allow the compositor to settle and any foreground/restore animation to finish.
+            Thread.Sleep(600);
+
+            using (var graphics = Graphics.FromImage(bitmap))
+            {
+                graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, new Size(width, height), CopyPixelOperation.SourceCopy);
+            }
+
+            return !IsUniformBitmap(bitmap);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsUniformBitmap(Bitmap bitmap)
+    {
+        var colors = new HashSet<int>();
+        var stepX = Math.Max(1, bitmap.Width / 80);
+        var stepY = Math.Max(1, bitmap.Height / 80);
+        for (var y = 0; y < bitmap.Height; y += stepY)
+        {
+            for (var x = 0; x < bitmap.Width; x += stepX)
+            {
+                colors.Add(bitmap.GetPixel(x, y).ToArgb());
+                if (colors.Count > 1)
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void ResizeWindowTall(IntPtr hwnd)
+    {
+        // Long pages (e.g. a task with an Artifacts section near the bottom) lay
+        // their lower content out below the page ScrollViewer's viewport, where it
+        // is scroll-clipped and never gets a UI Automation peer. Growing the window
+        // so the whole page fits without scrolling brings that content into the
+        // live visual tree so both the UIA walk and screen capture can see it.
+        try
+        {
+            if (IsIconic(hwnd))
+                ShowWindow(hwnd, ShowWindowRestore);
+
+            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 1500, 2400, SwpShowWindow);
+        }
+        catch
+        {
+            // Best-effort: verification still works at the default size for short pages.
+        }
+    }
+
+    private static void ForegroundWindowBestEffort(IntPtr hwnd)
+    {
+        try
+        {
+            if (IsIconic(hwnd))
+                ShowWindow(hwnd, ShowWindowRestore);
+
+            // Topmost flip is the most reliable way to surface a window without
+            // requiring foreground-activation rights, then drop back to non-topmost.
+            SetWindowPos(hwnd, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpShowWindow);
+            SetWindowPos(hwnd, HwndNoTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpShowWindow);
+            BringWindowToTop(hwnd);
+            SetForegroundWindow(hwnd);
+        }
+        catch
+        {
+            // Best-effort only; screen capture falls back to PrintWindow if this fails.
+        }
     }
 
     private static ImageStats AnalyzeImage(string path)
@@ -516,6 +705,26 @@ internal static partial class VisualVerificationRunner
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hWnd, out Rect lpRect);
 
     [DllImport("dwmapi.dll")]
@@ -533,6 +742,13 @@ internal static partial class VisualVerificationRunner
 
     private const uint PrintWindowRenderFullContent = 2;
     private const int DwmWindowAttributeExtendedFrameBounds = 9;
+
+    private const int ShowWindowRestore = 9;
+    private static readonly IntPtr HwndTopmost = new(-1);
+    private static readonly IntPtr HwndNoTopmost = new(-2);
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpShowWindow = 0x0040;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
