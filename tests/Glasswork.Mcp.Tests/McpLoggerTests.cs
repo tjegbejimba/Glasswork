@@ -267,6 +267,26 @@ public class McpLoggerTests
     }
 
     [TestMethod]
+    public void TraceEnabled_GetArtifact_IncludesReadArtifactPhase()
+    {
+        var sink = new StringBuilder();
+        var tools = MakeTools(MakeLogger(sink, traceEnabled: true));
+
+        // Create task and artifact first
+        var taskJson = tools.AddTask("Trace Test Task");
+        var taskId = JsonDocument.Parse(taskJson).RootElement.GetProperty("task_id").GetString()!;
+        tools.AddArtifact(taskId, "test.md", "content");
+
+        // Clear sink and call GetArtifact with tracing
+        sink.Clear();
+        tools.GetArtifact(taskId, "test.md");
+
+        var doc = JsonDocument.Parse(sink.ToString().Trim());
+        var phases = doc.RootElement.GetProperty("phases");
+        Assert.IsTrue(phases.TryGetProperty("read_artifact", out _), "get_artifact must record 'read_artifact' phase.");
+    }
+
+    [TestMethod]
     public void TraceDisabled_LogLine_NoPhasesObject()
     {
         var sink = new StringBuilder();

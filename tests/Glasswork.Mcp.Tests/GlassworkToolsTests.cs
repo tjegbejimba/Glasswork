@@ -1088,6 +1088,129 @@ public class GlassworkToolsTests
         Assert.AreEqual("research.md", artifacts[0].GetProperty("filename").GetString());
     }
 
+    // ───────────────────────────── get_artifact ──────────────────────────
+
+    [TestMethod]
+    public void GetArtifact_HappyPath_ReturnsContentAndPath()
+    {
+        var addJson = _tools.AddTask("Artifact Read Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "plan.md", "# Plan\n\nDetailed plan here.");
+
+        var json = _tools.GetArtifact(taskId, "plan.md");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.IsTrue(doc.RootElement.TryGetProperty("content", out var contentProp),
+            "get_artifact must return a 'content' field on success.");
+        Assert.AreEqual("# Plan\n\nDetailed plan here.", contentProp.GetString());
+
+        Assert.IsTrue(doc.RootElement.TryGetProperty("path", out var pathProp),
+            "get_artifact must return a 'path' field on success.");
+        Assert.AreEqual($"{taskId}.artifacts/plan.md", pathProp.GetString(),
+            "get_artifact must return a todo-relative path with forward slashes.");
+    }
+
+    [TestMethod]
+    public void GetArtifact_TaskNotFound_ReturnsNotFoundError()
+    {
+        var json = _tools.GetArtifact("does-not-exist", "plan.md");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("not_found", doc.RootElement.GetProperty("error").GetString());
+        StringAssert.Contains(doc.RootElement.GetProperty("message").GetString()!, "does-not-exist");
+    }
+
+    [TestMethod]
+    public void GetArtifact_FilenameNotFound_ReturnsNotFoundError()
+    {
+        var addJson = _tools.AddTask("Task For Missing Artifact");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "plan.md", "content");
+
+        var json = _tools.GetArtifact(taskId, "missing.md");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("not_found", doc.RootElement.GetProperty("error").GetString());
+        StringAssert.Contains(doc.RootElement.GetProperty("message").GetString()!, "missing.md");
+    }
+
+    [TestMethod]
+    public void GetArtifact_PathTraversal_ReturnsPathTraversalError()
+    {
+        var addJson = _tools.AddTask("Path Traversal Test");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.GetArtifact(taskId, "../escape.md");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("path_traversal", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void GetTask_IncludeArtifactBodies_True_EmbedsContent()
+    {
+        var addJson = _tools.AddTask("Task With Bodies");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "plan.md", "# Plan\nThis is the plan.");
+        _tools.AddArtifact(taskId, "notes.md", "# Notes\nThese are notes.");
+
+        var json = _tools.GetTask(taskId, include_artifact_bodies: true);
+        var doc = JsonDocument.Parse(json);
+
+        var artifacts = doc.RootElement.GetProperty("artifacts").EnumerateArray().ToList();
+        Assert.AreEqual(2, artifacts.Count);
+
+        var notes = artifacts[0];
+        Assert.AreEqual("notes.md", notes.GetProperty("filename").GetString());
+        Assert.AreEqual("# Notes\nThese are notes.", notes.GetProperty("content").GetString());
+
+        var plan = artifacts[1];
+        Assert.AreEqual("plan.md", plan.GetProperty("filename").GetString());
+        Assert.AreEqual("# Plan\nThis is the plan.", plan.GetProperty("content").GetString());
+    }
+
+    [TestMethod]
+    public void GetTask_IncludeArtifactBodies_False_OmitsContent()
+    {
+        var addJson = _tools.AddTask("Task Without Bodies");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "plan.md", "# Plan\nThis is the plan.");
+
+        var json = _tools.GetTask(taskId, include_artifact_bodies: false);
+        var doc = JsonDocument.Parse(json);
+
+        var artifacts = doc.RootElement.GetProperty("artifacts").EnumerateArray().ToList();
+        Assert.AreEqual(1, artifacts.Count);
+
+        var plan = artifacts[0];
+        Assert.AreEqual("plan.md", plan.GetProperty("filename").GetString());
+        Assert.IsFalse(plan.TryGetProperty("content", out _), "content field should not exist when include_artifact_bodies is false");
+    }
+
+    [TestMethod]
+    public void GetTask_IncludeArtifactBodies_DefaultFalse_OmitsContent()
+    {
+        var addJson = _tools.AddTask("Task Default Behavior");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        _tools.AddArtifact(taskId, "plan.md", "# Plan\nThis is the plan.");
+
+        // Call GetTask without the parameter (should default to false)
+        var json = _tools.GetTask(taskId);
+        var doc = JsonDocument.Parse(json);
+
+        var artifacts = doc.RootElement.GetProperty("artifacts").EnumerateArray().ToList();
+        Assert.AreEqual(1, artifacts.Count);
+
+        var plan = artifacts[0];
+        Assert.AreEqual("plan.md", plan.GetProperty("filename").GetString());
+        Assert.IsFalse(plan.TryGetProperty("content", out _), "content field should not exist by default");
+    }
+
     // ───────────────────────────── set_my_day ────────────────────────────
 
     [TestMethod]
