@@ -1640,6 +1640,51 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "list_overdue")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Find tasks past their due date for morning review. Returns tasks where due_date < today and status != done.")]
+    public string ListOverdue(
+        [Description("Include only tasks in My Day. Default false.")] bool include_my_day_only = false,
+        [Description("Maximum number of tasks to return. Default 50.")] int limit = 50)
+    {
+        using var scope = _logger?.BeginCall("list_overdue");
+        try
+        {
+            var all = _vault.LoadAll();
+            var today = DateTime.Today;
+
+            var overdueTasks = all
+                .Where(t => t.Due.HasValue && t.Due.Value.Date < today && t.Status != GlassworkTask.Statuses.Done)
+                .Where(t => !include_my_day_only || t.IsMyDay)
+                .OrderBy(t => t.Due)
+                .Take(limit)
+                .ToList();
+
+            var tasks = overdueTasks
+                .Select(t => new OverdueTask(
+                    Id: t.Id,
+                    Title: t.Title,
+                    Status: MapToExternalStatus(t.Status),
+                    DueDate: t.Due!.Value.ToString("yyyy-MM-dd"),
+                    DaysOverdue: (today - t.Due!.Value.Date).Days,
+                    Priority: t.Priority,
+                    InMyDay: t.IsMyDay))
+                .ToList();
+
+            var result = new ListOverdueResult(
+                Tasks: tasks,
+                Count: tasks.Count,
+                AsOf: today.ToString("yyyy-MM-dd"));
+
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
     [McpServerTool(Name = "get_activity")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Return structured data about what happened in a time period. Foundation for auto-generated work logs.")]
@@ -1791,6 +1836,20 @@ public sealed class GlassworkTools
 
     private sealed record GetMyDayResult(
         [property: JsonPropertyName("tasks")] List<MyDayTask> Tasks,
+        [property: JsonPropertyName("count")] int Count,
+        [property: JsonPropertyName("as_of")] string AsOf);
+
+    private sealed record OverdueTask(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("due_date")] string DueDate,
+        [property: JsonPropertyName("days_overdue")] int DaysOverdue,
+        [property: JsonPropertyName("priority")] string Priority,
+        [property: JsonPropertyName("in_my_day")] bool InMyDay);
+
+    private sealed record ListOverdueResult(
+        [property: JsonPropertyName("tasks")] List<OverdueTask> Tasks,
         [property: JsonPropertyName("count")] int Count,
         [property: JsonPropertyName("as_of")] string AsOf);
 }
