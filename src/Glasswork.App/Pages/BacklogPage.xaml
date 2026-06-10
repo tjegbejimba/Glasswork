@@ -300,6 +300,19 @@
                      AutomationProperties.Name="Search Backlog tasks"
                      TextChanged="SearchBox_TextChanged" />
 
+            <ComboBox x:Name="SavedViewFilter"
+                      AutomationProperties.AutomationId="BacklogSavedViewFilter"
+                      Width="190"
+                      PlaceholderText="Saved Task views"
+                      ItemsSource="{x:Bind ViewModel.SavedViews}"
+                      DisplayMemberPath="Name"
+                      SelectionChanged="SavedViewFilter_Changed" />
+
+            <Button AutomationProperties.AutomationId="BacklogSaveViewButton"
+                    Content="Save view"
+                    Click="SaveTaskView_Click"
+                    ToolTipService.ToolTip="Save the current Backlog filters as a Task view" />
+
             <ToggleButton x:Name="GroupToggle"
                           AutomationProperties.AutomationId="BacklogGroupToggle"
                           IsChecked="{x:Bind ViewModel.IsGrouped, Mode=TwoWay}"

@@ -95,6 +95,32 @@ public class BacklogViewModelIndexSubscriptionTests
     }
 
     [TestMethod]
+    public void SelectedSavedTaskView_FiltersBacklogTasks()
+    {
+        var urgent = _taskService.CreateTask("Urgent customer work");
+        urgent.Priority = GlassworkTask.Priorities.Urgent;
+        urgent.Tags = ["customer"];
+        _vault.Save(urgent);
+        _taskService.CreateTask("Routine work");
+
+        var ui = new JsonFileUiStateService(Path.Combine(_tempDir, "saved-views-ui-state.json"));
+        var savedViews = new SavedTaskViewService(ui);
+        var saved = savedViews.Save("Urgent customers", new TaskViewFilter
+        {
+            Statuses = [GlassworkTask.Statuses.Todo],
+            Priorities = [GlassworkTask.Priorities.Urgent],
+            Tags = ["customer"]
+        });
+
+        var vm = new BacklogViewModel(_vault, _taskService, _index, ui, savedViews);
+        vm.RefreshSavedViews();
+        vm.SelectedSavedViewId = saved.Id;
+
+        Assert.AreEqual(1, vm.Tasks.Count);
+        Assert.AreEqual("Urgent customer work", vm.Tasks[0].Title);
+    }
+
+    [TestMethod]
     public void Refresh_CompactsParentTitleCacheAgainstAllActiveBacklogTasks()
     {
         var todo = _taskService.CreateTask("Todo child");

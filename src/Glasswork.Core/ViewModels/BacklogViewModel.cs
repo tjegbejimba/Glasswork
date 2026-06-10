@@ -18,11 +18,14 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
 {
     private readonly TaskService _taskService;
     private readonly VaultService _vault;
+    private readonly SavedTaskViewService? _savedTaskViews;
 
     /// <summary>
     /// Flat list of tasks (ungrouped). Kept for backward compat / count exposure.
     /// </summary>
     public ObservableCollection<GlassworkTask> Tasks { get; } = [];
+
+    public ObservableCollection<SavedTaskView> SavedViews { get; } = [];
 
     /// <summary>
     /// The bound row sequence: when <see cref="IsGrouped"/> is true, contains
@@ -68,17 +71,24 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial bool IsGrouped { get; set; } = true;
     [ObservableProperty] public partial string ViewMode { get; set; } = "list"; // "list" | "board"
     [ObservableProperty] public partial string SearchText { get; set; } = string.Empty;
+    [ObservableProperty] public partial string? SelectedSavedViewId { get; set; }
 
     private readonly IndexService _index;
 
     public BacklogViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
         : this(vault, taskService, EnsureSeededIndex(vault), uiState) { }
 
-    public BacklogViewModel(VaultService vault, TaskService taskService, IndexService index, IUiStateService? uiState = null)
+    public BacklogViewModel(
+        VaultService vault,
+        TaskService taskService,
+        IndexService index,
+        IUiStateService? uiState = null,
+        SavedTaskViewService? savedTaskViews = null)
     {
         _vault = vault;
         _taskService = taskService;
         _index = index;
+        _savedTaskViews = savedTaskViews;
         _parentTitleStore = uiState is null ? null : new AdoParentTitleCacheStore(uiState);
         // Issue #188: Page (BacklogPage) subscribes to Index.Changed and marshals to UI thread.
         // ViewModel stays on Core and has no dispatcher access.
@@ -102,8 +112,8 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
 
         if (ViewMode == "board")
         {
-            // Board mode: use BacklogBoardGrouper, ignore FilterStatus and IsGrouped
-            var searched = BacklogQueries.Filter(all, "all", SearchText);
+            // Board mode: use BacklogBoardGrouper, ignore FilterStatus and IsGrouped.
+            var searched = FilterTasks(all, "all");
             var columns = BacklogBoardGrouper.GroupByStatus(searched);
             foreach (var col in columns)
             {
@@ -120,8 +130,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         }
         else
         {
-            // List mode: existing logic
-            var filtered = BacklogQueries.Filter(all, FilterStatus, SearchText);
+            var filtered = FilterTasks(all, FilterStatus);
 
             var ordered = filtered.OrderByDescending(t => t.Priority == "urgent")
                                   .ThenByDescending(t => t.Priority == "high")
@@ -164,6 +173,65 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         }
 
         Refreshed?.Invoke();
+    }
+
+    private IReadOnlyList<GlassworkTask> FilterTasks(IReadOnlyList<GlassworkTask> all, string fallbackStatus)
+    {
+        if (_savedTaskViews is not null && !string.IsNullOrWhiteSpace(SelectedSavedViewId))
+            return _savedTaskViews.Apply(all, SelectedSavedViewId!);
+
+        return BacklogQueries.Filter(all, fallbackStatus, SearchText);
+    }
+
+    public void RefreshSavedViews()
+    {
+        SavedViews.Clear();
+        if (_savedTaskViews is null)
+            return;
+
+        foreach (var view in _savedTaskViews.List())
+        {
+            SavedViews.Add(view);
+        }
+
+        if (!string.IsNullOrEmpty(SelectedSavedViewId)
+            && SavedViews.All(v => v.Id != SelectedSavedViewId))
+        {
+            SelectedSavedViewId = null;
+        }
+    }
+
+    public SavedTaskView? SaveCurrentView(string name)
+    {
+        if (_savedTaskViews is null)
+            return null;
+
+        var saved = _savedTaskViews.Save(name, BuildCurrentFilter());
+        RefreshSavedViews();
+        SelectedSavedViewId = saved.Id;
+        return saved;
+    }
+
+    public void ClearSavedViewSelection()
+    {
+        if (SelectedSavedViewId is not null)
+            SelectedSavedViewId = null;
+    }
+
+    private TaskViewFilter BuildCurrentFilter()
+    {
+        var statuses = FilterStatus switch
+        {
+            "all" => new List<string> { GlassworkTask.Statuses.Todo, GlassworkTask.Statuses.InProgress },
+            var value when string.IsNullOrWhiteSpace(value) => [],
+            var value => [value],
+        };
+
+        return new TaskViewFilter
+        {
+            Statuses = statuses,
+            SearchText = string.IsNullOrWhiteSpace(SearchText) ? null : SearchText.Trim(),
+        };
     }
 
     private void HydrateParentTitleCache(IReadOnlyList<GlassworkTask> ordered)
@@ -309,6 +377,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     partial void OnIsGroupedChanged(bool value) => Refresh();
     partial void OnViewModeChanged(string value) => Refresh();
     partial void OnSearchTextChanged(string value) => Refresh();
+    partial void OnSelectedSavedViewIdChanged(string? value) => Refresh();
 
     public void Dispose()
     {

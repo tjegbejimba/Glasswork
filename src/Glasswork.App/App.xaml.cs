@@ -40,6 +40,7 @@ public partial class App : Application
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; private set; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
+    public static SavedTaskViewService SavedTaskViews { get; private set; } = null!;
     public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
@@ -209,6 +210,7 @@ public partial class App : Application
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"UI state save failed: {ex.Message}"); }
         });
         UiState = new AutoSavingUiStateService(_uiStateImpl, uiStateDebouncer);
+        SavedTaskViews = new SavedTaskViewService(UiState);
 
         // Initialize update checker. Read installed version from AssemblyInformationalVersion,
         // which matches the version shown in the status bar. Fire-and-forget startup check
