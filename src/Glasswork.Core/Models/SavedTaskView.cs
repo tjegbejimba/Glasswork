@@ -25,6 +25,8 @@ public sealed class TaskViewFilter
     public bool? HasBlockedSubtasks { get; set; }
     public bool? HasLinks { get; set; }
     public bool? InMyDayToday { get; set; }
+    public bool? Ready { get; set; }
+    public double? MinimumUrgencyScore { get; set; }
     public int? RecentActivityDays { get; set; }
 
     public static class DueWindows

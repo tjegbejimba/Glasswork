@@ -160,7 +160,10 @@ Topic-driven task discovery. Splits the query on whitespace and requires **all t
       "status": "\"todo\" | \"doing\" | \"done\"",
       "parent_id": "string | null",
       "matched_in": ["title", "notes"],
-      "snippet": "string — ~120-char excerpt from the best matched field"
+      "snippet": "string — ~120-char excerpt from the best matched field",
+      "ready": true,
+      "urgency_score": 12.5,
+      "backlink_count": 2
     }
   ]
 }
@@ -269,7 +272,7 @@ The `updated_fields` array lists field names that actually changed. Fields provi
 }
 ```
 
-- **`fields`** (optional): when provided, each returned summary contains only the requested fields plus `id` (always included). Allowed values: `title`, `status`, `parent_id`, `path`, `created`, `priority`, `due`, `my_day`, `in_my_day_today`. Field names are case-folded, whitespace-trimmed, and de-duplicated; unknown names are silently dropped. Omitting `fields` (or passing `null` / `[]`) preserves the default shape below.
+- **`fields`** (optional): when provided, each returned summary contains only the requested fields plus `id` (always included). Allowed values: `title`, `status`, `parent_id`, `path`, `created`, `priority`, `due`, `start`, `my_day`, `defer_until`, `ready`, `urgency_score`, `backlink_count`, `in_my_day_today`. Field names are case-folded, whitespace-trimmed, and de-duplicated; unknown names are silently dropped. Omitting `fields` (or passing `null` / `[]`) preserves the default shape below.
 
 **Output (default — no `fields`)**
 
@@ -281,7 +284,10 @@ The `updated_fields` array lists field names that actually changed. Fields provi
       "title": "string",
       "status": "\"todo\" | \"doing\" | \"done\"",
       "parent_id": "string | null",
-      "path": "string — todo-relative path to the task file, e.g. fix-the-bug.md"
+      "path": "string — todo-relative path to the task file, e.g. fix-the-bug.md",
+      "ready": true,
+      "urgency_score": 12.5,
+      "backlink_count": 2
     }
   ]
 }

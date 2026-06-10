@@ -53,6 +53,8 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     /// </summary>
     public Func<string?>? AdoBaseUrlProvider { get; set; }
 
+    public Func<string, int>? BacklinkCountProvider { get; set; }
+
     /// <summary>
     /// Optional async resolver used to enrich numeric parent group headers with the
     /// real ADO work-item title. Page wires this to <see cref="App.AdoFetcher"/>.
@@ -132,10 +134,14 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         {
             var filtered = FilterTasks(all, FilterStatus);
 
-            var ordered = filtered.OrderByDescending(t => t.Priority == "urgent")
-                                  .ThenByDescending(t => t.Priority == "high")
-                                  .ThenByDescending(t => t.Created)
-                                  .ToList();
+            var ordered = filtered
+                .Select(t => new { Task = t, Signals = SignalsFor(t) })
+                .OrderByDescending(x => x.Signals.Ready)
+                .ThenByDescending(x => x.Signals.UrgencyScore)
+                .ThenByDescending(x => x.Task.Created)
+                .ThenBy(x => x.Task.Id, StringComparer.Ordinal)
+                .Select(x => x.Task)
+                .ToList();
 
             foreach (var task in ordered)
             {
@@ -181,6 +187,14 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
             return _savedTaskViews.Apply(all, SelectedSavedViewId!);
 
         return BacklogQueries.Filter(all, fallbackStatus, SearchText);
+    }
+
+    private TaskActionabilitySignals SignalsFor(GlassworkTask task)
+    {
+        var backlinkCount = BacklinkCountProvider?.Invoke(task.Id) ?? 0;
+        return TaskActionability.Compute(
+            task,
+            new TaskSignalContext(DateOnly.FromDateTime(DateTime.Today), backlinkCount));
     }
 
     public void RefreshSavedViews()

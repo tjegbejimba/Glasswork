@@ -26,9 +26,11 @@ public partial class GlassworkTask : ObservableObject
     [NotifyPropertyChangedFor(nameof(DueChipText))]
     [NotifyPropertyChangedFor(nameof(HasDue))]
     public partial DateTime? Due { get; set; }
+    [ObservableProperty] public partial DateTime? Start { get; set; }
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsMyDay))]
     public partial DateTime? MyDay { get; set; }
+    [ObservableProperty] public partial DateTime? DeferUntil { get; set; }
     
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(AdoLink))]
@@ -286,7 +288,9 @@ public partial class GlassworkTask : ObservableObject
             Created = Created,
             CompletedAt = CompletedAt,
             Due = Due,
+            Start = Start,
             MyDay = MyDay,
+            DeferUntil = DeferUntil,
             Parent = Parent,
             Description = Description,
             Notes = Notes,

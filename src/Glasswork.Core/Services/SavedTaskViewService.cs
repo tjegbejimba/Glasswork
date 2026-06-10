@@ -111,6 +111,12 @@ public sealed class SavedTaskViewService
             if (inMyDay != filter.InMyDayToday.Value) return false;
         }
 
+        var signals = TaskActionability.Compute(task, new TaskSignalContext(today));
+        if (filter.Ready is not null && signals.Ready != filter.Ready.Value)
+            return false;
+        if (filter.MinimumUrgencyScore is { } minScore && signals.UrgencyScore < minScore)
+            return false;
+
         if (!MatchesDue(task, filter.Due, today))
             return false;
 
@@ -167,6 +173,8 @@ public sealed class SavedTaskViewService
         HasBlockedSubtasks = filter.HasBlockedSubtasks,
         HasLinks = filter.HasLinks,
         InMyDayToday = filter.InMyDayToday,
+        Ready = filter.Ready,
+        MinimumUrgencyScore = filter.MinimumUrgencyScore is > 0 ? filter.MinimumUrgencyScore : null,
         RecentActivityDays = filter.RecentActivityDays is > 0 ? filter.RecentActivityDays : null,
     };
 
