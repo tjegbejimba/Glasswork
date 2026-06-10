@@ -1,4 +1,5 @@
 using System.IO;
+using Glasswork.Core.Models;
 
 namespace Glasswork.Core.Services;
 
@@ -12,19 +13,18 @@ public static class ArtifactPathResolver
     private const string ArtifactsSuffix = ".artifacts";
 
     /// <summary>
-    /// Returns true if <paramref name="fullPath"/> points to a <c>.md</c> file
+    /// Returns true if <paramref name="fullPath"/> points to a committed file
     /// inside a <c>&lt;id&gt;.artifacts/</c> directory and yields the owning
     /// task id (the folder name with the <c>.artifacts</c> suffix stripped).
+    /// Uses <see cref="ArtifactCommitPolicy"/> to reject transient/junk files.
     /// </summary>
     public static bool TryGetTaskId(string? fullPath, out string? taskId)
     {
         taskId = null;
         if (string.IsNullOrWhiteSpace(fullPath)) return false;
 
-        // Only react to .md files (atomic-rename contract — agents write a temp
-        // non-.md filename and rename when complete).
-        var ext = Path.GetExtension(fullPath);
-        if (!string.Equals(ext, ".md", System.StringComparison.OrdinalIgnoreCase)) return false;
+        // Reject transient/junk files via the commit policy
+        if (!ArtifactCommitPolicy.IsCommitted(fullPath)) return false;
 
         var dir = Path.GetDirectoryName(fullPath);
         if (string.IsNullOrEmpty(dir)) return false;

@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using Glasswork.Core.Models;
 
 namespace Glasswork.Core.Services;
 
 /// <summary>
 /// Watches every <c>&lt;task-id&gt;.artifacts/</c> subfolder under the vault
-/// (the wiki/todo directory) for markdown changes and raises one debounced
+/// (the wiki/todo directory) for artifact changes and raises one debounced
 /// event per affected task.
 ///
 /// Separate from <see cref="FileWatcherService"/> because:
@@ -38,9 +39,9 @@ public sealed class ArtifactWatcherService : IDisposable
         if (!Directory.Exists(vaultPath))
             Directory.CreateDirectory(vaultPath);
 
-        _watcher = new FileSystemWatcher(vaultPath, "*.md")
+        _watcher = new FileSystemWatcher(vaultPath, "*")
         {
-            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime,
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.Size,
             IncludeSubdirectories = true,
         };
 
@@ -58,8 +59,8 @@ public sealed class ArtifactWatcherService : IDisposable
 
     private void OnRenamed(object sender, RenamedEventArgs e)
     {
-        // A rename from a temp filename into <name>.md is the agent's
-        // commit point. Treat both endpoints as candidates: the new name
+        // A rename from a temp filename into <name>.html (or .png, etc.) is the
+        // agent's commit point. Treat both endpoints as candidates: the new name
         // (now visible to us) is what matters.
         Handle(e.FullPath);
     }
