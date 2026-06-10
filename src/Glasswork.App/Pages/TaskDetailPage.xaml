@@ -570,6 +570,32 @@
                     </ItemsControl>
                 </StackPanel>
 
+                <!-- Children (issue #173 — tasks whose parent field matches this task's id) -->
+                <StackPanel x:Name="ChildrenSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
+                    <TextBlock x:Name="ChildrenHeader" Text="Children" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <ItemsControl x:Name="ChildrenList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        Margin="0,2,0,2"
+                                        Padding="12,8"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        Click="Child_Click">
+                                    <Grid>
+                                        <TextBlock Text="{Binding Title}"
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
                 <!-- Backlinks (slice 6 — incoming wikilinks from outside wiki/todo/) -->
                 <StackPanel x:Name="BacklinksSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
                     <TextBlock x:Name="BacklinksHeader" Text="Backlinks" Style="{StaticResource SubtitleTextBlockStyle}" />
