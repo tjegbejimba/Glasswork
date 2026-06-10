@@ -63,8 +63,11 @@ public class FileSystemArtifactStoreTests
 
         var result = new FileSystemArtifactStore(_vaultRoot).Load("my-task");
 
-        Assert.HasCount(1, result);
-        Assert.AreEqual("real", result[0].Title);
+        // After Slice 2: we include data.json as Text, but still exclude .tmp files
+        Assert.HasCount(2, result);
+        Assert.IsTrue(result.Any(a => a.Path.EndsWith("real.md")));
+        Assert.IsTrue(result.Any(a => a.Path.EndsWith("data.json")));
+        Assert.IsFalse(result.Any(a => a.Path.Contains(".tmp")));
     }
 
     [TestMethod]
@@ -140,5 +143,128 @@ public class FileSystemArtifactStoreTests
 
         Assert.HasCount(1, result);
         Assert.AreEqual("Good Fallback", result[0].Title);
+    }
+
+    // === Multi-format artifact tests (Slice 2) ===
+
+    [TestMethod]
+    public void Load_MixedFormatFolder_EachRowHasCorrectKindAndSize()
+    {
+        var folder = ArtifactsFolder("multi-task");
+        var mdPath = Path.Combine(folder, "plan.md");
+        var htmlPath = Path.Combine(folder, "report.html");
+        var pngPath = Path.Combine(folder, "screenshot.png");
+        var txtPath = Path.Combine(folder, "notes.txt");
+        var svgPath = Path.Combine(folder, "diagram.svg");
+        
+        File.WriteAllText(mdPath, "# Plan\n\nSome markdown");
+        File.WriteAllText(htmlPath, "<html><body>Report</body></html>");
+        File.WriteAllBytes(pngPath, new byte[] { 0x89, 0x50, 0x4E, 0x47 }); // PNG header
+        File.WriteAllText(txtPath, "Plain text notes");
+        File.WriteAllText(svgPath, "<svg></svg>");
+
+        var result = new FileSystemArtifactStore(_vaultRoot).Load("multi-task");
+
+        Assert.HasCount(5, result);
+        
+        var md = result.First(a => a.Path.EndsWith("plan.md"));
+        Assert.AreEqual(ArtifactKind.Markdown, md.Kind);
+        Assert.IsNotNull(md.Body);
+        Assert.IsTrue(md.SizeBytes > 0);
+        
+        var html = result.First(a => a.Path.EndsWith("report.html"));
+        Assert.AreEqual(ArtifactKind.Html, html.Kind);
+        Assert.IsNull(html.Body);
+        Assert.IsTrue(html.SizeBytes > 0);
+        
+        var png = result.First(a => a.Path.EndsWith("screenshot.png"));
+        Assert.AreEqual(ArtifactKind.Image, png.Kind);
+        Assert.IsNull(png.Body);
+        Assert.IsTrue(png.SizeBytes > 0);
+        
+        var txt = result.First(a => a.Path.EndsWith("notes.txt"));
+        Assert.AreEqual(ArtifactKind.Text, txt.Kind);
+        Assert.IsNotNull(txt.Body);
+        Assert.IsTrue(txt.SizeBytes > 0);
+        
+        var svg = result.First(a => a.Path.EndsWith("diagram.svg"));
+        Assert.AreEqual(ArtifactKind.Image, svg.Kind);
+        Assert.IsNull(svg.Body);
+        Assert.IsTrue(svg.SizeBytes > 0);
+    }
+
+    [TestMethod]
+    public void Load_JunkAndTransientFiles_Excluded()
+    {
+        var folder = ArtifactsFolder("junk-task");
+        File.WriteAllText(Path.Combine(folder, "real.md"), "real content");
+        File.WriteAllText(Path.Combine(folder, ".DS_Store"), "junk");
+        File.WriteAllText(Path.Combine(folder, "~$temp.md"), "office temp");
+        File.WriteAllText(Path.Combine(folder, "scratch.tmp"), "transient");
+
+        var result = new FileSystemArtifactStore(_vaultRoot).Load("junk-task");
+
+        Assert.HasCount(1, result);
+        Assert.AreEqual("real", result[0].Title);
+    }
+
+    [TestMethod]
+    public void Load_OverCapTextFile_BodyNullButSizeCorrect()
+    {
+        var folder = ArtifactsFolder("big-task");
+        var bigContent = new string('x', (int)ArtifactCaps.InlineTextBytes + 1000);
+        var path = Path.Combine(folder, "huge.txt");
+        File.WriteAllText(path, bigContent);
+
+        var result = new FileSystemArtifactStore(_vaultRoot).Load("big-task");
+
+        Assert.HasCount(1, result);
+        var artifact = result[0];
+        Assert.AreEqual(ArtifactKind.Text, artifact.Kind);
+        Assert.IsNull(artifact.Body);
+        Assert.IsTrue(artifact.SizeBytes > ArtifactCaps.InlineTextBytes);
+        Assert.AreEqual("huge.txt", artifact.Title);
+    }
+
+    [TestMethod]
+    public void Load_UnreadableFile_LoadErrorPopulatedOtherRowsReturned()
+    {
+        var folder = ArtifactsFolder("error-task");
+        var goodPath = Path.Combine(folder, "good.txt");
+        var badPath = Path.Combine(folder, "bad.txt");
+        File.WriteAllText(goodPath, "good content");
+        File.WriteAllText(badPath, "bad content");
+        
+        // Make the file unreadable by opening it exclusively
+        using (var stream = File.Open(badPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var result = new FileSystemArtifactStore(_vaultRoot).Load("error-task");
+
+            Assert.HasCount(2, result);
+            var good = result.First(a => a.Path.EndsWith("good.txt"));
+            Assert.IsNull(good.LoadError);
+            Assert.IsNotNull(good.Body);
+            
+            var bad = result.First(a => a.Path.EndsWith("bad.txt"));
+            Assert.IsNotNull(bad.LoadError);
+            Assert.IsNull(bad.Body);
+        }
+    }
+
+    [TestMethod]
+    public void Load_NonMarkdownFiles_TitleIsFilenameWithExtension()
+    {
+        var folder = ArtifactsFolder("title-task");
+        File.WriteAllText(Path.Combine(folder, "report.html"), "<html>test</html>");
+        File.WriteAllText(Path.Combine(folder, "notes.txt"), "plain text");
+
+        var result = new FileSystemArtifactStore(_vaultRoot).Load("title-task");
+
+        Assert.HasCount(2, result);
+        var html = result.First(a => a.Path.EndsWith("report.html"));
+        Assert.AreEqual("report.html", html.Title);
+        
+        var txt = result.First(a => a.Path.EndsWith("notes.txt"));
+        Assert.AreEqual("notes.txt", txt.Title);
     }
 }
