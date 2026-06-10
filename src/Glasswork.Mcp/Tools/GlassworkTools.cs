@@ -832,6 +832,90 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "move_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Reparent a task (with circular-ancestor guard). If the task has subtasks, the whole subtree implicitly moves.")]
+    public string MoveTask(
+        [Description("Task ID to move.")] string task_id,
+        [Description("New parent task ID, or null to promote to top-level.")] string? new_parent_id)
+    {
+        using var scope = _logger?.BeginCall("move_task");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            var task = _vault.Load(safeId)!;
+            var oldParentId = task.Parent;
+            var safeNewParent = SanitizeId(new_parent_id);
+
+            // Validate new parent exists
+            if (!string.IsNullOrEmpty(safeNewParent) && !_vault.Exists(safeNewParent))
+            {
+                scope?.SetResult("invalid_parent");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_parent", $"Parent task '{new_parent_id}' not found."));
+            }
+
+            // Check for circular reparenting
+            if (!string.IsNullOrEmpty(safeNewParent) && WouldCreateCycle(safeId, safeNewParent))
+            {
+                scope?.SetResult("circular_parent");
+                return JsonSerializer.Serialize(new ErrorResult("circular_parent", $"Cannot move task '{task_id}': would create a circular parent relationship."));
+            }
+
+            // Perform the move
+            var writeSw = Stopwatch.StartNew();
+            _vault.SetParent(safeId, safeNewParent);
+            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(new MoveTaskResult(
+                TaskId: safeId,
+                Title: task.Title,
+                OldParentId: oldParentId,
+                NewParentId: safeNewParent));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Returns true if setting taskId's parent to potentialParent would create a cycle.
+    /// Walks the ancestor chain of potentialParent to check if taskId appears.
+    /// Guards against existing cycles by tracking visited nodes.
+    /// </summary>
+    private bool WouldCreateCycle(string taskId, string potentialParent)
+    {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var current = potentialParent;
+        
+        while (!string.IsNullOrEmpty(current))
+        {
+            // If we've seen this node before, there's a pre-existing cycle
+            // Treat this as safe (no cycle involving taskId), but stop walking
+            if (!visited.Add(current))
+                return false;
+
+            if (current == taskId)
+                return true;
+
+            var task = _vault.Load(current);
+            if (task is null)
+                break;
+
+            current = task.Parent;
+        }
+
+        return false;
+    }
+
     private static string AppendNotes(string existing, string value)
     {
         var trimmed = existing.TrimEnd();
@@ -1392,6 +1476,12 @@ public sealed class GlassworkTools
     private sealed record UpdateTaskResult(
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("updated_fields")] string[] UpdatedFields);
+
+    private sealed record MoveTaskResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("old_parent_id")] string? OldParentId,
+        [property: JsonPropertyName("new_parent_id")] string? NewParentId);
 
     private sealed record ErrorResult(
         [property: JsonPropertyName("error")] string Error,
