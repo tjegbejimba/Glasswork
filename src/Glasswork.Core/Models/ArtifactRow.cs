@@ -15,7 +15,7 @@ public sealed record ArtifactRow(
     string TimeBadge)
 {
     public string Title => Artifact.Title;
-    public string Body => Artifact.Body;
+    public string Body => Artifact.Body ?? "";
     public string Path => Artifact.Path;
 
     /// <summary>
