@@ -49,7 +49,7 @@ public sealed partial class TaskDetailPage : Page
             if (App.Watcher is not null)
             {
                 App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
-                App.Watcher.TaskFileChanged += OnAnyTaskFileChangedExternally;
+                App.Watcher.TaskFileChange += OnAnyTaskFileChange;
             }
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
@@ -61,7 +61,7 @@ public sealed partial class TaskDetailPage : Page
             if (App.Watcher is not null)
             {
                 App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
-                App.Watcher.TaskFileChanged += OnAnyTaskFileChangedExternally;
+                App.Watcher.TaskFileChange += OnAnyTaskFileChange;
             }
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
@@ -589,7 +589,7 @@ public sealed partial class TaskDetailPage : Page
         if (App.Watcher is not null)
         {
             App.Watcher.TaskFileChanged -= OnTaskFileChangedExternally;
-            App.Watcher.TaskFileChanged -= OnAnyTaskFileChangedExternally;
+            App.Watcher.TaskFileChange -= OnAnyTaskFileChange;
         }
         App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.BacklinksChangedExternally -= OnBacklinksChangedExternally;
@@ -611,12 +611,13 @@ public sealed partial class TaskDetailPage : Page
         DispatcherQueue.TryEnqueue(HandleExternalFileChange);
     }
 
-    private void OnAnyTaskFileChangedExternally(object? sender, string fileName)
+    private void OnAnyTaskFileChange(object? sender, TaskFileChange change)
     {
         // Refresh children list on any task file change. This catches:
-        // - New tasks created with parent = current task id
+        // - New tasks created with parent = current task id (including MCP/agent writes)
         // - Existing tasks changing their parent field to/from current task id
         // - Child tasks being deleted
+        // Uses TaskFileChange (not TaskFileChanged) so agent/MCP writes trigger refresh.
         // Slightly inefficient (refreshes on all changes) but simple and safe.
         var id = Task?.Id;
         if (string.IsNullOrEmpty(id)) return;
