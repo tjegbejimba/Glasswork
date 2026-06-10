@@ -1327,6 +1327,83 @@ public sealed class GlassworkTools
     private sealed record ListBacklinksResult(
         [property: JsonPropertyName("backlinks")] BacklinkEntry[] Backlinks);
 
+    private sealed record LinkResult(
+        [property: JsonPropertyName("type")] string Type,
+        [property: JsonPropertyName("url")] string Url,
+        [property: JsonPropertyName("title")] string? Title);
+
+    private sealed record AddLinkResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("link")] LinkResult Link,
+        [property: JsonPropertyName("total_links")] int TotalLinks);
+
+    [McpServerTool(Name = "add_link")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Attach a typed external link (ado/pr/incident/doc/build) to a task. Appends to the links: frontmatter array.")]
+    public string AddLink(
+        [Description("Task ID (required).")] string task_id,
+        [Description("Link type: ado, pr, incident, doc, build (required).")] string link_type,
+        [Description("URL or identifier (required).")] string url,
+        [Description("Optional display label")] string? title = null)
+    {
+        using var scope = _logger?.BeginCall("add_link");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            if (string.IsNullOrWhiteSpace(link_type))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_link_type", "link_type is required."));
+            }
+
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_url", "url is required."));
+            }
+
+            var normalizedType = TaskLink.Types.Normalize(link_type.Trim().ToLowerInvariant());
+            
+            var task = _vault.Load(safeId);
+            if (task is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            var newLink = new TaskLink
+            {
+                Type = normalizedType,
+                Value = url.Trim(),
+                Label = string.IsNullOrWhiteSpace(title) ? null : title.Trim()
+            };
+
+            var writeSw = Stopwatch.StartNew();
+            task.Links.Add(newLink);
+            _vault.Save(task);
+            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+
+            var result = new AddLinkResult(
+                TaskId: safeId,
+                Link: new LinkResult(normalizedType, newLink.Value, newLink.Label),
+                TotalLinks: task.Links.Count);
+
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
     [McpServerTool(Name = "get_activity")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Return structured data about what happened in a time period. Foundation for auto-generated work logs.")]
