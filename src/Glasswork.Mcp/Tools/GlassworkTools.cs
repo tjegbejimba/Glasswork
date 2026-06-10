@@ -612,7 +612,8 @@ public sealed class GlassworkTools
             Directory.CreateDirectory(artifactFolder);
             
             // Atomic write: temp → rename, no partial file visible on failure
-            var tempPath = resolvedPath + ".tmp";
+            // Use unique temp path to prevent concurrent writes from clobbering each other
+            var tempPath = resolvedPath + $".tmp.{Guid.NewGuid():N}";
             _selfWrites.RegisterWrite(tempPath);
             _selfWrites.RegisterWrite(resolvedPath);
             var writeSw = Stopwatch.StartNew();
@@ -620,6 +621,13 @@ public sealed class GlassworkTools
             {
                 File.WriteAllText(tempPath, content);
                 File.Move(tempPath, resolvedPath, overwrite: effectiveMode == "overwrite");
+            }
+            catch (IOException) when (effectiveMode == "create" && File.Exists(resolvedPath))
+            {
+                // Another concurrent write won the race → structured conflict
+                scope?.SetResult("conflict");
+                return JsonSerializer.Serialize(new ErrorResult("conflict",
+                    $"Artifact '{filename}' was created concurrently for task '{safeId}'."));
             }
             finally
             {
@@ -632,14 +640,30 @@ public sealed class GlassworkTools
             scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
 
             // Populate result with new additive fields
+            // Compute inline/reason using same decision logic as loaders
             var fileInfo = new FileInfo(resolvedPath);
+            var size = fileInfo.Length;
+            bool inline = (kind == ArtifactKind.Markdown || kind == ArtifactKind.Text) && size <= ArtifactCaps.InlineTextBytes;
+            string? reason = null;
+            if (!inline)
+            {
+                if (size > ArtifactCaps.InlineTextBytes)
+                {
+                    reason = "over_cap";
+                }
+                else if (kind == ArtifactKind.Html || kind == ArtifactKind.Image || kind == ArtifactKind.Other)
+                {
+                    reason = "binary";
+                }
+            }
+            
             var resultPath = TodoRelativeArtifactPath(safeId, Path.GetFileName(resolvedPath));
             return JsonSerializer.Serialize(new AddArtifactResult(
                 Path: resultPath,
                 Kind: kind.ToString(),
-                Size: fileInfo.Length,
-                Inline: true,  // Always true for add_artifact (we only accept text under cap)
-                Reason: null));
+                Size: size,
+                Inline: inline,
+                Reason: reason));
         }
         catch
         {
