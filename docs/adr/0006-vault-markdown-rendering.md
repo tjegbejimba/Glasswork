@@ -1,6 +1,6 @@
 # ADR 0006: Vault markdown rendering — `VaultMarkdownView`, Notes read/edit toggle, Obsidian launch primitive
 
-**Status**: Accepted
+**Status**: Accepted (WebView2 rejection scoped-reversed for HTML artifacts by [ADR 0015](./0015-multi-format-artifacts.md))
 **Context slice**: resolves issue #71 (Obsidian-fidelity markdown rendering); supersedes parts of ADR 0003; sets foundation for issue #68 (Open-in-Obsidian everywhere)
 
 ## Context

@@ -4,6 +4,8 @@
 **Context slice**: Artifacts feature (PRD `wiki/decisions/glasswork-artifacts-prd.md` §7, §12); resolves issue #48
 
 > **Supersession note**: ADR 0006 retains this ADR's renderer choice (Markdig + multi-element WinUI) and its safety policy (allowlist, blocked images, malformed-input fallback), but renames the type `MarkdownArtifactView` → `VaultMarkdownView`, expands the scope to Notes, and replaces the block-to-element mapping table (§"Decision") with the v1 feature set in ADR 0006 §2. New work should refer to ADR 0006.
+>
+> **WebView2 note**: Alternative C below (WebView2) was rejected here for *markdown* rendering, and that still holds. [ADR 0015](./0015-multi-format-artifacts.md) reverses it **only** for sandboxed preview of agent-produced **HTML artifacts** — a different surface from markdown rendering.
 
 ## Context
 

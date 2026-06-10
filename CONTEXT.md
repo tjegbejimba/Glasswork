@@ -43,20 +43,32 @@ The in-memory shape of a task and its subtasks. Pure C# in
   - `Task.Notes` — free-form scratch. Written by both humans and agents
     (agent-writable since #71). Edited in-app via an explicit read/edit
     toggle; rendered via `VaultMarkdownView` in read mode.
-  - `Artifacts` — agent-produced markdown work-products in a sibling
-    `<taskId>.artifacts/` folder. **Read-only in the app**; rendered via
-    `VaultMarkdownView`.
+  - `Artifacts` — agent-produced work-products in a sibling
+    `<taskId>.artifacts/` folder, of **any format** (markdown, HTML, image,
+    text/data, other), not just markdown. **Read-only in the app**; rendered
+    per **Artifact kind** (see Markdown rendering below and ADR 0015). The
+    defining boundary is authorship + access (agent-produced, read-only),
+    not file format. User-uploaded files (Attachments) are out of scope.
 - **Structured links** (see ADR 0009): `links:` is a typed frontmatter list of
   outbound task pointers (`ado`, `pr`, `incident`, `doc`, `build`, `other`) with
   `value` and optional `label`. Links are not a fourth prose tier; they are
   machine-readable task metadata adjacent to Description, Notes, and Artifacts.
   The v1 app surface is read-only, with editing in Obsidian or YAML.
 - **Markdown rendering** (see ADR 0006, supersedes parts of ADR 0003):
-  every rendered-markdown surface in the app (Artifacts, Notes read mode)
-  goes through a single `VaultMarkdownView` UserControl in
+  every rendered-**markdown** surface in the app (Markdown artifacts, Notes
+  read mode) goes through a single `VaultMarkdownView` UserControl in
   `Glasswork.App.Controls`. One renderer, one safety policy
   (`ArtifactLinkPolicy`), one wiki-link routing contract. All rendered
   content is treated as **untrusted** — agents produce it.
+- **Multi-format artifact rendering** (see ADR 0015): non-markdown Artifact
+  kinds render by their own strategy — images inline, text/code inline (size-
+  capped), HTML via a source view plus an opt-in **sandboxed WebView2**
+  preview (script off, network blocked, single live instance, runtime-missing
+  fallback), and Other kinds by reference with an Open-externally action.
+  This deliberately reverses the WebView2 rejection in ADRs 0003/0006, scoped
+  to untrusted agent-produced HTML only. `ArtifactLinkPolicy` is unchanged;
+  Open-externally is a trusted user action via `Launcher.LaunchFileAsync`,
+  outside that policy.
 
 ### 3. Index
 
