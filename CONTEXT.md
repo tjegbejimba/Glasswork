@@ -104,7 +104,8 @@ Non-task user preferences that should persist across app restarts but
 **must not pollute the vault**. Examples: which task cards the user has
 manually collapsed, sidebar pane width, last-selected page.
 
-- **Owns**: `IUiStateService`, JSON file in `%LocalAppData%\Glasswork\`.
+- **Owns**: `IUiStateService`, JSON file in `%LocalAppData%\Glasswork\`,
+  and app-local **Saved Task views** (named filters over Tasks).
 - **Speaks to**: Presentation (read/write key-value).
 - **Does not own**: anything in the vault, anything in the task model.
 - **Boundary rule**: if the data describes a *task*, it lives in the vault.

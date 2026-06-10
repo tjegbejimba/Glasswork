@@ -20,6 +20,7 @@ public sealed partial class BacklogPage : Page
     public BacklogViewModel ViewModel { get; }
     private readonly BacklogUndoState _undoState = new();
     private DispatcherTimer? _undoTimer;
+    private bool _syncingSavedViewSelection;
 
     // Issue #182: pending scroll-restore snapshot. Captured in ViewModel.Refreshing,
     // applied (with bounded retry) after ViewModel.Refreshed. Null when no restore
@@ -44,7 +45,8 @@ public sealed partial class BacklogPage : Page
 
     public BacklogPage()
     {
-        ViewModel = new BacklogViewModel(App.Vault, App.Tasks, App.Index, App.UiState);
+        ViewModel = new BacklogViewModel(App.Vault, App.Tasks, App.Index, App.UiState, App.SavedTaskViews);
+        ViewModel.RefreshSavedViews();
         // Load persisted ViewMode (default "list") BEFORE InitializeComponent
         ViewModel.ViewMode = App.UiState.Get<string>(App.BacklogViewModeKey) ?? "list";
         // Load persisted toggle (default true) BEFORE InitializeComponent so the
@@ -190,6 +192,64 @@ public sealed partial class BacklogPage : Page
         Frame.Navigate(typeof(WorkLogPage));
     }
 
+    private void SavedViewFilter_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingSavedViewSelection) return;
+        ViewModel.SelectedSavedViewId = (sender as ComboBox)?.SelectedItem is SavedTaskView view ? view.Id : null;
+    }
+
+    private async void SaveTaskView_Click(object sender, RoutedEventArgs e)
+    {
+        var nameBox = new TextBox
+        {
+            Header = "Name",
+            PlaceholderText = "e.g. Urgent customer work"
+        };
+        var dialog = new ContentDialog
+        {
+            Title = "Save Task view",
+            Content = nameBox,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(nameBox.Text)) return;
+
+        var saved = ViewModel.SaveCurrentView(nameBox.Text);
+        if (saved is not null)
+        {
+            SelectSavedView(saved.Id);
+            UpdateEmptyState();
+        }
+    }
+
+    private void SelectSavedView(string? viewId)
+    {
+        if (SavedViewFilter is null) return;
+        _syncingSavedViewSelection = true;
+        try
+        {
+            SavedViewFilter.SelectedItem = string.IsNullOrWhiteSpace(viewId)
+                ? null
+                : ViewModel.SavedViews.FirstOrDefault(v => v.Id == viewId);
+        }
+        finally
+        {
+            _syncingSavedViewSelection = false;
+        }
+    }
+
+    private void ClearSavedViewSelectionForManualFilter()
+    {
+        if (ViewModel.SelectedSavedViewId is null) return;
+        ViewModel.ClearSavedViewSelection();
+        SelectSavedView(null);
+    }
+
     private void BoardCard_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
@@ -219,6 +279,8 @@ public sealed partial class BacklogPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        ViewModel.RefreshSavedViews();
+        SelectSavedView(ViewModel.SelectedSavedViewId);
         Refresh();
         // Issue #188: Subscribe to Index.Changed for auto-refresh, with UI-thread marshalling
         App.Index.Changed += OnIndexChanged;
@@ -294,6 +356,7 @@ public sealed partial class BacklogPage : Page
     {
         if (sender is ComboBox cb && cb.SelectedItem is ComboBoxItem item)
         {
+            ClearSavedViewSelectionForManualFilter();
             ViewModel.FilterStatus = item.Tag?.ToString() ?? "all";
         }
     }
@@ -302,6 +365,7 @@ public sealed partial class BacklogPage : Page
     {
         if (sender is not TextBox tb) return;
         if (ViewModel.SearchText == tb.Text) return;
+        ClearSavedViewSelectionForManualFilter();
         _skipNextScrollCapture = true;
         ViewModel.SearchText = tb.Text;
     }
