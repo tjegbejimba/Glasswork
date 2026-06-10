@@ -1,0 +1,28 @@
+{
+  "name": "artifacts-html-hostile",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "artifact-html-hostile",
+      "title": "Hostile HTML preview sandbox",
+      "status": "todo",
+      "artifacts": [
+        {
+          "name": "hostile.html",
+          "content": "<!DOCTYPE html>\n<html>\n<head>\n<meta http-equiv=\"refresh\" content=\"1;url=https://evil.example/redirect\">\n<style>body{font-family:Segoe UI;margin:20px;color:#222} .ext{background:url(https://evil.example/bg.png);padding:8px} h1{color:#0F6CBD}</style>\n</head>\n<body>\n<h1>Hostile fixture renders locally</h1>\n<p>This text proves the local document rendered. External fetches and navigation must be blocked.</p>\n<img src=\"https://evil.example/tracker.png\" alt=\"external image (should be blocked)\" width=\"220\" height=\"50\">\n<iframe src=\"file:///C:/Windows/win.ini\" width=\"220\" height=\"50\"></iframe>\n<div class=\"ext\">CSS url() background (should be blocked)</div>\n<p><a href=\"https://evil.example/\" target=\"_blank\">External link (new window blocked)</a></p>\n<script>document.body.style.background='red';document.body.innerHTML='SCRIPT RAN';</script>\n</body>\n</html>\n"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    { "type": "select", "automationId": "NavBacklog", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "BacklogHeader", "timeoutMilliseconds": 10000 },
+    { "type": "invoke", "name": "Hostile HTML preview sandbox", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "row:hostile.html", "timeoutMilliseconds": 15000 },
+    { "type": "wait-for", "name": "Preview", "timeoutMilliseconds": 6000 },
+    { "type": "invoke", "name": "Preview" }
+  ],
+  "captures": [
+    { "name": "html-hostile-preview", "waitMilliseconds": 4500 }
+  ]
+}

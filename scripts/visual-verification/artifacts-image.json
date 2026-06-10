@@ -1,0 +1,26 @@
+{
+  "name": "artifacts-image",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "artifact-image",
+      "title": "Image artifact render",
+      "status": "todo",
+      "artifacts": [
+        {
+          "name": "checker.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAKElEQVR42mNgmLbqPzJ+ViGHggnKDwMDSNaAJj8cDBhNB6PpYNqq/wBzhF0fEFyTJgAAAABJRU5ErkJggg=="
+        }
+      ]
+    }
+  ],
+  "actions": [
+    { "type": "select", "automationId": "NavBacklog", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "BacklogHeader", "timeoutMilliseconds": 10000 },
+    { "type": "invoke", "name": "Image artifact render", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "row:checker.png", "timeoutMilliseconds": 15000 }
+  ],
+  "captures": [
+    { "name": "image", "waitMilliseconds": 1500 }
+  ]
+}

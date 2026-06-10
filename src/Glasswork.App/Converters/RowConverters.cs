@@ -120,6 +120,26 @@ public sealed class CollapseChevronGlyphConverter : IValueConverter
         => throw new NotImplementedException();
 }
 /// <summary>
+/// Builds a deterministic AutomationId for an artifact-row element by prefixing
+/// the artifact Title (its filename) with the ConverterParameter. Visual
+/// verification uses this to target a specific artifact's Expander
+/// (parameter "row:") or HTML Preview button (parameter "preview:") without
+/// relying on document order. Not used for any user-facing behavior.
+/// </summary>
+public sealed class ArtifactAutomationIdConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language)
+    {
+        var prefix = parameter as string ?? string.Empty;
+        var title = value as string ?? string.Empty;
+        return prefix + title;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
+        => throw new NotImplementedException();
+}
+
+/// <summary>
 /// Converts hex color strings (e.g., "#0F6CBD") to SolidColorBrush instances.
 /// Used for type badges in the Links section (slice 4).
 /// </summary>

@@ -29,6 +29,16 @@ public sealed partial class TaskDetailPage : Page
     private string _pendingDiskNotes = string.Empty;
     private ParentLinkResolution? _parentResolution;
 
+    /// <summary>
+    /// Per-artifact expand state (keyed by absolute Path, case-insensitive),
+    /// preserved across watcher-driven <see cref="BindArtifacts"/> refreshes so a
+    /// background file change does not collapse a row the user opened. Cleared
+    /// when the displayed task changes; stale keys are pruned on each rebind.
+    /// The live HTML preview is deliberately NOT preserved across refreshes.
+    /// </summary>
+    private readonly Dictionary<string, bool> _artifactExpandState = new(StringComparer.OrdinalIgnoreCase);
+    private string? _artifactsTaskId;
+
     public TaskDetailPage()
     {
         InitializeComponent();
@@ -273,6 +283,13 @@ public sealed partial class TaskDetailPage : Page
 
     private void BindArtifacts(string taskId)
     {
+        // Reset preserved expand state when the displayed task changes.
+        if (!string.Equals(_artifactsTaskId, taskId, StringComparison.OrdinalIgnoreCase))
+        {
+            _artifactExpandState.Clear();
+            _artifactsTaskId = taskId;
+        }
+
         IReadOnlyList<Artifact> artifacts;
         try
         {
@@ -291,8 +308,40 @@ public sealed partial class TaskDetailPage : Page
             return;
         }
 
+        var rows = ArtifactRow.Project(artifacts, DateTime.UtcNow);
+
+        // Prune expand state for artifacts that no longer exist, then apply any
+        // user-set state on top of the projection's default (newest expanded).
+        var livePaths = new HashSet<string>(rows.Select(r => r.Path), StringComparer.OrdinalIgnoreCase);
+        foreach (var stale in _artifactExpandState.Keys.Where(k => !livePaths.Contains(k)).ToList())
+        {
+            _artifactExpandState.Remove(stale);
+        }
+
+        var projected = rows
+            .Select(r => _artifactExpandState.TryGetValue(r.Path, out var expanded)
+                ? r with { IsExpanded = expanded }
+                : r)
+            .ToList();
+
         ArtifactsSection.Visibility = Visibility.Visible;
-        ArtifactsList.ItemsSource = ArtifactRow.Project(artifacts, DateTime.UtcNow);
+        ArtifactsList.ItemsSource = projected;
+    }
+
+    private void OnArtifactExpanding(Expander sender, ExpanderExpandingEventArgs args)
+    {
+        if (sender.DataContext is ArtifactRow row)
+        {
+            _artifactExpandState[row.Path] = true;
+        }
+    }
+
+    private void OnArtifactCollapsed(Expander sender, ExpanderCollapsedEventArgs args)
+    {
+        if (sender.DataContext is ArtifactRow row)
+        {
+            _artifactExpandState[row.Path] = false;
+        }
     }
 
 
@@ -594,6 +643,7 @@ public sealed partial class TaskDetailPage : Page
         App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.BacklinksChangedExternally -= OnBacklinksChangedExternally;
         App.ObsidianLauncher.NotInstalled -= OnObsidianNotInstalled;
+        App.HtmlPreview.ReleaseAll();
         App.ActiveTask.Clear();
     }
 

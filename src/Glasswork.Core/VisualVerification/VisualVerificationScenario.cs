@@ -172,7 +172,26 @@ public sealed class VisualVerificationSubtask
 public sealed class VisualVerificationArtifact
 {
     public string Name { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Raw text content for text-like artifacts (md/html/txt/svg). Takes
+    /// precedence over <see cref="Markdown"/> when set. Ignored when
+    /// <see cref="Base64"/> is provided.
+    /// </summary>
+    public string? Content { get; init; }
+
+    /// <summary>
+    /// Back-compat alias for <see cref="Content"/>; the original scenarios only
+    /// seeded markdown bodies.
+    /// </summary>
     public string Markdown { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Base64-encoded bytes for binary artifacts (e.g. a PNG). When set, the
+    /// file is written verbatim from the decoded bytes and text fields are
+    /// ignored.
+    /// </summary>
+    public string? Base64 { get; init; }
 }
 
 public sealed class VisualVerificationAction
