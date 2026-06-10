@@ -65,18 +65,19 @@ public sealed class ArtifactCommitPolicyTests
     [TestMethod]
     public void IsCommitted_HiddenAttributeFile_ReturnsFalse()
     {
-        var tempFile = Path.GetTempFileName();
+        var tempPath = Path.Combine(Path.GetTempPath(), "test-hidden-artifact.md");
         try
         {
-            File.SetAttributes(tempFile, FileAttributes.Hidden);
-            Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(tempFile));
+            File.WriteAllText(tempPath, "test content");
+            File.SetAttributes(tempPath, FileAttributes.Hidden);
+            Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(tempPath));
         }
         finally
         {
-            if (File.Exists(tempFile))
+            if (File.Exists(tempPath))
             {
-                File.SetAttributes(tempFile, FileAttributes.Normal);
-                File.Delete(tempFile);
+                File.SetAttributes(tempPath, FileAttributes.Normal);
+                File.Delete(tempPath);
             }
         }
     }
@@ -84,18 +85,19 @@ public sealed class ArtifactCommitPolicyTests
     [TestMethod]
     public void IsCommitted_SystemAttributeFile_ReturnsFalse()
     {
-        var tempFile = Path.GetTempFileName();
+        var tempPath = Path.Combine(Path.GetTempPath(), "test-system-artifact.md");
         try
         {
-            File.SetAttributes(tempFile, FileAttributes.System);
-            Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(tempFile));
+            File.WriteAllText(tempPath, "test content");
+            File.SetAttributes(tempPath, FileAttributes.System);
+            Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(tempPath));
         }
         finally
         {
-            if (File.Exists(tempFile))
+            if (File.Exists(tempPath))
             {
-                File.SetAttributes(tempFile, FileAttributes.Normal);
-                File.Delete(tempFile);
+                File.SetAttributes(tempPath, FileAttributes.Normal);
+                File.Delete(tempPath);
             }
         }
     }
