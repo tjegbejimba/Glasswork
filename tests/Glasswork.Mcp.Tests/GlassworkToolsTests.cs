@@ -1942,6 +1942,37 @@ References [[{taskId}]].
         // Assert: Should return invalid_parent error
         Assert.AreEqual("invalid_parent", result.RootElement.GetProperty("error").GetString());
     }
+
+    [TestMethod]
+    public void MoveTask_PreExistingCycle_DoesNotHang()
+    {
+        // Arrange: Create a pre-existing cycle (a -> b -> a) using VaultService.SetParent directly
+        var aJson = _tools.AddTask("Task A");
+        var bJson = _tools.AddTask("Task B");
+        var aId = JsonDocument.Parse(aJson).RootElement.GetProperty("task_id").GetString()!;
+        var bId = JsonDocument.Parse(bJson).RootElement.GetProperty("task_id").GetString()!;
+
+        // Create the cycle using VaultService.SetParent (bypasses all validation)
+        _vault.SetParent(aId, bId);
+        _vault.SetParent(bId, aId);
+
+        // Create an unrelated task
+        var cJson = _tools.AddTask("Task C");
+        var cId = JsonDocument.Parse(cJson).RootElement.GetProperty("task_id").GetString()!;
+
+        // Act: Try to move unrelated task C to the cyclic parent a
+        // This should complete (not hang) and succeed since c is not part of the cycle
+        var json = _tools.MoveTask(cId, aId);
+        var result = JsonDocument.Parse(json);
+
+        // Assert: Should succeed (c is not part of the a <-> b cycle)
+        Assert.AreEqual(cId, result.RootElement.GetProperty("task_id").GetString());
+        Assert.AreEqual(aId, result.RootElement.GetProperty("new_parent_id").GetString());
+
+        // Verify the file was updated
+        var updatedTask = _vault.Load(cId)!;
+        Assert.AreEqual(aId, updatedTask.Parent);
+    }
 }
 
 

@@ -889,23 +889,30 @@ public sealed class GlassworkTools
     /// <summary>
     /// Returns true if setting taskId's parent to potentialParent would create a cycle.
     /// Walks the ancestor chain of potentialParent to check if taskId appears.
+    /// Guards against existing cycles by tracking visited nodes.
     /// </summary>
     private bool WouldCreateCycle(string taskId, string potentialParent)
     {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var current = potentialParent;
         
         while (!string.IsNullOrEmpty(current))
         {
+            // If we've seen this node before, there's a pre-existing cycle
+            // Treat this as safe (no cycle involving taskId), but stop walking
+            if (!visited.Add(current))
+                return false;
+
             if (current == taskId)
                 return true;
-                
+
             var task = _vault.Load(current);
             if (task is null)
                 break;
-                
+
             current = task.Parent;
         }
-        
+
         return false;
     }
 
