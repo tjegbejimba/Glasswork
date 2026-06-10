@@ -22,6 +22,22 @@ public class GlassworkToolsTests
     private string ResolveTodoPath(string todoRelativePath) =>
         Path.Combine(TasksDir, todoRelativePath.Replace('/', Path.DirectorySeparatorChar));
 
+    private string UpdateTask(string taskId, string fieldsJson)
+    {
+        using var fields = JsonDocument.Parse(fieldsJson);
+        return _tools.UpdateTask(taskId, fields.RootElement);
+    }
+
+    private static string[] UpdatedFieldsFrom(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.GetProperty("updated_fields")
+            .EnumerateArray()
+            .Select(e => e.GetString()!)
+            .ToArray();
+    }
+
+
     [TestInitialize]
     public void Setup()
     {
@@ -1138,6 +1154,219 @@ public class GlassworkToolsTests
         var markerContent = File.ReadAllText(markerFile);
         StringAssert.Contains(markerContent, $"{taskId}.md",
             "Marker file must reference the written task path.");
+    }
+
+    // ───────────────────────────── update_task ──────────────────────────
+
+    [TestMethod]
+    public void UpdateTask_PartialUpdate_PreservesUntouchedFields()
+    {
+        var addJson = _tools.AddTask("Original Title", description: "Original description", status: "todo");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var task = _vault.Load(taskId)!;
+        task.Notes = "Original notes";
+        task.Priority = GlassworkTask.Priorities.High;
+        _vault.Save(task);
+
+        var updateJson = UpdateTask(taskId, """{ "status": "doing" }""");
+        var updated = _vault.Load(taskId)!;
+
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, updated.Status);
+        Assert.AreEqual("Original Title", updated.Title);
+        Assert.AreEqual("Original description", updated.Description);
+        Assert.AreEqual("Original notes", updated.Notes);
+        Assert.AreEqual(GlassworkTask.Priorities.High, updated.Priority);
+        CollectionAssert.AreEqual(new[] { "status" }, UpdatedFieldsFrom(updateJson));
+    }
+
+    [TestMethod]
+    public void UpdateTask_FullUpdate_WritesEverySupportedField()
+    {
+        var parentJson = _tools.AddTask("Updated Parent");
+        var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
+        var taskJson = _tools.AddTask("Before", description: "Before desc", status: "todo");
+        var taskId = JsonDocument.Parse(taskJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, $$"""
+            {
+              "title": "After",
+              "status": "done",
+              "description": "After desc",
+              "notes": { "value": "After notes", "append": false },
+              "priority": "urgent",
+              "parent_task_id": "{{parentId}}",
+              "ado_link": 136,
+              "ado_title": "ADO title"
+            }
+            """);
+
+        var updated = _vault.Load(taskId)!;
+        Assert.AreEqual("After", updated.Title);
+        Assert.AreEqual(GlassworkTask.Statuses.Done, updated.Status);
+        Assert.AreEqual("After desc", updated.Description);
+        Assert.AreEqual("After notes", updated.Notes);
+        Assert.AreEqual("urgent", updated.Priority);
+        Assert.AreEqual(parentId, updated.Parent);
+        Assert.AreEqual(136, updated.AdoLink);
+        Assert.AreEqual("ADO title", updated.AdoTitle);
+        CollectionAssert.AreEqual(
+            new[] { "title", "status", "description", "notes", "priority", "parent_task_id", "ado_link", "ado_title" },
+            UpdatedFieldsFrom(updateJson));
+    }
+
+    [TestMethod]
+    public void UpdateTask_NoOp_OmitsEqualProvidedFields()
+    {
+        var addJson = _tools.AddTask("Same", description: "Same desc", status: "todo");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """
+            {
+              "title": "Same",
+              "status": "todo",
+              "description": "Same desc",
+              "notes": { "value": "", "append": false }
+            }
+            """);
+
+        CollectionAssert.AreEqual(Array.Empty<string>(), UpdatedFieldsFrom(updateJson));
+    }
+
+    [TestMethod]
+    public void UpdateTask_NotesAppend_InsertsBlankLineSeparatorWithoutTripleNewlines()
+    {
+        var addJson = _tools.AddTask("Task for append");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var task = _vault.Load(taskId)!;
+        task.Notes = "Existing notes\n\n";
+        _vault.Save(task);
+
+        var updateJson = UpdateTask(taskId, """{ "notes": { "value": "Appended text", "append": true } }""");
+
+        var updated = _vault.Load(taskId)!;
+        Assert.AreEqual("Existing notes\n\nAppended text", updated.Notes);
+        Assert.IsFalse(updated.Notes.Contains("\n\n\n"));
+        CollectionAssert.AreEqual(new[] { "notes" }, UpdatedFieldsFrom(updateJson));
+    }
+
+    [TestMethod]
+    public void UpdateTask_NotesAppend_EmptyExistingBehavesAsWrite()
+    {
+        var addJson = _tools.AddTask("Task for first append");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        UpdateTask(taskId, """{ "notes": { "value": "First notes", "append": true } }""");
+
+        Assert.AreEqual("First notes", _vault.Load(taskId)!.Notes);
+    }
+
+    [TestMethod]
+    public void UpdateTask_NotesReplace_OverwritesNotes()
+    {
+        var addJson = _tools.AddTask("Task for replace");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var task = _vault.Load(taskId)!;
+        task.Notes = "Old notes";
+        _vault.Save(task);
+
+        var updateJson = UpdateTask(taskId, """{ "notes": { "value": "New notes", "append": false } }""");
+
+        Assert.AreEqual("New notes", _vault.Load(taskId)!.Notes);
+        CollectionAssert.AreEqual(new[] { "notes" }, UpdatedFieldsFrom(updateJson));
+    }
+
+    [TestMethod]
+    public void UpdateTask_InvalidStatus_ReturnsStructuredError()
+    {
+        var addJson = _tools.AddTask("Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "status": "wat" }""");
+        var doc = JsonDocument.Parse(updateJson);
+
+        Assert.AreEqual("invalid_status", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, _vault.Load(taskId)!.Status);
+    }
+
+    [TestMethod]
+    public void UpdateTask_InvalidParent_ReturnsStructuredError()
+    {
+        var addJson = _tools.AddTask("Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "parent_task_id": "ghost" }""");
+        var doc = JsonDocument.Parse(updateJson);
+
+        Assert.AreEqual("invalid_parent", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+    }
+
+    [TestMethod]
+    public void UpdateTask_NonExistent_ReturnsNotFound()
+    {
+        var updateJson = UpdateTask("does-not-exist", """{ "title": "New title" }""");
+        var doc = JsonDocument.Parse(updateJson);
+
+        Assert.AreEqual("not_found", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+    }
+
+    [TestMethod]
+    public void UpdateTask_ParentEmptyOrNullClearsParent()
+    {
+        var parentJson = _tools.AddTask("Parent");
+        var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
+        var childJson = _tools.AddTask("Child", parent_task_id: parentId);
+        var childId = JsonDocument.Parse(childJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var emptyUpdateJson = UpdateTask(childId, """{ "parent_task_id": "" }""");
+        Assert.IsNull(_vault.Load(childId)!.Parent);
+        CollectionAssert.AreEqual(new[] { "parent_task_id" }, UpdatedFieldsFrom(emptyUpdateJson));
+
+        var child = _vault.Load(childId)!;
+        child.Parent = parentId;
+        _vault.Save(child);
+
+        var nullUpdateJson = UpdateTask(childId, """{ "parent_task_id": null }""");
+        Assert.IsNull(_vault.Load(childId)!.Parent);
+        CollectionAssert.AreEqual(new[] { "parent_task_id" }, UpdatedFieldsFrom(nullUpdateJson));
+    }
+
+    [TestMethod]
+    public void UpdateTask_AppCoordinatorSuppressesExternalChangeBanner()
+    {
+        var addJson = _tools.AddTask("SelfWrite Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        var taskPath = Path.Combine(TasksDir, taskId + ".md");
+
+        UpdateTask(taskId, """{ "status": "doing" }""");
+
+        var appCoordinator = new SelfWriteCoordinator(TasksDir, TimeSpan.FromSeconds(2));
+        Assert.IsTrue(appCoordinator.IsSuppressed(taskPath),
+            "The app's coordinator must suppress the legacy external-change banner for MCP writes.");
+        Assert.IsFalse(appCoordinator.IsOwnProcessWrite(taskPath),
+            "A separate app process should learn about MCP writes from the marker file, not in-memory state.");
+    }
+
+    [TestMethod]
+    public void UpdateTask_WithTrace_EmitsWritePhase()
+    {
+        var addJson = _tools.AddTask("Trace Update Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+        var sink = new StringBuilder();
+        var logger = new McpLogger(_vaultDir, new StringWriter(sink), fileEnabled: false, traceEnabled: true);
+        _tools = new GlassworkTools(new VaultContext(_vaultDir), logger);
+
+        UpdateTask(taskId, """{ "status": "doing" }""");
+
+        var doc = JsonDocument.Parse(sink.ToString().Trim());
+        Assert.AreEqual("update_task", doc.RootElement.GetProperty("tool").GetString());
+        Assert.IsTrue(doc.RootElement.GetProperty("phases").TryGetProperty("write", out _),
+            "update_task must record a write phase when tracing is enabled.");
     }
 
     // ───────────────────────────── load_context ──────────────────────────

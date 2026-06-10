@@ -443,6 +443,258 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "update_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Update an existing task. Only fields present in the fields object are written; omitted fields remain untouched.")]
+    public string UpdateTask(
+        [Description("Task ID to update.")] string task_id,
+        [Description("Object containing fields to update: title, status, description, notes, priority, parent_task_id, ado_link, ado_title. notes may be a string/null or { value, append }.")] JsonElement fields)
+    {
+        using var scope = _logger?.BeginCall("update_task");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            var task = _vault.Load(safeId);
+            if (task is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            if (fields.ValueKind is not JsonValueKind.Object and not JsonValueKind.Null and not JsonValueKind.Undefined)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_fields", "fields must be a JSON object."));
+            }
+
+            var updatedFields = new List<string>();
+            var hasFields = fields.ValueKind == JsonValueKind.Object;
+
+            if (hasFields && fields.TryGetProperty("title", out var titleElement))
+            {
+                if (!TryReadNullableString(titleElement, "title", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                UpdateIfChanged(task.Title, value ?? string.Empty, v => task.Title = v, "title", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("status", out var statusElement))
+            {
+                if (!TryReadNullableString(statusElement, "status", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                if (!TryMapToInternalStatus(value, out var internalStatus, out var statusError))
+                    return SerializeInputError(scope, new ErrorResult("invalid_status", statusError!));
+                UpdateIfChanged(task.Status, internalStatus, v => task.Status = v, "status", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("description", out var descriptionElement))
+            {
+                if (!TryReadNullableString(descriptionElement, "description", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                UpdateIfChanged(task.Description, value ?? string.Empty, v => task.Description = v, "description", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("notes", out var notesElement))
+            {
+                if (!TryReadNotesUpdate(notesElement, out var value, out var append, out var error))
+                    return SerializeInputError(scope, error!);
+
+                var newNotes = append
+                    ? AppendNotes(task.Notes, value)
+                    : value;
+                UpdateIfChanged(task.Notes, newNotes, v => task.Notes = v, "notes", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("priority", out var priorityElement))
+            {
+                if (!TryReadNullableString(priorityElement, "priority", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                UpdateIfChanged(task.Priority, value ?? string.Empty, v => task.Priority = v, "priority", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("parent_task_id", out var parentElement))
+            {
+                if (!TryReadNullableString(parentElement, "parent_task_id", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+
+                var safeParent = SanitizeId(value);
+                if (!string.IsNullOrEmpty(safeParent) && !_vault.Exists(safeParent))
+                    return SerializeInputError(scope, new ErrorResult("invalid_parent", $"Parent task '{value}' not found."));
+
+                UpdateIfChanged(task.Parent, safeParent, v => task.Parent = v, "parent_task_id", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("ado_link", out var adoLinkElement))
+            {
+                if (!TryReadNullableInt(adoLinkElement, "ado_link", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                UpdateIfChanged(task.AdoLink, value, v => task.AdoLink = v, "ado_link", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("ado_title", out var adoTitleElement))
+            {
+                if (!TryReadNullableString(adoTitleElement, "ado_title", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                UpdateIfChanged(task.AdoTitle, value, v => task.AdoTitle = v, "ado_title", updatedFields);
+            }
+
+            if (updatedFields.Count > 0)
+            {
+                var writeSw = Stopwatch.StartNew();
+                _vault.Save(task);
+                scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+            }
+
+            return JsonSerializer.Serialize(new UpdateTaskResult(
+                TaskId: safeId,
+                UpdatedFields: updatedFields.ToArray()));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    private static string AppendNotes(string existing, string value)
+    {
+        var trimmed = existing.TrimEnd();
+        return trimmed.Length == 0 ? value : trimmed + "\n\n" + value;
+    }
+
+    private static void UpdateIfChanged<T>(T current, T next, Action<T> assign, string fieldName, List<string> updatedFields)
+    {
+        if (EqualityComparer<T>.Default.Equals(current, next)) return;
+        assign(next);
+        updatedFields.Add(fieldName);
+    }
+
+    private static bool TryReadNullableString(
+        JsonElement element,
+        string fieldName,
+        out string? value,
+        out ErrorResult? error)
+    {
+        if (element.ValueKind == JsonValueKind.Null)
+        {
+            value = null;
+            error = null;
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            value = element.GetString();
+            error = null;
+            return true;
+        }
+
+        value = null;
+        error = new ErrorResult("invalid_" + fieldName, fieldName + " must be a string or null.");
+        return false;
+    }
+
+    private static bool TryReadNullableInt(
+        JsonElement element,
+        string fieldName,
+        out int? value,
+        out ErrorResult? error)
+    {
+        if (element.ValueKind == JsonValueKind.Null)
+        {
+            value = null;
+            error = null;
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var number))
+        {
+            value = number;
+            error = null;
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), out var parsed))
+        {
+            value = parsed;
+            error = null;
+            return true;
+        }
+
+        value = null;
+        error = new ErrorResult("invalid_" + fieldName, fieldName + " must be an integer or null.");
+        return false;
+    }
+
+    private static bool TryReadNotesUpdate(
+        JsonElement element,
+        out string value,
+        out bool append,
+        out ErrorResult? error)
+    {
+        append = false;
+
+        if (element.ValueKind is JsonValueKind.String or JsonValueKind.Null)
+        {
+            if (!TryReadNullableString(element, "notes", out var raw, out error))
+            {
+                value = string.Empty;
+                return false;
+            }
+            value = raw ?? string.Empty;
+            return true;
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            value = string.Empty;
+            error = new ErrorResult("invalid_notes", "notes must be a string, null, or an object with value and append fields.");
+            return false;
+        }
+
+        if (!element.TryGetProperty("value", out var valueElement))
+        {
+            value = string.Empty;
+            error = new ErrorResult("invalid_notes", "notes.value is required.");
+            return false;
+        }
+
+        if (!TryReadNullableString(valueElement, "notes.value", out var rawValue, out error))
+        {
+            value = string.Empty;
+            error = new ErrorResult("invalid_notes", "notes.value must be a string or null.");
+            return false;
+        }
+        value = rawValue ?? string.Empty;
+
+        if (element.TryGetProperty("append", out var appendElement))
+        {
+            if (appendElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                append = appendElement.GetBoolean();
+            }
+            else if (appendElement.ValueKind != JsonValueKind.Null)
+            {
+                error = new ErrorResult("invalid_notes", "notes.append must be a boolean.");
+                return false;
+            }
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static string SerializeInputError(CallScope? scope, ErrorResult error)
+    {
+        scope?.SetResult("error");
+        return JsonSerializer.Serialize(error);
+    }
+
     [McpServerTool(Name = "load_context")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Return a task's complete context bundle: task content + artifact bodies + recursive subtasks (to depth) + backlinks. Single-call replacement for chaining get_task + N artifact reads + list_tasks + backlink discovery. Read-only.")]
@@ -854,6 +1106,10 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("my_day")] string MyDay,
         [property: JsonPropertyName("path")] string Path);
+
+    private sealed record UpdateTaskResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("updated_fields")] string[] UpdatedFields);
 
     private sealed record ErrorResult(
         [property: JsonPropertyName("error")] string Error,

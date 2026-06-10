@@ -9,6 +9,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`update_task` tool** (issue #136): enables agents to modify existing tasks. Accepts `task_id` plus a `fields` object containing any of `title`, `status`, `description`, `notes`, `priority`, `parent_task_id`, `ado_link`, and `ado_title`. Only provided fields are written; omitted fields remain untouched on disk. Returns `{ task_id, updated_fields[] }` listing field names that actually changed (no-op fields excluded). Special handling: `notes` supports `{ value, append }` to append with a blank-line separator (`existing.TrimEnd() + "\n\n" + new`) instead of replacing; empty/null `parent_task_id` clears the parent. Error cases: `not_found` (task doesn't exist), `invalid_status` (unknown status value), `invalid_parent` (parent task doesn't exist). Write registered with `SelfWriteCoordinator` to suppress App's external-change banner. Trace phase `write` instrumented under `GLASSWORK_MCP_TRACE=1`.
 - **`add_artifact` overwrite mode** (issue #134): optional `mode` parameter (`"create"` | `"overwrite"`). When `mode: "overwrite"`, the tool replaces the content of an existing artifact file instead of returning `{error: "conflict"}`. Defaults to `"create"` (create-only) for backward compatibility. Use `"overwrite"` for iterative agent workflows that refine artifacts (e.g., `plan.md`) across multiple turns without inventing `plan-v2.md` filenames. Path-traversal guards, `SelfWriteCoordinator` registration, and write-phase trace instrumentation still apply.
 
 ---
