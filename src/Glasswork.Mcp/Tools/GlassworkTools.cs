@@ -427,26 +427,83 @@ public sealed class GlassworkTools
             var artifacts = new List<ArtifactInfo>();
             if (Directory.Exists(artifactFolder))
             {
-                foreach (var file in Directory.EnumerateFiles(artifactFolder, "*.md", SearchOption.TopDirectoryOnly))
+                foreach (var file in Directory.EnumerateFiles(artifactFolder, "*", SearchOption.TopDirectoryOnly))
                 {
+                    // Filter to committed artifacts only
+                    if (!ArtifactCommitPolicy.IsCommitted(file))
+                    {
+                        continue;
+                    }
+
                     var filename = Path.GetFileName(file);
-                    string? content = null;
                     
+                    // Path traversal guard
+                    try
+                    {
+                        VaultPathGuard.EnsurePathInVault(artifactFolder, filename);
+                    }
+                    catch (ArgumentException)
+                    {
+                        continue;
+                    }
+
+                    var kind = ArtifactKindResolver.Resolve(file);
+                    var fileInfo = new FileInfo(file);
+                    var size = fileInfo.Length;
+                    var mtime = fileInfo.LastWriteTimeUtc.ToString("O");
+                    
+                    string? content = null;
+                    bool? inline = null;
+                    string? reason = null;
+                    string? kindStr = null;
+                    long? sizeNullable = null;
+                    string? mtimeNullable = null;
+
                     if (include_artifact_bodies)
                     {
-                        try
+                        kindStr = kind.ToString();
+                        sizeNullable = size;
+                        mtimeNullable = mtime;
+
+                        // Inline content only for Markdown/Text under cap
+                        if ((kind == ArtifactKind.Markdown || kind == ArtifactKind.Text) && size <= ArtifactCaps.InlineTextBytes)
                         {
-                            VaultPathGuard.EnsurePathInVault(artifactFolder, filename);
-                            content = File.ReadAllText(file);
+                            try
+                            {
+                                content = File.ReadAllText(file);
+                                inline = true;
+                            }
+                            catch
+                            {
+                                // Read error → by-reference with error reason
+                                inline = false;
+                                reason = "read_error";
+                            }
                         }
-                        catch (ArgumentException)
+                        else
                         {
-                            // Skip files that fail path traversal check
-                            continue;
+                            // By-reference: no content
+                            inline = false;
+                            if (size > ArtifactCaps.InlineTextBytes)
+                            {
+                                reason = "over_cap";
+                            }
+                            else if (kind == ArtifactKind.Html || kind == ArtifactKind.Image || kind == ArtifactKind.Other)
+                            {
+                                reason = "binary";
+                            }
                         }
                     }
                     
-                    artifacts.Add(new ArtifactInfo(filename, TodoRelativeArtifactPath(safeId, filename), content));
+                    artifacts.Add(new ArtifactInfo(
+                        Filename: filename,
+                        Path: TodoRelativeArtifactPath(safeId, filename),
+                        Content: content,
+                        Kind: kindStr,
+                        Size: sizeNullable,
+                        Mtime: mtimeNullable,
+                        Inline: inline,
+                        Reason: reason));
                 }
                 artifacts.Sort((a, b) => string.Compare(a.Filename, b.Filename, StringComparison.OrdinalIgnoreCase));
             }
@@ -472,11 +529,11 @@ public sealed class GlassworkTools
 
     [McpServerTool(Name = "add_artifact")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
-    [Description("Create a markdown artifact file in the task's artifact folder. Artifacts are agent-produced work products (plans, designs, logs). Fails with 'conflict' if the file already exists.")]
+    [Description("Create a text artifact file in the task's artifact folder. Artifacts are agent-produced work products (plans, designs, logs). Supports .md, .txt, .html, .htm extensions. Rejects binary kinds (image/other). Fails with 'conflict' if the file already exists and mode=create.")]
     public string AddArtifact(
         [Description("Task ID that owns the artifact.")] string task_id,
-        [Description("Filename for the artifact, must end in .md (e.g. 'plan.md'). Simple filenames only — no path separators.")] string filename,
-        [Description("Markdown content to write into the artifact file.")] string? content,
+        [Description("Filename for the artifact, must be a text extension: .md, .txt, .html, or .htm (e.g. 'plan.md', 'notes.txt'). Simple filenames only — no path separators.")] string filename,
+        [Description("Text content to write into the artifact file.")] string? content,
         [Description("Write mode: \"create\" (default, fails if file exists) or \"overwrite\" (create-or-replace).")] string? mode = null)
     {
         using var scope = _logger?.BeginCall("add_artifact");
@@ -514,13 +571,16 @@ public sealed class GlassworkTools
                     $"Filename '{filename}' is not allowed. Use a simple filename without path separators or '..'."));
             }
 
-            if (!filename.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            var artifactFolder = Path.Combine(_vaultPath, safeId + ".artifacts");
+
+            // Detect artifact kind to determine if file type is allowed
+            var kind = ArtifactKindResolver.Resolve(Path.Combine(artifactFolder, filename));
+            if (kind == ArtifactKind.Image || kind == ArtifactKind.Other)
             {
                 scope?.SetResult("error");
-                return JsonSerializer.Serialize(new ErrorResult("invalid_filename", "Filename must end in '.md'."));
+                return JsonSerializer.Serialize(new ErrorResult("invalid_filename",
+                    $"Filename '{filename}' has a binary extension. Use add_artifact only for text files (.md, .txt, .html, .htm). For binary artifacts, write the file directly to the artifact folder via atomic temp→rename."));
             }
-
-            var artifactFolder = Path.Combine(_vaultPath, safeId + ".artifacts");
 
             string resolvedPath;
             try
@@ -550,13 +610,60 @@ public sealed class GlassworkTools
             }
 
             Directory.CreateDirectory(artifactFolder);
+            
+            // Atomic write: temp → rename, no partial file visible on failure
+            // Use unique temp path to prevent concurrent writes from clobbering each other
+            var tempPath = resolvedPath + $".tmp.{Guid.NewGuid():N}";
+            _selfWrites.RegisterWrite(tempPath);
             _selfWrites.RegisterWrite(resolvedPath);
             var writeSw = Stopwatch.StartNew();
-            File.WriteAllText(resolvedPath, content);
+            try
+            {
+                File.WriteAllText(tempPath, content);
+                File.Move(tempPath, resolvedPath, overwrite: effectiveMode == "overwrite");
+            }
+            catch (IOException) when (effectiveMode == "create" && File.Exists(resolvedPath))
+            {
+                // Another concurrent write won the race → structured conflict
+                scope?.SetResult("conflict");
+                return JsonSerializer.Serialize(new ErrorResult("conflict",
+                    $"Artifact '{filename}' was created concurrently for task '{safeId}'."));
+            }
+            finally
+            {
+                // Clean up .tmp if it somehow remains (shouldn't happen on success)
+                if (File.Exists(tempPath))
+                {
+                    try { File.Delete(tempPath); } catch { /* best effort */ }
+                }
+            }
             scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
 
+            // Populate result with new additive fields
+            // Compute inline/reason using same decision logic as loaders
+            var fileInfo = new FileInfo(resolvedPath);
+            var size = fileInfo.Length;
+            bool inline = (kind == ArtifactKind.Markdown || kind == ArtifactKind.Text) && size <= ArtifactCaps.InlineTextBytes;
+            string? reason = null;
+            if (!inline)
+            {
+                if (size > ArtifactCaps.InlineTextBytes)
+                {
+                    reason = "over_cap";
+                }
+                else if (kind == ArtifactKind.Html || kind == ArtifactKind.Image || kind == ArtifactKind.Other)
+                {
+                    reason = "binary";
+                }
+            }
+            
             var resultPath = TodoRelativeArtifactPath(safeId, Path.GetFileName(resolvedPath));
-            return JsonSerializer.Serialize(new AddArtifactResult(Path: resultPath));
+            return JsonSerializer.Serialize(new AddArtifactResult(
+                Path: resultPath,
+                Kind: kind.ToString(),
+                Size: size,
+                Inline: inline,
+                Reason: reason));
         }
         catch
         {
@@ -1214,13 +1321,61 @@ public sealed class GlassworkTools
         var artifacts = new List<ArtifactWithBody>();
         if (!Directory.Exists(artifactFolder)) return artifacts;
 
-        foreach (var file in Directory.EnumerateFiles(artifactFolder, "*.md", SearchOption.TopDirectoryOnly))
+        // Multi-format loading: scan all files, filter by IsCommitted, resolve kind,
+        // inline only Markdown/Text under cap.
+        foreach (var filePath in Directory.EnumerateFiles(artifactFolder, "*", SearchOption.TopDirectoryOnly))
         {
-            var filename = Path.GetFileName(file);
-            string content;
-            try { content = File.ReadAllText(file); }
-            catch { content = string.Empty; }
-            artifacts.Add(new ArtifactWithBody(filename, TodoRelativeArtifactPath(safeId, filename), content));
+            var filename = Path.GetFileName(filePath);
+            
+            // Skip non-artifact files (dotfiles, .tmp, OS junk)
+            if (!ArtifactCommitPolicy.IsCommitted(filePath)) continue;
+            
+            var kind = ArtifactKindResolver.Resolve(filePath);
+            var fileInfo = new FileInfo(filePath);
+            var size = fileInfo.Length;
+            
+            string? content = null;
+            bool inline = false;
+            string? reason = null;
+            
+            // Inline text artifacts under cap; everything else by-reference
+            if ((kind == ArtifactKind.Markdown || kind == ArtifactKind.Text) && size <= ArtifactCaps.InlineTextBytes)
+            {
+                try
+                {
+                    content = File.ReadAllText(filePath);
+                    inline = true;
+                }
+                catch
+                {
+                    // Read error → by-reference with error reason
+                    inline = false;
+                    reason = "read_error";
+                }
+            }
+            else
+            {
+                // By-reference: no content
+                inline = false;
+                if (size > ArtifactCaps.InlineTextBytes)
+                {
+                    reason = "over_cap";
+                }
+                else if (kind == ArtifactKind.Html || kind == ArtifactKind.Image || kind == ArtifactKind.Other)
+                {
+                    reason = "binary";
+                }
+            }
+            
+            artifacts.Add(new ArtifactWithBody(
+                Filename: filename,
+                Path: TodoRelativeArtifactPath(safeId, filename),
+                Content: content,
+                Kind: kind.ToString(),
+                Size: size,
+                Mtime: fileInfo.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                Inline: inline,
+                Reason: reason));
         }
         artifacts.Sort((a, b) => string.Compare(a.Filename, b.Filename, StringComparison.OrdinalIgnoreCase));
         return artifacts;
@@ -1444,7 +1599,12 @@ public sealed class GlassworkTools
     private sealed record ArtifactInfo(
         [property: JsonPropertyName("filename")] string Filename,
         [property: JsonPropertyName("path")] string Path,
-        [property: JsonPropertyName("content"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Content = null);
+        [property: JsonPropertyName("content"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Content = null,
+        [property: JsonPropertyName("kind"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Kind = null,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Size = null,
+        [property: JsonPropertyName("mtime"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Mtime = null,
+        [property: JsonPropertyName("inline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Inline = null,
+        [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null);
 
     private sealed record GetTaskResult(
         [property: JsonPropertyName("id")] string Id,
@@ -1456,7 +1616,11 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("artifacts")] List<ArtifactInfo> Artifacts);
 
     private sealed record AddArtifactResult(
-        [property: JsonPropertyName("path")] string Path);
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("kind"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Kind = null,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Size = null,
+        [property: JsonPropertyName("inline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Inline = null,
+        [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null);
 
     private sealed record GetArtifactResult(
         [property: JsonPropertyName("content")] string Content,
@@ -1498,7 +1662,12 @@ public sealed class GlassworkTools
     private sealed record ArtifactWithBody(
         [property: JsonPropertyName("filename")] string Filename,
         [property: JsonPropertyName("path")] string Path,
-        [property: JsonPropertyName("content")] string Content);
+        [property: JsonPropertyName("content"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Content = null,
+        [property: JsonPropertyName("kind"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Kind = null,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Size = null,
+        [property: JsonPropertyName("mtime"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Mtime = null,
+        [property: JsonPropertyName("inline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Inline = null,
+        [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null);
 
     private sealed record LoadContextSubtree(
         [property: JsonPropertyName("task")] TaskCore Task,
