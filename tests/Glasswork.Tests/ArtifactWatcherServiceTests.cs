@@ -73,7 +73,49 @@ public class ArtifactWatcherServiceTests
     }
 
     [TestMethod]
-    public void DoesNotFire_ForNonMarkdownFiles()
+    public void Fires_ForCommittedNonMarkdownFiles()
+    {
+        // Multi-format: watch all committed files (HTML, PNG, etc.)
+        var artifactsDir = Path.Combine(_tempDir, "TASK-1.artifacts");
+        Directory.CreateDirectory(artifactsDir);
+
+        using var watcher = new ArtifactWatcherService(_tempDir, TimeSpan.FromMilliseconds(75));
+        string? observedTaskId = null;
+        var signal = new ManualResetEventSlim(false);
+
+        watcher.ArtifactChanged += (_, args) =>
+        {
+            observedTaskId = args.TaskId;
+            signal.Set();
+        };
+
+        watcher.Start();
+        File.WriteAllText(Path.Combine(artifactsDir, "report.html"), "<h1>Report</h1>");
+
+        Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "Event should fire for HTML artifact");
+        Assert.AreEqual("TASK-1", observedTaskId);
+    }
+
+    [TestMethod]
+    public void DoesNotFire_ForTransientFiles()
+    {
+        // Transient files (.tmp, .part, ~$*, etc.) must not trigger
+        var artifactsDir = Path.Combine(_tempDir, "TASK-1.artifacts");
+        Directory.CreateDirectory(artifactsDir);
+
+        using var watcher = new ArtifactWatcherService(_tempDir, TimeSpan.FromMilliseconds(75));
+        var signal = new ManualResetEventSlim(false);
+        watcher.ArtifactChanged += (_, _) => signal.Set();
+
+        watcher.Start();
+        File.WriteAllText(Path.Combine(artifactsDir, "plan.tmp"), "wip");
+
+        Assert.IsFalse(signal.Wait(TimeSpan.FromMilliseconds(500)),
+            "Transient writes must not raise events");
+    }
+
+    [TestMethod]
+    public void DoesNotFire_ForOsJunkFiles()
     {
         var artifactsDir = Path.Combine(_tempDir, "TASK-1.artifacts");
         Directory.CreateDirectory(artifactsDir);
@@ -83,11 +125,39 @@ public class ArtifactWatcherServiceTests
         watcher.ArtifactChanged += (_, _) => signal.Set();
 
         watcher.Start();
-        // FileSystemWatcher's filter is "*.md" so this is double-filtered, but assert the contract.
-        File.WriteAllText(Path.Combine(artifactsDir, "plan.tmp"), "wip");
+        File.WriteAllText(Path.Combine(artifactsDir, "Thumbs.db"), "junk");
 
         Assert.IsFalse(signal.Wait(TimeSpan.FromMilliseconds(500)),
-            "Non-md writes must not raise events");
+            "OS junk files must not raise events");
+    }
+
+    [TestMethod]
+    public void TempRenameToCommitted_RaisesOneEvent()
+    {
+        // Temp→rename pattern: write as .tmp, rename to final name
+        // Should raise one event for the final committed name
+        var artifactsDir = Path.Combine(_tempDir, "TASK-1.artifacts");
+        Directory.CreateDirectory(artifactsDir);
+
+        using var watcher = new ArtifactWatcherService(_tempDir, TimeSpan.FromMilliseconds(75));
+        string? observedPath = null;
+        var signal = new ManualResetEventSlim(false);
+
+        watcher.ArtifactChanged += (_, args) =>
+        {
+            observedPath = args.LastPath;
+            signal.Set();
+        };
+
+        watcher.Start();
+        var tmpPath = Path.Combine(artifactsDir, "report.tmp");
+        var finalPath = Path.Combine(artifactsDir, "report.html");
+        File.WriteAllText(tmpPath, "<h1>Report</h1>");
+        File.Move(tmpPath, finalPath);
+
+        Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "Event should fire for final name");
+        Assert.IsTrue(observedPath?.EndsWith("report.html", StringComparison.OrdinalIgnoreCase) ?? false,
+            $"Event should fire for final committed name, got: {observedPath}");
     }
 
     [TestMethod]
