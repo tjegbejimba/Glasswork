@@ -233,6 +233,114 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "list_subtasks")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("List task summaries filtered by parent. Returns children of a task, optionally recursive.")]
+    public string ListSubtasks(
+        [Description("Parent task ID (required).")] string parent_task_id,
+        [Description("Include descendants recursively. Default false.")] bool recursive = false,
+        [Description("Filter by status: todo, doing, or done.")] string? status_filter = null)
+    {
+        using var scope = _logger?.BeginCall("list_subtasks");
+        try
+        {
+            var sanitizedId = SanitizeId(parent_task_id);
+            if (sanitizedId is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Parent task '{parent_task_id}' not found."));
+            }
+
+            var parentTask = _vault.Load(sanitizedId);
+            if (parentTask is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Parent task '{parent_task_id}' not found."));
+            }
+
+            string? internalStatus = null;
+            if (status_filter is not null)
+            {
+                if (!TryMapToInternalStatus(status_filter, out var mapped, out var statusError))
+                {
+                    scope?.SetResult("error");
+                    return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
+                }
+                internalStatus = mapped;
+            }
+
+            // Load all tasks and filter for children
+            var all = _vault.LoadAll();
+            var subtasks = all.Where(t => t.Parent == sanitizedId).ToList();
+
+            if (recursive)
+            {
+                var expanded = new List<GlassworkTask>(subtasks);
+                var toProcess = new Queue<string>(subtasks.Select(t => t.Id));
+                var processed = new HashSet<string>(StringComparer.Ordinal) { sanitizedId };
+
+                while (toProcess.Count > 0)
+                {
+                    var currentId = toProcess.Dequeue();
+                    if (processed.Contains(currentId)) continue;
+                    processed.Add(currentId);
+
+                    var children = all.Where(t => t.Parent == currentId).ToList();
+                    expanded.AddRange(children);
+                    foreach (var child in children)
+                        toProcess.Enqueue(child.Id);
+                }
+                subtasks = expanded;
+            }
+
+            if (internalStatus is not null)
+            {
+                subtasks = subtasks.Where(t => t.Status == internalStatus).ToList();
+            }
+
+            var subtaskInfos = subtasks
+                .Select(t => new SubtaskInfo(
+                    Id: t.Id,
+                    Title: t.Title,
+                    Status: MapToExternalStatus(t.Status),
+                    Priority: t.Priority,
+                    Depth: CalculateDepth(t.Id, all),
+                    SubtaskCount: all.Count(child => child.Parent == t.Id)))
+                .ToList();
+
+            var total = subtaskInfos.Count;
+            var doneCount = subtasks.Count(t => t.Status == GlassworkTask.Statuses.Done);
+            var completionRate = total > 0 ? (double)doneCount / total : 0.0;
+
+            var result = new ListSubtasksResult(
+                Parent: new ParentInfo(sanitizedId, parentTask.Title, MapToExternalStatus(parentTask.Status)),
+                Subtasks: subtaskInfos,
+                Total: total,
+                CompletionRate: completionRate);
+
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    private int CalculateDepth(string taskId, List<GlassworkTask> all)
+    {
+        var depth = 0;
+        var current = taskId;
+        while (true)
+        {
+            var task = all.FirstOrDefault(t => t.Id == current);
+            if (task?.Parent is null) break;
+            depth++;
+            current = task.Parent;
+        }
+        return depth;
+    }
+
     [McpServerTool(Name = "search_tasks")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Search task content by topic across title, description, notes, subtasks, and tags. Returns ranked task summaries with matched fields and a snippet.")]
@@ -1341,6 +1449,25 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("link")] LinkResult Link,
         [property: JsonPropertyName("total_links")] int TotalLinks);
+
+    private sealed record ParentInfo(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("status")] string Status);
+
+    private sealed record SubtaskInfo(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("priority")] string Priority,
+        [property: JsonPropertyName("depth")] int Depth,
+        [property: JsonPropertyName("subtask_count")] int SubtaskCount);
+
+    private sealed record ListSubtasksResult(
+        [property: JsonPropertyName("parent")] ParentInfo Parent,
+        [property: JsonPropertyName("subtasks")] List<SubtaskInfo> Subtasks,
+        [property: JsonPropertyName("total")] int Total,
+        [property: JsonPropertyName("completion_rate")] double CompletionRate);
 
     [McpServerTool(Name = "add_link")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
