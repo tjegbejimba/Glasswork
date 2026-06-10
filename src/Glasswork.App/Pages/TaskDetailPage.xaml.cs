@@ -27,6 +27,7 @@ public sealed partial class TaskDetailPage : Page
     private bool _suppressNextNotesSave;
     private NotesEditController _notesEdit = new(string.Empty);
     private string _pendingDiskNotes = string.Empty;
+    private ParentLinkResolution? _parentResolution;
 
     public TaskDetailPage()
     {
@@ -214,6 +215,7 @@ public sealed partial class TaskDetailPage : Page
             ParentLinkButton.Visibility = Visibility.Collapsed;
             ParentTextRun.Text = string.Empty;
             EditParentButton.Content = "Set parent";
+            _parentResolution = null;
             return;
         }
 
@@ -221,9 +223,26 @@ public sealed partial class TaskDetailPage : Page
         ParentTextRun.Text = p;
         EditParentButton.Content = "Edit parent";
 
+        // Classify parent to determine link type
         var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim();
-        var url = AdoLinkResolver.TryResolve(p, baseUrl);
-        ParentLinkButton.Visibility = url is null ? Visibility.Collapsed : Visibility.Visible;
+        var classifier = new ParentLinkClassifier(App.Index);
+        _parentResolution = classifier.Classify(p, baseUrl);
+
+        // Update button visibility and content based on resolution
+        if (_parentResolution.Type == ParentLinkResolution.ResolutionType.InAppTask)
+        {
+            ParentLinkButton.Visibility = Visibility.Visible;
+            ParentLinkButton.Content = "Open task";
+        }
+        else if (_parentResolution.Type == ParentLinkResolution.ResolutionType.AdoUrl)
+        {
+            ParentLinkButton.Visibility = Visibility.Visible;
+            ParentLinkButton.Content = "Open in ADO";
+        }
+        else
+        {
+            ParentLinkButton.Visibility = Visibility.Collapsed;
+        }
     }
 
     private void BindSubtasks(IList<SubTask> subtasks)
@@ -1007,12 +1026,27 @@ public sealed partial class TaskDetailPage : Page
 
     private void OpenParent_Click(object sender, RoutedEventArgs e)
     {
-        var p = Task.Parent?.Trim();
-        if (string.IsNullOrEmpty(p)) return;
-        var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim();
-        var url = AdoLinkResolver.TryResolve(p, baseUrl);
-        if (url is null) return;
-        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        if (_parentResolution is null) return;
+
+        switch (_parentResolution.Type)
+        {
+            case ParentLinkResolution.ResolutionType.InAppTask:
+                // Navigate to parent task
+                var parentTask = App.Index.ById(_parentResolution.TaskId ?? string.Empty);
+                if (parentTask is not null)
+                    Frame.Navigate(typeof(TaskDetailPage), parentTask);
+                break;
+
+            case ParentLinkResolution.ResolutionType.AdoUrl:
+                // Open in external browser
+                if (_parentResolution.Url is not null)
+                    Process.Start(new ProcessStartInfo(_parentResolution.Url) { UseShellExecute = true });
+                break;
+
+            case ParentLinkResolution.ResolutionType.None:
+                // No action
+                break;
+        }
     }
 
     private async void EditParent_Click(object sender, RoutedEventArgs e)
