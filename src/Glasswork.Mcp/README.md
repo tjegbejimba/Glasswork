@@ -214,15 +214,19 @@ Update an existing task. Only provided fields are written; omitted fields remain
 ```json
 {
   "task_id": "string (required)",
-  "title": "string (optional)",
-  "status": "\"todo\" | \"doing\" | \"done\" (optional)",
-  "description": "string (optional)",
-  "notes": "string (optional)",
-  "notes_append": "boolean (optional) — when true, appends notes with blank line separator instead of replacing",
-  "priority": "string (optional)",
-  "parent_task_id": "string (optional) — pass empty string or null to clear parent",
-  "ado_link": "integer (optional) — ADO work item ID",
-  "ado_title": "string (optional) — ADO work item title"
+  "fields": {
+    "title": "string (optional)",
+    "status": "\"todo\" | \"doing\" | \"done\" (optional)",
+    "description": "string (optional)",
+    "notes": {
+      "value": "string | null (required in notes object)",
+      "append": "boolean (optional, default false)"
+    },
+    "priority": "string (optional)",
+    "parent_task_id": "string | null (optional) — empty string or null clears parent",
+    "ado_link": "integer | null (optional) — ADO work item ID; null clears it",
+    "ado_title": "string | null (optional) — ADO work item title"
+  }
 }
 ```
 
@@ -238,9 +242,9 @@ Update an existing task. Only provided fields are written; omitted fields remain
 The `updated_fields` array lists field names that actually changed. Fields provided but already equal to the current value are omitted (no-op updates don't appear here).
 
 **Notes append semantics:**
-- When `notes_append` is `true` and existing Notes is non-empty: inserts a blank line separator (`existing.TrimEnd() + "\n\n" + new`)
-- When `notes_append` is `true` and existing Notes is empty: writes the new value directly
-- When `notes_append` is `false` or omitted: replaces the entire Notes body
+- When `fields.notes.append` is `true` and existing Notes is non-empty: inserts a blank line separator (`existing.TrimEnd() + "\n\n" + new`)
+- When `fields.notes.append` is `true` and existing Notes is empty: writes the new value directly
+- When `fields.notes.append` is `false` or omitted: replaces the entire Notes body
 
 **Output (errors)**
 
