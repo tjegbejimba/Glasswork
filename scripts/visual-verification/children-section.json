@@ -1,0 +1,33 @@
+{
+  "name": "Children section in task detail",
+  "startUri": "glasswork://task/visual-parent-task",
+  "tasks": [
+    {
+      "id": "visual-parent-task",
+      "title": "Visual verification parent task",
+      "description": "This parent task has child tasks. The TaskDetailPage should show a Children section.",
+      "status": "todo",
+      "priority": "high"
+    },
+    {
+      "id": "visual-child-task-1",
+      "title": "Visual child task 1",
+      "description": "First child of visual-parent-task",
+      "status": "todo",
+      "parent": "visual-parent-task"
+    },
+    {
+      "id": "visual-child-task-2",
+      "title": "Visual child task 2",
+      "description": "Second child of visual-parent-task",
+      "status": "done",
+      "parent": "visual-parent-task"
+    }
+  ],
+  "actions": [],
+  "captures": [
+    {
+      "name": "task-detail-with-children"
+    }
+  ]
+}
