@@ -45,7 +45,13 @@ public sealed class GlassworkTools
         [Description("Task title (required).")] string title,
         [Description("Optional description text. Becomes the Description body section (ADR 0002).")] string? description = null,
         [Description("Optional parent task ID.")] string? parent_task_id = null,
-        [Description("Task status: todo, doing, or done. Defaults to todo.")] string? status = null)
+        [Description("Task status: todo, doing, or done. Defaults to todo.")] string? status = null,
+        [Description("Optional priority: low, medium, high, or urgent. Defaults to medium.")] string? priority = null,
+        [Description("Optional due date (yyyy-MM-dd format).")] string? due_date = null,
+        [Description("Optional scheduled date (yyyy-MM-dd format). Sets my_day to this future date.")] string? scheduled = null,
+        [Description("If true, sets my_day to today.")] bool? my_day = null,
+        [Description("Optional notes content. Becomes the Notes section (ADR 0002).")] string? notes = null,
+        [Description("Idempotency mode: 'error' (default - fail on duplicate title), 'return_existing' (return existing task), or 'update' (update existing task).")] string? if_exists = null)
     {
         using var scope = _logger?.BeginCall("add_task");
         try
@@ -62,6 +68,51 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
             }
 
+            var ifExistsMode = if_exists ?? "error";
+
+            // Check if task with this title already exists (for if_exists modes)
+            GlassworkTask? existing = null;
+            if (ifExistsMode != "error")
+            {
+                var allTaskIds = Directory.EnumerateFiles(_vaultPath, "*.md")
+                    .Select(f => Path.GetFileNameWithoutExtension(f))
+                    .ToList();
+                
+                foreach (var taskId in allTaskIds)
+                {
+                    var existingTask = _vault.Load(taskId);
+                    if (existingTask != null && existingTask.Title.Equals(title, StringComparison.OrdinalIgnoreCase))
+                    {
+                        existing = existingTask;
+                        break;
+                    }
+                }
+
+                if (existing != null)
+                {
+                    if (ifExistsMode == "return_existing")
+                    {
+                        return JsonSerializer.Serialize(new AddTaskResult(TaskId: existing.Id, Path: TodoRelativeTaskPath(existing.Id)));
+                    }
+                    else if (ifExistsMode == "update")
+                    {
+                        // Build fields object for UpdateTask
+                        var updateFields = new Dictionary<string, object?>();
+                        if (description != null) updateFields["description"] = description;
+                        if (status != null) updateFields["status"] = status;
+                        if (priority != null) updateFields["priority"] = priority;
+                        if (due_date != null) updateFields["due_date"] = due_date;
+                        if (scheduled != null) updateFields["scheduled"] = scheduled;
+                        if (my_day.HasValue) updateFields["my_day"] = my_day.Value;
+                        if (notes != null) updateFields["notes"] = notes;
+
+                        var fieldsJson = JsonSerializer.Serialize(updateFields);
+                        var fieldsElement = JsonDocument.Parse(fieldsJson).RootElement;
+                        return UpdateTask(existing.Id, fieldsElement);
+                    }
+                }
+            }
+
             var safeParent = SanitizeId(parent_task_id);
 
             var baseId = VaultService.GenerateId(title);
@@ -70,15 +121,36 @@ public sealed class GlassworkTools
             while (_vault.Exists(id))
                 id = $"{baseId}-{counter++}";
 
+            var taskPriority = priority ?? GlassworkTask.Priorities.Medium;
+
+            DateTime? dueDate = null;
+            if (!string.IsNullOrWhiteSpace(due_date) && DateTime.TryParseExact(due_date, "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out var parsedDue))
+            {
+                dueDate = parsedDue;
+            }
+
+            DateTime? myDayDate = null;
+            if (my_day == true)
+            {
+                myDayDate = DateTime.Today;
+            }
+            else if (!string.IsNullOrWhiteSpace(scheduled) && DateTime.TryParseExact(scheduled, "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out var parsedScheduled))
+            {
+                myDayDate = parsedScheduled;
+            }
+
             var task = new GlassworkTask
             {
                 Id = id,
                 Title = title,
                 Status = internalStatus,
-                Priority = GlassworkTask.Priorities.Medium,
+                Priority = taskPriority,
                 Created = DateTime.Today,
                 Parent = safeParent,
                 Description = description ?? string.Empty,
+                Due = dueDate,
+                MyDay = myDayDate,
+                Notes = notes ?? string.Empty,
             };
 
             var writeSw = Stopwatch.StartNew();

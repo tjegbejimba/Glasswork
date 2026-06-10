@@ -207,6 +207,84 @@ public class GlassworkToolsTests
             "Marker file must reference the written task path.");
     }
 
+    [TestMethod]
+    public void AddTask_WithPriority_StoresPriorityInFrontmatter()
+    {
+        var json = _tools.AddTask("High priority task", priority: "high");
+        var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
+
+        var content = File.ReadAllText(ResolveTodoPath(path));
+        StringAssert.Contains(content, "priority: high");
+    }
+
+    [TestMethod]
+    public void AddTask_WithDueDate_StoresDueDateInFrontmatter()
+    {
+        var json = _tools.AddTask("Task with due date", due_date: "2026-12-31");
+        var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
+
+        var content = File.ReadAllText(ResolveTodoPath(path));
+        StringAssert.Contains(content, "due: 2026-12-31");
+    }
+
+    [TestMethod]
+    public void AddTask_WithMyDayTrue_SetsMyDayToToday()
+    {
+        var json = _tools.AddTask("My Day task", my_day: true);
+        var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
+
+        var content = File.ReadAllText(ResolveTodoPath(path));
+        var expectedDate = DateTime.Today.ToString("yyyy-MM-dd");
+        StringAssert.Contains(content, $"my_day: {expectedDate}");
+    }
+
+    [TestMethod]
+    public void AddTask_WithScheduled_SetsMyDayToFutureDate()
+    {
+        var json = _tools.AddTask("Scheduled task", scheduled: "2026-12-31");
+        var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
+
+        var content = File.ReadAllText(ResolveTodoPath(path));
+        StringAssert.Contains(content, "my_day: 2026-12-31");
+    }
+
+    [TestMethod]
+    public void AddTask_WithNotes_StoresNotesSection()
+    {
+        var json = _tools.AddTask("Task with notes", notes: "These are my notes.");
+        var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
+
+        var content = File.ReadAllText(ResolveTodoPath(path));
+        StringAssert.Contains(content, "## Notes");
+        StringAssert.Contains(content, "These are my notes.");
+    }
+
+    [TestMethod]
+    public void AddTask_IfExistsReturnExisting_ReturnsSameTaskId()
+    {
+        var json1 = _tools.AddTask("Unique Task For Idempotency");
+        var id1 = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
+
+        var json2 = _tools.AddTask("Unique Task For Idempotency", if_exists: "return_existing");
+        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
+
+        Assert.AreEqual(id1, id2, "if_exists: return_existing should return the existing task ID.");
+    }
+
+    [TestMethod]
+    public void AddTask_IfExistsUpdate_UpdatesExistingTask()
+    {
+        var json1 = _tools.AddTask("Task To Update", description: "Original description");
+        var id1 = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
+
+        var json2 = _tools.AddTask("Task To Update", description: "Updated description", if_exists: "update");
+        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
+
+        Assert.AreEqual(id1, id2);
+        var content = File.ReadAllText(ResolveTodoPath($"{id2}.md"));
+        StringAssert.Contains(content, "Updated description");
+    }
+
     // ───────────────────────────── list_tasks ───────────────────────────
 
     [TestMethod]
