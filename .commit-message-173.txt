@@ -1,0 +1,20 @@
+feat: add children section to task detail page
+
+Implements Issue #173 - display child tasks in TaskDetailPage.
+
+Backend changes:
+- Added IndexService.GetChildren(taskId) to query tasks whose parent field matches taskId
+- Added ChildRow model for UI projection (mirrors BacklinkRow pattern)
+
+UI changes:
+- Added ChildrenSection to TaskDetailPage.xaml after LinksSection
+- Added BindChildren() method and Child_Click() handler
+- Wired OnAnyTaskFileChangedExternally to refresh children on vault changes
+- Section shows "Children (n)" header with count, hidden when n == 0
+- Each child row shows task title and navigates in-app on click
+
+Tests:
+- Added IndexServiceGetChildrenTests with 3 test cases
+- All existing tests still pass (803 total)
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

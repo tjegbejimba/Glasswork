@@ -122,6 +122,31 @@ public class IndexService
     }
 
     /// <summary>
+    /// Returns all tasks whose <c>parent</c> field matches the given task id,
+    /// sorted by title. Returns defensive clones; mutating elements does not
+    /// affect the canonical store. Returns an empty list when no children exist.
+    /// </summary>
+    public IReadOnlyList<GlassworkTask> GetChildren(string taskId)
+    {
+        if (string.IsNullOrWhiteSpace(taskId))
+            return Array.Empty<GlassworkTask>();
+
+        var trimmedId = taskId.Trim();
+        
+        lock (_gate)
+        {
+            var children = _store.Values
+                .Where(t => !string.IsNullOrWhiteSpace(t.Parent) && 
+                           t.Parent.Trim().Equals(trimmedId, StringComparison.Ordinal))
+                .OrderBy(t => t.Title, StringComparer.Ordinal)
+                .Select(t => t.Clone())
+                .ToList();
+            
+            return children;
+        }
+    }
+
+    /// <summary>
     /// Hydrate the in-memory store from <see cref="VaultService.LoadAll"/>.
     /// Idempotent. Intentionally does <b>not</b> raise <see cref="TasksChanged"/> —
     /// this is a snapshot, not a delta. Call once during app startup

@@ -47,7 +47,10 @@ public sealed partial class TaskDetailPage : Page
             // (FocusSubtaskTitle is currently informational; UI affordance for scrolling could
             // be added later).
             if (App.Watcher is not null)
+            {
                 App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
+                App.Watcher.TaskFileChange += OnAnyTaskFileChange;
+            }
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(nav.Task);
@@ -56,7 +59,10 @@ public sealed partial class TaskDetailPage : Page
         if (e.Parameter is GlassworkTask task)
         {
             if (App.Watcher is not null)
+            {
                 App.Watcher.TaskFileChanged += OnTaskFileChangedExternally;
+                App.Watcher.TaskFileChange += OnAnyTaskFileChange;
+            }
             App.ArtifactChangedExternally += OnArtifactChangedExternally;
             App.BacklinksChangedExternally += OnBacklinksChangedExternally;
             ApplyTask(task);
@@ -85,6 +91,7 @@ public sealed partial class TaskDetailPage : Page
         BindRelated(task.RelatedLinks);
         BindArtifacts(task.Id);
         BindLinks(task.Links);
+        BindChildren(task.Id);
         BindBacklinks(task.Id);
 
         CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
@@ -288,6 +295,39 @@ public sealed partial class TaskDetailPage : Page
         ArtifactsList.ItemsSource = ArtifactRow.Project(artifacts, DateTime.UtcNow);
     }
 
+
+    private void BindChildren(string taskId)
+    {
+        IReadOnlyList<GlassworkTask> children;
+        try
+        {
+            children = App.Index?.GetChildren(taskId) ?? Array.Empty<GlassworkTask>();
+        }
+        catch
+        {
+            // Children lookup is best-effort — never block the task view.
+            children = Array.Empty<GlassworkTask>();
+        }
+
+        if (children.Count == 0)
+        {
+            ChildrenSection.Visibility = Visibility.Collapsed;
+            ChildrenList.ItemsSource = null;
+            return;
+        }
+
+        ChildrenSection.Visibility = Visibility.Visible;
+        ChildrenHeader.Text = $"Children ({children.Count})";
+        ChildrenList.ItemsSource = ChildRow.Project(children);
+    }
+
+    private void Child_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not ChildRow row) return;
+        var child = App.Index?.ById(row.Id);
+        if (child is null) return;
+        Frame.Navigate(typeof(TaskDetailPage), child);
+    }
 
     private void BindBacklinks(string taskId)
     {
@@ -547,7 +587,10 @@ public sealed partial class TaskDetailPage : Page
     {
         base.OnNavigatedFrom(e);
         if (App.Watcher is not null)
+        {
             App.Watcher.TaskFileChanged -= OnTaskFileChangedExternally;
+            App.Watcher.TaskFileChange -= OnAnyTaskFileChange;
+        }
         App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.BacklinksChangedExternally -= OnBacklinksChangedExternally;
         App.ObsidianLauncher.NotInstalled -= OnObsidianNotInstalled;
@@ -566,6 +609,19 @@ public sealed partial class TaskDetailPage : Page
         // touching the model or any banners. The watcher is filtered through
         // SelfWriteCoordinator, so this only fires for external edits (Obsidian, agents).
         DispatcherQueue.TryEnqueue(HandleExternalFileChange);
+    }
+
+    private void OnAnyTaskFileChange(object? sender, TaskFileChange change)
+    {
+        // Refresh children list on any task file change. This catches:
+        // - New tasks created with parent = current task id (including MCP/agent writes)
+        // - Existing tasks changing their parent field to/from current task id
+        // - Child tasks being deleted
+        // Uses TaskFileChange (not TaskFileChanged) so agent/MCP writes trigger refresh.
+        // Slightly inefficient (refreshes on all changes) but simple and safe.
+        var id = Task?.Id;
+        if (string.IsNullOrEmpty(id)) return;
+        DispatcherQueue.TryEnqueue(() => BindChildren(id));
     }
 
     private void HandleExternalFileChange()
