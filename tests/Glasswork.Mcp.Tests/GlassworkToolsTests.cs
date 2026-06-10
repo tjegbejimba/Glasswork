@@ -868,12 +868,12 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void AddArtifact_NonMdFilename_ReturnsInvalidFilenameError()
+    public void AddArtifact_BinaryFilename_ReturnsInvalidFilenameError()
     {
         var addJson = _tools.AddTask("Invalid Ext Task");
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
 
-        var json = _tools.AddArtifact(taskId, "plan.txt", "content");
+        var json = _tools.AddArtifact(taskId, "screenshot.png", "content");
         var doc = JsonDocument.Parse(json);
 
         Assert.AreEqual("invalid_filename", doc.RootElement.GetProperty("error").GetString());
