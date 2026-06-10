@@ -95,6 +95,24 @@ public class BacklogViewModelIndexSubscriptionTests
     }
 
     [TestMethod]
+    public void Refresh_OrdersReadyBacklogTasksByUrgencyScore()
+    {
+        var high = _taskService.CreateTask("High priority no due", priority: GlassworkTask.Priorities.High);
+        high.Created = DateTime.Today;
+        _vault.Save(high);
+        var due = _taskService.CreateTask("Medium due today", priority: GlassworkTask.Priorities.Medium);
+        due.Due = DateTime.Today;
+        due.Created = DateTime.Today;
+        _vault.Save(due);
+
+        var vm = new BacklogViewModel(_vault, _taskService, _index);
+        vm.Refresh();
+
+        Assert.AreEqual("Medium due today", vm.Tasks[0].Title);
+        Assert.AreEqual("High priority no due", vm.Tasks[1].Title);
+    }
+
+    [TestMethod]
     public void SelectedSavedTaskView_FiltersBacklogTasks()
     {
         var urgent = _taskService.CreateTask("Urgent customer work");

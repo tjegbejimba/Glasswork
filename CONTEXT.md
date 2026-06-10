@@ -35,7 +35,8 @@ The in-memory shape of a task and its subtasks. Pure C# in
 `Glasswork.Core.Models`. No I/O, no UI dependencies.
 
 - **Owns**: `GlassworkTask`, `SubTask`, status enums, derived helpers
-  (`IsRich`, `ShowAsCard`, `IsEffectivelyDone`, etc.).
+  (`IsRich`, `ShowAsCard`, `IsEffectivelyDone`, etc.), and computed
+  Task actionability signals (`Ready`, `Urgency score`).
 - **Speaks to**: Vault Sync (deserialized from), Presentation (bound to).
 - **Does not own**: persistence, file paths, watch state.
 - **Three-tier task prose model** (see ADR 0002):

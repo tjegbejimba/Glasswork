@@ -95,6 +95,25 @@ public class IndexMarkdownWriterTests
     }
 
     [TestMethod]
+    public void WriteCurrent_IndexIncludesReadinessAndUrgencySignals()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "due",
+            Title = "Due",
+            Status = GlassworkTask.Statuses.Todo,
+            Due = DateTime.Today,
+        });
+        _index.EnsureLoaded();
+
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
+
+        var content = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
+        StringAssert.Contains(content, "| Task | Ready | Urgency | Priority |");
+        StringAssert.Contains(content, "| [[due|Due]] | yes |");
+    }
+
+    [TestMethod]
     public void Dispose_UnsubscribesFromChanged()
     {
         var writer = new IndexMarkdownWriter(_index, _tempDir);

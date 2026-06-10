@@ -172,7 +172,7 @@ public sealed class GlassworkTools
     public string ListTasks(
         [Description("Filter by status: todo, doing, or done.")] string? status = null,
         [Description("Filter by parent task ID.")] string? parent_task_id = null,
-        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values: title, status, parent_id, path, created, priority, due, my_day, in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
+        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values: title, status, parent_id, path, created, priority, due, start, my_day, defer_until, ready, urgency_score, backlink_count, in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
     {
         using var scope = _logger?.BeginCall("list_tasks");
         try
@@ -232,23 +232,31 @@ public sealed class GlassworkTools
             scope?.RecordPhase("sort", sortSw.ElapsedMilliseconds);
 
             scope?.SetCount("task_count", sortedTasks.Count);
+            var backlinkCounts = BuildBacklinkCounts(sortedTasks);
 
             var projection = NormalizeFieldProjection(fields);
             if (projection.Mode == FieldProjectionMode.UseDefault)
             {
                 var summaries = sortedTasks
-                    .Select(t => new TaskSummary(
-                        Id: t.Id,
-                        Title: t.Title,
-                        Status: MapToExternalStatus(t.Status),
-                        ParentId: t.Parent,
-                        Path: TodoRelativeTaskPath(t.Id)))
+                    .Select(t =>
+                    {
+                        var signals = SignalsFor(t, backlinkCounts);
+                        return new TaskSummary(
+                            Id: t.Id,
+                            Title: t.Title,
+                            Status: MapToExternalStatus(t.Status),
+                            ParentId: t.Parent,
+                            Path: TodoRelativeTaskPath(t.Id),
+                            Ready: signals.Ready,
+                            UrgencyScore: signals.UrgencyScore,
+                            BacklinkCount: signals.BacklinkCount);
+                    })
                     .ToList();
                 return JsonSerializer.Serialize(new ListTasksResult(summaries));
             }
 
             var projected = sortedTasks
-                .Select(t => ProjectTaskSummary(t, projection.Fields))
+                .Select(t => ProjectTaskSummary(t, projection.Fields, backlinkCounts))
                 .ToList();
             return JsonSerializer.Serialize(new ListTasksProjectedResult(projected));
         }
@@ -448,14 +456,26 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("invalid_argument", ex.Message));
             }
 
+            var tasksById = _vault.LoadAll().ToDictionary(t => t.Id, StringComparer.Ordinal);
+            var backlinkCounts = BuildBacklinkCounts(tasksById.Values);
             var hits = searchHits
-                .Select(h => new TaskSearchSummary(
-                    Id: h.Id,
-                    Title: h.Title,
-                    Status: h.Status,
-                    ParentId: h.ParentId,
-                    MatchedIn: h.MatchedIn.ToArray(),
-                    Snippet: h.Snippet))
+                .Select(h =>
+                {
+                    tasksById.TryGetValue(h.Id, out var task);
+                    var signals = task is null
+                        ? new TaskActionabilitySignals(true, 0, 0)
+                        : SignalsFor(task, backlinkCounts);
+                    return new TaskSearchSummary(
+                        Id: h.Id,
+                        Title: h.Title,
+                        Status: h.Status,
+                        ParentId: h.ParentId,
+                        MatchedIn: h.MatchedIn.ToArray(),
+                        Snippet: h.Snippet,
+                        Ready: signals.Ready,
+                        UrgencyScore: signals.UrgencyScore,
+                        BacklinkCount: signals.BacklinkCount);
+                })
                 .ToList();
             scope?.SetCount("task_count", hits.Count);
             return JsonSerializer.Serialize(new SearchTasksResult(hits));
@@ -1563,7 +1583,8 @@ public sealed class GlassworkTools
 
     private static readonly HashSet<string> AllowedSummaryFields = new(StringComparer.Ordinal)
     {
-        "title", "status", "parent_id", "path", "created", "priority", "due", "my_day", "in_my_day_today",
+        "title", "status", "parent_id", "path", "created", "priority", "due", "start", "my_day", "defer_until",
+        "ready", "urgency_score", "backlink_count", "in_my_day_today",
     };
 
     /// <summary>
@@ -1595,9 +1616,13 @@ public sealed class GlassworkTools
             : (FieldProjectionMode.Projection, set);
     }
 
-    private Dictionary<string, object?> ProjectTaskSummary(GlassworkTask task, HashSet<string> fields)
+    private Dictionary<string, object?> ProjectTaskSummary(
+        GlassworkTask task,
+        HashSet<string> fields,
+        IReadOnlyDictionary<string, int> backlinkCounts)
     {
         var dict = new Dictionary<string, object?> { ["id"] = task.Id };
+        var signals = SignalsFor(task, backlinkCounts);
         if (fields.Contains("title")) dict["title"] = task.Title;
         if (fields.Contains("status")) dict["status"] = MapToExternalStatus(task.Status);
         if (fields.Contains("parent_id")) dict["parent_id"] = task.Parent;
@@ -1605,13 +1630,43 @@ public sealed class GlassworkTools
         if (fields.Contains("created")) dict["created"] = task.Created.ToString("yyyy-MM-dd");
         if (fields.Contains("priority")) dict["priority"] = task.Priority;
         if (fields.Contains("due")) dict["due"] = task.Due?.ToString("yyyy-MM-dd");
+        if (fields.Contains("start")) dict["start"] = task.Start?.ToString("yyyy-MM-dd");
         if (fields.Contains("my_day")) dict["my_day"] = task.MyDay?.ToString("yyyy-MM-dd");
+        if (fields.Contains("defer_until")) dict["defer_until"] = task.DeferUntil?.ToString("yyyy-MM-dd");
+        if (fields.Contains("ready")) dict["ready"] = signals.Ready;
+        if (fields.Contains("urgency_score")) dict["urgency_score"] = signals.UrgencyScore;
+        if (fields.Contains("backlink_count")) dict["backlink_count"] = signals.BacklinkCount;
         if (fields.Contains("in_my_day_today"))
             dict["in_my_day_today"] = MyDayPromotionPolicy.IsTaskInMyDayToday(
                 task,
                 DateOnly.FromDateTime(DateTime.Today),
                 new HashSet<string>(StringComparer.Ordinal));
         return dict;
+    }
+
+    private TaskActionabilitySignals SignalsFor(
+        GlassworkTask task,
+        IReadOnlyDictionary<string, int> backlinkCounts)
+    {
+        return TaskActionability.Compute(
+            task,
+            new TaskSignalContext(
+                DateOnly.FromDateTime(DateTime.Today),
+                backlinkCounts.TryGetValue(task.Id, out var count) ? count : 0));
+    }
+
+    private Dictionary<string, int> BuildBacklinkCounts(IEnumerable<GlassworkTask> tasks)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var index = new BacklinkIndex();
+        try { index.Build(_vaultRoot); }
+        catch { return counts; }
+
+        foreach (var task in tasks)
+        {
+            counts[task.Id] = index.GetBacklinks(task.Id).Count;
+        }
+        return counts;
     }
 
     // ────── output path helpers (slash-normalized, always forward slashes) ──────
@@ -1649,7 +1704,10 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("title")] string Title,
         [property: JsonPropertyName("status")] string Status,
         [property: JsonPropertyName("parent_id")] string? ParentId,
-        [property: JsonPropertyName("path")] string Path);
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("ready")] bool Ready,
+        [property: JsonPropertyName("urgency_score")] double UrgencyScore,
+        [property: JsonPropertyName("backlink_count")] int BacklinkCount);
 
     private sealed record ListTasksResult(
         [property: JsonPropertyName("tasks")] List<TaskSummary> Tasks);
@@ -1663,7 +1721,10 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("status")] string Status,
         [property: JsonPropertyName("parent_id")] string? ParentId,
         [property: JsonPropertyName("matched_in")] string[] MatchedIn,
-        [property: JsonPropertyName("snippet")] string Snippet);
+        [property: JsonPropertyName("snippet")] string Snippet,
+        [property: JsonPropertyName("ready")] bool Ready,
+        [property: JsonPropertyName("urgency_score")] double UrgencyScore,
+        [property: JsonPropertyName("backlink_count")] int BacklinkCount);
 
     private sealed record SearchTasksResult(
         [property: JsonPropertyName("tasks")] List<TaskSearchSummary> Tasks);

@@ -20,7 +20,9 @@ public class FrontmatterParserTests
             created: 2026-04-17
             completed_at: 2026-04-18
             due: 2026-04-20
+            start: 2026-04-19
             my_day: 2026-04-17
+            defer_until: 2026-04-21
             ado_link: 12345
             ado_title: "Dev cert setup"
             parent: parent-task
@@ -48,7 +50,9 @@ public class FrontmatterParserTests
         Assert.AreEqual(new DateTime(2026, 4, 17), task.Created);
         Assert.AreEqual(new DateTime(2026, 4, 18), task.CompletedAt);
         Assert.AreEqual(new DateTime(2026, 4, 20), task.Due);
+        Assert.AreEqual(new DateTime(2026, 4, 19), task.Start);
         Assert.AreEqual(new DateTime(2026, 4, 17), task.MyDay);
+        Assert.AreEqual(new DateTime(2026, 4, 21), task.DeferUntil);
         Assert.AreEqual(12345, task.AdoLink);
         Assert.AreEqual("Dev cert setup", task.AdoTitle);
         Assert.AreEqual("parent-task", task.Parent);
@@ -80,7 +84,9 @@ public class FrontmatterParserTests
             Priority = "high",
             Created = new DateTime(2026, 1, 15),
             Due = new DateTime(2026, 2, 1),
+            Start = new DateTime(2026, 1, 20),
             MyDay = new DateTime(2026, 1, 15),
+            DeferUntil = new DateTime(2026, 1, 22),
             AdoLink = 999,
             AdoTitle = "ADO item title",
             Parent = "parent-id",
@@ -103,7 +109,9 @@ public class FrontmatterParserTests
         Assert.AreEqual(original.Priority, parsed.Priority);
         Assert.AreEqual(original.Created, parsed.Created);
         Assert.AreEqual(original.Due, parsed.Due);
+        Assert.AreEqual(original.Start, parsed.Start);
         Assert.AreEqual(original.MyDay, parsed.MyDay);
+        Assert.AreEqual(original.DeferUntil, parsed.DeferUntil);
         Assert.AreEqual(original.AdoLink, parsed.AdoLink);
         Assert.AreEqual(original.AdoTitle, parsed.AdoTitle);
         Assert.AreEqual(original.Parent, parsed.Parent);

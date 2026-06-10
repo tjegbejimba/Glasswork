@@ -77,7 +77,9 @@ public partial class FrontmatterParser
             Created = ParseDate(frontmatter.Created) ?? DateTime.Today,
             CompletedAt = ParseDate(frontmatter.CompletedAt),
             Due = ParseDate(frontmatter.Due),
+            Start = ParseDate(frontmatter.Start),
             MyDay = ParseDate(frontmatter.MyDay),
+            DeferUntil = ParseDate(frontmatter.DeferUntil),
             AdoLink = frontmatter.AdoLink,
             AdoTitle = frontmatter.AdoTitle,
             Parent = frontmatter.Parent,
@@ -124,7 +126,9 @@ public partial class FrontmatterParser
             Created = task.Created.ToString("yyyy-MM-dd"),
             CompletedAt = task.CompletedAt?.ToString("yyyy-MM-dd"),
             Due = task.Due?.ToString("yyyy-MM-dd"),
+            Start = task.Start?.ToString("yyyy-MM-dd"),
             MyDay = task.MyDay?.ToString("yyyy-MM-dd"),
+            DeferUntil = task.DeferUntil?.ToString("yyyy-MM-dd"),
             Parent = task.Parent,
             ContextLinks = task.ContextLinks.Count > 0 ? task.ContextLinks : null,
             Tags = task.Tags.Count > 0 ? task.Tags : null,
@@ -364,8 +368,11 @@ public partial class FrontmatterParser
         [YamlMember(Alias = "completed_at")]
         public string? CompletedAt { get; set; }
         public string? Due { get; set; }
+        public string? Start { get; set; }
         [YamlMember(Alias = "my_day")]
         public string? MyDay { get; set; }
+        [YamlMember(Alias = "defer_until")]
+        public string? DeferUntil { get; set; }
         [YamlMember(Alias = "ado_link")]
         public int? AdoLink { get; set; }
         [YamlMember(Alias = "ado_title")]

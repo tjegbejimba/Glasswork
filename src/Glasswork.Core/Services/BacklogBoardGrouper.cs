@@ -12,7 +12,7 @@ public static class BacklogBoardGrouper
 {
     /// <summary>
     /// Groups tasks into board columns (To Do, In Progress).
-    /// Excludes done tasks. Sorts within each column by priority (urgent → high) then created date descending.
+    /// Excludes done tasks. Sorts within each column by urgency score, then created date descending.
     /// </summary>
     public static List<BoardColumn> GroupByStatus(IEnumerable<GlassworkTask> tasks)
     {
@@ -35,17 +35,12 @@ public static class BacklogBoardGrouper
         };
     }
 
-    private static (int, long) SortKey(GlassworkTask t)
+    private static (double, long, string) SortKey(GlassworkTask t)
     {
-        var priorityRank = t.Priority switch
-        {
-            GlassworkTask.Priorities.Urgent => 0,
-            GlassworkTask.Priorities.High => 1,
-            GlassworkTask.Priorities.Medium => 2,
-            GlassworkTask.Priorities.Low => 3,
-            _ => 4
-        };
-        // Negate ticks to sort descending by created date
-        return (priorityRank, -t.Created.Ticks);
+        var signals = TaskActionability.Compute(
+            t,
+            new TaskSignalContext(System.DateOnly.FromDateTime(System.DateTime.Today)));
+        // Negate urgency and ticks to sort both descending.
+        return (-signals.UrgencyScore, -t.Created.Ticks, t.Id);
     }
 }

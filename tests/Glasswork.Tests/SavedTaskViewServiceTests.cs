@@ -47,6 +47,31 @@ public sealed class SavedTaskViewServiceTests
     }
 
     [TestMethod]
+    public void Apply_FiltersByComputedReadySignal()
+    {
+        var service = new SavedTaskViewService(new JsonFileUiStateService(_statePath));
+        var view = service.Save("Ready work", new TaskViewFilter { Ready = true });
+        var ready = new GlassworkTask
+        {
+            Id = "ready",
+            Title = "Ready",
+            Status = GlassworkTask.Statuses.Todo,
+        };
+        var scheduled = new GlassworkTask
+        {
+            Id = "scheduled",
+            Title = "Scheduled",
+            Status = GlassworkTask.Statuses.Todo,
+            MyDay = DateTime.Today.AddDays(3),
+        };
+
+        var result = service.Apply([ready, scheduled], view, DateOnly.FromDateTime(DateTime.Today));
+
+        Assert.AreEqual(1, result.Count);
+        Assert.AreEqual("ready", result[0].Id);
+    }
+
+    [TestMethod]
     public void Apply_FiltersTasksBySavedTaskViewCriteria()
     {
         var service = new SavedTaskViewService(new JsonFileUiStateService(_statePath));

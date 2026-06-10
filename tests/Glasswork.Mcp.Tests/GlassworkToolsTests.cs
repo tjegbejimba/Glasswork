@@ -318,6 +318,18 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void ListTasks_DefaultSummaryIncludesReadinessAndUrgencySignals()
+    {
+        _tools.AddTask("Due task", due_date: DateTime.Today.ToString("yyyy-MM-dd"));
+
+        var json = _tools.ListTasks();
+        var task = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        Assert.AreEqual(true, task.GetProperty("ready").GetBoolean());
+        Assert.IsTrue(task.GetProperty("urgency_score").GetDouble() > 0);
+    }
+
+    [TestMethod]
     public void ListTasks_FilterByStatus_ReturnsTodoOnly()
     {
         _tools.AddTask("Todo Task", status: "todo");
@@ -425,9 +437,9 @@ public class GlassworkToolsTests
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
         CollectionAssert.AreEqual(
-            new[] { "id", "parent_id", "path", "status", "title" },
+            new[] { "backlink_count", "id", "parent_id", "path", "ready", "status", "title", "urgency_score" },
             keys,
-            "Default list_tasks shape must be exactly id+title+status+parent_id+path.");
+            "Default list_tasks shape must include task identity plus computed actionability signals.");
     }
 
     [TestMethod]
@@ -470,9 +482,9 @@ public class GlassworkToolsTests
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
         CollectionAssert.AreEqual(
-            new[] { "id", "parent_id", "path", "status", "title" },
+            new[] { "backlink_count", "id", "parent_id", "path", "ready", "status", "title", "urgency_score" },
             keys,
-            "Empty fields array must preserve default shape.");
+            "Empty fields array must preserve default signal-enriched shape.");
     }
 
     [TestMethod]
@@ -621,6 +633,18 @@ public class GlassworkToolsTests
             new[] { "title" },
             tasks[0].GetProperty("matched_in").EnumerateArray().Select(x => x.GetString()!).ToArray());
         Assert.IsFalse(string.IsNullOrWhiteSpace(tasks[0].GetProperty("snippet").GetString()));
+    }
+
+    [TestMethod]
+    public void SearchTasks_SummaryIncludesReadinessAndUrgencySignals()
+    {
+        _tools.AddTask("Batch due task", due_date: DateTime.Today.ToString("yyyy-MM-dd"));
+
+        var json = _tools.SearchTasks("batch");
+        var task = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        Assert.AreEqual(true, task.GetProperty("ready").GetBoolean());
+        Assert.IsTrue(task.GetProperty("urgency_score").GetDouble() > 0);
     }
 
     [TestMethod]
