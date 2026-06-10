@@ -1337,6 +1337,11 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("link")] LinkResult Link,
         [property: JsonPropertyName("total_links")] int TotalLinks);
 
+    private sealed record RemoveLinkResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("link")] LinkResult Link,
+        [property: JsonPropertyName("total_links")] int TotalLinks);
+
     [McpServerTool(Name = "add_link")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Attach a typed external link (ado/pr/incident/doc/build) to a task. Appends to the links: frontmatter array.")]
@@ -1392,6 +1397,110 @@ public sealed class GlassworkTools
             var result = new AddLinkResult(
                 TaskId: safeId,
                 Link: new LinkResult(normalizedType, newLink.Value, newLink.Label),
+                TotalLinks: task.Links.Count);
+
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "remove_link")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Remove a typed link from a task. Matches by exact URL/value.")]
+    public string RemoveLink(
+        [Description("Task ID (required).")] string task_id,
+        [Description("URL or identifier (required) — exact match against stored value.")] string url,
+        [Description("Optional link type (ado/pr/incident/doc/build/other) to disambiguate if same URL exists under multiple types.")] string? link_type = null)
+    {
+        using var scope = _logger?.BeginCall("remove_link");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_url", "url is required."));
+            }
+
+            var trimmedUrl = url.Trim();
+            string? normalizedType = null;
+
+            if (!string.IsNullOrWhiteSpace(link_type))
+            {
+                var trimmedType = link_type.Trim().ToLowerInvariant();
+                var knownTypes = new[] { TaskLink.Types.Ado, TaskLink.Types.Pr, TaskLink.Types.Incident, 
+                                        TaskLink.Types.Doc, TaskLink.Types.Build, TaskLink.Types.Other };
+                if (!knownTypes.Contains(trimmedType))
+                {
+                    scope?.SetResult("error");
+                    return JsonSerializer.Serialize(new ErrorResult("invalid_link_type", 
+                        $"link_type '{link_type}' is not recognized. Valid types: ado, pr, incident, doc, build, other."));
+                }
+                normalizedType = trimmedType;
+            }
+
+            var task = _vault.Load(safeId);
+            if (task is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            // Find matching links
+            var candidates = task.Links.Where(l => l.Value == trimmedUrl).ToList();
+            
+            if (candidates.Count == 0)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("link_not_found", 
+                    $"No link with URL '{url}' found in task '{task_id}'."));
+            }
+
+            // If type provided, filter by type
+            if (normalizedType is not null)
+            {
+                candidates = candidates.Where(l => l.Type == normalizedType).ToList();
+                if (candidates.Count == 0)
+                {
+                    scope?.SetResult("not_found");
+                    return JsonSerializer.Serialize(new ErrorResult("link_not_found", 
+                        $"No link with URL '{url}' and type '{link_type}' found in task '{task_id}'."));
+                }
+            }
+            else
+            {
+                // No type filter — check for ambiguity across types
+                var distinctTypes = candidates.Select(l => l.Type).Distinct().ToList();
+                if (distinctTypes.Count > 1)
+                {
+                    scope?.SetResult("error");
+                    return JsonSerializer.Serialize(new ErrorResult("ambiguous_link", 
+                        $"URL '{url}' exists under multiple types ({string.Join(", ", distinctTypes)}). " +
+                        "Specify link_type to disambiguate."));
+                }
+            }
+
+            // Remove first match
+            var linkToRemove = candidates[0];
+            var writeSw = Stopwatch.StartNew();
+            task.Links.Remove(linkToRemove);
+            _vault.Save(task);
+            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+
+            var result = new RemoveLinkResult(
+                TaskId: safeId,
+                Link: new LinkResult(linkToRemove.Type, linkToRemove.Value, linkToRemove.Label),
                 TotalLinks: task.Links.Count);
 
             scope?.SetResult("success");
