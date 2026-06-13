@@ -1,0 +1,7 @@
+# Per-iteration logs and runtime state — never commit.
+loop.out
+logs/
+lock/
+state.json
+state.lock/
+runs/
