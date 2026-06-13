@@ -19,7 +19,7 @@ You are running headless inside an automation loop with **no human at the keyboa
 ## Preflight
 
 1. Run `git status --porcelain`. If non-empty, abort: the loop expects a clean tree.
-2. Run `git checkout main && git pull --ff-only origin main`.
+2. Run `git fetch origin`. Do not check out the local `main` branch; worker worktrees must base new work directly on `origin/main`.
 3. Read `.ralph/config.json` for this repo's profile, issue-matching metadata, validation commands, and dashboard stage hints.
 4. Read `UBIQUITOUS_LANGUAGE.md` if present and the parent the parent PRD (`gh issue view 1 --repo tjegbejimba/Glasswork`) for vocabulary. Use those exact terms.
 5. Check whether an open PR already references this issue:
@@ -41,7 +41,7 @@ Repository notes for this repo:
 
 You MUST use the `tdd` skill (red-green-refactor). Invoke it explicitly via the skill tool before writing any code.
 
-1. **Branch**: `git checkout -b slice-<N>-<short-kebab-name>` (e.g., `slice-1-bootstrap`).
+1. **Branch**: `git switch -c slice-<N>-<short-kebab-name> origin/main` (e.g., `slice-1-bootstrap`). This keeps worker worktrees independent of the primary checkout's local `main` branch.
 2. **Red**: Write failing tests covering the slice's acceptance criteria. Prefer integration tests over unit tests. No production code yet.
 3. **Green**: Implement the minimum code to make those tests pass. Nothing more.
 4. **Refactor**: Improve structure with tests staying green.
@@ -75,7 +75,7 @@ You MUST use the `tdd` skill (red-green-refactor). Invoke it explicitly via the 
     - If GitHub allows the merge after step 10's local green checks, continue immediately to verification.
     - If GitHub blocks the merge because required checks are pending, wait only for required checks: `gh pr checks <pr> --repo tjegbejimba/Glasswork --required --watch --fail-fast`, then retry the same normal merge command.
     - If GitHub blocks the merge because the branch is out of date or no longer mergeable, repeat step 10 once, then retry the same normal merge command. If it still cannot merge, exit non-zero.
-12. **Verify**: `gh issue view <N> --repo tjegbejimba/Glasswork --json state,closedByPullRequests` should show `state: CLOSED` and at least one entry in `closedByPullRequests` with `mergedAt != null`. If not, exit non-zero.
+12. **Verify**: `gh issue view <N> --repo tjegbejimba/Glasswork --json state,closedByPullRequestsReferences` should show `state: CLOSED` and at least one entry in `closedByPullRequestsReferences` with `mergedAt != null`. If not, exit non-zero.
 
 > **Known residual race**: if the target repo does not require branches to be up to date before merging, a third worker can land on `main` between step 10's push and step 11's merge, slipping a stale base through. Tolerated for now — caught by the post-merge CI run on `main` and surfaced as a follow-up issue if it ever bites. To eliminate, enable "Require branches to be up to date before merging" on `main`; Ralph will then rebase and retry instead of bypassing protection.
 
@@ -83,10 +83,10 @@ You MUST use the `tdd` skill (red-green-refactor). Invoke it explicitly via the 
 
 If the environment variable `RALPH_RELEASE_BRANCH` is set (e.g. `multi-user`, `next`, `v2`), the loop is targeting a non-default base branch. In that mode:
 
-- Substitute `$RALPH_RELEASE_BRANCH` for `main` everywhere above (preflight checkout/pull, rebase target, PR `--base`, post-merge fast-forward).
+- Substitute `$RALPH_RELEASE_BRANCH` for `main` everywhere above (preflight fetch/branch base, rebase target, PR `--base`, post-merge fast-forward).
 - If `RALPH_BRANCH_PREFIX` is set (e.g. `mu-`), name your branch `${RALPH_BRANCH_PREFIX}<N>-<short-kebab-name>` instead of `slice-<N>-…`.
 - After step 11's successful merge, you MUST also run `gh issue close <N> --repo tjegbejimba/Glasswork --reason completed --comment "Merged via PR #<pr> into \`$RALPH_RELEASE_BRANCH\`."`. GitHub does **not** auto-close issues from PRs whose base ≠ default branch, even with `Closes #<N>` in the body. This is the one exception to the "never call `gh issue close`" rule below.
-- Step 12's verify check still applies: the issue must be `CLOSED` and `closedByPullRequests` should contain the merged PR (the explicit `gh issue close` makes the first half true; the link itself may or may not populate for non-default bases — that's fine, the verifier accepts the merged PR via body-text matching).
+- Step 12's verify check still applies: the issue must be `CLOSED` and `closedByPullRequestsReferences` should contain the merged PR (the explicit `gh issue close` makes the first half true; the link itself may or may not populate for non-default bases — that's fine, the verifier accepts the merged PR via body-text matching).
 - See `docs/release-branch.md` for the full design.
 
 ## On failure
@@ -116,5 +116,5 @@ In addition to the slice's own acceptance criteria, Slice 1 MUST:
 
 You are done when, and only when:
 - The PR is merged via squash with branch deleted.
-- The slice issue is `CLOSED` and `closedByPullRequests` contains the merged PR.
+- The slice issue is `CLOSED` and `closedByPullRequestsReferences` contains the merged PR.
 - Local `main` is fast-forwarded to the new tip and clean.
