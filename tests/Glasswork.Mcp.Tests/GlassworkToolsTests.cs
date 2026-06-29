@@ -591,6 +591,28 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void ListTasks_FieldsType_ReturnsType()
+    {
+        // Opt-in `type` projection: an agent can request the work-item kind on the
+        // list_tasks sibling, mirroring get_my_day / list_overdue. Default shape is
+        // untouched — the field only appears when explicitly requested.
+        _vault.Save(new GlassworkTask
+        {
+            Id = "bug-task",
+            Title = "Bug task",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Bug,
+        });
+
+        var json = _tools.ListTasks(fields: new[] { "type" });
+        var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+        CollectionAssert.AreEqual(new[] { "id", "type" }, keys, "Projection must contain exactly id + type.");
+        Assert.AreEqual("bug", first.GetProperty("type").GetString());
+    }
+
+    [TestMethod]
     public void ListTasks_ParentIdInOutput_IsNullWhenNoParent()
     {
         _tools.AddTask("Standalone Task");

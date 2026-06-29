@@ -225,4 +225,30 @@ public class ListOverdueToolTests
         Assert.AreEqual(1, tasks.GetArrayLength());
         Assert.AreEqual("t-overdue-myday", tasks[0].GetProperty("id").GetString());
     }
+
+    [TestMethod]
+    public void ListOverdue_ReturnsTaskType()
+    {
+        // ARRANGE: an overdue PBI. list_overdue is NOT type-gated, so PBIs appear
+        // here; surfacing `type` lets a morning-review agent tell a container from a
+        // leaf among returned items.
+        _vault.Save(new GlassworkTask
+        {
+            Id = "overdue-pbi",
+            Title = "Overdue PBI",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Pbi,
+            Due = DateTime.Today.AddDays(-1),
+            Created = DateTime.Today.AddDays(-7)
+        });
+
+        // ACT
+        var json = _tools.ListOverdue();
+
+        // ASSERT
+        using var doc = JsonDocument.Parse(json);
+        var tasks = doc.RootElement.GetProperty("tasks");
+        Assert.AreEqual(1, tasks.GetArrayLength(), "Overdue PBI should be returned.");
+        Assert.AreEqual("pbi", tasks[0].GetProperty("type").GetString(), "Overdue item must carry its type.");
+    }
 }
