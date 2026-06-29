@@ -230,6 +230,85 @@ public class MyDayPromotionPolicyTests
         Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
     }
 
+    // ===== PBI container type (type:pbi must not self-promote on its own due) =====
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_Pbi_OverdueDue_NoSubtasks_ReturnsFalse()
+    {
+        // A PBI is a container, not an actionable leaf. The ADO import stamps a
+        // sprint-end `due` on every PBI; after sprint end that would otherwise
+        // flood My Day. A PBI must NOT promote on its own due date.
+        var task = new GlassworkTask
+        {
+            Id = "pbi-overdue",
+            Type = GlassworkTask.Types.Pbi,
+            Due = DateTime.Today.AddDays(-3),
+            Status = GlassworkTask.Statuses.Todo,
+        };
+        Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_Pbi_PinnedToday_ReturnsTrue()
+    {
+        // Explicit pin (my_day == today) still promotes a PBI — the user asked for it.
+        var task = new GlassworkTask
+        {
+            Id = "pbi-pinned",
+            Type = GlassworkTask.Types.Pbi,
+            MyDay = DateTime.Today,
+        };
+        Assert.IsTrue(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_Pbi_FlaggedSubtask_ReturnsTrue()
+    {
+        // A PBI with an actionable flagged subtask still surfaces (container card).
+        var task = new GlassworkTask
+        {
+            Id = "pbi-flagged-sub",
+            Type = GlassworkTask.Types.Pbi,
+            Due = DateTime.Today.AddDays(-3),
+            Subtasks =
+            [
+                new SubTask { Text = "Flagged", Metadata = new() { ["my_day"] = "true" } },
+            ],
+        };
+        Assert.IsTrue(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_Pbi_SubtaskDueToday_ReturnsTrue()
+    {
+        // A PBI whose subtask is due today surfaces even though its own due is gated.
+        var task = new GlassworkTask
+        {
+            Id = "pbi-due-sub",
+            Type = GlassworkTask.Types.Pbi,
+            Due = DateTime.Today.AddDays(-3),
+            Subtasks =
+            [
+                new SubTask { Text = "Due sub", Metadata = new() { ["due"] = Today.ToString("yyyy-MM-dd") } },
+            ],
+        };
+        Assert.IsTrue(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
+    public void IsTaskInMyDayToday_Bug_DueToday_ReturnsTrue()
+    {
+        // A bug is an actionable leaf, not a container — it self-promotes like a task.
+        var task = new GlassworkTask
+        {
+            Id = "bug-due",
+            Type = GlassworkTask.Types.Bug,
+            Due = DateTime.Today,
+            Status = GlassworkTask.Statuses.Todo,
+        };
+        Assert.IsTrue(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
     // ===== TodaysSubtasks =====
 
     [TestMethod]

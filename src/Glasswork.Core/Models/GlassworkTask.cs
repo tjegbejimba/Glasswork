@@ -19,6 +19,7 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPriorityChip))]
     public partial string Priority { get; set; } = "medium";
+    [ObservableProperty] public partial string Type { get; set; } = "task";
     [ObservableProperty] public partial DateTime Created { get; set; } = DateTime.Today;
     [ObservableProperty] public partial DateTime? CompletedAt { get; set; }
     [ObservableProperty]
@@ -86,6 +87,35 @@ public partial class GlassworkTask : ObservableObject
         public const string Medium = "medium";
         public const string High = "high";
         public const string Urgent = "urgent";
+    }
+
+    /// <summary>
+    /// The kind of work item, mirroring Azure DevOps. <see cref="Pbi"/> is a
+    /// container (Product Backlog Item / User Story) whose actionable work lives
+    /// in child Tasks; <see cref="Task"/> and <see cref="Bug"/> are actionable
+    /// leaves. Used by My Day promotion: a PBI does not self-promote on its own
+    /// due date (see <see cref="Services.MyDayPromotionPolicy"/>).
+    /// </summary>
+    public static class Types
+    {
+        public const string Task = "task";
+        public const string Pbi = "pbi";
+        public const string Bug = "bug";
+
+        /// <summary>
+        /// Coerces a raw frontmatter value to a known type, defaulting to
+        /// <see cref="Task"/> for null/empty/unrecognized input (case-insensitive).
+        /// </summary>
+        public static string Normalize(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return Task;
+            return raw.Trim().ToLowerInvariant() switch
+            {
+                Pbi => Pbi,
+                Bug => Bug,
+                _ => Task,
+            };
+        }
     }
 
     /// <summary>
@@ -285,6 +315,7 @@ public partial class GlassworkTask : ObservableObject
             Title = Title,
             Status = Status,
             Priority = Priority,
+            Type = Type,
             Created = Created,
             CompletedAt = CompletedAt,
             Due = Due,

@@ -73,9 +73,14 @@ public partial class MyDayViewModel : ObservableObject
         foreach (var task in todayTasks)
         {
             // Attach TodaysSubtasks for virtually-promoted tasks per ADR 0008
+            // A PBI is a container: it must not count its own (import-stamped)
+            // due as a direct promotion, otherwise its actionable children get
+            // hidden (TodaysSubtasks nulled). It still renders as a container
+            // when surfaced via a child subtask.
             var directlyPromoted =
                 task.MyDay.HasValue ||
-                (task.Due.HasValue
+                (task.Type != GlassworkTask.Types.Pbi
+                 && task.Due.HasValue
                  && System.DateOnly.FromDateTime(task.Due.Value.Date) <= today
                  && task.Status != GlassworkTask.Statuses.Done);
             task.TodaysSubtasks = directlyPromoted
@@ -166,6 +171,7 @@ public partial class MyDayViewModel : ObservableObject
         target.Id = source.Id;
         target.Title = source.Title;
         target.Status = source.Status;
+        target.Type = source.Type;
         target.Priority = source.Priority;
         target.Created = source.Created;
         target.CompletedAt = source.CompletedAt;

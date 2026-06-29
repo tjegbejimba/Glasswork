@@ -25,8 +25,11 @@ public static class MyDayPromotionPolicy
         if (task.MyDay.HasValue
             && DateOnly.FromDateTime(task.MyDay.Value.Date) == today) return true;
 
-        // Task is due today or overdue and not done.
-        if (task.Due.HasValue
+        // Task is due today or overdue and not done. PBIs are containers and
+        // must not self-promote on their own due date (the ADO import stamps a
+        // sprint-end due on every PBI); their work surfaces via child tasks.
+        if (task.Type != GlassworkTask.Types.Pbi
+            && task.Due.HasValue
             && DateOnly.FromDateTime(task.Due.Value.Date) <= today
             && task.Status != GlassworkTask.Statuses.Done) return true;
 

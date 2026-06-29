@@ -21,6 +21,7 @@ public class GlassworkTaskCloneTests
             Title = "Original",
             Status = GlassworkTask.Statuses.InProgress,
             Priority = GlassworkTask.Priorities.High,
+            Type = GlassworkTask.Types.Pbi,
             Created = new DateTime(2024, 1, 2),
             CompletedAt = new DateTime(2024, 5, 1),
             Due = new DateTime(2024, 6, 1),
@@ -37,6 +38,7 @@ public class GlassworkTaskCloneTests
         Assert.AreEqual("Original", copy.Title);
         Assert.AreEqual(GlassworkTask.Statuses.InProgress, copy.Status);
         Assert.AreEqual(GlassworkTask.Priorities.High, copy.Priority);
+        Assert.AreEqual(GlassworkTask.Types.Pbi, copy.Type);
         Assert.AreEqual(new DateTime(2024, 1, 2), copy.Created);
         Assert.AreEqual(new DateTime(2024, 5, 1), copy.CompletedAt);
         Assert.AreEqual(new DateTime(2024, 6, 1), copy.Due);
