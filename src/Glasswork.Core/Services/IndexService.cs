@@ -46,6 +46,13 @@ public class IndexService
     private bool _loaded;
 
     /// <summary>
+    /// Stateless serializer used by <see cref="Rehydrate"/> as a content
+    /// signature for change detection — two tasks are considered equal iff they
+    /// serialize to identical markdown. Cheap to hold; never writes to disk.
+    /// </summary>
+    private readonly FrontmatterParser _serializer = new();
+
+    /// <summary>
     /// Raised after the in-memory store has been mutated by a vault event or
     /// a watcher-observed file change. Carries old+new snapshots so filtered
     /// views can detect removal-from-set. Subscribers may throw — exceptions
@@ -167,6 +174,91 @@ public class IndexService
             _loaded = true;
         }
     }
+
+    /// <summary>
+    /// Full reconciliation recovery path (Option B hardening). Re-reads every
+    /// task from disk via <see cref="VaultService.LoadAll"/>, diffs it against
+    /// the in-memory store, and emits a single batched delta covering every
+    /// task that was added, content-changed, or removed. Both
+    /// <see cref="TasksChanged"/> and <see cref="Changed"/> fire (once) so
+    /// subscribed pages catch back up.
+    ///
+    /// <para>
+    /// This is the recovery for <b>dropped watcher events</b>: when the
+    /// <see cref="FileSystemWatcher"/> buffer overflows during a bulk burst of
+    /// writes (e.g. an ADO sprint import) it raises <c>Error</c> and silently
+    /// drops queued changes, leaving in-memory snapshots stale until restart.
+    /// <see cref="FileWatcherService.Overflowed"/> wires here to resync live.
+    /// </para>
+    ///
+    /// <para>
+    /// Change detection compares <see cref="FrontmatterParser.Serialize"/>
+    /// signatures — conservative by design: an unchanged file parses to an
+    /// identical snapshot and serializes identically, so it produces no delta
+    /// (true no-op when disk matches memory); any real edit differs and is
+    /// surfaced. Read-only — does <b>not</b> write the vault, so it needs no
+    /// <see cref="SelfWriteCoordinator"/> registration (hard rule 5). Safe to
+    /// call before <see cref="EnsureLoaded"/>: an empty store reconciles to
+    /// "everything on disk is Added" and the store is marked loaded.
+    /// </para>
+    /// </summary>
+    public void Rehydrate()
+    {
+        // Read disk OUTSIDE the lock — LoadAll does file IO + parsing.
+        var fresh = new Dictionary<string, GlassworkTask>(StringComparer.Ordinal);
+        foreach (var t in _vault.LoadAll())
+        {
+            if (!string.IsNullOrEmpty(t.Id))
+                fresh[t.Id] = t;
+        }
+
+        var changes = new List<TaskChange>();
+        lock (_gate)
+        {
+            // Removed: present in the store, absent on disk.
+            var removedIds = new List<string>();
+            foreach (var kv in _store)
+            {
+                if (!fresh.ContainsKey(kv.Key))
+                {
+                    changes.Add(new TaskChange(kv.Value.Clone(), null));
+                    removedIds.Add(kv.Key);
+                }
+            }
+            foreach (var id in removedIds)
+                _store.Remove(id);
+
+            // Added or content-changed.
+            foreach (var kv in fresh)
+            {
+                if (!_store.TryGetValue(kv.Key, out var existing))
+                {
+                    _store[kv.Key] = kv.Value;
+                    changes.Add(new TaskChange(null, kv.Value.Clone()));
+                }
+                else if (!ContentEquals(existing, kv.Value))
+                {
+                    var old = existing.Clone();
+                    _store[kv.Key] = kv.Value;
+                    changes.Add(new TaskChange(old, kv.Value.Clone()));
+                }
+            }
+
+            _loaded = true;
+        }
+
+        if (changes.Count > 0)
+            RaiseTasksChanged(changes);
+    }
+
+    /// <summary>
+    /// Content equality by serialized signature: two snapshots are equal iff
+    /// they serialize to identical markdown. Over-reporting (a spurious Changed)
+    /// only costs a UI refresh; under-reporting would leave a stale chip, so the
+    /// conservative direction is correct here.
+    /// </summary>
+    private bool ContentEquals(GlassworkTask a, GlassworkTask b)
+        => _serializer.Serialize(a) == _serializer.Serialize(b);
 
     /// <summary>
     /// Async hydrate (issue #186 contract). Today the implementation is

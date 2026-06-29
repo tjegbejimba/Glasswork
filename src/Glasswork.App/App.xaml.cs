@@ -369,6 +369,16 @@ public partial class App : Application
             try { Index.OnFileChangedOnDisk(change); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.OnFileChangedOnDisk failed: {ex.Message}"); }
         };
+        // When the OS change buffer overflows during a bulk burst of writes (e.g.
+        // an ADO sprint import), the watcher silently drops the queued per-file
+        // events and those tasks' snapshots go stale until restart. Recover by
+        // re-reading the whole vault from disk and emitting deltas for whatever
+        // drifted, so chips converge to the on-disk Due/urgency instead of sticking.
+        Watcher.Overflowed += (_, _) =>
+        {
+            try { Index.Rehydrate(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.Rehydrate after watcher overflow failed: {ex.Message}"); }
+        };
         Watcher.Start();
 
         ArtifactsWatcher = new ArtifactWatcherService(vaultPath);

@@ -328,4 +328,44 @@ public class FileWatcherServiceTests
         Assert.IsFalse(signal.Wait(TimeSpan.FromSeconds(2)));
         Assert.IsNull(observed);
     }
+
+    // ── Watcher overflow recovery (Option B hardening) ──────────────────────
+    //
+    // A real FileSystemWatcher InternalBufferOverflowException is load- and
+    // timing-dependent and can't be triggered deterministically. The recovery
+    // seam (HandleWatcherError ⇒ Overflowed) is exercised directly instead; the
+    // app wires Overflowed → IndexService.Rehydrate() so a dropped burst still
+    // converges to the on-disk state instead of leaving stale chips.
+
+    [TestMethod]
+    public void HandleWatcherError_RaisesOverflowed()
+    {
+        using var watcher = new FileWatcherService(_tempDir);
+        var fired = 0;
+        watcher.Overflowed += (_, _) => fired++;
+
+        watcher.HandleWatcherError(new InternalBufferOverflowException("buffer overflow"));
+
+        Assert.AreEqual(1, fired,
+            "A watcher error must surface exactly one Overflowed event for the app to rehydrate on.");
+    }
+
+    [TestMethod]
+    public void HandleWatcherError_WithNoSubscriber_DoesNotThrow()
+    {
+        using var watcher = new FileWatcherService(_tempDir);
+
+        // No Overflowed subscriber attached — must be a safe no-op.
+        watcher.HandleWatcherError(new Exception("boom"));
+    }
+
+    [TestMethod]
+    public void HandleWatcherError_SwallowsSubscriberException()
+    {
+        using var watcher = new FileWatcherService(_tempDir);
+        watcher.Overflowed += (_, _) => throw new InvalidOperationException("subscriber blew up");
+
+        // A throwing subscriber must not propagate out of the error callback.
+        watcher.HandleWatcherError(new Exception("boom"));
+    }
 }
