@@ -25,8 +25,12 @@ Add an explicit, user-owned **`type`** frontmatter field on every task, mirrorin
 ADO's work-item types, normalized to one of:
 
 - **`task`** *(default)* — an actionable leaf. Unchanged behavior.
-- **`pbi`** — a container (Product Backlog Item / User Story). Does **not**
-  self-promote to My Day on its **own** `due` date.
+- **`pbi`** — a **non-actionable container**. Mirrors ADO's container work-item
+  types: **Product Backlog Item, User Story, Epic, and Feature** all normalize to
+  `pbi`. Does **not** self-promote to My Day on its **own** `due` date. (The enum
+  stays `task` / `pbi` / `bug`; `pbi` is the single "container" bucket — Epic/Feature
+  are containers for the same My-Day-gating reason as a PBI, so they share it rather
+  than getting their own values.)
 - **`bug`** — an actionable leaf; behaves exactly like `task` for promotion.
 
 Only `pbi` changes behavior. A `pbi` is excluded from the **own-due** promotion
@@ -100,6 +104,16 @@ new imports from re-polluting My Day at the source.
   It does **not** introduce between-file PBI→Task container *grouping* in My Day
   (rendering imported child Tasks visually nested under their imported PBI across
   separate vault files). That is deferred as Phase 2.
+- **Backfilling the pre-existing corpus (issue #338).** PBIs imported before this
+  field existed default to `task` and still leak into My Day on their stale
+  import-stamped `due`. A one-time, ADO-authoritative, idempotent backfill stamps
+  the existing vault: it queries each imported file's `System.WorkItemType` and maps
+  any container type (**Product Backlog Item / User Story / Epic / Feature → `pbi`**),
+  `Bug → bug`, and leaves `Task` untouched. It lives in `Glasswork.Core`
+  (`TaskTypeBackfillService`, surgical frontmatter insert — never a `Serialize`
+  round-trip, so legacy `ado_link:` files do not churn), is driven by the
+  `tools/Glasswork.Maintenance` console + the `glasswork-backfill-types` skill, and
+  registers writes with `SelfWriteCoordinator`.
 - Core-only change — no App/XAML surface affected, so hard rule 7 (visual
   verification) does not apply.
 
