@@ -184,4 +184,107 @@ public class IndexRehydrateTests
         var delta = _changed.Single();
         CollectionAssert.AreEquivalent(new[] { "x", "y" }, delta.Added.Select(t => t.Id).ToList());
     }
+
+    // ── Reconciliation safety (PR #336 dual-review findings) ────────────────
+    //
+    // Rehydrate reads the whole vault OUTSIDE the lock, then applies under it.
+    // Three races, all triggered by the same bulk-write burst this path targets,
+    // must not let a live task vanish or re-stale — outcomes worse than the
+    // original stale-chip bug. Each mirrors the policy the per-file
+    // OnFileChangedOnDisk path already enforces.
+
+    /// <summary>
+    /// Test seam over <see cref="IndexService"/>: returns a caller-supplied disk
+    /// snapshot (parsed task + the mtime "captured at read") instead of the live
+    /// vault, so a test can simulate a snapshot that is already stale relative to
+    /// disk by the time <c>Rehydrate</c> applies it.
+    /// </summary>
+    private sealed class SeamIndex : IndexService
+    {
+        private readonly Func<IReadOnlyList<(GlassworkTask, DateTime)>> _snapshot;
+        public SeamIndex(VaultService vault, Func<IReadOnlyList<(GlassworkTask, DateTime)>> snapshot)
+            : base(vault) => _snapshot = snapshot;
+        protected override IReadOnlyList<(GlassworkTask Task, DateTime ReadMtimeUtc)> ReadDiskSnapshot()
+            => _snapshot();
+    }
+
+    // Finding 1 (BLOCKING): a present-but-unparseable file (mid-write / invalid
+    // YAML during a bulk import) is silently omitted by LoadAll. It must KEEP its
+    // prior snapshot, NOT be misclassified as a deletion.
+    [TestMethod]
+    public void Rehydrate_WhenExistingFileTemporarilyUnparseable_KeepsPriorSnapshot_AndDoesNotEmitRemoved()
+    {
+        _vault.Save(new GlassworkTask { Id = "t", Title = "Task", Due = DateTime.Today.AddDays(12) });
+        _changed.Clear();
+        Assert.AreEqual(DueUrgency.Future, _index.ById("t")!.DueUrgency, "precondition: index sees the valid future due.");
+
+        // Corrupt frontmatter lands on disk: file is PRESENT but cannot parse.
+        File.WriteAllText(Path.Combine(_tempDir, "t.md"), "this file has no frontmatter delimiters and cannot parse");
+
+        _index.Rehydrate();
+
+        Assert.IsNotNull(_index.ById("t"), "an unparseable-but-present file must keep its prior snapshot, not vanish.");
+        Assert.AreEqual(DueUrgency.Future, _index.ById("t")!.DueUrgency, "prior (valid) snapshot must be retained intact.");
+        Assert.AreEqual(0, _changed.Count, "a present-but-unparseable file must emit no delta (no spurious Removed).");
+    }
+
+    // Finding 2 (BLOCKING): a slow full-vault read can replay a stale snapshot over
+    // a newer per-file update applied while it was reading. The stale entry's source
+    // file changed since it was read → it must be skipped, not clobber the newer value.
+    [TestMethod]
+    public void Rehydrate_DoesNotOverwriteConcurrentNewerPerFileUpdate()
+    {
+        // Current good state: store + disk both hold the NEWER value (future due),
+        // as if a per-file watcher update already landed it.
+        var future = DateTime.Today.AddDays(12);
+        _vault.Save(new GlassworkTask { Id = "t", Title = "Task", Due = future });
+
+        // A Rehydrate that began BEFORE that update: its unlocked read saw the OLDER
+        // value (overdue) and captured an OLDER mtime. The live file mtime is newer.
+        var staleMtime = File.GetLastWriteTimeUtc(Path.Combine(_tempDir, "t.md")).AddMinutes(-5);
+        var staleSnapshot = new List<(GlassworkTask, DateTime)>
+        {
+            (new GlassworkTask { Id = "t", Title = "Task", Due = DateTime.Today.AddDays(-3) }, staleMtime),
+        };
+        var seam = new SeamIndex(_vault, () => staleSnapshot);
+        var seamChanges = new List<TasksChanged>();
+        seam.Changed += (_, e) => seamChanges.Add(e);
+        seam.EnsureLoaded(); // hydrate from disk = newer future value
+        Assert.AreEqual(DueUrgency.Future, seam.ById("t")!.DueUrgency, "precondition: store holds the newer value.");
+
+        seam.Rehydrate();
+
+        Assert.AreEqual(DueUrgency.Future, seam.ById("t")!.DueUrgency, "stale snapshot must not clobber the newer in-memory value.");
+        Assert.AreEqual(future.Date, seam.ById("t")!.Due!.Value.Date);
+        Assert.AreEqual(0, seamChanges.Count, "a skipped stale entry must emit no delta.");
+    }
+
+    // Finding 3 (MEDIUM): TOCTOU. A file written to disk + store AFTER the unlocked
+    // read snapshotted disk is absent from the snapshot but PRESENT on disk. It must
+    // NOT be removed — the removal branch re-checks File.Exists.
+    [TestMethod]
+    public void Rehydrate_RemovesOnlyGenuinelyAbsentFiles_NotFilesWrittenDuringSnapshotWindow()
+    {
+        _vault.Save(new GlassworkTask { Id = "a", Title = "Alpha", Due = DateTime.Today.AddDays(5) });
+        _vault.Save(new GlassworkTask { Id = "z", Title = "Zed", Due = DateTime.Today.AddDays(8) });
+
+        // Snapshot reflects disk BEFORE z.md existed (only "a"): a same-process Save
+        // wrote z.md and committed _store["z"] after LoadAll ran, before the lock.
+        var aMtime = File.GetLastWriteTimeUtc(Path.Combine(_tempDir, "a.md"));
+        var staleSnapshot = new List<(GlassworkTask, DateTime)>
+        {
+            (new GlassworkTask { Id = "a", Title = "Alpha", Due = DateTime.Today.AddDays(5) }, aMtime),
+        };
+        var seam = new SeamIndex(_vault, () => staleSnapshot);
+        var seamChanges = new List<TasksChanged>();
+        seam.Changed += (_, e) => seamChanges.Add(e);
+        seam.EnsureLoaded(); // store = {a, z} (both files exist on disk)
+        Assert.AreEqual(2, seam.Count);
+
+        seam.Rehydrate();
+
+        Assert.IsNotNull(seam.ById("z"), "a file written during the snapshot window must not be dropped from the index.");
+        Assert.AreEqual(2, seam.Count);
+        Assert.IsFalse(seamChanges.Any(e => e.Removed.Contains("z")), "must not emit a spurious Removed for a present file.");
+    }
 }

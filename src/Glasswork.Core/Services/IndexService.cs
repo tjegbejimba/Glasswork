@@ -204,43 +204,62 @@ public class IndexService
     /// </summary>
     public void Rehydrate()
     {
-        // Read disk OUTSIDE the lock — LoadAll does file IO + parsing.
-        var fresh = new Dictionary<string, GlassworkTask>(StringComparer.Ordinal);
-        foreach (var t in _vault.LoadAll())
+        // Read disk OUTSIDE the lock — LoadAll does file IO + parsing. Each entry
+        // carries the source file's last-write time captured at read, so the apply
+        // phase can detect (and skip) any entry whose file changed under us between
+        // this unlocked read and taking the lock.
+        var fresh = ReadDiskSnapshot();
+        var freshById = new Dictionary<string, (GlassworkTask Task, DateTime ReadMtimeUtc)>(StringComparer.Ordinal);
+        foreach (var entry in fresh)
         {
-            if (!string.IsNullOrEmpty(t.Id))
-                fresh[t.Id] = t;
+            if (!string.IsNullOrEmpty(entry.Task.Id))
+                freshById[entry.Task.Id] = entry;
         }
 
         var changes = new List<TaskChange>();
         lock (_gate)
         {
-            // Removed: present in the store, absent on disk.
+            // Removed: present in the store, absent from the fresh snapshot — but
+            // only when the file is GENUINELY absent from disk. A file that is
+            // present-but-unparseable (mid-write / invalid YAML during a bulk
+            // import) is silently omitted by LoadAll; and a file written + committed
+            // to the store after the unlocked read but before this lock (TOCTOU) is
+            // also missing from the snapshot. Both must KEEP their prior snapshot,
+            // mirroring OnFileChangedOnDisk's File.Exists guard, not be deleted.
             var removedIds = new List<string>();
             foreach (var kv in _store)
             {
-                if (!fresh.ContainsKey(kv.Key))
-                {
-                    changes.Add(new TaskChange(kv.Value.Clone(), null));
-                    removedIds.Add(kv.Key);
-                }
+                if (freshById.ContainsKey(kv.Key)) continue;
+                if (File.Exists(Path.Combine(_vault.VaultPath, kv.Key + ".md"))) continue;
+                changes.Add(new TaskChange(kv.Value.Clone(), null));
+                removedIds.Add(kv.Key);
             }
             foreach (var id in removedIds)
                 _store.Remove(id);
 
-            // Added or content-changed.
-            foreach (var kv in fresh)
+            // Added or content-changed — but skip any entry whose source file
+            // changed on disk since the unlocked read. A newer per-file update may
+            // have landed in the store while we were reading; replaying our older
+            // snapshot would re-stale it. The store already holds the newer value;
+            // the next watcher event / rehydrate converges anything genuinely missed.
+            foreach (var kv in freshById)
             {
-                if (!_store.TryGetValue(kv.Key, out var existing))
+                var id = kv.Key;
+                var task = kv.Value.Task;
+
+                if (CurrentMtimeUtc(id) != kv.Value.ReadMtimeUtc)
+                    continue;
+
+                if (!_store.TryGetValue(id, out var existing))
                 {
-                    _store[kv.Key] = kv.Value;
-                    changes.Add(new TaskChange(null, kv.Value.Clone()));
+                    _store[id] = task;
+                    changes.Add(new TaskChange(null, task.Clone()));
                 }
-                else if (!ContentEquals(existing, kv.Value))
+                else if (!ContentEquals(existing, task))
                 {
                     var old = existing.Clone();
-                    _store[kv.Key] = kv.Value;
-                    changes.Add(new TaskChange(old, kv.Value.Clone()));
+                    _store[id] = task;
+                    changes.Add(new TaskChange(old, task.Clone()));
                 }
             }
 
@@ -249,6 +268,37 @@ public class IndexService
 
         if (changes.Count > 0)
             RaiseTasksChanged(changes);
+    }
+
+    /// <summary>
+    /// Test seam: reads every task from disk via <see cref="VaultService.LoadAll"/>,
+    /// pairing each parsed snapshot with its source file's last-write time captured
+    /// at read. <c>protected virtual</c> so tests can inject a snapshot that is
+    /// already stale relative to disk by the time <see cref="Rehydrate"/> applies it
+    /// (the read-outside-lock / apply-inside-lock race the reconciliation guards
+    /// against). Production reads the live vault.
+    /// </summary>
+    protected virtual IReadOnlyList<(GlassworkTask Task, DateTime ReadMtimeUtc)> ReadDiskSnapshot()
+    {
+        var list = new List<(GlassworkTask, DateTime)>();
+        foreach (var t in _vault.LoadAll())
+        {
+            if (string.IsNullOrEmpty(t.Id)) continue;
+            list.Add((t, CurrentMtimeUtc(t.Id)));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Last-write time (UTC) of the task's <c>.md</c> file, or a sentinel
+    /// (<see cref="DateTime.MinValue"/> on IO error; the 1601 epoch when the file
+    /// is simply absent) that compares unequal to any real timestamp. Used by
+    /// <see cref="Rehydrate"/> to detect concurrent on-disk writes.
+    /// </summary>
+    private DateTime CurrentMtimeUtc(string taskId)
+    {
+        try { return File.GetLastWriteTimeUtc(Path.Combine(_vault.VaultPath, taskId + ".md")); }
+        catch { return DateTime.MinValue; }
     }
 
     /// <summary>
