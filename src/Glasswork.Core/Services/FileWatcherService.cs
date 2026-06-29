@@ -29,6 +29,20 @@ public class FileWatcherService : IDisposable
     /// </summary>
     public event EventHandler<TaskFileChange>? TaskFileChange;
 
+    /// <summary>
+    /// Raised when the underlying <see cref="FileSystemWatcher"/> reports an
+    /// error — most importantly an <b>internal buffer overflow</b>. When the OS
+    /// change buffer overflows during a bulk burst of writes (e.g. an ADO sprint
+    /// import writing many <c>*.md</c> files at once) the watcher silently drops
+    /// the queued change events, so the per-file <see cref="TaskFileChange"/>
+    /// path misses them and in-memory snapshots go stale until restart.
+    /// Subscribers should respond with a full resync
+    /// (<see cref="IndexService.Rehydrate"/>). Carries no per-file detail — by
+    /// the time an overflow fires, the specific dropped events are already gone,
+    /// so the only safe recovery is to re-read everything from disk.
+    /// </summary>
+    public event EventHandler? Overflowed;
+
     public FileWatcherService(string vaultPath) : this(vaultPath, null) { }
 
     public FileWatcherService(string vaultPath, SelfWriteCoordinator? selfWrites)
@@ -42,13 +56,18 @@ public class FileWatcherService : IDisposable
         _watcher = new FileSystemWatcher(vaultPath, "*.md")
         {
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime,
-            IncludeSubdirectories = false
+            IncludeSubdirectories = false,
+            // Default is 8 KB — enough headroom for a handful of edits but easily
+            // overrun by a bulk import. 64 KB (the documented practical max for
+            // reliable delivery) sharply reduces the odds of a dropped burst.
+            InternalBufferSize = 64 * 1024,
         };
 
         _watcher.Changed += (s, e) => RaiseEvent(TaskFileChangeKind.CreatedOrChanged, oldPath: null, e.FullPath);
         _watcher.Created += (s, e) => RaiseEvent(TaskFileChangeKind.CreatedOrChanged, oldPath: null, e.FullPath);
         _watcher.Deleted += (s, e) => RaiseEvent(TaskFileChangeKind.Deleted, oldPath: null, e.FullPath);
         _watcher.Renamed += (s, e) => RaiseEvent(TaskFileChangeKind.Renamed, e.OldFullPath, e.FullPath);
+        _watcher.Error += (s, e) => HandleWatcherError(e.GetException());
     }
 
     public void Start() => _watcher.EnableRaisingEvents = true;
@@ -83,6 +102,29 @@ public class FileWatcherService : IDisposable
 
         if (!isOwn)
             TaskFileChange?.Invoke(this, new TaskFileChange(kind, oldFileName, newFileName));
+    }
+
+    /// <summary>
+    /// Handle a <see cref="FileSystemWatcher.Error"/> report by surfacing
+    /// <see cref="Overflowed"/>. Exposed as <c>internal</c> so unit tests can
+    /// drive it directly — a real <c>InternalBufferOverflowException</c> is
+    /// load/timing-dependent and cannot be triggered deterministically in a
+    /// test, but the recovery contract (error ⇒ Overflowed ⇒ rehydrate) can be.
+    /// Subscriber exceptions are swallowed so one bad handler can't tear down
+    /// the watcher's error callback.
+    /// </summary>
+    internal void HandleWatcherError(Exception? exception)
+    {
+        System.Diagnostics.Debug.WriteLine(
+            $"FileWatcherService: watcher error (likely buffer overflow), requesting rehydrate: {exception?.Message}");
+        try
+        {
+            Overflowed?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"FileWatcherService.Overflowed subscriber threw: {ex}");
+        }
     }
 
     public void Dispose()

@@ -45,6 +45,21 @@ public partial class App : Application
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
 
+    // Coalesces a burst of watcher-overflow events into a single full rehydrate.
+    // An OS buffer overflow can fire repeatedly while a bulk write is still in
+    // flight; debouncing lets the disk settle before we re-read the whole vault.
+    private static Glasswork.Core.Services.Debouncer? _overflowRehydrateDebouncer;
+
+    // Finding B (bounded convergence): a rehydrate can legitimately leave an entry
+    // unreconciled — it skipped a value that a concurrent write was mid-applying, or
+    // kept a present-but-unparseable (mid-write) file. Normally the next per-file
+    // watcher event converges it, but in the exact overflow scenario this recovery
+    // exists for, that triggering event may ALSO have been dropped. So when Index
+    // raises ConvergencePending, schedule exactly ONE bounded follow-up rehydrate per
+    // overflow episode — never an unbounded loop on a permanently-corrupt file.
+    private static Glasswork.Core.Services.Debouncer? _convergenceRehydrateDebouncer;
+    private static int _convergenceFollowUpsRemaining;
+
     /// <summary>
     /// Single app-wide owner of the live HTML-preview WebView2 (#324).
     /// UI-thread only; constructed eagerly since it holds no startup state.
@@ -368,6 +383,48 @@ public partial class App : Application
         {
             try { Index.OnFileChangedOnDisk(change); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.OnFileChangedOnDisk failed: {ex.Message}"); }
+        };
+        // When the OS change buffer overflows during a bulk burst of writes (e.g.
+        // an ADO sprint import), the watcher silently drops the queued per-file
+        // events and those tasks' snapshots go stale until restart. Recover by
+        // re-reading the whole vault from disk and emitting deltas for whatever
+        // drifted, so chips converge to the on-disk Due/urgency instead of sticking.
+        // Debounced so a storm of overflow signals collapses into one rehydrate
+        // once the write burst has quieted.
+        _overflowRehydrateDebouncer = new Glasswork.Core.Services.Debouncer(
+            TimeSpan.FromMilliseconds(500),
+            () =>
+            {
+                try { Index.Rehydrate(); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.Rehydrate after watcher overflow failed: {ex.Message}"); }
+            });
+
+        // The single bounded follow-up pass. Debounced on its own timer so the
+        // repaired/quiesced disk has settled before the second read. Each overflow
+        // episode arms exactly one of these (see _convergenceFollowUpsRemaining).
+        _convergenceRehydrateDebouncer = new Glasswork.Core.Services.Debouncer(
+            TimeSpan.FromMilliseconds(500),
+            () =>
+            {
+                try { Index.Rehydrate(); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.Rehydrate convergence follow-up failed: {ex.Message}"); }
+            });
+
+        // An overflow opens a fresh convergence budget: arm one follow-up, then
+        // kick the primary rehydrate.
+        Watcher.Overflowed += (_, _) =>
+        {
+            System.Threading.Interlocked.Exchange(ref _convergenceFollowUpsRemaining, 1);
+            _overflowRehydrateDebouncer!.Trigger();
+        };
+
+        // A rehydrate that couldn't fully reconcile asks for a follow-up. Spend the
+        // single budgeted pass if one is available; otherwise ignore (bounded — a
+        // permanently-corrupt file can't spin us forever).
+        Index.ConvergencePending += (_, _) =>
+        {
+            if (System.Threading.Interlocked.Exchange(ref _convergenceFollowUpsRemaining, 0) > 0)
+                _convergenceRehydrateDebouncer!.Trigger();
         };
         Watcher.Start();
 

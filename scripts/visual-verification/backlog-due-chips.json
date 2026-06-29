@@ -1,0 +1,69 @@
+{
+  // Option B hardening — rule 7 visual verification for the App wiring
+  // (Watcher.Overflowed -> Index.Rehydrate). The watcher-overflow trigger
+  // itself is load/timing-dependent and cannot be fired deterministically from
+  // the scenario harness (there is no out-of-band mid-run write action), so the
+  // Overflowed -> Rehydrate -> delta logic is proven by the deterministic Core
+  // tests (IndexRehydrateTests, FileWatcherServiceTests). What this scenario
+  // verifies is the part rule 7 actually guards: with the new App wiring in
+  // place the app still launches without a startup crash (no STOWED_EXCEPTION),
+  // and the due-chip surface at the heart of the overdue-flag bug renders
+  // correctly — a future due date must NOT show as overdue.
+  "name": "Backlog due chips",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "due-overdue",
+      "title": "Overdue task should show overdue chip",
+      "description": "Due yesterday — must render with the overdue (past) due chip.",
+      "status": "todo",
+      "priority": "high",
+      "due": "yesterday"
+    },
+    {
+      "id": "due-today",
+      "title": "Today task should show today chip",
+      "description": "Due today — must render with the today due chip.",
+      "status": "todo",
+      "priority": "medium",
+      "due": "today"
+    },
+    {
+      "id": "due-future",
+      "title": "Future task must not show overdue",
+      "description": "Newer-schema repro: a future due date (~2 weeks out) must render as Future, never overdue.",
+      "status": "in-progress",
+      "priority": "medium",
+      "due": "2026-07-11",
+      "myDay": "yesterday"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "BacklogHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Future task must not show overdue",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Overdue task should show overdue chip",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "backlog-due-chips",
+      "waitMilliseconds": 500
+    }
+  ]
+}
