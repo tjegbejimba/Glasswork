@@ -295,14 +295,21 @@ public partial class MyDayViewModel : ObservableObject
     public void RemoveFromMyDay(GlassworkTask? task)
     {
         if (task is null) return;
-        var plan = MyDayRemovalPolicy.PlanRemoval(task);
-        if (plan.ClearMyDayFlag)
+        // A PBI container's X removes the WHOLE group: apply the removal plan to each
+        // nested child (so the group leaves My Day) and to the container PBI itself (so
+        // an independently promoted PBI can't pop back as a standalone row). For a plain
+        // row this is just the row itself. See ADR 0017 / issue #337.
+        foreach (var target in MyDayRemovalPolicy.RemovalTargets(task))
         {
-            _taskService.ToggleMyDay(task);
-        }
-        if (plan.SetDismissForToday)
-        {
-            _uiState?.Set(DismissKey(task.Id), true);
+            var plan = MyDayRemovalPolicy.PlanRemoval(target);
+            if (plan.ClearMyDayFlag)
+            {
+                _taskService.ToggleMyDay(target);
+            }
+            if (plan.SetDismissForToday)
+            {
+                _uiState?.Set(DismissKey(target.Id), true);
+            }
         }
         Refresh();
     }

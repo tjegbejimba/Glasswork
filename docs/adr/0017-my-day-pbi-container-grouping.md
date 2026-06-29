@@ -1,7 +1,7 @@
 # ADR 0017: My Day groups child Tasks under their parent PBI as cross-file container cards
 
 **Status**: Accepted
-**Context slice**: `MyDayViewModel`, `MyDayContainerGrouper` (new), `GlassworkTask.TodaysChildren` (new), `MyDayPage` card template, `IndexService.GetChildren`
+**Context slice**: `MyDayViewModel`, `MyDayContainerGrouper` (new), `MyDayRemovalPolicy`, `GlassworkTask.TodaysChildren` (new), `MyDayPage` card template, the in-memory `IndexService` task map
 **Relates to**: ADR 0016 (PBI type / containers — Phase 1), ADR 0008 (My Day virtual promotion + inline subtasks), ADR 0013 (date-scoped pins), ADR 0005 (backlinks — explicitly *not* the parent model)
 
 ## Context
@@ -16,9 +16,10 @@ only reads well in My Day if a child Task that is in My Day is shown **under** i
 parent PBI, with the PBI acting as a container — even though the PBI and its children
 live in **separate vault files**.
 
-The parent link already exists: the `parent:` frontmatter field, resolved by
-`IndexService.GetChildren`, already powers Backlog "group by parent" and TaskDetail's
-Children section. My Day cards already render *in-file* subtasks inline via
+The parent link already exists: the `parent:` frontmatter field. Backlog "group by
+parent" and TaskDetail's Children section resolve it via `IndexService.GetChildren`; the
+My Day grouper resolves it directly through the in-memory index by parent id (a lookup
+over `IndexService.Tasks`). My Day cards already render *in-file* subtasks inline via
 `TodaysSubtasks` (ADR 0008). Phase 2 layers cross-file children onto that same card.
 
 ## Decision
@@ -26,10 +27,10 @@ Children section. My Day cards already render *in-file* subtasks inline via
 Add a **presentation-only** grouping step to the My Day view that nests a promoted child
 Task under its parent PBI as a container card.
 
-1. **Parent identity = the `parent:` field**, resolved through the in-memory index. A
-   child nests only when its `parent` resolves to an in-app task with `type == pbi`.
-   Wikilinks and backlinks are *not* used — backlinks (ADR 0005) are incoming wiki
-   references, a different relationship.
+1. **Parent identity = the `parent:` field**, resolved through the in-memory index by
+   parent id. A child nests only when its `parent` resolves to an in-app task with
+   `type == pbi`. Wikilinks and backlinks are *not* used — backlinks (ADR 0005) are
+   incoming wiki references, a different relationship.
 2. **Container-only host.** A PBI with ≥1 in-My-Day child is shown in My Day to host
    those children **even if it would not independently promote**. This is a view-model
    construct: `MyDayPromotionPolicy`, `MyDayQueries.Today`, and `TaskService.GetMyDay`
@@ -54,6 +55,14 @@ Task under its parent PBI as a container card.
    existing `TodaysSubtasks` section. A PBI container card suppresses the leaf
    "complete" affordance (you complete its children — ADR 0016) and reuses
    `IsManuallyCollapsed` to collapse/expand its children.
+8. **Removal removes the group.** "Remove from My Day" (the row X) on a PBI container
+   acts on the **whole group**: the existing `MyDayRemovalPolicy.PlanRemoval` is applied
+   to each nested child (dismiss-for-today, plus clear `my_day` if set) **and** to the
+   container PBI itself, so an independently promoted PBI cannot pop back as a standalone
+   row. Without this, the grouper would rebuild the container from its still-promoted
+   children on the next refresh and the X would be a no-op. `MyDayRemovalPolicy` stays
+   pure: a new `RemovalTargets(task)` returns the child+container set for a container (or
+   just the task otherwise), and the view-model applies the per-task plan to each.
 
 ## Considered alternatives
 

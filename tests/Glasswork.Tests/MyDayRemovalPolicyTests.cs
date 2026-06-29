@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 
@@ -65,5 +66,38 @@ public class MyDayRemovalPolicyTests
         Assert.AreEqual(subDueBefore, task.Subtasks[0].Due);
         Assert.AreEqual(myDayBefore, task.MyDay);
         Assert.AreEqual(dueBefore, task.Due);
+    }
+
+    [TestMethod]
+    public void RemovalTargets_PlainTask_ReturnsItself()
+    {
+        var task = new GlassworkTask { Id = "solo" };
+
+        var targets = MyDayRemovalPolicy.RemovalTargets(task);
+
+        Assert.AreEqual(1, targets.Count);
+        Assert.AreSame(task, targets[0]);
+    }
+
+    [TestMethod]
+    public void RemovalTargets_Container_ReturnsChildrenThenContainer()
+    {
+        // A PBI container's X removes the whole group: every nested child plus the
+        // container PBI itself (issue #337 / ADR 0017).
+        var childA = new GlassworkTask { Id = "child-a" };
+        var childB = new GlassworkTask { Id = "child-b" };
+        var container = new GlassworkTask
+        {
+            Id = "epic",
+            Type = GlassworkTask.Types.Pbi,
+            TodaysChildren = new[] { childA, childB },
+        };
+
+        var targets = MyDayRemovalPolicy.RemovalTargets(container);
+
+        CollectionAssert.AreEquivalent(
+            new[] { childA, childB, container },
+            targets.ToArray());
+        Assert.AreSame(container, targets[^1], "The container itself is included so it can't pop back as a standalone row.");
     }
 }

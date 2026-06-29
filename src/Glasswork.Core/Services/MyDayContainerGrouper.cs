@@ -90,6 +90,7 @@ public static class MyDayContainerGrouper
         containers = containers
             .OrderBy(EarliestChildDue)
             .ThenBy(c => c.Title, StringComparer.Ordinal)
+            .ThenBy(c => c.Id, StringComparer.Ordinal)
             .ToList();
 
         var rows = new List<GlassworkTask>(standalone.Count + containers.Count);

@@ -130,6 +130,7 @@
                             <Button Grid.Column="4" Click="RemoveFromDay_Click"
                                     Background="Transparent" BorderThickness="0"
                                     Padding="6,2" VerticalAlignment="Center" Margin="6,0,0,0"
+                                    AutomationProperties.Name="{Binding RemoveFromMyDayLabel}"
                                     ToolTipService.ToolTip="Remove from My Day">
                                 <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="13" />
                             </Button>

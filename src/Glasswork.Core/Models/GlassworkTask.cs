@@ -12,7 +12,9 @@ namespace Glasswork.Core.Models;
 public partial class GlassworkTask : ObservableObject
 {
     [ObservableProperty] public partial string Id { get; set; } = string.Empty;
-    [ObservableProperty] public partial string Title { get; set; } = string.Empty;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RemoveFromMyDayLabel))]
+    public partial string Title { get; set; } = string.Empty;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDone))]
     public partial string Status { get; set; } = "todo";
@@ -309,6 +311,14 @@ public partial class GlassworkTask : ObservableObject
 
     /// <summary>True when there is at least one cross-file child Task to render nested in My Day.</summary>
     public bool HasTodaysChildren => TodaysChildren is { Count: > 0 };
+
+    /// <summary>
+    /// Accessible name for the per-row "Remove from My Day" button. Includes the title so
+    /// screen readers (and UI-automation, e.g. visual-verification scenarios) can tell one
+    /// row's remove button from another. On a PBI container the button removes the whole
+    /// group (ADR 0017).
+    /// </summary>
+    public string RemoveFromMyDayLabel => $"Remove {Title} from My Day";
 
     /// <summary>
     /// True when this row is a PBI rendered as a My Day container — a <c>pbi</c> hosting

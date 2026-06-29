@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Glasswork.Core.Models;
@@ -21,6 +22,7 @@ public class MyDayViewModelCrossFileContainerTests
     private VaultService _vault = null!;
     private IndexService _index = null!;
     private TaskService _taskService = null!;
+    private InMemoryUiState _uiState = null!;
 
     [TestInitialize]
     public void Setup()
@@ -31,6 +33,7 @@ public class MyDayViewModelCrossFileContainerTests
         _index = new IndexService(_vault);
         _index.EnsureLoaded();
         _taskService = new TaskService(_vault, _index);
+        _uiState = new InMemoryUiState();
     }
 
     [TestCleanup]
@@ -66,7 +69,7 @@ public class MyDayViewModelCrossFileContainerTests
         _vault.Save(pbi);
         var child = CreateChild("Actionable child", pbi.Id, due: today);
 
-        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
         vm.Refresh();
 
         var container = vm.TodayTasks.SingleOrDefault(t => t.Id == pbi.Id);
@@ -88,7 +91,7 @@ public class MyDayViewModelCrossFileContainerTests
         var pbi = CreatePbi("Sprint epic");
         CreateChild("Actionable child", pbi.Id, due: today);
 
-        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
         vm.Refresh();
 
         Assert.AreEqual(2, vm.TodayTasks.Count);
@@ -105,7 +108,7 @@ public class MyDayViewModelCrossFileContainerTests
         _vault.Save(pbi);
         var child = CreateChild("Actionable child", pbi.Id, due: today);
 
-        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
         vm.Refresh();
 
         Assert.AreEqual(1, vm.TodayTasks.Count(t => t.Id == pbi.Id),
@@ -124,7 +127,7 @@ public class MyDayViewModelCrossFileContainerTests
         _vault.Save(pbi);
         var child = CreateChild("Only child", pbi.Id, due: today);
 
-        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
         vm.Refresh();
         Assert.IsTrue(vm.TodayTasks.Any(t => t.Id == pbi.Id), "Container is present while its child is in My Day.");
 
@@ -142,7 +145,7 @@ public class MyDayViewModelCrossFileContainerTests
         var pbi = CreatePbi("Sprint epic");
         CreateChild("Actionable child", pbi.Id, due: today);
 
-        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
         vm.Refresh();
         var container = vm.TodayTasks.Single(t => t.Id == pbi.Id);
         container.IsManuallyCollapsed = true;
@@ -151,5 +154,101 @@ public class MyDayViewModelCrossFileContainerTests
 
         Assert.IsTrue(vm.TodayTasks.Single(t => t.Id == pbi.Id).IsManuallyCollapsed,
             "Per-row collapse state survives a refresh (CopyTaskState preserves it).");
+    }
+
+    [TestMethod]
+    public void RemoveFromMyDay_OnContainerOnlyHost_RemovesWholeGroup()
+    {
+        var today = DateTime.Today;
+        var pbi = CreatePbi("Sprint epic");
+        pbi.Due = today.AddDays(-7); // stale: container-only host, never self-promotes
+        _vault.Save(pbi);
+        CreateChild("Wire up the API", pbi.Id, due: today);
+        CreateChild("Add the integration test", pbi.Id, due: today);
+
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
+        vm.Refresh();
+        var container = vm.TodayTasks.Single(t => t.Id == pbi.Id);
+        Assert.AreEqual(2, container.TodaysChildren!.Count, "Both children host the container before removal.");
+
+        vm.RemoveFromMyDayCommand.Execute(container);
+
+        Assert.IsFalse(vm.TodayTasks.Any(t => t.Id == pbi.Id),
+            "Removing the container clears its children for today, so the group leaves My Day.");
+        Assert.IsFalse(vm.TodayTasks.Any(t => t.Title is "Wire up the API" or "Add the integration test"),
+            "No nested child should remain anywhere in My Day after the group is removed.");
+    }
+
+    [TestMethod]
+    public void RemoveFromMyDay_OnIndependentlyPinnedContainer_RemovesGroupAndStandalone()
+    {
+        var today = DateTime.Today;
+        var pbi = CreatePbi("Sprint epic");
+        pbi.MyDay = today; // independently promoted (pinned) AND hosts children
+        _vault.Save(pbi);
+        CreateChild("Wire up the API", pbi.Id, due: today);
+        CreateChild("Add the integration test", pbi.Id, due: today);
+
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
+        vm.Refresh();
+        var container = vm.TodayTasks.Single(t => t.Id == pbi.Id);
+
+        vm.RemoveFromMyDayCommand.Execute(container);
+
+        Assert.IsFalse(vm.TodayTasks.Any(t => t.Id == pbi.Id),
+            "A pinned PBI container must not pop back as a standalone row after the X — the whole group leaves My Day.");
+        Assert.IsFalse(vm.TodayTasks.Any(t => t.Title is "Wire up the API" or "Add the integration test"),
+            "Children are gone too.");
+    }
+
+    [TestMethod]
+    public void RemoveFromMyDay_OnPlainTask_RemovesOnlyThatTask()
+    {
+        var today = DateTime.Today;
+        var pinned = _taskService.CreateTask("Pinned standalone");
+        pinned.MyDay = today;
+        _vault.Save(pinned);
+        var other = _taskService.CreateTask("Another pinned");
+        other.MyDay = today;
+        _vault.Save(other);
+
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
+        vm.Refresh();
+        var target = vm.TodayTasks.Single(t => t.Id == pinned.Id);
+
+        vm.RemoveFromMyDayCommand.Execute(target);
+
+        Assert.IsFalse(vm.TodayTasks.Any(t => t.Id == pinned.Id), "The removed task leaves My Day.");
+        Assert.IsTrue(vm.TodayTasks.Any(t => t.Id == other.Id),
+            "Removing one plain row must not affect unrelated rows (non-container path unchanged).");
+    }
+
+    private sealed class InMemoryUiState : IUiStateService
+    {
+        private readonly Dictionary<string, object> _data = new(StringComparer.Ordinal);
+
+        public T? Get<T>(string key) =>
+            _data.TryGetValue(key, out var v) && v is T typed ? typed : default;
+
+        public void Set<T>(string key, T value)
+        {
+            if (value is null) _data.Remove(key);
+            else _data[key] = value;
+        }
+
+        public void Remove(string key) => _data.Remove(key);
+
+        public void Save() { }
+
+        public void RemoveKeysNotIn(string keyPrefix, IReadOnlyCollection<string> liveSuffixes)
+        {
+            foreach (var key in _data.Keys
+                         .Where(k => k.StartsWith(keyPrefix, StringComparison.Ordinal)
+                                  && !liveSuffixes.Contains(k.Substring(keyPrefix.Length)))
+                         .ToList())
+            {
+                _data.Remove(key);
+            }
+        }
     }
 }
