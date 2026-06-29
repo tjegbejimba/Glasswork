@@ -19,7 +19,10 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPriorityChip))]
     public partial string Priority { get; set; } = "medium";
-    [ObservableProperty] public partial string Type { get; set; } = "task";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsMyDayContainer))]
+    [NotifyPropertyChangedFor(nameof(ShowLeafCompleteAffordance))]
+    public partial string Type { get; set; } = "task";
     [ObservableProperty] public partial DateTime Created { get; set; } = DateTime.Today;
     [ObservableProperty] public partial DateTime? CompletedAt { get; set; }
     [ObservableProperty]
@@ -268,6 +271,7 @@ public partial class GlassworkTask : ObservableObject
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowCardDetails))]
+    [NotifyPropertyChangedFor(nameof(ShowTodaysChildren))]
     public partial bool IsManuallyCollapsed { get; set; }
 
     /// <summary>
@@ -298,10 +302,32 @@ public partial class GlassworkTask : ObservableObject
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasTodaysChildren))]
+    [NotifyPropertyChangedFor(nameof(IsMyDayContainer))]
+    [NotifyPropertyChangedFor(nameof(ShowLeafCompleteAffordance))]
+    [NotifyPropertyChangedFor(nameof(ShowTodaysChildren))]
     public partial System.Collections.Generic.IReadOnlyList<GlassworkTask>? TodaysChildren { get; set; }
 
     /// <summary>True when there is at least one cross-file child Task to render nested in My Day.</summary>
     public bool HasTodaysChildren => TodaysChildren is { Count: > 0 };
+
+    /// <summary>
+    /// True when this row is a PBI rendered as a My Day container — a <c>pbi</c> hosting
+    /// in-My-Day cross-file children (issue #337 / ADR 0017).
+    /// </summary>
+    public bool IsMyDayContainer =>
+        string.Equals(Type, Types.Pbi, StringComparison.OrdinalIgnoreCase) && HasTodaysChildren;
+
+    /// <summary>
+    /// True when the leaf "complete" affordance (circle checkbox) should render. Suppressed
+    /// for a PBI container — you complete its children, not the container itself (ADR 0016/0017).
+    /// </summary>
+    public bool ShowLeafCompleteAffordance => !IsMyDayContainer;
+
+    /// <summary>
+    /// True when a container's nested children should render: present and not manually
+    /// collapsed. Double-tapping the container toggles <see cref="IsManuallyCollapsed"/>.
+    /// </summary>
+    public bool ShowTodaysChildren => HasTodaysChildren && !IsManuallyCollapsed;
 
     /// <summary>
     /// Returns a deep, defensive copy of this task suitable for storing in (or

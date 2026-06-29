@@ -1,0 +1,72 @@
+{
+  "name": "My Day PBI container",
+  "tasks": [
+    {
+      "id": "vv-pinned",
+      "title": "Pinned standalone task",
+      "description": "A directly-pinned task that should sort above the PBI container.",
+      "status": "todo",
+      "priority": "medium",
+      "myDay": "today"
+    },
+    {
+      "id": "vv-epic",
+      "title": "Sprint epic",
+      "description": "A PBI container. Its own stale due must not self-promote it; it is pulled into My Day only to host its in-My-Day children.",
+      "type": "pbi",
+      "due": "yesterday"
+    },
+    {
+      "id": "vv-child-a",
+      "title": "Wire up the API",
+      "status": "in_progress",
+      "priority": "high",
+      "parent": "vv-epic",
+      "due": "today"
+    },
+    {
+      "id": "vv-child-b",
+      "title": "Add the integration test",
+      "status": "todo",
+      "parent": "vv-epic",
+      "due": "today"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "MyDayTodayHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Pinned standalone task",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Sprint epic",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Wire up the API",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Add the integration test",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "myday-pbi-container"
+    }
+  ]
+}

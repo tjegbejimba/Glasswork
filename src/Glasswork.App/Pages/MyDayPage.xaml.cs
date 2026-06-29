@@ -219,9 +219,10 @@ public sealed partial class MyDayPage : Page
     private void TaskRow_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
-        if (task.IsActive)
+        if (task.IsActive || task.HasTodaysChildren)
         {
-            // Toggle manual collapse and persist.
+            // Toggle manual collapse and persist. A PBI container (cross-file children)
+            // is collapsible too, even when it has no in-file card content (ADR 0017).
             task.IsManuallyCollapsed = !task.IsManuallyCollapsed;
             App.UiState.Set($"{App.CollapsedTaskKeyPrefix}{task.Id}", task.IsManuallyCollapsed);
             e.Handled = true;

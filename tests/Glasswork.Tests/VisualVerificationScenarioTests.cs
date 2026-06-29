@@ -1,3 +1,4 @@
+using Glasswork.Core.Models;
 using Glasswork.Core.VisualVerification;
 
 namespace Glasswork.Tests;
@@ -78,5 +79,17 @@ public class VisualVerificationScenarioTests
         """;
 
         Assert.ThrowsExactly<FormatException>(() => VisualVerificationScenario.FromJson(json));
+    }
+
+    [TestMethod]
+    public void ToGlassworkTask_NormalizesType()
+    {
+        var today = new DateTime(2026, 6, 29);
+        var pbi = new VisualVerificationTask { Id = "epic", Title = "Epic", Type = "pbi" };
+        var defaulted = new VisualVerificationTask { Id = "leaf", Title = "Leaf" };
+
+        Assert.AreEqual(GlassworkTask.Types.Pbi, pbi.ToGlassworkTask(today).Type);
+        Assert.AreEqual(GlassworkTask.Types.Task, defaulted.ToGlassworkTask(today).Type,
+            "A task with no scenario type normalizes to the default task type.");
     }
 }

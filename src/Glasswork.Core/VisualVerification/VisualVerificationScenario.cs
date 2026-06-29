@@ -93,6 +93,7 @@ public sealed class VisualVerificationTask
     public string Title { get; init; } = string.Empty;
     public string Status { get; init; } = GlassworkTask.Statuses.Todo;
     public string Priority { get; init; } = GlassworkTask.Priorities.Medium;
+    public string? Type { get; init; }
     public string? Description { get; init; }
     public string? Notes { get; init; }
     public string? Due { get; init; }
@@ -109,6 +110,7 @@ public sealed class VisualVerificationTask
             Title = Title,
             Status = Status,
             Priority = Priority,
+            Type = GlassworkTask.Types.Normalize(Type),
             Created = today.Date,
             Due = ParseScenarioDate(Due, today),
             MyDay = ParseScenarioDate(MyDay, today),

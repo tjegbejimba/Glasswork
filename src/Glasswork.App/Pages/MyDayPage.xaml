@@ -86,20 +86,28 @@
             </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate>
-                    <Grid Padding="10,8" RowDefinitions="Auto,Auto,Auto"
+                    <Grid Padding="10,8" RowDefinitions="Auto,Auto,Auto,Auto"
                           DoubleTapped="TaskRow_DoubleTapped"
                           ContextRequested="TaskRow_ContextRequested"
                           Background="Transparent">
                         <!-- Title row -->
                         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
                             <Grid Grid.Column="0" Width="22" Height="22" VerticalAlignment="Center" Margin="0,0,8,0">
+                                <!-- Leaf complete affordance — hidden for PBI containers (you complete
+                                     the children, not the container itself; ADR 0016/0017). -->
                                 <CheckBox VerticalAlignment="Center" HorizontalAlignment="Center"
                                           IsChecked="{Binding IsDone, Mode=OneWay}"
                                           Style="{StaticResource CircleCheckBoxStyle}"
+                                          Visibility="{Binding ShowLeafCompleteAffordance, Converter={StaticResource BoolVis}}"
                                           IsHitTestVisible="False" IsTabStop="False" />
                                 <Button Background="Transparent" BorderThickness="0" Padding="0"
                                         HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                        Visibility="{Binding ShowLeafCompleteAffordance, Converter={StaticResource BoolVis}}"
                                         Click="CompleteTask_Click" />
+                                <!-- Container marker for a PBI hosting cross-file children (ADR 0017). -->
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8B7;" FontSize="14"
+                                          VerticalAlignment="Center" HorizontalAlignment="Center" Opacity="0.7"
+                                          Visibility="{Binding IsMyDayContainer, Converter={StaticResource BoolVis}}" />
                             </Grid>
                             <HyperlinkButton Grid.Column="1" Content="{Binding Title}"
                                              Click="OpenTask_Click"
@@ -224,6 +232,45 @@
                                                    FontSize="12" Opacity="0.75"
                                                    TextTrimming="CharacterEllipsis"
                                                    VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Today's children (ADR 0017): in-My-Day cross-file child Tasks rendered
+                             nested beneath a PBI container. Each child is a full Task — complete via
+                             the circle, open via the title. Hidden when the container is collapsed. -->
+                        <ItemsControl Grid.Row="3" ItemsSource="{Binding TodaysChildren}"
+                                      Visibility="{Binding ShowTodaysChildren, Converter={StaticResource BoolVis}}"
+                                      Margin="32,4,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="0,3" ColumnDefinitions="Auto,*,Auto,Auto" Background="Transparent">
+                                        <Grid Grid.Column="0" Width="20" Height="20" VerticalAlignment="Center" Margin="0,0,8,0">
+                                            <CheckBox VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                      IsChecked="{Binding IsDone, Mode=OneWay}"
+                                                      Style="{StaticResource CircleCheckBoxStyle}"
+                                                      IsHitTestVisible="False" IsTabStop="False" />
+                                            <Button Background="Transparent" BorderThickness="0" Padding="0"
+                                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                                    Click="CompleteTask_Click" />
+                                        </Grid>
+                                        <HyperlinkButton Grid.Column="1" Content="{Binding Title}"
+                                                         Click="OpenTask_Click"
+                                                         Padding="0" VerticalAlignment="Center"
+                                                         HorizontalAlignment="Stretch"
+                                                         HorizontalContentAlignment="Left" />
+                                        <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}"
+                                                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                                Visibility="{Binding HasPriorityChip, Converter={StaticResource BoolVis}}">
+                                            <TextBlock Text="{Binding Priority}" Style="{StaticResource ChipTextStyle}" />
+                                        </Border>
+                                        <Border Grid.Column="3" Style="{StaticResource ChipBorderStyle}"
+                                                Background="{Binding DueUrgency, Converter={StaticResource DueBg}}"
+                                                Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
+                                            <TextBlock Text="{Binding DueChipText}" Style="{StaticResource ChipTextStyle}"
+                                                       Foreground="{Binding DueUrgency, Converter={StaticResource DueFg}}" />
+                                        </Border>
                                     </Grid>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
