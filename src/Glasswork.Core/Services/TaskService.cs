@@ -138,9 +138,9 @@ public class TaskService
     /// <summary>
     /// Get tasks in My Day for today, applying the four-condition promotion rule from ADR 0008:
     /// 1. Direct pin: task.MyDay == today
-    /// 2. Task due: task.Due <= today && Status != Done
+    /// 2. Task due: task.Due &lt;= today &amp;&amp; Status != Done &amp;&amp; Type != pbi (PBIs don't self-promote on their own due — ADR 0016)
     /// 3. Flagged subtask: any subtask has IsMyDay == true
-    /// 4. Due subtask: any subtask has Due <= today && Status != Done
+    /// 4. Due subtask: any subtask has Due &lt;= today &amp;&amp; Status != Done
     /// </summary>
     public List<GlassworkTask> GetMyDay(bool includeDone, bool includeSubtasks)
     {
@@ -157,8 +157,9 @@ public class TaskService
                 promoted = true;
             }
 
-            // Condition 2: Task due (not done)
-            if (!promoted && task.Due.HasValue && task.Due.Value.Date <= today && task.Status != GlassworkTask.Statuses.Done)
+            // Condition 2: Task due (not done). A PBI is a container, not an actionable
+            // leaf, so it must NOT self-promote on its own (often import-stamped) due — ADR 0016.
+            if (!promoted && task.Type != GlassworkTask.Types.Pbi && task.Due.HasValue && task.Due.Value.Date <= today && task.Status != GlassworkTask.Statuses.Done)
             {
                 promoted = true;
             }
