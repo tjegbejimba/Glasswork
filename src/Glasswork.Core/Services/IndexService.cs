@@ -53,6 +53,37 @@ public class IndexService
     private readonly FrontmatterParser _serializer = new();
 
     /// <summary>
+    /// Monotonic store-mutation sequence and the per-id version it stamps. Every
+    /// <c>_store</c> insert / update / remove bumps <see cref="_versionSeq"/> under
+    /// <see cref="_gate"/> and records the new value as the touched id's version.
+    /// <see cref="Rehydrate"/> captures <see cref="_versionSeq"/> <b>before</b> its
+    /// unlocked disk read and, at apply time, skips any entry whose per-id version
+    /// advanced past that capture — a concurrent per-file write moved it under us, so
+    /// replaying the older parse would re-stale the newer store value. A counter is
+    /// immune to filesystem mtime resolution / coalescing and, because it is read
+    /// strictly before the content, to a write that lands <i>during</i> the read
+    /// (the ordering flaw that a post-read mtime sample cannot detect).
+    /// </summary>
+    private long _versionSeq;
+    private readonly Dictionary<string, long> _versions = new(StringComparer.Ordinal);
+
+    /// <summary>Stamp the id with a fresh version. MUST be called under <see cref="_gate"/>.</summary>
+    private void BumpVersion(string id) => _versions[id] = ++_versionSeq;
+
+    /// <summary>Forget an id's version on removal. MUST be called under <see cref="_gate"/>.</summary>
+    private void DropVersion(string id) => _versions.Remove(id);
+
+    /// <summary>
+    /// Snapshot returned by the <see cref="ReadDiskSnapshot"/> seam: every task
+    /// parsed from disk, paired with the store-version sequence captured
+    /// <b>immediately before</b> the content read began. <see cref="Rehydrate"/>
+    /// compares each task's per-id version against <see cref="ReadStartSeq"/> to
+    /// detect a per-file write that landed during the read. Public only so the test
+    /// seam subclass (another assembly) can construct and return it.
+    /// </summary>
+    public readonly record struct DiskSnapshot(IReadOnlyList<GlassworkTask> Tasks, long ReadStartSeq);
+
+    /// <summary>
     /// Raised after the in-memory store has been mutated by a vault event or
     /// a watcher-observed file change. Carries old+new snapshots so filtered
     /// views can detect removal-from-set. Subscribers may throw — exceptions
@@ -69,6 +100,21 @@ public class IndexService
     /// subscribers are caught and logged.
     /// </summary>
     public event EventHandler<TasksChanged>? Changed;
+
+    /// <summary>
+    /// Raised once at the end of a <see cref="Rehydrate"/> pass that could not fully
+    /// reconcile in a single shot — it skipped an entry whose source file was
+    /// concurrently rewritten, or kept a present-but-unparseable file. In the
+    /// watcher-overflow scenario <see cref="Rehydrate"/> exists for, the per-file
+    /// event that would otherwise converge that entry may itself have been dropped by
+    /// the same overflow, so the store cannot be assumed to already hold the newer
+    /// value and — once writes quiesce — no further overflow will fire. The app
+    /// subscribes and re-arms a single <b>bounded</b>, debounced follow-up
+    /// <see cref="Rehydrate"/> so eventual convergence does not depend on another
+    /// overflow event. Raised after the lock is released and after the data deltas;
+    /// subscriber exceptions are caught and logged.
+    /// </summary>
+    public event EventHandler? ConvergencePending;
 
     public IndexService(VaultService vault)
     {
@@ -166,10 +212,14 @@ public class IndexService
         {
             if (_loaded) return;
             _store.Clear();
+            _versions.Clear();
             foreach (var t in _vault.LoadAll())
             {
                 if (!string.IsNullOrEmpty(t.Id))
+                {
                     _store[t.Id] = t;
+                    BumpVersion(t.Id);
+                }
             }
             _loaded = true;
         }
@@ -204,19 +254,22 @@ public class IndexService
     /// </summary>
     public void Rehydrate()
     {
-        // Read disk OUTSIDE the lock — LoadAll does file IO + parsing. Each entry
-        // carries the source file's last-write time captured at read, so the apply
-        // phase can detect (and skip) any entry whose file changed under us between
-        // this unlocked read and taking the lock.
-        var fresh = ReadDiskSnapshot();
-        var freshById = new Dictionary<string, (GlassworkTask Task, DateTime ReadMtimeUtc)>(StringComparer.Ordinal);
-        foreach (var entry in fresh)
+        // Capture the store-version sequence BEFORE the unlocked disk read begins,
+        // then read disk OUTSIDE the lock (LoadAll does file IO + parsing). Any
+        // per-file store mutation that lands during the read bumps a per-id version
+        // past this captured baseline, so the apply phase can detect (and skip) it.
+        // The counter is sampled strictly before the content — unlike a post-read
+        // mtime sample, it cannot miss a write that occurs DURING the read.
+        var snapshot = ReadDiskSnapshot();
+        var freshById = new Dictionary<string, GlassworkTask>(StringComparer.Ordinal);
+        foreach (var t in snapshot.Tasks)
         {
-            if (!string.IsNullOrEmpty(entry.Task.Id))
-                freshById[entry.Task.Id] = entry;
+            if (!string.IsNullOrEmpty(t.Id))
+                freshById[t.Id] = t;
         }
 
         var changes = new List<TaskChange>();
+        bool convergencePending = false;
         lock (_gate)
         {
             // Removed: present in the store, absent from the fresh snapshot — but
@@ -230,35 +283,51 @@ public class IndexService
             foreach (var kv in _store)
             {
                 if (freshById.ContainsKey(kv.Key)) continue;
-                if (File.Exists(Path.Combine(_vault.VaultPath, kv.Key + ".md"))) continue;
+                if (File.Exists(Path.Combine(_vault.VaultPath, kv.Key + ".md")))
+                {
+                    // Present on disk but missing from the snapshot => it was
+                    // unparseable / mid-write when LoadAll ran, or written after the
+                    // snapshot. Keep the prior value and request a bounded follow-up
+                    // so a final write whose event was also dropped still converges.
+                    convergencePending = true;
+                    continue;
+                }
                 changes.Add(new TaskChange(kv.Value.Clone(), null));
                 removedIds.Add(kv.Key);
             }
             foreach (var id in removedIds)
+            {
                 _store.Remove(id);
+                DropVersion(id);
+            }
 
-            // Added or content-changed — but skip any entry whose source file
-            // changed on disk since the unlocked read. A newer per-file update may
-            // have landed in the store while we were reading; replaying our older
-            // snapshot would re-stale it. The store already holds the newer value;
-            // the next watcher event / rehydrate converges anything genuinely missed.
+            // Added or content-changed — but skip any entry whose per-id version
+            // advanced past the sequence captured before the read. A newer per-file
+            // update landed in the store while we were reading; replaying our older
+            // parse would re-stale it. Per-id compare (not the global current seq) so
+            // Rehydrate's own bumps on OTHER ids this pass don't self-interfere.
             foreach (var kv in freshById)
             {
                 var id = kv.Key;
-                var task = kv.Value.Task;
+                var task = kv.Value;
 
-                if (CurrentMtimeUtc(id) != kv.Value.ReadMtimeUtc)
+                if (_versions.TryGetValue(id, out var ver) && ver > snapshot.ReadStartSeq)
+                {
+                    convergencePending = true;
                     continue;
+                }
 
                 if (!_store.TryGetValue(id, out var existing))
                 {
                     _store[id] = task;
+                    BumpVersion(id);
                     changes.Add(new TaskChange(null, task.Clone()));
                 }
                 else if (!ContentEquals(existing, task))
                 {
                     var old = existing.Clone();
                     _store[id] = task;
+                    BumpVersion(id);
                     changes.Add(new TaskChange(old, task.Clone()));
                 }
             }
@@ -268,37 +337,44 @@ public class IndexService
 
         if (changes.Count > 0)
             RaiseTasksChanged(changes);
+
+        if (convergencePending)
+            RaiseConvergencePending();
     }
 
     /// <summary>
-    /// Test seam: reads every task from disk via <see cref="VaultService.LoadAll"/>,
-    /// pairing each parsed snapshot with its source file's last-write time captured
-    /// at read. <c>protected virtual</c> so tests can inject a snapshot that is
-    /// already stale relative to disk by the time <see cref="Rehydrate"/> applies it
-    /// (the read-outside-lock / apply-inside-lock race the reconciliation guards
-    /// against). Production reads the live vault.
+    /// Test seam: captures the store-version sequence (under <see cref="_gate"/>)
+    /// <b>before</b> reading every task from disk via <see cref="VaultService.LoadAll"/>,
+    /// returning both. <c>protected virtual</c> so tests can inject a snapshot whose
+    /// captured <see cref="DiskSnapshot.ReadStartSeq"/> predates a store mutation that
+    /// lands before <see cref="Rehydrate"/> applies it (the read-outside-lock /
+    /// apply-inside-lock race the version guard defends against). Production reads the
+    /// live vault.
     /// </summary>
-    protected virtual IReadOnlyList<(GlassworkTask Task, DateTime ReadMtimeUtc)> ReadDiskSnapshot()
+    protected virtual DiskSnapshot ReadDiskSnapshot()
     {
-        var list = new List<(GlassworkTask, DateTime)>();
+        long readStartSeq;
+        lock (_gate)
+        {
+            readStartSeq = _versionSeq;
+        }
+        var list = new List<GlassworkTask>();
         foreach (var t in _vault.LoadAll())
         {
             if (string.IsNullOrEmpty(t.Id)) continue;
-            list.Add((t, CurrentMtimeUtc(t.Id)));
+            list.Add(t);
         }
-        return list;
+        return new DiskSnapshot(list, readStartSeq);
     }
 
-    /// <summary>
-    /// Last-write time (UTC) of the task's <c>.md</c> file, or a sentinel
-    /// (<see cref="DateTime.MinValue"/> on IO error; the 1601 epoch when the file
-    /// is simply absent) that compares unequal to any real timestamp. Used by
-    /// <see cref="Rehydrate"/> to detect concurrent on-disk writes.
-    /// </summary>
-    private DateTime CurrentMtimeUtc(string taskId)
+    /// <summary>Raise <see cref="ConvergencePending"/>, swallowing subscriber faults.</summary>
+    private void RaiseConvergencePending()
     {
-        try { return File.GetLastWriteTimeUtc(Path.Combine(_vault.VaultPath, taskId + ".md")); }
-        catch { return DateTime.MinValue; }
+        try { ConvergencePending?.Invoke(this, EventArgs.Empty); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"IndexService: ConvergencePending subscriber threw: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -454,6 +530,7 @@ public class IndexService
         {
             _store.TryGetValue(taskId, out oldEntry);
             _store[taskId] = parsed;
+            BumpVersion(taskId);
             // Clone OUTSIDE the lock? Cheap enough to do under it; avoids racing
             // with another mutation. Then we hand the clones out.
             newEntry = parsed.Clone();
@@ -470,6 +547,7 @@ public class IndexService
         {
             if (!_store.TryGetValue(taskId, out oldEntry)) return;
             _store.Remove(taskId);
+            DropVersion(taskId);
         }
         changes.Add(new TaskChange(oldEntry.Clone(), null));
     }
