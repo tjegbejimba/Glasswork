@@ -45,6 +45,11 @@ public partial class App : Application
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
 
+    // Coalesces a burst of watcher-overflow events into a single full rehydrate.
+    // An OS buffer overflow can fire repeatedly while a bulk write is still in
+    // flight; debouncing lets the disk settle before we re-read the whole vault.
+    private static Glasswork.Core.Services.Debouncer? _overflowRehydrateDebouncer;
+
     /// <summary>
     /// Single app-wide owner of the live HTML-preview WebView2 (#324).
     /// UI-thread only; constructed eagerly since it holds no startup state.
@@ -374,11 +379,16 @@ public partial class App : Application
         // events and those tasks' snapshots go stale until restart. Recover by
         // re-reading the whole vault from disk and emitting deltas for whatever
         // drifted, so chips converge to the on-disk Due/urgency instead of sticking.
-        Watcher.Overflowed += (_, _) =>
-        {
-            try { Index.Rehydrate(); }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.Rehydrate after watcher overflow failed: {ex.Message}"); }
-        };
+        // Debounced so a storm of overflow signals collapses into one rehydrate
+        // once the write burst has quieted.
+        _overflowRehydrateDebouncer = new Glasswork.Core.Services.Debouncer(
+            TimeSpan.FromMilliseconds(500),
+            () =>
+            {
+                try { Index.Rehydrate(); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.Rehydrate after watcher overflow failed: {ex.Message}"); }
+            });
+        Watcher.Overflowed += (_, _) => _overflowRehydrateDebouncer.Trigger();
         Watcher.Start();
 
         ArtifactsWatcher = new ArtifactWatcherService(vaultPath);
