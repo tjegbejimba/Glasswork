@@ -319,6 +319,18 @@ public class IndexService
 
                 if (!_store.TryGetValue(id, out var existing))
                 {
+                    // Don't resurrect a file that was deleted between the unlocked
+                    // read and this apply. Its RemoveSnapshot dropped the version,
+                    // so the per-id guard above can't catch it (TryGetValue=false,
+                    // same path as a brand-new id). Mirror the removed-branch
+                    // File.Exists check; request a bounded follow-up so the next
+                    // pass — whose snapshot won't contain the deleted id — reconciles
+                    // cleanly via the removed-branch's genuine-absence handling.
+                    if (!File.Exists(Path.Combine(_vault.VaultPath, id + ".md")))
+                    {
+                        convergencePending = true;
+                        continue;
+                    }
                     _store[id] = task;
                     BumpVersion(id);
                     changes.Add(new TaskChange(null, task.Clone()));

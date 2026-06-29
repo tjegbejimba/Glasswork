@@ -346,6 +346,53 @@ public class IndexRehydrateTests
         Assert.AreEqual(1, convergence, "a version-skipped entry must request exactly one bounded follow-up.");
     }
 
+    // ── Finding C: delete-during-read must not resurrect ────────────────────
+    //
+    // ReadDiskSnapshot/LoadAll is lock-free; the watcher thread can run
+    // RemoveSnapshot concurrently. If a task is deleted on disk AFTER the read
+    // captured it but BEFORE the apply lock, its id is gone from _store and —
+    // critically — DROPPED from _versions. The add-branch version guard is
+    // `_versions.TryGetValue(id, ...)`, which returns false for a dropped id, so
+    // the guard is skipped exactly as for a brand-new id → the stale parse would
+    // re-add the task as a phantom (an Added delta), reappearing in the UI until
+    // the next overflow or restart. That is WORSE than the stale-chip bug this PR
+    // fixes. The add-branch must mirror the removed-branch File.Exists guard.
+    [TestMethod]
+    public void Rehydrate_WhenFileDeletedDuringRead_DoesNotResurrectDeletedTask()
+    {
+        _vault.Save(new GlassworkTask { Id = "x", Title = "Ex", Due = DateTime.Today.AddDays(5) });
+
+        SeamIndex seam = null!;
+        seam = new SeamIndex(_vault, () =>
+        {
+            // The snapshot captured "x" while x.md still existed…
+            var captured = new GlassworkTask { Id = "x", Title = "Ex", Due = DateTime.Today.AddDays(5) };
+
+            // …then, during the unlocked read, x is deleted on disk and the delete
+            // event is delivered + processed by the real watcher path: store loses
+            // "x" and DropVersion("x") erases its version (so the add-branch's
+            // version guard cannot catch it).
+            File.Delete(Path.Combine(_tempDir, "x.md"));
+            seam.OnFileChangedOnDisk("x"); // file gone => RemoveSnapshot("x")
+
+            return new IndexService.DiskSnapshot(new[] { captured }, ReadStartSeq: 0);
+        });
+        var seamChanges = new List<TasksChanged>();
+        seam.Changed += (_, e) => seamChanges.Add(e);
+        seam.EnsureLoaded();
+
+        int convergence = 0;
+        seam.ConvergencePending += (_, _) => convergence++;
+
+        seam.Rehydrate();
+
+        Assert.IsNull(seam.ById("x"), "a task deleted during the unlocked read must not be resurrected by the apply.");
+        Assert.IsFalse(
+            seamChanges.Any(e => e.Added.Any(t => t.Id == "x")),
+            "the apply must not emit a phantom Added for a file that is absent at apply time.");
+        Assert.AreEqual(1, convergence, "a skipped resurrection must request one bounded follow-up to reconcile cleanly.");
+    }
+
     // A fully-reconciled pass (disk == memory, nothing skipped or kept-unparseable)
     // must NOT request a follow-up — otherwise every overflow would re-arm forever.
     [TestMethod]
