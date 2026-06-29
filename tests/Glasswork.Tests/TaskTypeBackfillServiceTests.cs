@@ -328,4 +328,56 @@ public class TaskTypeBackfillServiceTests
 
         Assert.AreEqual(AdoIdStatus.None, r.Status);
     }
+
+    [TestMethod]
+    public void ResolveAdoId_FencedAdoLinkInBody_IsIgnored_BodyMarkerWins()
+    {
+        // A fenced/quoted `ado_link:` in the BODY must never be treated as the frontmatter
+        // field. ado_link is resolved only within the frontmatter span; here the real id
+        // comes from the body marker + URL (which agree).
+        var content = """
+            ---
+            id: x
+            status: todo
+            priority: medium
+            ---
+
+            Pasted from another task for reference:
+
+            ```
+            ado_link: 11111111
+            ```
+
+            ADO 22222222 — https://msazure.visualstudio.com/One/_workitems/edit/22222222
+            """.ReplaceLineEndings("\n");
+
+        var r = TaskTypeBackfillService.ResolveAdoId(content);
+
+        Assert.AreEqual(AdoIdStatus.Resolved, r.Status);
+        Assert.AreEqual(22222222, r.Id);
+    }
+
+    [TestMethod]
+    public void ResolveAdoId_FencedBodyMarkerAndDifferentUrl_IsAmbiguous()
+    {
+        // A fenced ^ADO marker (one id) plus a real work-item URL (a different id) must be
+        // reported Ambiguous — not first-match-wins on the fenced marker.
+        var content = """
+            ---
+            id: x
+            ---
+
+            Pasted log:
+
+            ```
+            ADO 11111111 — stale reference
+            ```
+
+            Real link: https://msazure.visualstudio.com/One/_workitems/edit/22222222
+            """.ReplaceLineEndings("\n");
+
+        var r = TaskTypeBackfillService.ResolveAdoId(content);
+
+        Assert.AreEqual(AdoIdStatus.Ambiguous, r.Status);
+    }
 }

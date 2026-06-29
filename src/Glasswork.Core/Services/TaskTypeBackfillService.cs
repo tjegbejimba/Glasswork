@@ -33,6 +33,13 @@ public partial class TaskTypeBackfillService
         _selfWrites = selfWrites;
     }
 
+    /// <summary>
+    /// Test-only seam: invoked with the full path immediately before the pre-write re-read,
+    /// so a test can simulate a concurrent vault edit landing in the read→write window.
+    /// Never set in production.
+    /// </summary>
+    internal Action<string>? BeforeWriteHook { get; set; }
+
     [GeneratedRegex(@"\A---[ \t]*\r?\n", RegexOptions.Singleline)]
     private static partial Regex OpeningDelimiterRegex();
 
@@ -133,27 +140,45 @@ public partial class TaskTypeBackfillService
 
     /// <summary>
     /// Resolves a task file's own ADO work-item id with strict precedence and ambiguity
-    /// reporting: (1) a top-level <c>ado_link:</c> frontmatter field is authoritative;
-    /// (2) otherwise a line-anchored <c>^ADO &lt;id&gt;</c> body marker, if exactly one
-    /// distinct id; (3) otherwise a <c>_workitems/edit/&lt;id&gt;</c> URL, if exactly one
-    /// distinct id. Multiple distinct ids within a tier yields <see cref="AdoIdStatus.Ambiguous"/>
-    /// so the caller can skip and report; no reference yields <see cref="AdoIdStatus.None"/>.
-    /// The line anchor on the body marker avoids picking up casual prose mentions
-    /// (e.g. "same shape as ADO 123").
+    /// reporting:
+    /// <list type="number">
+    ///   <item><description><c>ado_link:</c> is a frontmatter field and is resolved
+    ///     <b>only within the frontmatter span</b> — a fenced/quoted <c>ado_link:</c> in the
+    ///     body never wins. Authoritative when present.</description></item>
+    ///   <item><description>otherwise the <b>union</b> of distinct ids from line-anchored
+    ///     <c>^ADO &lt;id&gt;</c> body markers and <c>_workitems/edit/&lt;id&gt;</c> URLs.</description></item>
+    /// </list>
+    /// More than one distinct id in the chosen tier yields <see cref="AdoIdStatus.Ambiguous"/>
+    /// (flag for human review, never auto-stamp); no reference yields
+    /// <see cref="AdoIdStatus.None"/>. The line anchor on the body marker avoids casual prose
+    /// mentions (e.g. "same shape as ADO 123").
     /// </summary>
     public static AdoIdResolution ResolveAdoId(string content)
     {
-        var adoLink = AdoLinkFrontmatterRegex().Match(content);
-        if (adoLink.Success && int.TryParse(adoLink.Groups[1].Value, out var linkId))
-            return AdoIdResolution.Resolved(linkId);
+        // Tier 1: ado_link — frontmatter only. Scoping to the span is what stops a fenced or
+        // quoted `ado_link:` in the body from being mistaken for the real field.
+        var body = content;
+        if (TryGetFrontmatterSpan(content, out var yamlStart, out var yamlEnd))
+        {
+            var frontmatter = content[yamlStart..yamlEnd];
+            var linkIds = DistinctIds(AdoLinkFrontmatterRegex().Matches(frontmatter));
+            if (linkIds.Count == 1) return AdoIdResolution.Resolved(linkIds[0]);
+            if (linkIds.Count > 1) return AdoIdResolution.Ambiguous;
 
-        var markerIds = DistinctIds(AdoBodyMarkerRegex().Matches(content));
-        if (markerIds.Count == 1) return AdoIdResolution.Resolved(markerIds[0]);
-        if (markerIds.Count > 1) return AdoIdResolution.Ambiguous;
+            body = content[yamlEnd..]; // only the region below the frontmatter is "body"
+        }
 
-        var urlIds = DistinctIds(WorkitemUrlRegex().Matches(content));
-        if (urlIds.Count == 1) return AdoIdResolution.Resolved(urlIds[0]);
-        if (urlIds.Count > 1) return AdoIdResolution.Ambiguous;
+        // Tier 2: body markers and work-item URLs, unioned. Any disagreement (more than one
+        // distinct id across both kinds) is Ambiguous rather than first-match-wins, so a
+        // stray id in a code block or quoted log cannot silently mis-resolve the file.
+        var bodyIds = new HashSet<int>();
+        foreach (Match m in AdoBodyMarkerRegex().Matches(body))
+            if (int.TryParse(m.Groups[1].Value, out var markerId)) bodyIds.Add(markerId);
+        foreach (Match m in WorkitemUrlRegex().Matches(body))
+            if (int.TryParse(m.Groups[1].Value, out var urlId)) bodyIds.Add(urlId);
+
+        if (bodyIds.Count == 1) return AdoIdResolution.Resolved(bodyIds.First());
+        if (bodyIds.Count > 1) return AdoIdResolution.Ambiguous;
 
         return AdoIdResolution.None;
     }
@@ -242,11 +267,15 @@ public partial class TaskTypeBackfillService
     /// <para>Preflight (no writes): rejects duplicate paths, types other than <c>pbi</c>/
     /// <c>bug</c>, and paths not present in the in-scope inventory.</para>
     /// <para>Per file: a file that already carries a top-level <c>type:</c> is skipped
-    /// (<see cref="BackfillReport.SkippedAlreadyTyped"/>); a file whose current ADO id no
-    /// longer matches the classification (edited/renamed since classification) is skipped as
-    /// drift (<see cref="BackfillReport.SkippedDrift"/>); otherwise the <c>type:</c> line is
-    /// inserted. When <paramref name="dryRun"/> is true the report is computed identically
-    /// but nothing is written.</para>
+    /// (<see cref="BackfillReport.SkippedAlreadyTyped"/>); one whose current ADO id no longer
+    /// matches the classification is skipped as drift
+    /// (<see cref="BackfillReport.SkippedDrift"/>); one whose frontmatter cannot be stamped
+    /// (e.g. malformed/unterminated) is surfaced as
+    /// <see cref="BackfillReport.Unstampable"/> rather than hidden; and one that changes on
+    /// disk between the read and the write is skipped as a conflict
+    /// (<see cref="BackfillReport.SkippedConflict"/>) so a stale buffer never clobbers a
+    /// concurrent edit. When <paramref name="dryRun"/> is true the report is computed
+    /// identically but nothing is written.</para>
     /// </summary>
     public BackfillReport Run(IReadOnlyList<BackfillClassification> classifications, bool dryRun)
     {
@@ -256,6 +285,8 @@ public partial class TaskTypeBackfillService
         var stamped = new List<string>();
         var alreadyTyped = new List<string>();
         var drift = new List<string>();
+        var conflict = new List<string>();
+        var unstampable = new List<string>();
         var invalid = new List<BackfillRejection>();
 
         var duplicatePaths = classifications
@@ -304,19 +335,35 @@ public partial class TaskTypeBackfillService
             var (updated, changed) = StampType(content, c.Type);
             if (!changed)
             {
-                alreadyTyped.Add(c.RelativePath);
+                // A top-level type was already ruled out above, so a no-op here means the
+                // file has no usable frontmatter span to insert into (malformed/unterminated).
+                // Surface it for review instead of hiding it as "already typed".
+                unstampable.Add(c.RelativePath);
                 continue;
             }
 
             if (!dryRun)
             {
+                // TOCTOU guard: the vault is concurrently editable (Obsidian / the app). Re-read
+                // immediately before writing and skip if the file changed since we read it, so a
+                // stale buffer never clobbers a concurrent edit.
+                BeforeWriteHook?.Invoke(fullPath);
+                string current;
+                try { current = File.ReadAllText(fullPath); }
+                catch { conflict.Add(c.RelativePath); continue; }
+                if (!string.Equals(current, content, StringComparison.Ordinal))
+                {
+                    conflict.Add(c.RelativePath);
+                    continue;
+                }
+
                 _selfWrites?.RegisterWrite(fullPath);
                 File.WriteAllText(fullPath, updated);
             }
             stamped.Add(c.RelativePath);
         }
 
-        return new BackfillReport(stamped, alreadyTyped, drift, invalid, dryRun);
+        return new BackfillReport(stamped, alreadyTyped, drift, conflict, unstampable, invalid, dryRun);
     }
 }
 
@@ -330,10 +377,20 @@ public sealed record BackfillRejection(string RelativePath, string Reason);
 
 /// <summary>Outcome of <see cref="TaskTypeBackfillService.Run"/>. In a dry run the
 /// <see cref="Stamped"/> list is what <em>would</em> be stamped.</summary>
+/// <param name="Stamped">Files stamped (or, in a dry run, that would be stamped).</param>
+/// <param name="SkippedAlreadyTyped">Files that already carry a top-level <c>type:</c>.</param>
+/// <param name="SkippedDrift">Files whose current ADO id no longer matches the classification.</param>
+/// <param name="SkippedConflict">Files that changed on disk between read and write (apply only) —
+/// skipped so a stale buffer never clobbers a concurrent edit.</param>
+/// <param name="Unstampable">Files with a resolvable ADO id but no usable frontmatter span to
+/// insert into (malformed/unterminated); surfaced for review rather than silently skipped.</param>
+/// <param name="Invalid">Classifications rejected during preflight, with reasons.</param>
 public sealed record BackfillReport(
     IReadOnlyList<string> Stamped,
     IReadOnlyList<string> SkippedAlreadyTyped,
     IReadOnlyList<string> SkippedDrift,
+    IReadOnlyList<string> SkippedConflict,
+    IReadOnlyList<string> Unstampable,
     IReadOnlyList<BackfillRejection> Invalid,
     bool DryRun);
 

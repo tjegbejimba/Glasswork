@@ -98,9 +98,12 @@ dotnet run --project tools/Glasswork.Maintenance/Glasswork.Maintenance.csproj --
 ```
 
 Without `--apply` this is a **dry run**: it writes nothing and prints a report
-(`stamped` = would-stamp, `skipped_already_typed`, `skipped_drift`, `invalid`). Show the
-report to the user. Investigate any `invalid` (bad path / non-pbi-bug type / duplicate) or
-`skipped_drift` (the file's ADO id no longer matches what you classified) before proceeding.
+(`stamped` = would-stamp, `skipped_already_typed`, `skipped_drift`, `skipped_conflict`,
+`unstampable`, `invalid`). Show the report to the user. Investigate any `invalid` (bad path /
+non-pbi-bug type / duplicate), `unstampable` (resolvable ADO id but malformed frontmatter — no
+place to insert), or `skipped_drift` (the file's ADO id no longer matches what you classified)
+before proceeding. `skipped_conflict` only appears on `--apply` (a file changed on disk between
+read and write — re-run to pick it up).
 
 ### 5. CONFIRM, then apply
 
@@ -128,10 +131,11 @@ Stamped (N): pbi=<count>, bug=<count>
   ...
 
 Needs manual review (M):
-  - <relative_path>  [ado: ambiguous|none]
+  - <relative_path>  [ado: ambiguous|none]      # unresolvable / conflicting ADO id
+  - <relative_path>  [unstampable]              # resolvable id but malformed frontmatter
   ...
 
-Not changed: <count> already-typed, <count> drift/invalid (list any).
+Not changed: <count> already-typed, <count> drift, <count> conflict (re-run), <count> invalid (list any).
 ```
 
 If the user wants confirmation it worked: an active (non-done) PBI with `due <= today`

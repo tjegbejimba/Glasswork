@@ -198,4 +198,42 @@ public class TaskTypeBackfillServiceVaultTests
         CollectionAssert.Contains(report.SkippedDrift.ToArray(), "pbi-file.md");
         Assert.IsFalse(File.ReadAllText(Path.Combine(_todo, "pbi-file.md")).Contains("type: pbi"));
     }
+
+    [TestMethod]
+    public void Run_Apply_SkipsAndReportsConflict_WhenFileChangesBetweenReadAndWrite()
+    {
+        Write("pbi-file.md", PbiFile);
+        var fullPath = Path.Combine(_todo, "pbi-file.md");
+        var svc = new TaskTypeBackfillService(_todo);
+
+        // Simulate a concurrent vault edit (Obsidian / the app) landing after Run reads the
+        // file but before it writes — exercised via the before-write test seam.
+        svc.BeforeWriteHook = path =>
+            File.WriteAllText(path, "---\nid: pbi-file\nstatus: done\n---\n\nconcurrently edited\n");
+
+        var report = svc.Run([new BackfillClassification("pbi-file.md", 14480984, "pbi")], dryRun: false);
+
+        Assert.AreEqual(0, report.Stamped.Count, "must not overwrite a concurrently edited file");
+        CollectionAssert.Contains(report.SkippedConflict.ToArray(), "pbi-file.md");
+        var onDisk = File.ReadAllText(fullPath);
+        StringAssert.Contains(onDisk, "concurrently edited"); // the concurrent edit survived
+        Assert.IsFalse(onDisk.Contains("type: pbi"));
+    }
+
+    [TestMethod]
+    public void Run_Apply_MalformedFrontmatterResolvedByBody_IsUnstampable_NotAlreadyTyped()
+    {
+        // Opening `---` but no closing delimiter: ResolveAdoId still finds the body id, but
+        // StampType has no frontmatter span to insert into. It must be surfaced as
+        // unstampable, not silently hidden in the already-typed bucket.
+        Write("broken.md",
+            "---\nid: broken\npriority: medium\n\nADO 14480984 — https://msazure.visualstudio.com/One/_workitems/edit/14480984\n");
+        var svc = new TaskTypeBackfillService(_todo);
+
+        var report = svc.Run([new BackfillClassification("broken.md", 14480984, "pbi")], dryRun: false);
+
+        Assert.AreEqual(0, report.Stamped.Count);
+        CollectionAssert.Contains(report.Unstampable.ToArray(), "broken.md");
+        CollectionAssert.DoesNotContain(report.SkippedAlreadyTyped.ToArray(), "broken.md");
+    }
 }
