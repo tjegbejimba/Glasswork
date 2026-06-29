@@ -172,7 +172,7 @@ public sealed class GlassworkTools
     public string ListTasks(
         [Description("Filter by status: todo, doing, or done.")] string? status = null,
         [Description("Filter by parent task ID.")] string? parent_task_id = null,
-        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values: title, status, parent_id, path, created, priority, due, start, my_day, defer_until, ready, urgency_score, backlink_count, in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
+        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values: title, status, type, parent_id, path, created, priority, due, start, my_day, defer_until, ready, urgency_score, backlink_count, in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
     {
         using var scope = _logger?.BeginCall("list_tasks");
         try
@@ -288,6 +288,7 @@ public sealed class GlassworkTools
                     Id: t.Id,
                     Title: t.Title,
                     Status: MapToExternalStatus(t.Status),
+                    Type: GlassworkTask.Types.Normalize(t.Type),
                     Priority: t.Priority,
                     DueDate: t.Due?.ToString("yyyy-MM-dd"),
                     Scheduled: t.MyDay?.ToString("yyyy-MM-dd"),
@@ -1583,7 +1584,7 @@ public sealed class GlassworkTools
 
     private static readonly HashSet<string> AllowedSummaryFields = new(StringComparer.Ordinal)
     {
-        "title", "status", "parent_id", "path", "created", "priority", "due", "start", "my_day", "defer_until",
+        "title", "status", "type", "parent_id", "path", "created", "priority", "due", "start", "my_day", "defer_until",
         "ready", "urgency_score", "backlink_count", "in_my_day_today",
     };
 
@@ -1625,6 +1626,7 @@ public sealed class GlassworkTools
         var signals = SignalsFor(task, backlinkCounts);
         if (fields.Contains("title")) dict["title"] = task.Title;
         if (fields.Contains("status")) dict["status"] = MapToExternalStatus(task.Status);
+        if (fields.Contains("type")) dict["type"] = GlassworkTask.Types.Normalize(task.Type);
         if (fields.Contains("parent_id")) dict["parent_id"] = task.Parent;
         if (fields.Contains("path")) dict["path"] = TodoRelativeTaskPath(task.Id);
         if (fields.Contains("created")) dict["created"] = task.Created.ToString("yyyy-MM-dd");
@@ -2057,6 +2059,7 @@ public sealed class GlassworkTools
                     Id: t.Id,
                     Title: t.Title,
                     Status: MapToExternalStatus(t.Status),
+                    Type: GlassworkTask.Types.Normalize(t.Type),
                     DueDate: t.Due!.Value.ToString("yyyy-MM-dd"),
                     DaysOverdue: (today - t.Due!.Value.Date).Days,
                     Priority: t.Priority,
@@ -2215,6 +2218,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("title")] string Title,
         [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("type")] string Type,
         [property: JsonPropertyName("priority")] string Priority,
         [property: JsonPropertyName("due_date")] string? DueDate,
         [property: JsonPropertyName("scheduled")] string? Scheduled,
@@ -2235,6 +2239,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("title")] string Title,
         [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("type")] string Type,
         [property: JsonPropertyName("due_date")] string DueDate,
         [property: JsonPropertyName("days_overdue")] int DaysOverdue,
         [property: JsonPropertyName("priority")] string Priority,
