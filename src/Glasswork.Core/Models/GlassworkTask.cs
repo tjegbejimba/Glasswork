@@ -289,6 +289,21 @@ public partial class GlassworkTask : ObservableObject
     public bool HasTodaysSubtasks => TodaysSubtasks is { Count: > 0 };
 
     /// <summary>
+    /// Cross-file child Tasks (separate vault files) that are in My Day today and should
+    /// render nested beneath this task when it is a PBI container on the My Day surface
+    /// (issue #337 / ADR 0017). Parallel to <see cref="TodaysSubtasks"/> (which is the
+    /// in-file checklist subtasks). Populated by
+    /// <see cref="Glasswork.Core.Services.MyDayContainerGrouper"/> at refresh time and
+    /// consumed by the My Day card template. Transient (not serialized, not cloned).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasTodaysChildren))]
+    public partial System.Collections.Generic.IReadOnlyList<GlassworkTask>? TodaysChildren { get; set; }
+
+    /// <summary>True when there is at least one cross-file child Task to render nested in My Day.</summary>
+    public bool HasTodaysChildren => TodaysChildren is { Count: > 0 };
+
+    /// <summary>
     /// Returns a deep, defensive copy of this task suitable for storing in (or
     /// returning from) the in-memory <c>IndexService</c> snapshot store
     /// (see issue #184). Subtasks, Links, RelatedLinks, Tags, ContextLinks, and

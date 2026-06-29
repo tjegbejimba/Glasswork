@@ -88,7 +88,13 @@ public partial class MyDayViewModel : ObservableObject
                 : MyDayPromotionPolicy.TodaysSubtasks(task, today);
             targetTodayTasks.Add(task);
         }
-        ReconcileTaskCollection(TodayTasks, targetTodayTasks);
+
+        // Cross-file PBI container grouping (issue #337 / ADR 0017): nest promoted child
+        // Tasks under their parent PBI, pulling the PBI in as a container-only host.
+        // Presentation-only — the promotion policy that produced targetTodayTasks above
+        // is unchanged; a container-only PBI is a host, not independently "in My Day".
+        var groupedTodayTasks = MyDayContainerGrouper.Group(targetTodayTasks, all, today);
+        ReconcileTaskCollection(TodayTasks, groupedTodayTasks);
 
         // Recently completed: tasks completed today that were on My Day today (real or virtual).
         var recentlyCompleted = all.Values
@@ -101,7 +107,17 @@ public partial class MyDayViewModel : ObservableObject
         // Note: due-today/overdue tasks are no longer in suggestions because they're virtually
         // included in TodayTasks above.
         var yesterday = System.DateTime.Today.AddDays(-1);
-        var alreadyToday = targetTodayTasks.Select(t => t.Id).ToHashSet();
+        // Everything visible in My Day after grouping — top-level rows plus nested
+        // children and pulled-in container hosts — is excluded from suggestions.
+        var alreadyToday = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in groupedTodayTasks)
+        {
+            alreadyToday.Add(row.Id);
+            if (row.TodaysChildren is not null)
+            {
+                foreach (var child in row.TodaysChildren) alreadyToday.Add(child.Id);
+            }
+        }
         var suggestions = all.Values.Where(t =>
             t.Status != GlassworkTask.Statuses.Done &&
             !alreadyToday.Contains(t.Id) &&
@@ -187,6 +203,7 @@ public partial class MyDayViewModel : ObservableObject
         target.RelatedLinks = source.RelatedLinks;
         target.IsV1Format = source.IsV1Format;
         target.TodaysSubtasks = source.TodaysSubtasks;
+        target.TodaysChildren = source.TodaysChildren;
         target.IsManuallyCollapsed = isManuallyCollapsed;
     }
 
