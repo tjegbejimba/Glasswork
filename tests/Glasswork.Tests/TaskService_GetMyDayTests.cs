@@ -325,4 +325,83 @@ public class TaskService_GetMyDayTests
         Assert.AreEqual(1, result.Count);
         Assert.AreEqual(0, result[0].Subtasks.Count, "Subtasks should be excluded when flag is false");
     }
+
+    [TestMethod]
+    public void GetMyDay_PbiWithOverdueOwnDue_NoActionableSubtask_NotReturned()
+    {
+        // Arrange: a PBI with a stale (overdue) import-stamped due and no actionable
+        // children must NOT self-promote to My Day on its own due — mirrors the
+        // MyDayPromotionPolicy own-due gate so the MCP get_my_day surface agrees.
+        var pbi = new GlassworkTask
+        {
+            Id = "stale-pbi",
+            Title = "Imported PBI",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Pbi,
+            Due = DateTime.Today.AddDays(-3)
+        };
+        _vault.Save(pbi);
+        _index.OnFileChangedOnDisk("stale-pbi");
+
+        // Act
+        var result = _taskService.GetMyDay(includeDone: false, includeSubtasks: false);
+
+        // Assert
+        Assert.AreEqual(0, result.Count, "A PBI must not self-promote on its own overdue due");
+    }
+
+    [TestMethod]
+    public void GetMyDay_PbiPinnedToday_Returned()
+    {
+        // Arrange: an explicitly pinned PBI still promotes (direct-pin is type-agnostic).
+        var pbi = new GlassworkTask
+        {
+            Id = "pinned-pbi",
+            Title = "Pinned PBI",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Pbi,
+            MyDay = DateTime.Today,
+            Due = DateTime.Today.AddDays(-3)
+        };
+        _vault.Save(pbi);
+        _index.OnFileChangedOnDisk("pinned-pbi");
+
+        // Act
+        var result = _taskService.GetMyDay(includeDone: false, includeSubtasks: false);
+
+        // Assert
+        Assert.AreEqual(1, result.Count);
+        Assert.AreEqual("pinned-pbi", result[0].Id);
+    }
+
+    [TestMethod]
+    public void GetMyDay_PbiWithDueSubtask_Returned()
+    {
+        // Arrange: a PBI surfaces via an actionable child even when its own due is stale.
+        var pbi = new GlassworkTask
+        {
+            Id = "pbi-with-due-child",
+            Title = "PBI with due subtask",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Pbi,
+            Due = DateTime.Today.AddDays(-3),
+            Subtasks =
+            [
+                new SubTask
+                {
+                    Text = "Child due today",
+                    Metadata = new Dictionary<string, string> { { "due", DateTime.Today.ToString("yyyy-MM-dd") } }
+                }
+            ]
+        };
+        _vault.Save(pbi);
+        _index.OnFileChangedOnDisk("pbi-with-due-child");
+
+        // Act
+        var result = _taskService.GetMyDay(includeDone: false, includeSubtasks: false);
+
+        // Assert
+        Assert.AreEqual(1, result.Count);
+        Assert.AreEqual("pbi-with-due-child", result[0].Id);
+    }
 }

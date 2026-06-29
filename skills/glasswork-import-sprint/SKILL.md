@@ -106,6 +106,17 @@ For each ADO work item from step 2:
 
 If you encounter an ADO state not in this table, **skip the item** and surface it in the summary under "Skipped (unmapped state)" with the state name. Do not guess a mapping — surface the gap so the skill can be updated.
 
+**Resolve the Glasswork Task type** (the "ADO → Glasswork type map"), from `System.WorkItemType`:
+
+| ADO work-item type     | Glasswork `type` | Stamped? |
+|------------------------|------------------|----------|
+| `Task`                 | `task`           | omitted (default) |
+| `Bug`                  | `bug`            | `type: bug` |
+| `Product Backlog Item` | `pbi`            | `type: pbi` |
+| `User Story`           | `pbi`            | `type: pbi` |
+
+A `pbi` is a **container** and will not self-promote to My Day on its sprint-end `due` (ADR 0016). `task` and `bug` are actionable leaves.
+
 **Decide the action:**
 
 1. **Not in `imported`** → CREATE (step 4a).
@@ -132,7 +143,8 @@ Write the file with this exact template:
 id: <slug>
 title: <System.Title verbatim>
 status: <mapped status>
-priority: medium
+<if System.WorkItemType != 'Task'>type: <mapped type>
+</if>priority: medium
 created: <today YYYY-MM-DD>
 due: <SPRINT_END>
 <if status == 'done'>completed_at: <today YYYY-MM-DD>
@@ -154,7 +166,8 @@ Imported from ADO sprint pull (sprint <SPRINT_LEAF>).
 
 Notes:
 - `priority: medium` always — do **not** map from ADO Priority (it's too noisy at Microsoft to trust).
-- `due:` is the sprint end date — always set, even for `done` imports.
+- `type:` maps from `System.WorkItemType`: **Product Backlog Item** / **User Story** → `type: pbi`, **Bug** → `type: bug`, **Task** → omit the line (`task` is the default, omitted to match the serializer and avoid churn). A `type: pbi` is a **container**: it will **not** self-promote to My Day on its sprint-end `due` (ADR 0016) — its work surfaces through child tasks — which is the whole reason this field is stamped. `bug` behaves like `task` for My Day.
+- `due:` is the sprint end date — always set, even for `done` imports. (PBIs still get it for reference; the `type: pbi` stamp is what keeps it from polluting My Day.)
 - `my_day:` is NOT set. The user owns that field.
 - No copy of the ADO description. Click the link if you need context.
 - The single `## Notes` entry is provenance — it gives `glasswork-resume` something to anchor on if the user resumes this task later.
@@ -175,6 +188,8 @@ The task already exists. Read its current frontmatter `status`. Apply the forwar
 | anything non-canonical (e.g. `in_review`) | anything | leave (unknown ordering — don't guess) |
 
 **Promotions to in-progress** are an in-place frontmatter edit only (single field change — `status: in-progress`). Do not rewrite the file. Do not touch other fields.
+
+**Type backfill (every already-imported item, regardless of status change).** If the existing file has no `type:` frontmatter field and the item's `System.WorkItemType` maps to `pbi` or `bug` (per the ADO → Glasswork type map above), add the single `type:` field in place — an additive single-field edit, same tier as a status promotion (do **not** rewrite the file, do **not** touch other fields). This retro-stamps PBIs that were imported before the `type` field existed so they stop polluting My Day on their stale sprint-end `due` (ADR 0016). Items that map to `task` need no edit (default is omitted).
 
 **Promotions to done** require a file move (`wiki/todo/{slug}.md` → `wiki/todo/done/{slug}.md`) plus frontmatter edits (`status: done`, add `completed_at: <today>`). File moves are CONFIRM-tier per the D8 guardrails below — collect all promote-to-done candidates, list them in chat, and ask the user to confirm in one batch before performing the moves. Non-move promotions (todo → in-progress) execute without confirmation.
 

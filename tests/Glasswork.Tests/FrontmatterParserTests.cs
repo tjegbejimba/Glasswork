@@ -877,4 +877,84 @@ public class FrontmatterParserTests
 
         Assert.IsFalse(markdown.Contains("links:"), "Empty Links should not emit links: key");
     }
+
+    // ===== type field (PBI vs Task distinction) =====
+
+    [TestMethod]
+    public void Parse_TypePbi_ReturnsPbi()
+    {
+        var markdown = """
+            ---
+            id: epic-1
+            title: Big container
+            type: pbi
+            ---
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(GlassworkTask.Types.Pbi, task.Type);
+    }
+
+    [TestMethod]
+    public void Parse_MissingType_DefaultsToTask()
+    {
+        var markdown = """
+            ---
+            id: leaf-1
+            title: Just a task
+            ---
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(GlassworkTask.Types.Task, task.Type);
+    }
+
+    [TestMethod]
+    public void Serialize_DefaultTaskType_OmitsTypeKey()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "leaf-1",
+            Title = "Just a task",
+            Created = new DateTime(2026, 4, 17),
+        };
+
+        var markdown = _parser.Serialize(task);
+
+        Assert.IsFalse(markdown.Contains("type:"), "Default task type should not emit type: key");
+    }
+
+    [TestMethod]
+    public void Serialize_PbiType_WritesTypeKey()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "epic-1",
+            Title = "Big container",
+            Type = GlassworkTask.Types.Pbi,
+            Created = new DateTime(2026, 4, 17),
+        };
+
+        var markdown = _parser.Serialize(task);
+
+        Assert.IsTrue(markdown.Contains("type: pbi"), "PBI type should be written to YAML");
+    }
+
+    [TestMethod]
+    public void SerializeParse_PbiType_RoundTrips()
+    {
+        var original = new GlassworkTask
+        {
+            Id = "epic-1",
+            Title = "Big container",
+            Type = GlassworkTask.Types.Pbi,
+            Created = new DateTime(2026, 4, 17),
+        };
+
+        var roundTripped = _parser.Parse(_parser.Serialize(original));
+
+        Assert.AreEqual(GlassworkTask.Types.Pbi, roundTripped.Type);
+    }
 }

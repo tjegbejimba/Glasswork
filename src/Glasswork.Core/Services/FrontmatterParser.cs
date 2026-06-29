@@ -74,6 +74,7 @@ public partial class FrontmatterParser
             Title = frontmatter.Title ?? string.Empty,
             Status = frontmatter.Status ?? GlassworkTask.Statuses.Todo,
             Priority = frontmatter.Priority ?? GlassworkTask.Priorities.Medium,
+            Type = GlassworkTask.Types.Normalize(frontmatter.Type),
             Created = ParseDate(frontmatter.Created) ?? DateTime.Today,
             CompletedAt = ParseDate(frontmatter.CompletedAt),
             Due = ParseDate(frontmatter.Due),
@@ -123,6 +124,8 @@ public partial class FrontmatterParser
             Title = task.Title,
             Status = task.Status,
             Priority = task.Priority,
+            // Default "task" is omitted to avoid churning legacy files; only pbi/bug are written.
+            Type = task.Type == GlassworkTask.Types.Task ? null : task.Type,
             Created = task.Created.ToString("yyyy-MM-dd"),
             CompletedAt = task.CompletedAt?.ToString("yyyy-MM-dd"),
             Due = task.Due?.ToString("yyyy-MM-dd"),
@@ -364,6 +367,7 @@ public partial class FrontmatterParser
         public string? Title { get; set; }
         public string? Status { get; set; }
         public string? Priority { get; set; }
+        public string? Type { get; set; }
         public string? Created { get; set; }
         [YamlMember(Alias = "completed_at")]
         public string? CompletedAt { get; set; }
