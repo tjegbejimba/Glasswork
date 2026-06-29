@@ -12,14 +12,19 @@ namespace Glasswork.Core.Models;
 public partial class GlassworkTask : ObservableObject
 {
     [ObservableProperty] public partial string Id { get; set; } = string.Empty;
-    [ObservableProperty] public partial string Title { get; set; } = string.Empty;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RemoveFromMyDayLabel))]
+    public partial string Title { get; set; } = string.Empty;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDone))]
     public partial string Status { get; set; } = "todo";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPriorityChip))]
     public partial string Priority { get; set; } = "medium";
-    [ObservableProperty] public partial string Type { get; set; } = "task";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsMyDayContainer))]
+    [NotifyPropertyChangedFor(nameof(ShowLeafCompleteAffordance))]
+    public partial string Type { get; set; } = "task";
     [ObservableProperty] public partial DateTime Created { get; set; } = DateTime.Today;
     [ObservableProperty] public partial DateTime? CompletedAt { get; set; }
     [ObservableProperty]
@@ -268,6 +273,7 @@ public partial class GlassworkTask : ObservableObject
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowCardDetails))]
+    [NotifyPropertyChangedFor(nameof(ShowTodaysChildren))]
     public partial bool IsManuallyCollapsed { get; set; }
 
     /// <summary>
@@ -287,6 +293,51 @@ public partial class GlassworkTask : ObservableObject
 
     /// <summary>True when there is at least one subtask to render inline in My Day.</summary>
     public bool HasTodaysSubtasks => TodaysSubtasks is { Count: > 0 };
+
+    /// <summary>
+    /// Cross-file child Tasks (separate vault files) that are in My Day today and should
+    /// render nested beneath this task when it is a PBI container on the My Day surface
+    /// (issue #337 / ADR 0017). Parallel to <see cref="TodaysSubtasks"/> (which is the
+    /// in-file checklist subtasks). Populated by
+    /// <see cref="Glasswork.Core.Services.MyDayContainerGrouper"/> at refresh time and
+    /// consumed by the My Day card template. Transient (not serialized, not cloned).
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasTodaysChildren))]
+    [NotifyPropertyChangedFor(nameof(IsMyDayContainer))]
+    [NotifyPropertyChangedFor(nameof(ShowLeafCompleteAffordance))]
+    [NotifyPropertyChangedFor(nameof(ShowTodaysChildren))]
+    public partial System.Collections.Generic.IReadOnlyList<GlassworkTask>? TodaysChildren { get; set; }
+
+    /// <summary>True when there is at least one cross-file child Task to render nested in My Day.</summary>
+    public bool HasTodaysChildren => TodaysChildren is { Count: > 0 };
+
+    /// <summary>
+    /// Accessible name for the per-row "Remove from My Day" button. Includes the title so
+    /// screen readers (and UI-automation, e.g. visual-verification scenarios) can tell one
+    /// row's remove button from another. On a PBI container the button removes the whole
+    /// group (ADR 0017).
+    /// </summary>
+    public string RemoveFromMyDayLabel => $"Remove {Title} from My Day";
+
+    /// <summary>
+    /// True when this row is a PBI rendered as a My Day container — a <c>pbi</c> hosting
+    /// in-My-Day cross-file children (issue #337 / ADR 0017).
+    /// </summary>
+    public bool IsMyDayContainer =>
+        string.Equals(Type, Types.Pbi, StringComparison.OrdinalIgnoreCase) && HasTodaysChildren;
+
+    /// <summary>
+    /// True when the leaf "complete" affordance (circle checkbox) should render. Suppressed
+    /// for a PBI container — you complete its children, not the container itself (ADR 0016/0017).
+    /// </summary>
+    public bool ShowLeafCompleteAffordance => !IsMyDayContainer;
+
+    /// <summary>
+    /// True when a container's nested children should render: present and not manually
+    /// collapsed. Double-tapping the container toggles <see cref="IsManuallyCollapsed"/>.
+    /// </summary>
+    public bool ShowTodaysChildren => HasTodaysChildren && !IsManuallyCollapsed;
 
     /// <summary>
     /// Returns a deep, defensive copy of this task suitable for storing in (or

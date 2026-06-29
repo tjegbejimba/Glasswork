@@ -132,6 +132,7 @@ public class GlassworkTaskCloneTests
     {
         var src = new GlassworkTask { Id = "t1", Title = "T", IsManuallyCollapsed = true };
         src.TodaysSubtasks = new[] { new SubTask { Text = "today" } };
+        src.TodaysChildren = new[] { new GlassworkTask { Id = "child", Title = "Child" } };
 
         var copy = src.Clone();
 
@@ -139,5 +140,6 @@ public class GlassworkTaskCloneTests
         // promotion attachments — those are recomputed per page render.
         Assert.IsFalse(copy.IsManuallyCollapsed);
         Assert.IsNull(copy.TodaysSubtasks);
+        Assert.IsNull(copy.TodaysChildren);
     }
 }
