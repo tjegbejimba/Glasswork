@@ -1,0 +1,32 @@
+{
+  "name": "artifacts-share",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "artifact-share",
+      "title": "Share artifact content",
+      "status": "todo",
+      "artifacts": [
+        {
+          "name": "summary.md",
+          "content": "# Release summary\n\nThis is **markdown** for Teams sharing.\n\n- Copy formatted\n- Copy Markdown\n\n[safe link](https://example.com) and [blocked link](javascript:alert(1)).\n"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    { "type": "select", "automationId": "NavBacklog", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "BacklogHeader", "timeoutMilliseconds": 10000 },
+    { "type": "invoke", "name": "Share artifact content", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "row:Release summary", "timeoutMilliseconds": 15000 },
+    { "type": "expand", "automationId": "row:Release summary", "timeoutMilliseconds": 10000 },
+    { "type": "invoke", "automationId": "share:Release summary", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ArtifactShareCopyFormatted", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ArtifactShareCopyMarkdown", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ArtifactShareSaveCopy", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ArtifactShareShowInFolder", "timeoutMilliseconds": 10000 }
+  ],
+  "captures": [
+    { "name": "share-flyout", "waitMilliseconds": 1500 }
+  ]
+}
