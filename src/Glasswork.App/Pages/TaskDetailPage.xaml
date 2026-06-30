@@ -490,12 +490,22 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
                                                 <TextBlock Text="{Binding TimeBadge}" Opacity="0.6" FontSize="12" VerticalAlignment="Center" />
                                             </StackPanel>
-                                            <HyperlinkButton Grid.Column="1"
+                                            <Button Grid.Column="1"
+                                                    Content="Share"
+                                                    Tag="{Binding}"
+                                                    Click="ArtifactShare_Click"
+                                                    AutomationProperties.AutomationId="{Binding Title, Converter={StaticResource ArtifactAutoId}, ConverterParameter='share:'}"
+                                                    FontSize="12"
+                                                    Padding="8,2"
+                                                    VerticalAlignment="Center"
+                                                    Margin="8,0,0,0" />
+                                            <HyperlinkButton Grid.Column="2"
                                                              Content="Open in Obsidian"
                                                              Tag="{Binding Path}"
                                                              Click="OpenArtifactInObsidian_Click"

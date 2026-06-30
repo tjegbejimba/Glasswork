@@ -10,6 +10,7 @@ using Glasswork.Core.Services;
 using Glasswork.Services;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media;
@@ -987,6 +988,70 @@ public sealed partial class TaskDetailPage : Page
         var vaultRelative = ToVaultRelativePath(artifactPath);
         if (vaultRelative is null) return;
         await App.ObsidianLauncher.Open(vaultRelative);
+    }
+
+    private void ArtifactShare_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.Tag is not ArtifactRow row)
+        {
+            return;
+        }
+
+        var availability = ArtifactShareFormatter.GetAvailability(row.Artifact);
+        var flyout = new MenuFlyout();
+        flyout.Items.Add(CreateArtifactShareItem(
+            "Copy formatted",
+            "ArtifactShareCopyFormatted",
+            availability.CanCopyFormatted,
+            async () => await ArtifactShareService.CopyToClipboardAsync(row, ArtifactShareClipboardFormat.Formatted)));
+        flyout.Items.Add(CreateArtifactShareItem(
+            "Copy Markdown",
+            "ArtifactShareCopyMarkdown",
+            availability.CanCopyMarkdown,
+            async () => await ArtifactShareService.CopyToClipboardAsync(row, ArtifactShareClipboardFormat.Markdown)));
+        flyout.Items.Add(new MenuFlyoutSeparator());
+        flyout.Items.Add(CreateArtifactShareItem(
+            "Save a copy...",
+            "ArtifactShareSaveCopy",
+            availability.CanSaveCopy,
+            () => ArtifactShareService.SaveCopyAsync(row)));
+        flyout.Items.Add(CreateArtifactShareItem(
+            "Show in folder",
+            "ArtifactShareShowInFolder",
+            availability.CanShowInFolder,
+            () => System.Threading.Tasks.Task.FromResult<string?>(ArtifactShareService.ShowInFolder(row) ?? "Opened artifact folder.")));
+
+        flyout.ShowAt(button);
+    }
+
+    private MenuFlyoutItem CreateArtifactShareItem(
+        string text,
+        string automationId,
+        bool isEnabled,
+        Func<System.Threading.Tasks.Task<string?>> action)
+    {
+        var item = new MenuFlyoutItem
+        {
+            Text = text,
+            IsEnabled = isEnabled,
+        };
+        AutomationProperties.SetAutomationId(item, automationId);
+        item.Click += async (_, _) =>
+        {
+            var message = await action();
+            ShowArtifactShareStatus(message);
+        };
+        return item;
+    }
+
+    private void ShowArtifactShareStatus(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        ClipboardHint.Text = message;
     }
 
     private static string? ToVaultRelativePath(string absolutePath)
