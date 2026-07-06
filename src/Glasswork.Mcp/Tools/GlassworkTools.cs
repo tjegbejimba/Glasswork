@@ -412,6 +412,73 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "add_subtask")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Append a checklist subtask to an existing task.")]
+    public string AddSubtask(
+        [Description("Task ID to add the subtask to.")] string task_id,
+        [Description("Title of the new subtask.")] string title)
+    {
+        using var scope = _logger?.BeginCall("add_subtask");
+        try
+        {
+            // Validate title
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                scope?.SetResult("invalid_title");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_title", "Subtask title cannot be empty."));
+            }
+
+            var sanitizedId = SanitizeId(task_id);
+            if (sanitizedId is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            var task = _vault.Load(sanitizedId);
+            if (task is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            // Call VaultService.AddSubtask (modifies file)
+            _vault.AddSubtask(sanitizedId, title);
+
+            // Reload task to get updated subtasks
+            var updatedTask = _vault.Load(sanitizedId);
+            if (updatedTask is null)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("error", "Failed to reload task after adding subtask."));
+            }
+
+            // Build response with updated subtask list
+            var subtaskInfos = updatedTask.Subtasks
+                .Select(st => new ContextSubtaskInfo(
+                    st.Text,
+                    // When Status is null, derive from checkbox: IsCompleted -> "done", else "todo"
+                    st.Status is not null ? MapToExternalStatus(st.Status) : (st.IsCompleted ? "done" : "todo"),
+                    st.Notes))
+                .ToArray();
+
+            var result = new
+            {
+                task_id = sanitizedId,
+                subtasks = subtaskInfos
+            };
+
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
     private int CalculateDepth(string taskId, List<GlassworkTask> all)
     {
         var depth = 0;
@@ -2460,7 +2527,7 @@ public sealed class GlassworkTools
                 Notes: bundle.Notes,
                 ActiveSubtasks: bundle.ActiveSubtasks.Select(s => new ContextSubtaskInfo(
                     Text: s.Text,
-                    Status: s.Status,
+                    Status: s.Status is not null ? MapToExternalStatus(s.Status) : (s.IsCompleted ? "done" : "todo"),
                     Notes: s.Notes)).ToArray(),
                 Links: bundle.Links.Select(l => new LinkResult(l.Type, l.Value, l.Label)).ToArray(),
                 LatestArtifacts: bundle.LatestArtifacts.Select(a => new ContextArtifactInfo(
@@ -2475,7 +2542,7 @@ public sealed class GlassworkTools
                     PageType: b.PageType.ToString())).ToArray(),
                 OpenBlockers: bundle.OpenBlockers.Select(s => new ContextSubtaskInfo(
                     Text: s.Text,
-                    Status: s.Status,
+                    Status: s.Status is not null ? MapToExternalStatus(s.Status) : (s.IsCompleted ? "done" : "todo"),
                     Notes: s.Notes)).ToArray(),
                 TaskFilePath: TodoRelativeTaskPath(bundle.TaskId),
                 ArtifactsPath: bundle.ArtifactsPath != null 
