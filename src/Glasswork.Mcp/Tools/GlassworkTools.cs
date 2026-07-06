@@ -1048,6 +1048,116 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "update_subtask")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Update an existing subtask (status, title, or notes). Only fields present in the fields object are written; omitted fields remain untouched.")]
+    public string UpdateSubtask(
+        [Description("Parent task ID.")] string task_id,
+        [Description("Zero-based subtask index.")] int subtask_index,
+        [Description("Object containing fields to update: status (todo/done/blocked), title, notes.")] JsonElement fields)
+    {
+        using var scope = _logger?.BeginCall("update_subtask");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            var task = _vault.Load(safeId);
+            if (task is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+            }
+
+            if (subtask_index < 0 || subtask_index >= task.Subtasks.Count)
+            {
+                scope?.SetResult("index_out_of_range");
+                return JsonSerializer.Serialize(new ErrorResult(
+                    "index_out_of_range",
+                    $"Subtask index {subtask_index} out of range. Task has {task.Subtasks.Count} subtasks."));
+            }
+
+            if (fields.ValueKind is not JsonValueKind.Object and not JsonValueKind.Null and not JsonValueKind.Undefined)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_fields", "fields must be a JSON object."));
+            }
+
+            var subtask = task.Subtasks[subtask_index];
+            var updatedFields = new List<string>();
+            var hasFields = fields.ValueKind == JsonValueKind.Object;
+
+            if (hasFields && fields.TryGetProperty("status", out var statusElement))
+            {
+                if (!TryReadNullableString(statusElement, "status", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+
+                // Validate status value
+                var validStatuses = new[] { "todo", "in_progress", "blocked", "done", "dropped" };
+                if (value is not null && !validStatuses.Contains(value))
+                {
+                    scope?.SetResult("invalid_status");
+                    return JsonSerializer.Serialize(new ErrorResult(
+                        "invalid_status",
+                        $"Invalid status '{value}'. Must be one of: {string.Join(", ", validStatuses)}."));
+                }
+
+                UpdateIfChanged(subtask.Status, value, v => subtask.Status = v, "status", updatedFields);
+                
+                // Sync IsCompleted with status (matches UI behavior in SubtaskDetailDialog.xaml.cs:85)
+                var newIsCompleted = value is "done" or "dropped";
+                if (subtask.IsCompleted != newIsCompleted)
+                {
+                    subtask.IsCompleted = newIsCompleted;
+                }
+            }
+
+            if (hasFields && fields.TryGetProperty("title", out var titleElement))
+            {
+                if (!TryReadNullableString(titleElement, "title", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                UpdateIfChanged(subtask.Text, value ?? string.Empty, v => subtask.Text = v, "title", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("notes", out var notesElement))
+            {
+                if (!TryReadNullableString(notesElement, "notes", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                UpdateIfChanged(subtask.Notes, value ?? string.Empty, v => subtask.Notes = v, "notes", updatedFields);
+            }
+
+            if (updatedFields.Count > 0)
+            {
+                var writeSw = Stopwatch.StartNew();
+                _vault.Save(task);
+                scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                task_id = safeId,
+                subtask_index,
+                updated_fields = updatedFields.ToArray(),
+                subtask = new
+                {
+                    text = subtask.Text,
+                    status = subtask.Status,
+                    notes = subtask.Notes,
+                    is_completed = subtask.IsCompleted
+                }
+            });
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
     [McpServerTool(Name = "move_task")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Reparent a task (with circular-ancestor guard). If the task has subtasks, the whole subtree implicitly moves.")]
