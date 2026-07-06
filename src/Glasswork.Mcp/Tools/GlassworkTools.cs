@@ -1107,6 +1107,13 @@ public sealed class GlassworkTools
                 }
 
                 UpdateIfChanged(subtask.Status, value, v => subtask.Status = v, "status", updatedFields);
+                
+                // Sync IsCompleted with status (matches UI behavior in SubtaskDetailDialog.xaml.cs:85)
+                var newIsCompleted = value is "done" or "dropped";
+                if (subtask.IsCompleted != newIsCompleted)
+                {
+                    subtask.IsCompleted = newIsCompleted;
+                }
             }
 
             if (hasFields && fields.TryGetProperty("title", out var titleElement))
@@ -1134,7 +1141,14 @@ public sealed class GlassworkTools
             {
                 task_id = safeId,
                 subtask_index,
-                updated_fields = updatedFields.ToArray()
+                updated_fields = updatedFields.ToArray(),
+                subtask = new
+                {
+                    text = subtask.Text,
+                    status = subtask.Status,
+                    notes = subtask.Notes,
+                    is_completed = subtask.IsCompleted
+                }
             });
         }
         catch

@@ -2226,8 +2226,8 @@ References [[{taskId}]].
             Title = "Task with subtasks",
             Subtasks =
             {
-                new SubTask { Text = "First subtask", Status = "todo" },
-                new SubTask { Text = "Second subtask", Status = "todo" }
+                new SubTask { Text = "First subtask", Status = "todo", IsCompleted = false },
+                new SubTask { Text = "Second subtask", Status = "todo", IsCompleted = false }
             }
         };
         _vault.Save(task);
@@ -2240,10 +2240,11 @@ References [[{taskId}]].
         Assert.AreEqual(task.Id, result.RootElement.GetProperty("task_id").GetString());
         Assert.AreEqual(0, result.RootElement.GetProperty("subtask_index").GetInt32());
 
-        // Verify the subtask was marked done
+        // Verify the subtask was marked done AND checkbox is checked
         var reloaded = _vault.Load(task.Id)!;
         Assert.AreEqual(2, reloaded.Subtasks.Count);
         Assert.AreEqual("done", reloaded.Subtasks[0].Status);
+        Assert.IsTrue(reloaded.Subtasks[0].IsCompleted, "status: done should check the box (IsCompleted=true)");
     }
 
     [TestMethod]
@@ -2254,16 +2255,17 @@ References [[{taskId}]].
         {
             Id = "test-task",
             Title = "Task with subtasks",
-            Subtasks = { new SubTask { Text = "Done subtask", Status = "done" } }
+            Subtasks = { new SubTask { Text = "Done subtask", Status = "done", IsCompleted = true } }
         };
         _vault.Save(task);
 
         // Act: Mark it as todo
         var json = UpdateSubtask(task.Id, 0, """{ "status": "todo" }""");
 
-        // Assert: The subtask was unchecked
+        // Assert: The subtask was unchecked AND checkbox is unchecked
         var reloaded = _vault.Load(task.Id)!;
         Assert.AreEqual("todo", reloaded.Subtasks[0].Status);
+        Assert.IsFalse(reloaded.Subtasks[0].IsCompleted, "status: todo should uncheck the box (IsCompleted=false)");
     }
 
     [TestMethod]
