@@ -921,7 +921,7 @@ public sealed class GlassworkTools
     [Description("Update an existing task. Only fields present in the fields object are written; omitted fields remain untouched.")]
     public string UpdateTask(
         [Description("Task ID to update.")] string task_id,
-        [Description("Object containing fields to update: title, status, description, notes, priority, parent_task_id, ado_link, ado_title. notes may be a string/null or { value, append }.")] JsonElement fields)
+        [Description("Object containing fields to update: title, status, description, notes, priority, parent_task_id, ado_link, ado_title, due_date, scheduled. notes may be a string/null or { value, append }. due_date and scheduled accept yyyy-MM-dd strings or null to clear.")] JsonElement fields)
     {
         using var scope = _logger?.BeginCall("update_task");
         try
