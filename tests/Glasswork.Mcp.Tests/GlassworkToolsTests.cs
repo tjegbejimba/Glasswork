@@ -1616,6 +1616,116 @@ public class GlassworkToolsTests
             "update_task must record a write phase when tracing is enabled.");
     }
 
+    [TestMethod]
+    public void UpdateTask_DueDateField_SetsTaskDueDate()
+    {
+        var addJson = _tools.AddTask("Task without due date");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "due_date": "2026-08-15" }""");
+
+        var updatedFields = UpdatedFieldsFrom(updateJson);
+        CollectionAssert.Contains(updatedFields, "due_date");
+        
+        var reloaded = _vault.Load(taskId);
+        Assert.IsNotNull(reloaded);
+        Assert.IsNotNull(reloaded.Due);
+        Assert.AreEqual(new DateTime(2026, 8, 15), reloaded.Due.Value);
+    }
+
+    [TestMethod]
+    public void UpdateTask_DueDateNull_ClearsDueDate()
+    {
+        var addJson = _tools.AddTask("Task with due date", due_date: "2026-08-15");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "due_date": null }""");
+
+        var updatedFields = UpdatedFieldsFrom(updateJson);
+        CollectionAssert.Contains(updatedFields, "due_date");
+        
+        var reloaded = _vault.Load(taskId);
+        Assert.IsNotNull(reloaded);
+        Assert.IsNull(reloaded.Due);
+    }
+
+    [TestMethod]
+    public void UpdateTask_ScheduledField_SetsMyDay()
+    {
+        var addJson = _tools.AddTask("Task to reschedule");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "scheduled": "2026-09-20" }""");
+
+        var updatedFields = UpdatedFieldsFrom(updateJson);
+        CollectionAssert.Contains(updatedFields, "scheduled");
+        
+        var reloaded = _vault.Load(taskId);
+        Assert.IsNotNull(reloaded);
+        Assert.IsNotNull(reloaded.MyDay);
+        Assert.AreEqual(new DateTime(2026, 9, 20), reloaded.MyDay!.Value);
+    }
+
+    [TestMethod]
+    public void UpdateTask_ScheduledNull_ClearsMyDay()
+    {
+        var addJson = _tools.AddTask("Task with MyDay", scheduled: "2026-10-01");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "scheduled": null }""");
+
+        var updatedFields = UpdatedFieldsFrom(updateJson);
+        CollectionAssert.Contains(updatedFields, "scheduled");
+        
+        var reloaded = _vault.Load(taskId);
+        Assert.IsNotNull(reloaded);
+        Assert.IsNull(reloaded.MyDay);
+    }
+
+    [TestMethod]
+    public void UpdateTask_MalformedDueDate_ReturnsStructuredError()
+    {
+        var addJson = _tools.AddTask("Task to update");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "due_date": "not-a-date" }""");
+
+        var doc = JsonDocument.Parse(updateJson);
+        Assert.AreEqual("invalid_due_date", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsTrue(doc.RootElement.GetProperty("message").GetString()!.Contains("yyyy-MM-dd"));
+    }
+
+    [TestMethod]
+    public void UpdateTask_MalformedScheduled_ReturnsStructuredError()
+    {
+        var addJson = _tools.AddTask("Task to update");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "scheduled": "bad-date" }""");
+
+        var doc = JsonDocument.Parse(updateJson);
+        Assert.AreEqual("invalid_scheduled", doc.RootElement.GetProperty("error").GetString());
+        Assert.IsTrue(doc.RootElement.GetProperty("message").GetString()!.Contains("yyyy-MM-dd"));
+    }
+
+    [TestMethod]
+    public void UpdateTask_OmittedFields_DontChangeExistingDates()
+    {
+        // Create task with both dates set
+        var addJson = _tools.AddTask("Task with dates", due_date: "2026-06-15", scheduled: "2026-06-20");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        // Update title only, omitting due_date and scheduled
+        var updateJson = UpdateTask(taskId, """{ "title": "Updated title" }""");
+
+        // Verify both dates remain unchanged
+        var getJson = _tools.GetTask(taskId);
+        var doc = JsonDocument.Parse(getJson);
+        Assert.AreEqual("2026-06-15", doc.RootElement.GetProperty("due_date").GetString());
+        Assert.AreEqual("2026-06-20", doc.RootElement.GetProperty("scheduled").GetString());
+        Assert.AreEqual("Updated title", doc.RootElement.GetProperty("title").GetString());
+    }
+
     // ───────────────────────────── load_context ──────────────────────────
 
     [TestMethod]

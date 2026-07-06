@@ -609,7 +609,9 @@ public sealed class GlassworkTools
                 ParentId: task.Parent,
                 Description: task.Description,
                 Notes: task.Notes,
-                Artifacts: artifacts);
+                Artifacts: artifacts,
+                DueDate: task.Due?.ToString("yyyy-MM-dd"),
+                Scheduled: task.MyDay?.ToString("yyyy-MM-dd"));
 
             return JsonSerializer.Serialize(result);
         }
@@ -919,7 +921,7 @@ public sealed class GlassworkTools
     [Description("Update an existing task. Only fields present in the fields object are written; omitted fields remain untouched.")]
     public string UpdateTask(
         [Description("Task ID to update.")] string task_id,
-        [Description("Object containing fields to update: title, status, description, notes, priority, parent_task_id, ado_link, ado_title. notes may be a string/null or { value, append }.")] JsonElement fields)
+        [Description("Object containing fields to update: title, status, description, notes, priority, parent_task_id, ado_link, ado_title, due_date, scheduled. notes may be a string/null or { value, append }. due_date and scheduled accept yyyy-MM-dd strings or null to clear.")] JsonElement fields)
     {
         using var scope = _logger?.BeginCall("update_task");
         try
@@ -1012,6 +1014,20 @@ public sealed class GlassworkTools
                 if (!TryReadNullableString(adoTitleElement, "ado_title", out var value, out var error))
                     return SerializeInputError(scope, error!);
                 UpdateIfChanged(task.AdoTitle, value, v => task.AdoTitle = v, "ado_title", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("due_date", out var dueDateElement))
+            {
+                if (!TryReadNullableDate(dueDateElement, "due_date", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                UpdateIfChanged(task.Due, value, v => task.Due = v, "due_date", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("scheduled", out var scheduledElement))
+            {
+                if (!TryReadNullableDate(scheduledElement, "scheduled", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                UpdateIfChanged(task.MyDay, value, v => task.MyDay = v, "scheduled", updatedFields);
             }
 
             if (updatedFields.Count > 0)
@@ -1183,6 +1199,36 @@ public sealed class GlassworkTools
 
         value = null;
         error = new ErrorResult("invalid_" + fieldName, fieldName + " must be an integer or null.");
+        return false;
+    }
+
+    private static bool TryReadNullableDate(
+        JsonElement element,
+        string fieldName,
+        out DateTime? value,
+        out ErrorResult? error)
+    {
+        if (element.ValueKind == JsonValueKind.Null)
+        {
+            value = null;
+            error = null;
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            var dateStr = element.GetString();
+            if (!string.IsNullOrWhiteSpace(dateStr) && 
+                DateTime.TryParseExact(dateStr, "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out var parsed))
+            {
+                value = parsed;
+                error = null;
+                return true;
+            }
+        }
+
+        value = null;
+        error = new ErrorResult("invalid_" + fieldName, fieldName + " must be a date in yyyy-MM-dd format or null.");
         return false;
     }
 
@@ -1748,7 +1794,9 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("parent_id")] string? ParentId,
         [property: JsonPropertyName("description")] string Description,
         [property: JsonPropertyName("notes")] string Notes,
-        [property: JsonPropertyName("artifacts")] List<ArtifactInfo> Artifacts);
+        [property: JsonPropertyName("artifacts")] List<ArtifactInfo> Artifacts,
+        [property: JsonPropertyName("due_date"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DueDate = null,
+        [property: JsonPropertyName("scheduled"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Scheduled = null);
 
     private sealed record AddArtifactResult(
         [property: JsonPropertyName("path")] string Path,
