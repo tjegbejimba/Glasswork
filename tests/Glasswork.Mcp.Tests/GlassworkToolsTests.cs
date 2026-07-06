@@ -1870,7 +1870,7 @@ public class GlassworkToolsTests
         Assert.IsFalse(doc.RootElement.TryGetProperty("error", out _),
             "depth > 3 must clamp silently, not error.");
 
-        // Walk: child -> grandchild -> GGC (3 levels). Then GGC.subtasks must be empty.
+        // Walk: child -> grandchild -> GGC (3 levels). Then GGC.Subtasks must be empty.
         var ggcSubtree = doc.RootElement
             .GetProperty("subtasks")[0]
             .GetProperty("subtasks")[0]
@@ -2206,6 +2206,227 @@ References [[{taskId}]].
         // Verify the file was updated
         var updatedTask = _vault.Load(cId)!;
         Assert.AreEqual(aId, updatedTask.Parent);
+    }
+
+    // ───────────────────────────── update_subtask ─────────────────────────────
+
+    private string UpdateSubtask(string taskId, int subtaskIndex, string fieldsJson)
+    {
+        using var fields = JsonDocument.Parse(fieldsJson);
+        return _tools.UpdateSubtask(taskId, subtaskIndex, fields.RootElement);
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_StatusToDone_ChecksTheBox()
+    {
+        // Arrange: Create a task with subtasks directly
+        var task = new GlassworkTask
+        {
+            Id = "test-task",
+            Title = "Task with subtasks",
+            Subtasks =
+            {
+                new SubTask { Text = "First subtask", Status = "todo" },
+                new SubTask { Text = "Second subtask", Status = "todo" }
+            }
+        };
+        _vault.Save(task);
+
+        // Act: Mark the first subtask as done
+        var json = UpdateSubtask(task.Id, 0, """{ "status": "done" }""");
+
+        // Assert: The operation succeeded
+        var result = JsonDocument.Parse(json);
+        Assert.AreEqual(task.Id, result.RootElement.GetProperty("task_id").GetString());
+        Assert.AreEqual(0, result.RootElement.GetProperty("subtask_index").GetInt32());
+
+        // Verify the subtask was marked done
+        var reloaded = _vault.Load(task.Id)!;
+        Assert.AreEqual(2, reloaded.Subtasks.Count);
+        Assert.AreEqual("done", reloaded.Subtasks[0].Status);
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_StatusToTodo_UnchecksTheBox()
+    {
+        // Arrange: Create a task with a done subtask
+        var task = new GlassworkTask
+        {
+            Id = "test-task",
+            Title = "Task with subtasks",
+            Subtasks = { new SubTask { Text = "Done subtask", Status = "done" } }
+        };
+        _vault.Save(task);
+
+        // Act: Mark it as todo
+        var json = UpdateSubtask(task.Id, 0, """{ "status": "todo" }""");
+
+        // Assert: The subtask was unchecked
+        var reloaded = _vault.Load(task.Id)!;
+        Assert.AreEqual("todo", reloaded.Subtasks[0].Status);
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_StatusToBlocked_SetsBlockedPill()
+    {
+        // Arrange
+        var task = new GlassworkTask
+        {
+            Id = "test-task",
+            Title = "Task",
+            Subtasks = { new SubTask { Text = "Subtask", Status = "todo" } }
+        };
+        _vault.Save(task);
+
+        // Act
+        var json = UpdateSubtask(task.Id, 0, """{ "status": "blocked" }""");
+
+        // Assert
+        var reloaded = _vault.Load(task.Id)!;
+        Assert.AreEqual("blocked", reloaded.Subtasks[0].Status);
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_Title_RenamesSubtask()
+    {
+        // Arrange
+        var task = new GlassworkTask
+        {
+            Id = "test-task",
+            Title = "Task",
+            Subtasks = { new SubTask { Text = "Old title", Status = "todo" } }
+        };
+        _vault.Save(task);
+
+        // Act
+        var json = UpdateSubtask(task.Id, 0, """{ "title": "New title" }""");
+
+        // Assert
+        var reloaded = _vault.Load(task.Id)!;
+        Assert.AreEqual("New title", reloaded.Subtasks[0].Text);
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_Notes_AnnotatesSubtask()
+    {
+        // Arrange
+        var task = new GlassworkTask
+        {
+            Id = "test-task",
+            Title = "Task",
+            Subtasks = { new SubTask { Text = "Subtask", Status = "todo" } }
+        };
+        _vault.Save(task);
+
+        // Act
+        var json = UpdateSubtask(task.Id, 0, """{ "notes": "Added context here." }""");
+
+        // Assert
+        var reloaded = _vault.Load(task.Id)!;
+        Assert.AreEqual("Added context here.", reloaded.Subtasks[0].Notes);
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_PartialUpdate_PreservesUntouchedFields()
+    {
+        // Arrange: Create a subtask with title, status, and notes
+        var task = new GlassworkTask
+        {
+            Id = "test-task",
+            Title = "Task",
+            Subtasks =
+            {
+                new SubTask
+                {
+                    Text = "Original title",
+                    Status = "in_progress",
+                    Notes = "Original notes"
+                }
+            }
+        };
+        _vault.Save(task);
+
+        // Act: Update only the status
+        var json = UpdateSubtask(task.Id, 0, """{ "status": "done" }""");
+
+        // Assert: Title and notes are unchanged
+        var reloaded = _vault.Load(task.Id)!;
+        Assert.AreEqual("Original title", reloaded.Subtasks[0].Text);
+        Assert.AreEqual("done", reloaded.Subtasks[0].Status);
+        Assert.AreEqual("Original notes", reloaded.Subtasks[0].Notes);
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_InvalidTaskId_ReturnsNotFound()
+    {
+        // Act
+        var json = UpdateSubtask("nonexistent-task", 0, """{ "status": "done" }""");
+
+        // Assert
+        var result = JsonDocument.Parse(json);
+        Assert.AreEqual("not_found", result.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_OutOfRangeIndex_ReturnsIndexOutOfRange()
+    {
+        // Arrange
+        var task = new GlassworkTask
+        {
+            Id = "test-task",
+            Title = "Task",
+            Subtasks = { new SubTask { Text = "Only subtask", Status = "todo" } }
+        };
+        _vault.Save(task);
+
+        // Act: Try to update subtask at index 5
+        var json = UpdateSubtask(task.Id, 5, """{ "status": "done" }""");
+
+        // Assert
+        var result = JsonDocument.Parse(json);
+        Assert.AreEqual("index_out_of_range", result.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_InvalidStatus_ReturnsStructuredError()
+    {
+        // Arrange
+        var task = new GlassworkTask
+        {
+            Id = "test-task",
+            Title = "Task",
+            Subtasks = { new SubTask { Text = "Subtask", Status = "todo" } }
+        };
+        _vault.Save(task);
+
+        // Act
+        var json = UpdateSubtask(task.Id, 0, """{ "status": "invalid_status_value" }""");
+
+        // Assert
+        var result = JsonDocument.Parse(json);
+        Assert.AreEqual("invalid_status", result.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void UpdateSubtask_PersistsToVault_ReloadableAfterSave()
+    {
+        // Arrange
+        var task = new GlassworkTask
+        {
+            Id = "test-task",
+            Title = "Task",
+            Subtasks = { new SubTask { Text = "Subtask", Status = "todo" } }
+        };
+        _vault.Save(task);
+
+        // Act
+        UpdateSubtask(task.Id, 0, """{ "status": "done", "notes": "Completed successfully" }""");
+
+        // Assert: Create a fresh VaultService to reload from disk
+        var freshVault = new VaultService(TasksDir);
+        var reloaded = freshVault.Load(task.Id)!;
+        Assert.AreEqual("done", reloaded.Subtasks[0].Status);
+        Assert.AreEqual("Completed successfully", reloaded.Subtasks[0].Notes);
     }
 }
 
