@@ -2352,4 +2352,63 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("linking_page_path")] string LinkingPagePath,
         [property: JsonPropertyName("linking_page_title")] string LinkingPageTitle,
         [property: JsonPropertyName("page_type")] string PageType);
+
+    // ───────────────────────────── promote_subtask ─────────────────────────────
+
+    [McpServerTool(Name = "promote_subtask")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Promote an in-file subtask to its own task file, parented to the source task.")]
+    public string PromoteSubtask(
+        [Description("Task ID containing the subtask to promote.")] string task_id,
+        [Description("Zero-based index of the subtask to promote.")] int subtask_index)
+    {
+        using var scope = _logger?.BeginCall("promote_subtask");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("task_not_found", $"Task '{task_id}' not found."));
+            }
+
+            var parent = _vault.Load(safeId);
+            if (parent is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("task_not_found", $"Task '{task_id}' not found."));
+            }
+
+            if (subtask_index < 0 || subtask_index >= parent.Subtasks.Count)
+            {
+                scope?.SetResult("invalid_index");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_subtask_index", 
+                    $"Subtask index {subtask_index} is out of range. Task has {parent.Subtasks.Count} subtasks."));
+            }
+
+            var index = new IndexService(_vault);
+            index.EnsureLoaded();
+            var taskService = new TaskService(_vault, index);
+
+            var writeSw = Stopwatch.StartNew();
+            var newTask = taskService.PromoteSubtask(parent, subtask_index);
+            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+
+            var result = new PromoteSubtaskResult(
+                TaskId: newTask.Id,
+                Path: TodoRelativeTaskPath(newTask.Id));
+
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(result);
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    private sealed record PromoteSubtaskResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("path")] string Path);
 }
