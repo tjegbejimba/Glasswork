@@ -51,6 +51,7 @@ public sealed class GlassworkTools
         [Description("Optional scheduled date (yyyy-MM-dd format). Sets my_day to this future date.")] string? scheduled = null,
         [Description("If true, sets my_day to today.")] bool? my_day = null,
         [Description("Optional notes content. Becomes the Notes section (ADR 0002).")] string? notes = null,
+        [Description("Task type: task, pbi, or bug. Accepts broader aliases (Product Backlog Item/User Story/Epic/Feature → pbi). Defaults to task (ADR 0016).")] string? type = null,
         [Description("Idempotency mode: 'error' (default - fail on duplicate title), 'return_existing' (return existing task), or 'update' (update existing task).")] string? if_exists = null)
     {
         using var scope = _logger?.BeginCall("add_task");
@@ -105,6 +106,7 @@ public sealed class GlassworkTools
                         if (scheduled != null) updateFields["scheduled"] = scheduled;
                         if (my_day.HasValue) updateFields["my_day"] = my_day.Value;
                         if (notes != null) updateFields["notes"] = notes;
+                        if (type != null) updateFields["type"] = type;
 
                         var fieldsJson = JsonSerializer.Serialize(updateFields);
                         var fieldsElement = JsonDocument.Parse(fieldsJson).RootElement;
@@ -122,6 +124,7 @@ public sealed class GlassworkTools
                 id = $"{baseId}-{counter++}";
 
             var taskPriority = priority ?? GlassworkTask.Priorities.Medium;
+            var taskType = GlassworkTask.Types.Normalize(type);
 
             DateTime? dueDate = null;
             if (!string.IsNullOrWhiteSpace(due_date) && DateTime.TryParseExact(due_date, "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out var parsedDue))
@@ -145,6 +148,7 @@ public sealed class GlassworkTools
                 Title = title,
                 Status = internalStatus,
                 Priority = taskPriority,
+                Type = taskType,
                 Created = DateTime.Today,
                 Parent = safeParent,
                 Description = description ?? string.Empty,
@@ -921,7 +925,7 @@ public sealed class GlassworkTools
     [Description("Update an existing task. Only fields present in the fields object are written; omitted fields remain untouched.")]
     public string UpdateTask(
         [Description("Task ID to update.")] string task_id,
-        [Description("Object containing fields to update: title, status, description, notes, priority, parent_task_id, ado_link, ado_title, due_date, scheduled. notes may be a string/null or { value, append }. due_date and scheduled accept yyyy-MM-dd strings or null to clear.")] JsonElement fields)
+        [Description("Object containing fields to update: title, status, description, notes, priority, type, parent_task_id, ado_link, ado_title, due_date, scheduled. notes may be a string/null or { value, append }. due_date and scheduled accept yyyy-MM-dd strings or null to clear.")] JsonElement fields)
     {
         using var scope = _logger?.BeginCall("update_task");
         try
@@ -988,6 +992,14 @@ public sealed class GlassworkTools
                 if (!TryReadNullableString(priorityElement, "priority", out var value, out var error))
                     return SerializeInputError(scope, error!);
                 UpdateIfChanged(task.Priority, value ?? string.Empty, v => task.Priority = v, "priority", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("type", out var typeElement))
+            {
+                if (!TryReadNullableString(typeElement, "type", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                var normalizedType = GlassworkTask.Types.Normalize(value);
+                UpdateIfChanged(task.Type, normalizedType, v => task.Type = v, "type", updatedFields);
             }
 
             if (hasFields && fields.TryGetProperty("parent_task_id", out var parentElement))
