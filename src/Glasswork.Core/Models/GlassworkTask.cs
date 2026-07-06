@@ -110,14 +110,21 @@ public partial class GlassworkTask : ObservableObject
         /// <summary>
         /// Coerces a raw frontmatter value to a known type, defaulting to
         /// <see cref="Task"/> for null/empty/unrecognized input (case-insensitive).
+        /// ADO container work-item types (Product Backlog Item / User Story / Epic / Feature)
+        /// normalize to <see cref="Pbi"/> (ADR 0016).
         /// </summary>
         public static string Normalize(string? raw)
         {
             if (string.IsNullOrWhiteSpace(raw)) return Task;
-            return raw.Trim().ToLowerInvariant() switch
+            var normalized = raw.Trim().ToLowerInvariant();
+            return normalized switch
             {
                 Pbi => Pbi,
                 Bug => Bug,
+                "product backlog item" => Pbi,
+                "user story" => Pbi,
+                "epic" => Pbi,
+                "feature" => Pbi,
                 _ => Task,
             };
         }

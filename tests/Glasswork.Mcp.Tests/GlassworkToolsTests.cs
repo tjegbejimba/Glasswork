@@ -285,6 +285,105 @@ public class GlassworkToolsTests
         StringAssert.Contains(content, "Updated description");
     }
 
+    [TestMethod]
+    public void AddTask_TypeTask_DefaultsToTask()
+    {
+        var json = _tools.AddTask("Regular Task", type: "task");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+        var task = _vault.Load(taskId);
+        
+        Assert.IsNotNull(task);
+        Assert.AreEqual("task", task.Type);
+    }
+
+    [TestMethod]
+    public void AddTask_TypePbi_StoresPbi()
+    {
+        var json = _tools.AddTask("Product Backlog Item", type: "pbi");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+        var task = _vault.Load(taskId);
+        
+        Assert.IsNotNull(task);
+        Assert.AreEqual("pbi", task.Type);
+    }
+
+    [TestMethod]
+    public void AddTask_TypeBug_StoresBug()
+    {
+        var json = _tools.AddTask("Fix the crash", type: "bug");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+        var task = _vault.Load(taskId);
+        
+        Assert.IsNotNull(task);
+        Assert.AreEqual("bug", task.Type);
+    }
+
+    [TestMethod]
+    public void AddTask_TypeProductBacklogItem_NormalizesToPbi()
+    {
+        var json = _tools.AddTask("User Story", type: "Product Backlog Item");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+        var task = _vault.Load(taskId);
+        
+        Assert.IsNotNull(task);
+        Assert.AreEqual("pbi", task.Type);
+    }
+
+    [TestMethod]
+    public void AddTask_TypeUserStory_NormalizesToPbi()
+    {
+        var json = _tools.AddTask("User Story", type: "User Story");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+        var task = _vault.Load(taskId);
+        
+        Assert.IsNotNull(task);
+        Assert.AreEqual("pbi", task.Type);
+    }
+
+    [TestMethod]
+    public void AddTask_TypeEpic_NormalizesToPbi()
+    {
+        var json = _tools.AddTask("Epic", type: "Epic");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+        var task = _vault.Load(taskId);
+        
+        Assert.IsNotNull(task);
+        Assert.AreEqual("pbi", task.Type);
+    }
+
+    [TestMethod]
+    public void AddTask_TypeFeature_NormalizesToPbi()
+    {
+        var json = _tools.AddTask("Feature", type: "Feature");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+        var task = _vault.Load(taskId);
+        
+        Assert.IsNotNull(task);
+        Assert.AreEqual("pbi", task.Type);
+    }
+
+    [TestMethod]
+    public void AddTask_TypeNull_DefaultsToTask()
+    {
+        var json = _tools.AddTask("No Type Specified");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+        var task = _vault.Load(taskId);
+        
+        Assert.IsNotNull(task);
+        Assert.AreEqual("task", task.Type);
+    }
+
+    [TestMethod]
+    public void AddTask_TypeInvalid_DefaultsToTask()
+    {
+        var json = _tools.AddTask("Invalid Type", type: "invalid-type");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+        var task = _vault.Load(taskId);
+        
+        Assert.IsNotNull(task);
+        Assert.AreEqual("task", task.Type);
+    }
+
     // ───────────────────────────── list_tasks ───────────────────────────
 
     [TestMethod]
@@ -1724,6 +1823,108 @@ public class GlassworkToolsTests
         Assert.AreEqual("2026-06-15", doc.RootElement.GetProperty("due_date").GetString());
         Assert.AreEqual("2026-06-20", doc.RootElement.GetProperty("scheduled").GetString());
         Assert.AreEqual("Updated title", doc.RootElement.GetProperty("title").GetString());
+    }
+
+    [TestMethod]
+    public void UpdateTask_TypeToPbi_UpdatesType()
+    {
+        var addJson = _tools.AddTask("Regular Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "type": "pbi" }""");
+        var updated = UpdatedFieldsFrom(updateJson);
+
+        CollectionAssert.Contains(updated, "type");
+        var task = _vault.Load(taskId);
+        Assert.AreEqual("pbi", task!.Type);
+    }
+
+    [TestMethod]
+    public void UpdateTask_TypeToBug_UpdatesType()
+    {
+        var addJson = _tools.AddTask("Regular Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "type": "bug" }""");
+        var updated = UpdatedFieldsFrom(updateJson);
+
+        CollectionAssert.Contains(updated, "type");
+        var task = _vault.Load(taskId);
+        Assert.AreEqual("bug", task!.Type);
+    }
+
+    [TestMethod]
+    public void UpdateTask_TypeProductBacklogItem_NormalizesToPbi()
+    {
+        var addJson = _tools.AddTask("Regular Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "type": "Product Backlog Item" }""");
+        
+        var task = _vault.Load(taskId);
+        Assert.AreEqual("pbi", task!.Type);
+    }
+
+    [TestMethod]
+    public void UpdateTask_TypeUserStory_NormalizesToPbi()
+    {
+        var addJson = _tools.AddTask("Regular Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "type": "User Story" }""");
+        
+        var task = _vault.Load(taskId);
+        Assert.AreEqual("pbi", task!.Type);
+    }
+
+    [TestMethod]
+    public void UpdateTask_TypeEpic_NormalizesToPbi()
+    {
+        var addJson = _tools.AddTask("Regular Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "type": "Epic" }""");
+        
+        var task = _vault.Load(taskId);
+        Assert.AreEqual("pbi", task!.Type);
+    }
+
+    [TestMethod]
+    public void UpdateTask_TypeFeature_NormalizesToPbi()
+    {
+        var addJson = _tools.AddTask("Regular Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "type": "Feature" }""");
+        
+        var task = _vault.Load(taskId);
+        Assert.AreEqual("pbi", task!.Type);
+    }
+
+    [TestMethod]
+    public void UpdateTask_TypeInvalid_DefaultsToTask()
+    {
+        var addJson = _tools.AddTask("PBI", type: "pbi");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "type": "invalid-type" }""");
+        
+        var task = _vault.Load(taskId);
+        Assert.AreEqual("task", task!.Type);
+    }
+
+    [TestMethod]
+    public void UpdateTask_TypeOmitted_PreservesExistingType()
+    {
+        var addJson = _tools.AddTask("Bug Task", type: "bug");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "title": "Updated Bug" }""");
+        var updated = UpdatedFieldsFrom(updateJson);
+
+        CollectionAssert.DoesNotContain(updated, "type");
+        var task = _vault.Load(taskId);
+        Assert.AreEqual("bug", task!.Type);
     }
 
     // ───────────────────────────── load_context ──────────────────────────
