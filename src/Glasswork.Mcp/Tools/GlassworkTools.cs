@@ -2581,4 +2581,64 @@ public sealed class GlassworkTools
     private sealed record PromoteSubtaskResult(
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("path")] string Path);
+
+    /// <summary>
+    /// Deletes an in-file checklist subtask from a parent task.
+    /// </summary>
+    [McpServerTool(Name = "delete_subtask")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Remove a checklist subtask from a parent task. Returns the updated subtask list.")]
+    public string DeleteSubtask(
+        [Description("Task ID containing the subtask to delete.")] string task_id,
+        [Description("Zero-based index of the subtask to delete.")] int subtask_index)
+    {
+        using var scope = _logger?.BeginCall("delete_subtask");
+        try
+        {
+            var safeId = SanitizeId(task_id);
+            if (safeId is null || !_vault.Exists(safeId))
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("task_not_found", $"Task '{task_id}' not found."));
+            }
+
+            var parent = _vault.Load(safeId);
+            if (parent is null)
+            {
+                scope?.SetResult("not_found");
+                return JsonSerializer.Serialize(new ErrorResult("task_not_found", $"Task '{task_id}' not found."));
+            }
+
+            if (subtask_index < 0 || subtask_index >= parent.Subtasks.Count)
+            {
+                scope?.SetResult("invalid_index");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_subtask_index", 
+                    $"Subtask index {subtask_index} is out of range. Task has {parent.Subtasks.Count} subtasks."));
+            }
+
+            var index = new IndexService(_vault);
+            index.EnsureLoaded();
+            var taskService = new TaskService(_vault, index);
+
+            var writeSw = Stopwatch.StartNew();
+            taskService.DeleteSubtask(parent, subtask_index);
+            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+
+            // Reload to get the updated subtask list
+            var updated = _vault.Load(safeId)!;
+
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(new
+            {
+                subtasks = updated.Subtasks.Select(s => new { text = s.Text, status = s.Status }).ToArray(),
+                parent_task_id = updated.Id,
+                removed_index = subtask_index
+            });
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
 }
