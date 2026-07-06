@@ -286,6 +286,24 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void AddTask_IfExistsUpdate_UpdatesType()
+    {
+        // Create task with default type
+        var json1 = _tools.AddTask("Task Type Update", description: "Original");
+        var id = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
+        var task1 = _vault.Load(id);
+        Assert.AreEqual(GlassworkTask.Types.Task, task1!.Type);
+        
+        // Update to PBI via add_task if_exists=update
+        var json2 = _tools.AddTask("Task Type Update", type: "Product Backlog Item", if_exists: "update");
+        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
+        Assert.AreEqual(id, id2); // Same task
+        
+        var task2 = _vault.Load(id);
+        Assert.AreEqual(GlassworkTask.Types.Pbi, task2!.Type);
+    }
+
+    [TestMethod]
     public void AddTask_TypeTask_DefaultsToTask()
     {
         var json = _tools.AddTask("Regular Task", type: "task");

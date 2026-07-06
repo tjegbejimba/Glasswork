@@ -106,6 +106,7 @@ public sealed class GlassworkTools
                         if (scheduled != null) updateFields["scheduled"] = scheduled;
                         if (my_day.HasValue) updateFields["my_day"] = my_day.Value;
                         if (notes != null) updateFields["notes"] = notes;
+                        if (type != null) updateFields["type"] = type;
 
                         var fieldsJson = JsonSerializer.Serialize(updateFields);
                         var fieldsElement = JsonDocument.Parse(fieldsJson).RootElement;
