@@ -1,6 +1,7 @@
 # ADR 0007: `glasswork-mcp` — standalone MCP server for typed agent vault access
 
 **Status**: Accepted
+**Amended**: 2026-07-06 — the shipped tool surface has grown well beyond the v1 four; see the [2026-07-06 Amendment](#amendment--2026-07-06-shipped-tool-surface).
 **Context slice**: resolves issue #67 (MCP server); depends on a new prerequisite issue (file-based `SelfWriteCoordinator`); loosely related to #84 (vault settings) and #69 (quick-capture).
 
 ## Context
@@ -43,7 +44,7 @@ Ship the minimum that powers use cases #1 and #3:
 | `get_task` | Return full task content (frontmatter + Description + Notes + artifact filenames) for context |
 | `add_artifact` | Create a sibling markdown file under the task's artifact folder |
 
-**Explicitly deferred to a later milestone**: `update_task`, `add_note`, `set_status`, `list_subtasks`, `add_subtask`, `search_tasks`. The Core services for all of these already exist — they're cheap to add when the agent friction surfaces.
+**Explicitly deferred to a later milestone**: `update_task`, `add_note`, `set_status`, `list_subtasks`, `add_subtask`, `search_tasks`. The Core services for all of these already exist — they're cheap to add when the agent friction surfaces. *(Status: most of these shipped post-v1 — see the [2026-07-06 Amendment](#amendment--2026-07-06-shipped-tool-surface).)*
 
 Tool implementations are **thin wrappers over `Glasswork.Core` services** (`TaskService`, `ArtifactPathResolver`, `FileSystemArtifactStore`). MCP is a transport layer, not a domain layer.
 
@@ -108,6 +109,42 @@ New project: `src/Glasswork.Mcp/Glasswork.Mcp.csproj`.
 - References `Glasswork.Core` only — never `Glasswork.App` (Windows-only, would break Linux/Mac builds).
 - Tests in `tests/Glasswork.Mcp.Tests/` (MSTest, separate project).
 - Solution gains a third app project: `Glasswork.Core`, `Glasswork.App`, `Glasswork.Mcp`.
+
+## Amendment — 2026-07-06: shipped tool surface
+
+The v1 four-tool surface (§3) was the *starting* point, not the ceiling. As of
+2026-07-06 `glasswork-mcp` ships **19 tools**; the "deferred" list in §3 has largely
+landed. Current surface, grouped by verb:
+
+- **Create**: `add_task` (full field coverage — description, parent, status, priority,
+  due date, scheduled, my_day, notes — plus `if_exists` idempotency), `add_artifact`,
+  `add_link`
+- **Read**: `list_tasks`, `get_task`, `search_tasks`, `list_subtasks`, `get_my_day`,
+  `get_artifact`, `list_backlinks`, `list_overdue`, `get_activity`,
+  `get_task_context`, `load_context`
+- **Update**: `update_task` (title / status / description / notes [with append] /
+  priority / parent / ado_link / ado_title), `move_task`, `set_my_day`,
+  `toggle_my_day`
+- **Delete**: `remove_link`
+
+### Remaining gaps (tracked as scoped children of umbrella #277)
+
+- **Subtask writes** — `add_subtask`, `update_subtask` (status / title / notes),
+  `promote_subtask`, `delete_subtask`. The Core methods (`VaultService.AddSubtask`,
+  `TaskService.PromoteSubtask` / `DeleteSubtask`, plus the UI's subtask status-toggle
+  path) already exist; only the MCP wrappers are missing. This is the largest gap —
+  agents can read subtasks but not create or check them off.
+- **`update_task` date fields** — `due_date` and `scheduled` are settable at creation
+  (`add_task`) but have no update path, so an agent can't reschedule or clear a date.
+- **`type` on create/update** — the model carries `type` (`task` / `pbi` / `bug`,
+  ADR 0016) and `get_my_day` surfaces it, but `add_task` / `update_task` can't set it,
+  so agents can't create a PBI or convert task↔PBI.
+- **Task deletion** — no delete-a-task tool exists. The soft-vs-hard decision is
+  ADR 0018 (resolving #207); `delete_subtask` (in-file, low-risk) ships independently.
+
+The boundaries in §9 (stdio-only, vault-only writes, path-traversal guard, optimistic
+concurrency via mtime, self-write marker) continue to govern **every** tool added
+above and every tool still to come.
 
 ## Consequences
 
