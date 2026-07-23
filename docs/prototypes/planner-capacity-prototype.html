@@ -1,0 +1,755 @@
+<!-- Question: How should capacity-first planning combine scope decisions with proportional time context? Variant A won. Throwaway primary source; not production code. -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glasswork Planner Hybrid Prototype</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      overflow: hidden;
+      background: var(--cp-bg);
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+    }
+    button { font: inherit; }
+    button:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 2px; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 28px; line-height: 1.1; letter-spacing: -.02em; }
+    h2 { font-size: 17px; }
+    h3 { font-size: 14px; }
+    .muted { color: var(--cp-text-muted); }
+    .soft { color: var(--cp-text-soft); }
+    .danger-text { color: var(--cp-danger); }
+    .success-text { color: var(--cp-success); }
+    .eyebrow {
+      color: var(--cp-text-muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .window { height: 100vh; display: grid; grid-template-rows: 48px 1fr 26px; background: var(--cp-bg-elevated); }
+    .titlebar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--cp-border);
+      background: var(--cp-bg);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .app-mark {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--cp-border-strong);
+      border-radius: 6px;
+      color: var(--cp-accent);
+      font-weight: 700;
+    }
+    .throwaway {
+      position: fixed;
+      z-index: 20;
+      top: 15px;
+      right: 18px;
+      color: var(--cp-text-muted);
+      font-size: 10px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .shell { min-height: 0; display: grid; grid-template-columns: 208px minmax(0, 1fr); }
+    .nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 8px;
+      border-right: 1px solid var(--cp-border);
+      background: var(--cp-bg);
+    }
+    .nav-item {
+      position: relative;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--cp-text);
+      text-align: left;
+    }
+    .nav-item.active { background: var(--cp-accent-soft); font-weight: 650; }
+    .nav-item.active::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      width: 3px;
+      height: 18px;
+      border-radius: 3px;
+      background: var(--cp-accent);
+    }
+    .nav-icon { width: 20px; text-align: center; color: var(--cp-text-soft); }
+    .nav-spacer { flex: 1; }
+    .main { min-width: 0; min-height: 0; overflow: hidden; }
+    .statusbar {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 12px;
+      border-top: 1px solid var(--cp-border);
+      background: var(--cp-bg);
+      color: var(--cp-text-muted);
+      font-size: 11px;
+    }
+    .statusbar span:first-child { flex: 1; }
+    .watching { color: var(--cp-success); }
+
+    .page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+    .page-head {
+      min-height: 100px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 18px 28px;
+      border-bottom: 1px solid var(--cp-border);
+    }
+    .page-head p { margin-top: 6px; }
+    .capacity-panel { width: 365px; }
+    .capacity-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+    .capacity-line strong { font-size: 15px; }
+    .capacity-line .over { color: var(--cp-danger); font-size: 17px; }
+    .meter { height: 8px; margin: 8px 0 6px; overflow: hidden; border-radius: 5px; background: var(--cp-border); }
+    .meter-fill { height: 100%; width: 100%; background: var(--cp-danger); }
+    .meter-fill.ok { background: var(--cp-success); }
+    .capacity-detail { display: flex; justify-content: space-between; color: var(--cp-text-muted); font-size: 11px; }
+    .state-banner {
+      min-height: 35px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 28px;
+      border-bottom: 1px solid var(--cp-border);
+      background: var(--cp-surface-soft);
+      color: var(--cp-text-soft);
+      font-size: 12px;
+    }
+    .state-banner strong { color: var(--cp-text); }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-height: 22px;
+      padding: 2px 7px;
+      border: 1px solid var(--cp-border);
+      border-radius: 5px;
+      color: var(--cp-text-muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .pill.meeting { color: var(--cp-link); border-color: var(--cp-link); }
+    .pill.focus { color: var(--cp-accent); border-color: var(--cp-accent); }
+    .pill.open { color: var(--cp-success); border-color: var(--cp-success); }
+    .pill.over { color: var(--cp-danger); border-color: var(--cp-danger); }
+    .btn {
+      border: 1px solid var(--cp-border);
+      border-radius: 0.625rem;
+      padding: 6px 10px;
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      cursor: pointer;
+    }
+    .btn:hover { border-color: var(--cp-border-strong); }
+    .btn.compact { padding: 4px 8px; font-size: 11px; }
+    .btn.selected { border-color: var(--cp-accent); background: var(--cp-accent-soft); color: var(--cp-accent); }
+    .btn.defer-selected { border-color: var(--cp-border-strong); background: var(--cp-surface-soft); color: var(--cp-text-muted); }
+    .decision-buttons { display: flex; gap: 5px; }
+
+    .decision-card {
+      border: 1px solid var(--cp-border);
+      border-radius: 10px;
+      background: var(--cp-surface);
+      box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border);
+    }
+    .decision-main {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+    }
+    .decision-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-weight: 650; }
+    .decision-meta { margin-top: 4px; color: var(--cp-text-muted); font-size: 11px; }
+    .expand-btn {
+      margin-right: 5px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--cp-text-muted);
+      cursor: pointer;
+    }
+    .subtask-list { display: none; padding: 6px 12px 10px 26px; border-top: 1px solid var(--cp-border); }
+    .decision-card.expanded .subtask-list { display: block; }
+    .subtask-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 38px;
+      border-bottom: 1px solid var(--cp-border);
+    }
+    .subtask-row:last-child { border-bottom: 0; }
+    .subtask-name { font-size: 12px; }
+    .subtask-note { color: var(--cp-text-muted); font-size: 10px; margin-top: 2px; }
+    .deferred { opacity: .58; }
+
+    /* Shared proportional day timeline */
+    .vertical-day {
+      height: 600px;
+      display: grid;
+      grid-template-columns: 52px 1fr;
+      overflow: hidden;
+      border: 1px solid var(--cp-border);
+      border-radius: 10px;
+      background: var(--cp-surface);
+    }
+    .time-axis { position: relative; border-right: 1px solid var(--cp-border); }
+    .time-label {
+      position: absolute;
+      right: 8px;
+      transform: translateY(-50%);
+      color: var(--cp-text-muted);
+      font-size: 10px;
+    }
+    .time-label:first-child { transform: none; }
+    .day-track { position: relative; }
+    .hour-line { position: absolute; left: 0; right: 0; border-top: 1px solid var(--cp-border); }
+    .time-block {
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      overflow: hidden;
+      border: 1px solid var(--cp-border);
+      border-radius: 7px;
+      padding: 6px 9px;
+      background: var(--cp-surface-soft);
+      font-size: 11px;
+    }
+    .time-block.meeting { border-color: var(--cp-link); }
+    .time-block.focus { border-color: var(--cp-accent); background: var(--cp-accent-soft); }
+    .time-block.open { border-color: var(--cp-success); background: var(--cp-surface); color: var(--cp-success); }
+    .time-block.tiny { padding: 1px 8px; font-size: 9px; }
+    .time-block strong { display: block; margin-bottom: 2px; color: var(--cp-text); }
+    .time-block.open strong { color: var(--cp-success); }
+
+    /* A: split decisions + tall day */
+    .split-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(520px, 1fr) 430px; gap: 20px; padding: 18px 28px 70px; overflow: auto; }
+    .decision-column { min-width: 0; }
+    .section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .card-stack { display: grid; gap: 8px; }
+    .timeline-column { min-width: 0; }
+    .legend { display: flex; gap: 6px; }
+
+    /* B: horizontal timeline first */
+    .timeline-first-body { min-height: 0; flex: 1; padding: 18px 28px 78px; overflow: auto; }
+    .horizontal-map {
+      border: 1px solid var(--cp-border);
+      border-radius: 16px;
+      background: var(--cp-surface);
+      box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border);
+      overflow: hidden;
+    }
+    .map-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--cp-border); }
+    .time-ruler { display: grid; grid-template-columns: repeat(9, 1fr); padding: 7px 12px 5px; color: var(--cp-text-muted); font-size: 10px; }
+    .time-ruler span:last-child { text-align: right; }
+    .horizontal-track { height: 150px; display: flex; padding: 0 12px 12px; }
+    .h-block {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 8px;
+      border: 1px solid var(--cp-border);
+      background: var(--cp-surface-soft);
+      font-size: 11px;
+      overflow: hidden;
+    }
+    .h-block:first-child { border-radius: 8px 0 0 8px; }
+    .h-block:last-child { border-radius: 0 8px 8px 0; }
+    .h-block.meeting { border-color: var(--cp-link); }
+    .h-block.focus { border-color: var(--cp-accent); background: var(--cp-accent-soft); }
+    .h-block.open { border-color: var(--cp-success); background: var(--cp-surface); color: var(--cp-success); }
+    .h-block strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .h-block small { margin-top: 4px; color: var(--cp-text-muted); white-space: nowrap; }
+    .triage-head { display: flex; justify-content: space-between; align-items: end; margin: 18px 0 10px; }
+    .compact-triage { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .compact-triage .decision-card:first-child { grid-column: span 2; }
+    .compact-triage .subtask-list { display: none; }
+    .compact-triage .decision-card.expanded .subtask-list { display: grid; grid-template-columns: repeat(2, 1fr); column-gap: 14px; }
+
+    /* C: gap organizing units */
+    .gap-body { min-height: 0; flex: 1; display: grid; grid-template-columns: 120px minmax(620px, 1fr) 320px; gap: 16px; padding: 18px 28px 76px; overflow: auto; }
+    .mini-day { height: 600px; border: 1px solid var(--cp-border); border-radius: 10px; overflow: hidden; background: var(--cp-surface); }
+    .mini-block {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 8px;
+      padding: 4px;
+      border-bottom: 1px solid var(--cp-border);
+      text-align: center;
+      font-size: 9px;
+      overflow: hidden;
+    }
+    .mini-block.meeting { color: var(--cp-link); background: var(--cp-surface-soft); }
+    .mini-block.focus { color: var(--cp-accent); background: var(--cp-accent-soft); }
+    .mini-block.open { color: var(--cp-success); background: var(--cp-surface); }
+    .gap-stack { display: flex; flex-direction: column; gap: 10px; }
+    .gap-card {
+      display: grid;
+      grid-template-columns: 118px 1fr;
+      min-height: 120px;
+      border: 1px solid var(--cp-border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--cp-surface);
+      box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border);
+    }
+    .gap-time { display: flex; flex-direction: column; justify-content: center; padding: 12px; border-right: 1px solid var(--cp-border); background: var(--cp-surface-soft); }
+    .gap-time strong { color: var(--cp-success); font-size: 18px; }
+    .gap-time small { margin-top: 5px; color: var(--cp-text-muted); }
+    .gap-content { padding: 12px 14px; }
+    .candidate { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--cp-border); }
+    .candidate:last-child { border-bottom: 0; }
+    .candidate strong { font-size: 12px; }
+    .candidate small { display: block; margin-top: 2px; color: var(--cp-text-muted); }
+    .gap-decisions { min-width: 0; }
+    .gap-decisions .decision-card { margin-bottom: 8px; }
+    .gap-decisions .decision-main { grid-template-columns: 1fr; }
+
+    .switcher {
+      position: fixed;
+      z-index: 50;
+      left: 50%;
+      bottom: 40px;
+      transform: translateX(-50%);
+      display: grid;
+      grid-template-columns: 40px minmax(280px, auto) 40px;
+      align-items: center;
+      padding: 4px;
+      border: 1px solid var(--cp-border-strong);
+      border-radius: 999px;
+      background: var(--cp-panel-strong);
+      box-shadow: var(--cp-shadow);
+    }
+    .switcher button {
+      width: 34px;
+      height: 34px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--cp-text);
+      cursor: pointer;
+      font-size: 18px;
+    }
+    .switcher button:hover { background: var(--cp-accent-soft); }
+    .switch-label { padding: 0 10px; text-align: center; font-weight: 650; }
+    .switch-label small { display: block; margin-top: 1px; color: var(--cp-text-muted); font-size: 10px; font-weight: 400; }
+
+    @media (max-width: 1050px) {
+      .shell { grid-template-columns: 56px minmax(0, 1fr); }
+      .nav-item { justify-content: center; padding: 0; }
+      .nav-item span:last-child { display: none; }
+      .split-body { grid-template-columns: minmax(430px, 1fr) 360px; }
+      .gap-body { grid-template-columns: 90px minmax(500px, 1fr) 280px; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Three hybrids of capacity decisions + proportional time, switchable via ?variant=A|B|C. -->
+  <div class="throwaway">Disposable prototype · no data is saved</div>
+  <div class="window">
+    <header class="titlebar"><span class="app-mark">G</span><span>Glasswork</span></header>
+    <div class="shell">
+      <nav class="nav" aria-label="Primary">
+        <button class="nav-item"><span class="nav-icon">☀</span><span>My Day</span></button>
+        <button class="nav-item active"><span class="nav-icon">▦</span><span>Planner</span></button>
+        <button class="nav-item"><span class="nav-icon">☷</span><span>Backlog</span></button>
+        <button class="nav-item"><span class="nav-icon">◷</span><span>Work Log</span></button>
+        <div class="nav-spacer"></div>
+        <button class="nav-item"><span class="nav-icon">✦</span><span>Feedback</span></button>
+      </nav>
+      <main class="main" id="app"></main>
+    </div>
+    <footer class="statusbar">
+      <span>Obsidian Vault / Glasswork</span><span>28 tasks</span><span class="watching">● watching</span><span>reloaded just now</span>
+    </footer>
+  </div>
+  <div class="switcher" aria-label="Prototype variant switcher">
+    <button id="previous" aria-label="Previous variant">←</button>
+    <div class="switch-label" id="variant-label"></div>
+    <button id="next" aria-label="Next variant">→</button>
+  </div>
+
+  <script>
+    const variants = {
+      A: { name: "Split decisions + tall day", question: "Can one screen balance triage and proportional time?" },
+      B: { name: "Timeline-first triage", question: "Should the shape of the day lead before the task decisions?" },
+      C: { name: "Gap-first decisions", question: "Should usable gaps organize the work choices?" }
+    };
+
+    const initialState = {
+      expanded: true,
+      decisions: {
+        research: true,
+        sketch: true,
+        build: true,
+        findings: true,
+        dj: true,
+        nas: true,
+        email: true,
+        homelab: true
+      },
+      lastAction: "All 8h of My Day is still in scope."
+    };
+    const state = structuredClone(initialState);
+
+    const items = {
+      research: { name: "Review planner research", minutes: 45, parent: "planner", note: "Already placed · 2:30 PM" },
+      sketch: { name: "Sketch task pool states", minutes: 60, parent: "planner", note: "Already placed · 10:00 AM" },
+      build: { name: "Build time-grid interaction", minutes: 90, parent: "planner", note: "Unscheduled Subtask" },
+      findings: { name: "Capture findings", minutes: 45, parent: "planner", note: "Unscheduled Subtask" },
+      dj: { name: "Prepare Friday DJ set", minutes: 120, note: "Due Friday · needs a long block" },
+      nas: { name: "Review NAS backup report", minutes: 30, note: "Due today · shallow work" },
+      email: { name: "Answer project email", minutes: 30, note: "Shallow work" },
+      homelab: { name: "Plan homelab migration notes", minutes: 60, note: "No deadline" }
+    };
+
+    const daySegments = [
+      { start: "9:00", end: "10:00", minutes: 60, kind: "meeting", title: "Product sync", detail: "Microsoft 365 · read-only" },
+      { start: "10:00", end: "11:00", minutes: 60, kind: "focus", title: "Sketch task pool states", detail: "Planned Subtask", item: "sketch" },
+      { start: "11:00", end: "12:00", minutes: 60, kind: "open", title: "Open gap", detail: "1h" },
+      { start: "12:00", end: "12:45", minutes: 45, kind: "meeting", title: "Design critique", detail: "Microsoft 365 · read-only" },
+      { start: "12:45", end: "1:00", minutes: 15, kind: "open", title: "Open gap", detail: "15m" },
+      { start: "1:00", end: "2:30", minutes: 90, kind: "meeting", title: "Focus hold", detail: "Microsoft 365 · read-only" },
+      { start: "2:30", end: "3:15", minutes: 45, kind: "focus", title: "Review planner research", detail: "Planned Subtask", item: "research" },
+      { start: "3:15", end: "5:00", minutes: 105, kind: "open", title: "Open gap", detail: "1h 45m" }
+    ];
+
+    const keys = Object.keys(variants);
+    const requested = new URLSearchParams(location.search).get("variant");
+    let current = variants[requested] ? requested : "A";
+
+    const fmt = minutes => {
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      if (!hours) return `${mins}m`;
+      if (!mins) return `${hours}h`;
+      return `${hours}h ${mins}m`;
+    };
+
+    function selectedMinutes() {
+      return Object.entries(state.decisions).reduce((sum, [id, kept]) => sum + (kept ? items[id].minutes : 0), 0);
+    }
+
+    function capacityModel() {
+      const selected = selectedMinutes();
+      const available = 285;
+      const difference = selected - available;
+      return {
+        selected,
+        available,
+        difference,
+        ratio: Math.min(100, Math.round(selected / available * 100)),
+        kept: Object.values(state.decisions).filter(Boolean).length,
+        deferred: Object.values(state.decisions).filter(value => !value).length
+      };
+    }
+
+    function capacityHeader() {
+      const c = capacityModel();
+      const status = c.difference > 0 ? `${fmt(c.difference)} over` : `${fmt(Math.abs(c.difference))} spare`;
+      return `
+        <div class="capacity-panel">
+          <div class="capacity-line"><strong>${fmt(c.selected)} selected / ${fmt(c.available)} open</strong><strong class="${c.difference > 0 ? "over" : "success-text"}">${status}</strong></div>
+          <div class="meter"><div class="meter-fill ${c.difference <= 0 ? "ok" : ""}" style="width:${c.ratio}%"></div></div>
+          <div class="capacity-detail"><span>3h 15m meetings</span><span>${c.kept} kept · ${c.deferred} deferred</span></div>
+        </div>`;
+    }
+
+    function pageHead(title, subtitle) {
+      return `
+        <header class="page-head">
+          <div><div class="eyebrow">Planner · Wednesday, July 22</div><h1>${title}</h1><p class="muted">${subtitle}</p></div>
+          ${capacityHeader()}
+        </header>
+        <div class="state-banner"><span class="pill ${capacityModel().difference > 0 ? "over" : "open"}">${capacityModel().difference > 0 ? "Over capacity" : "Fits today"}</span><strong>Current state:</strong><span>${state.lastAction}</span></div>`;
+    }
+
+    function decisionButtons(id) {
+      const kept = state.decisions[id];
+      return `<div class="decision-buttons">
+        <button class="btn compact ${kept ? "selected" : ""}" data-decision="${id}" data-value="keep">Keep today</button>
+        <button class="btn compact ${!kept ? "defer-selected" : ""}" data-decision="${id}" data-value="defer">Defer</button>
+      </div>`;
+    }
+
+    function subtaskRows() {
+      return ["research", "sketch", "build", "findings"].map(id => {
+        const item = items[id];
+        return `<div class="subtask-row ${state.decisions[id] ? "" : "deferred"}">
+          <div><div class="subtask-name">${item.name} · ${fmt(item.minutes)}</div><div class="subtask-note">${item.note}</div></div>
+          ${decisionButtons(id)}
+        </div>`;
+      }).join("");
+    }
+
+    function plannerCard(compact = false) {
+      const selected = ["research", "sketch", "build", "findings"].reduce((sum, id) => sum + (state.decisions[id] ? items[id].minutes : 0), 0);
+      return `<article class="decision-card ${state.expanded ? "expanded" : ""}">
+        <div class="decision-main">
+          <div>
+            <div class="decision-title"><span><button class="expand-btn" data-expand>${state.expanded ? "⌃" : "⌄"}</button>Prototype Glasswork day planner</span><span>${fmt(selected)} kept</span></div>
+            <div class="decision-meta">Large Task · choose its Subtasks; the parent is not a time block</div>
+          </div>
+          <span class="pill focus">${Object.values(state.decisions).slice(0, 4).filter(Boolean).length} of 4</span>
+        </div>
+        <div class="subtask-list">${subtaskRows()}</div>
+      </article>`;
+    }
+
+    function leafCard(id) {
+      const item = items[id];
+      return `<article class="decision-card ${state.decisions[id] ? "" : "deferred"}">
+        <div class="decision-main">
+          <div><div class="decision-title"><span>${item.name}</span><span>${fmt(item.minutes)}</span></div><div class="decision-meta">${item.note}</div></div>
+          ${decisionButtons(id)}
+        </div>
+      </article>`;
+    }
+
+    function verticalTimeline() {
+      const labels = Array.from({ length: 9 }, (_, index) => {
+        const top = index * 12.5;
+        const hour = index + 9;
+        const display = hour === 12 ? "12 PM" : hour > 12 ? `${hour - 12} PM` : `${hour} AM`;
+        return `<span class="time-label" style="top:${top}%">${display}</span>`;
+      }).join("");
+      const lines = Array.from({ length: 9 }, (_, index) => `<span class="hour-line" style="top:${index * 12.5}%"></span>`).join("");
+      let elapsed = 0;
+      const blocks = daySegments.map(segment => {
+        const top = elapsed / 480 * 100;
+        const height = segment.minutes / 480 * 100;
+        elapsed += segment.minutes;
+        const hidden = segment.item && !state.decisions[segment.item];
+        if (hidden) return `<div class="time-block open" style="top:${top}%;height:${height}%"><strong>Open after deferring</strong><span>${segment.start}–${segment.end}</span></div>`;
+        return `<div class="time-block ${segment.kind} ${segment.minutes <= 15 ? "tiny" : ""}" style="top:${top}%;height:${height}%"><strong>${segment.title}</strong><span>${segment.start}–${segment.end}${segment.minutes > 15 ? ` · ${segment.detail}` : ""}</span></div>`;
+      }).join("");
+      return `<div class="vertical-day"><div class="time-axis">${labels}</div><div class="day-track">${lines}${blocks}</div></div>`;
+    }
+
+    function horizontalTimeline() {
+      return `<div class="horizontal-map">
+        <div class="map-head"><div><h2>The shape of Wednesday</h2><p class="muted" style="font-size:11px;margin-top:3px">Widths are proportional from 9 AM to 5 PM. Meetings stay read-only.</p></div><div class="legend"><span class="pill meeting">Meeting</span><span class="pill focus">Planned focus</span><span class="pill open">Open</span></div></div>
+        <div class="time-ruler"><span>9 AM</span><span>10</span><span>11</span><span>12 PM</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5 PM</span></div>
+        <div class="horizontal-track">${daySegments.map(segment => {
+          const hidden = segment.item && !state.decisions[segment.item];
+          const kind = hidden ? "open" : segment.kind;
+          const title = hidden ? "Open" : segment.title;
+          return `<div class="h-block ${kind}" style="width:${segment.minutes / 480 * 100}%"><strong>${title}</strong><small>${segment.minutes >= 30 ? fmt(segment.minutes) : ""}</small></div>`;
+        }).join("")}</div>
+      </div>`;
+    }
+
+    function renderA() {
+      return `<section class="page">
+        ${pageHead("Make today fit", "Keep or defer first. Use the proportional day only to understand the consequence.")}
+        <div class="split-body">
+          <section class="decision-column">
+            <div class="section-title"><div><h2>Decide what stays</h2><p class="muted" style="font-size:11px;margin-top:3px">My Day is the scope; Planner is the reality check.</p></div><span class="pill">${capacityModel().kept} items kept</span></div>
+            <div class="card-stack">${plannerCard()}${leafCard("dj")}${leafCard("nas")}${leafCard("email")}${leafCard("homelab")}</div>
+          </section>
+          <aside class="timeline-column">
+            <div class="section-title"><div><h2>Wednesday · 9–5</h2><p class="muted" style="font-size:11px;margin-top:3px">Block heights are proportional. No drag or resize.</p></div><div class="legend"><span class="pill meeting">Meetings</span><span class="pill focus">Focus</span><span class="pill open">Open</span></div></div>
+            ${verticalTimeline()}
+          </aside>
+        </div>
+      </section>`;
+    }
+
+    function renderB() {
+      return `<section class="page">
+        ${pageHead("See the day, then cut scope", "The timeline leads; keep/defer remains the only scheduling decision.")}
+        <div class="timeline-first-body">
+          ${horizontalTimeline()}
+          <div class="triage-head"><div><h2>Keep or defer</h2><p class="muted" style="font-size:11px;margin-top:3px">Nothing moves automatically when you change scope.</p></div><span class="pill ${capacityModel().difference > 0 ? "over" : "open"}">${fmt(capacityModel().selected)} selected</span></div>
+          <div class="compact-triage">${plannerCard(true)}${leafCard("dj")}${leafCard("nas")}${leafCard("email")}${leafCard("homelab")}</div>
+        </div>
+      </section>`;
+    }
+
+    function candidate(id, reason) {
+      const item = items[id];
+      return `<div class="candidate ${state.decisions[id] ? "" : "deferred"}"><div><strong>${item.name} · ${fmt(item.minutes)}</strong><small>${reason}</small></div>${decisionButtons(id)}</div>`;
+    }
+
+    function renderC() {
+      return `<section class="page">
+        ${pageHead("Plan through the gaps", "Open time is the organizing unit; capacity decisions still belong to My Day.")}
+        <div class="gap-body">
+          <aside>
+            <div class="section-title"><div><h3>9–5 map</h3><p class="muted" style="font-size:10px;margin-top:3px">Proportional</p></div></div>
+            <div class="mini-day">${daySegments.map(segment => {
+              const hidden = segment.item && !state.decisions[segment.item];
+              const kind = hidden ? "open" : segment.kind;
+              const title = hidden ? "Open" : segment.title;
+              return `<div class="mini-block ${kind}" style="height:${segment.minutes / 480 * 600}px">${segment.minutes >= 30 ? `${title}<br>${fmt(segment.minutes)}` : ""}</div>`;
+            }).join("")}</div>
+          </aside>
+          <section>
+            <div class="section-title"><div><h2>Usable gaps</h2><p class="muted" style="font-size:11px;margin-top:3px">Candidates are suggestions only; no auto-scheduling.</p></div><span class="pill open">3 unallocated gaps</span></div>
+            <div class="gap-stack">
+              <article class="gap-card">
+                <div class="gap-time"><strong>1h</strong><small>11:00–12:00<br>Focused</small></div>
+                <div class="gap-content"><h3>Fits cleanly</h3>${candidate("homelab", "Exact duration; no deadline")}${candidate("nas", "Leaves 30m for email")}</div>
+              </article>
+              <article class="gap-card" style="min-height:84px">
+                <div class="gap-time"><strong>15m</strong><small>12:45–1:00<br>Transition</small></div>
+                <div class="gap-content"><h3>Too small for selected work</h3><p class="muted" style="margin-top:8px;font-size:12px">Preserve this buffer instead of forcing a Task into it.</p></div>
+              </article>
+              <article class="gap-card" style="min-height:190px">
+                <div class="gap-time"><strong>1h 45m</strong><small>3:15–5:00<br>Best gap</small></div>
+                <div class="gap-content"><h3>Choose one focused outcome</h3>${candidate("build", "1h 30m Subtask; leaves 15m")}${candidate("findings", "Pairs with email and NAS work")}${candidate("dj", "Does not fit; defer or split later")}</div>
+              </article>
+            </div>
+          </section>
+          <aside class="gap-decisions">
+            <div class="section-title"><div><h2>Scope state</h2><p class="muted" style="font-size:11px;margin-top:3px">Explicit keep/defer</p></div></div>
+            ${plannerCard()}${leafCard("dj")}${leafCard("nas")}${leafCard("email")}${leafCard("homelab")}
+          </aside>
+        </div>
+      </section>`;
+    }
+
+    function bindActions() {
+      document.querySelectorAll("[data-decision]").forEach(button => {
+        button.addEventListener("click", () => {
+          const id = button.dataset.decision;
+          const keep = button.dataset.value === "keep";
+          state.decisions[id] = keep;
+          state.lastAction = `${items[id].name} ${keep ? "kept in My Day" : "deferred"}. ${fmt(selectedMinutes())} remains selected.`;
+          render();
+        });
+      });
+      document.querySelectorAll("[data-expand]").forEach(button => {
+        button.addEventListener("click", () => {
+          state.expanded = !state.expanded;
+          state.lastAction = `Large Task Subtasks ${state.expanded ? "expanded" : "collapsed"}; capacity is unchanged.`;
+          render();
+        });
+      });
+    }
+
+    function render() {
+      document.getElementById("app").innerHTML = current === "A" ? renderA() : current === "B" ? renderB() : renderC();
+      const info = variants[current];
+      document.getElementById("variant-label").innerHTML = `${current} — ${info.name}<small>${info.question}</small>`;
+      document.title = `Glasswork Planner Hybrid — ${current}`;
+      bindActions();
+    }
+
+    function switchVariant(step) {
+      current = keys[(keys.indexOf(current) + step + keys.length) % keys.length];
+      const url = new URL(location);
+      url.searchParams.set("variant", current);
+      history.replaceState({}, "", url);
+      state.lastAction = `Showing Variant ${current}; decision state is preserved.`;
+      render();
+    }
+
+    document.getElementById("previous").addEventListener("click", () => switchVariant(-1));
+    document.getElementById("next").addEventListener("click", () => switchVariant(1));
+    addEventListener("keydown", event => {
+      const target = document.activeElement;
+      if (["INPUT", "TEXTAREA"].includes(target?.tagName) || target?.isContentEditable) return;
+      if (event.key === "ArrowLeft") switchVariant(-1);
+      if (event.key === "ArrowRight") switchVariant(1);
+    });
+    addEventListener("popstate", () => {
+      const fromUrl = new URLSearchParams(location.search).get("variant");
+      if (variants[fromUrl]) current = fromUrl;
+      render();
+    });
+    render();
+  </script>
+</body>
+</html>
