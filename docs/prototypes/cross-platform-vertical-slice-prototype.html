@@ -1,0 +1,366 @@
+<!--
+  PROTOTYPE ONLY — throwaway artifact for Wayfinder ticket #370
+  "Define the shared cross-platform vertical slice" (map #369).
+
+  QUESTION ANSWERED (design-brief slice): how much platform-specific chrome
+  adaptation should the shared vertical slice carry on macOS vs Windows,
+  layered on ONE identical layout/content/interaction model?
+
+  Three variants, same fixture data, same layout — only chrome/material
+  differs. Switch with ?variant=A|B|C or the floating switcher.
+  Each variant shows a macOS pane and a Windows pane side by side so the
+  chrome difference is judged directly, not imagined.
+
+  Not a production surface. No data is persisted. Drag-reorder, file-watch,
+  and sandboxed HTML preview are called out as requirement badges rather than
+  functionally implemented — this artifact is about visual direction, not
+  spike behavior itself.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glasswork Cross-Platform Vertical Slice — Design Brief Prototype</title>
+<style>
+  :root {
+    --cp-bg: #f7f4ef; --cp-bg-elevated: #fcfbf8; --cp-surface: #ffffff;
+    --cp-surface-soft: #f5f5f5; --cp-border: #dedede; --cp-border-strong: #919191;
+    --cp-text: #242424; --cp-text-muted: #5c5c5c; --cp-text-soft: #6f6f6f;
+    --cp-accent: #b11f4b; --cp-accent-soft: rgba(177,31,75,.08); --cp-accent-fg:#fff;
+    --cp-success:#16a34a; --cp-danger:#dc2626; --cp-warning:#f59e0b; --cp-link:#0078d4;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--cp-bg); color: var(--cp-text);
+    font-family: "Segoe UI", Aptos, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px;
+  }
+  h1,h2,h3,p { margin: 0; }
+  button { font: inherit; cursor: pointer; }
+  .muted { color: var(--cp-text-muted); }
+  .throwaway {
+    position: fixed; z-index: 30; top: 10px; left: 50%; transform: translateX(-50%);
+    color: var(--cp-text-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  }
+  .brief {
+    max-width: 1400px; margin: 40px auto 0; padding: 0 20px 10px;
+  }
+  .brief h1 { font-size: 22px; }
+  .brief p { margin-top: 6px; max-width: 760px; }
+  .question-label { color: var(--cp-accent); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+
+  .panes { max-width: 1400px; margin: 18px auto 90px; padding: 0 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  .pane-label { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; font-weight: 650; color: var(--cp-text-soft); }
+  .os-badge { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 4px; font-size: 10px; letter-spacing: .04em; }
+  .os-badge.mac { background: #e7e3ff; color: #4b3fb0; }
+  .os-badge.windows { background: #d9edff; color: #0057a3; }
+
+  .window {
+    height: 640px; display: grid; grid-template-rows: 40px 1fr 24px;
+    border: 1px solid var(--cp-border-strong); background: var(--cp-bg-elevated);
+    box-shadow: 0 12px 30px rgba(0,0,0,.14); overflow: hidden;
+  }
+  .titlebar { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--cp-border); font-weight: 650; }
+  .traffic { display: flex; gap: 7px; }
+  .traffic span { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .traffic .r { background: #ff5f57; } .traffic .y { background: #febc2e; } .traffic .g { background: #28c840; }
+  .caption { display: flex; gap: 0; margin-left: auto; }
+  .caption span { width: 34px; height: 40px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--cp-text-muted); }
+  .caption span:last-child:hover { background: #e81123; color: #fff; }
+  .app-title { flex: 1; text-align: center; font-size: 12px; }
+
+  .shell { min-height: 0; display: grid; grid-template-columns: 180px minmax(0,1fr); }
+  .nav { display: flex; flex-direction: column; gap: 3px; padding: 10px 7px; border-right: 1px solid var(--cp-border); }
+  .nav-item { height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--cp-text); text-align: left; width: 100%; }
+  .nav-item.active { background: var(--cp-accent-soft); font-weight: 650; color: var(--cp-accent); }
+  .nav-icon { width: 16px; text-align: center; color: var(--cp-text-soft); }
+  .main { min-width: 0; min-height: 0; overflow: auto; background: var(--cp-bg); }
+  .statusbar { display: flex; align-items: center; gap: 14px; padding: 0 10px; border-top: 1px solid var(--cp-border); color: var(--cp-text-muted); font-size: 10px; }
+  .statusbar span:first-child { flex: 1; }
+  .watching { color: var(--cp-success); }
+
+  .page-head { padding: 14px 18px 10px; border-bottom: 1px solid var(--cp-border); }
+  .page-head h2 { font-size: 16px; }
+  .page-body { padding: 12px 18px 18px; display: flex; flex-direction: column; gap: 8px; }
+
+  .task-row { border: 1px solid var(--cp-border); border-radius: 9px; background: var(--cp-surface); overflow: hidden; }
+  .task-row.quiet { padding: 9px 12px; display: flex; align-items: center; gap: 8px; }
+  .task-row.card { padding: 10px 12px; }
+  .title-row { display: flex; align-items: baseline; gap: 8px; font-weight: 650; }
+  .chip { display: inline-flex; align-items: center; height: 17px; padding: 0 6px; border-radius: 4px; font-size: 9px; font-weight: 650; }
+  .chip.priority-high { background: #fde2e2; color: #b3261e; }
+  .chip.priority-low { background: #eef1f4; color: var(--cp-text-muted); }
+  .chip.priority-med { background: #fef3d9; color: #9a6a00; }
+  .chip.due-today { background: #ffe9d6; color: #b3540a; }
+  .chip.ado { background: #e4eef9; color: #0057a3; }
+  .segbar { display: flex; gap: 2px; height: 6px; margin: 7px 0 5px; border-radius: 3px; overflow: hidden; }
+  .seg { flex: 1; }
+  .seg.done { background: var(--cp-accent); }
+  .seg.in_progress { background: #e79fb3; }
+  .seg.blocked { background: var(--cp-danger); }
+  .seg.todo { background: var(--cp-border); }
+  .current-step { font-size: 11px; color: var(--cp-text-soft); }
+  .blocker-row { margin-top: 5px; font-size: 11px; color: var(--cp-danger); }
+  .blurb { margin-top: 5px; font-size: 11px; color: var(--cp-text-muted); }
+  .watch-note { margin-top: 6px; font-size: 10px; color: var(--cp-link); }
+
+  .detail-panel { margin-top: 4px; border: 1px dashed var(--cp-border-strong); border-radius: 9px; padding: 12px; background: var(--cp-surface-soft); }
+  .detail-section { margin-top: 10px; }
+  .detail-section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--cp-text-muted); margin-bottom: 4px; }
+  .subtask-row2 { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--cp-border); font-size: 11.5px; }
+  .subtask-row2:last-child { border-bottom: 0; }
+  .grip { color: var(--cp-text-soft); cursor: grab; }
+  .circle { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--cp-border-strong); }
+  .circle.done { background: var(--cp-accent); border-color: var(--cp-accent); }
+  .circle.blocked { border-color: var(--cp-danger); }
+  .subtext { text-decoration: none; }
+  .subtext.done { text-decoration: line-through; color: var(--cp-text-muted); }
+  .artifact-row { border: 1px solid var(--cp-border); border-radius: 7px; padding: 7px 9px; margin-bottom: 6px; font-size: 11.5px; }
+  .sandbox-badge { display: inline-flex; align-items: center; height: 16px; padding: 0 6px; border-radius: 4px; font-size: 9px; background: #eafaf0; color: var(--cp-success); margin-left: 6px; }
+  .html-preview-box { margin-top: 5px; border: 1px solid var(--cp-border); border-radius: 6px; padding: 10px; background: repeating-linear-gradient(135deg, #fafafa, #fafafa 8px, #f2f2f2 8px, #f2f2f2 16px); font-size: 10.5px; color: var(--cp-text-muted); }
+
+  .callouts { margin-top: 10px; border-top: 1px dashed var(--cp-border); padding-top: 8px; font-size: 10.5px; color: var(--cp-text-soft); }
+  .callouts b { color: var(--cp-text); }
+
+  .planner-banner { margin: 0 18px 8px; padding: 6px 10px; border: 1px solid var(--cp-warning); background: #fff7e6; border-radius: 6px; font-size: 10.5px; color: #8a5a00; }
+  .split { display: grid; grid-template-columns: 1fr 150px; gap: 12px; padding: 0 18px 14px; }
+  .decide-item { border: 1px solid var(--cp-border); border-radius: 7px; padding: 7px 9px; margin-bottom: 6px; font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
+  .decide-btns button { border: 1px solid var(--cp-border); border-radius: 5px; padding: 2px 6px; font-size: 9.5px; background: var(--cp-surface); margin-left: 3px; }
+  .decide-btns .keep { border-color: var(--cp-accent); color: var(--cp-accent); }
+  .day { border: 1px solid var(--cp-border); border-radius: 8px; overflow: hidden; }
+  .day-block { padding: 5px 7px; font-size: 9.5px; border-bottom: 1px solid var(--cp-border); }
+  .day-block.meeting { color: var(--cp-link); } .day-block.focus { color: var(--cp-accent); } .day-block.open { color: var(--cp-success); }
+
+  /* ---- Variant + OS chrome differences ---- */
+  [data-variant="A"] .window { border-radius: 6px; }
+  [data-variant="A"] .titlebar { background: var(--cp-bg); }
+  [data-variant="A"][data-os="mac"] .traffic { display: none; }
+  [data-variant="A"] .nav { background: var(--cp-bg); }
+
+  [data-variant="B"] .window { border-radius: 8px; }
+  [data-variant="B"][data-os="mac"] .titlebar { background: rgba(255,255,255,.55); backdrop-filter: blur(8px); border-bottom-color: var(--cp-border); }
+  [data-variant="B"][data-os="mac"] .caption { display: none; }
+  [data-variant="B"][data-os="mac"] .nav { background: rgba(255,255,255,.45); backdrop-filter: blur(10px); }
+  [data-variant="B"][data-os="windows"] .traffic { display: none; }
+  [data-variant="B"][data-os="windows"] .titlebar { background: linear-gradient(180deg, #eef2f8, #e4eaf2); }
+  [data-variant="B"][data-os="windows"] .nav { background: linear-gradient(180deg, #eef2f8cc, #e4eaf2cc); }
+
+  [data-variant="C"] .window { border-radius: 10px; }
+  [data-variant="C"][data-os="mac"] .titlebar { background: rgba(255,255,255,.35); backdrop-filter: blur(20px) saturate(1.6); border-bottom-color: transparent; }
+  [data-variant="C"][data-os="mac"] .caption { display: none; }
+  [data-variant="C"][data-os="mac"] .nav { background: rgba(255,255,255,.3); backdrop-filter: blur(24px) saturate(1.6); border-right: none; }
+  [data-variant="C"][data-os="mac"] .nav-item.active { border-radius: 10px; }
+  [data-variant="C"][data-os="windows"] .traffic { display: none; }
+  [data-variant="C"][data-os="windows"] .window { border-radius: 2px; }
+  [data-variant="C"][data-os="windows"] .titlebar { background: repeating-linear-gradient(120deg, #eef2f8, #eef2f8 3px, #e6ecf5 3px, #e6ecf5 6px); }
+  [data-variant="C"][data-os="windows"] .nav { background: repeating-linear-gradient(120deg, #f2f5fa, #f2f5fa 3px, #e9eef6 3px, #e9eef6 6px); }
+  [data-variant="C"][data-os="windows"] .nav-item.active::before { content:""; position:absolute; left:0; width:3px; }
+
+  .switcher {
+    position: fixed; z-index: 30; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+    border-radius: 999px; background: #1f1f1f; color: #fff; box-shadow: 0 10px 24px rgba(0,0,0,.3);
+  }
+  .switcher button { border: 0; background: transparent; color: #fff; font-size: 16px; }
+  .switch-label { font-size: 12px; min-width: 230px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="throwaway">Disposable prototype · design brief for ticket #370 · no data saved</div>
+
+  <div class="brief">
+    <div class="question-label">Design brief question</div>
+    <h1 id="variant-title"></h1>
+    <p id="variant-question"></p>
+  </div>
+
+  <div class="panes" id="panes"></div>
+
+  <div class="switcher">
+    <button id="prev" aria-label="Previous variant">←</button>
+    <div class="switch-label" id="switch-label"></div>
+    <button id="next" aria-label="Next variant">→</button>
+  </div>
+
+<script>
+const variants = {
+  A: { name: "Shared Neutral", question: "Identical custom chrome on both platforms — maximum consistency, zero native flourishes. Does this feel too generic for a desktop app?" },
+  B: { name: "Deliberate Adaptation", question: "Native traffic lights + subtle vibrancy on macOS, custom caption + Mica-like tint on Windows — same layout, light native cues. The research-recommended middle path." },
+  C: { name: "Platform-Immersive", question: "Heavier native materials and per-OS corner language on top of the same layout. Does the extra platform texture earn its complexity?" }
+};
+
+const tasks = {
+  budget: {
+    title: "Prepare Q3 budget review", kind: "card",
+    chips: [["priority-high","High"],["due-today","Due today"],["ado","ADO #4821"]],
+    segs: ["done","in_progress","blocked","todo"],
+    current: "Reconcile NAS hosting costs",
+    blocker: "🚫 Get sign-off from manager — waiting on manager availability until Thursday",
+    blurb: "Quarterly reconciliation of homelab and NAS hosting spend, ready for manager review.",
+    description: "Quarterly reconciliation of homelab and NAS hosting spend ahead of manager sign-off. Source numbers live in the vendor invoice exports.",
+    notes: "Check whether the November invoice from the hosting vendor landed yet — accounting flagged a mismatch last cycle.",
+    subtasks: [
+      { name: "Collect vendor invoices", status: "done" },
+      { name: "Reconcile NAS hosting costs", status: "in_progress" },
+      { name: "Get sign-off from manager", status: "blocked" },
+      { name: "Send summary email", status: "todo" }
+    ],
+    artifacts: [
+      { name: "budget-draft.md", kind: "Markdown" },
+      { name: "cost-report.html", kind: "Html" }
+    ]
+  },
+  domain: {
+    title: "Renew domain registration", kind: "quiet",
+    chips: [["priority-low","Low"],["due-today","Due today"]]
+  },
+  watcher: {
+    title: "Confirm Tailscale ACL update", kind: "quiet",
+    chips: [["priority-med","Med"],["due-today","Due today"]],
+    watchNote: "↻ Requirement callout: editing this file's frontmatter externally while the app runs must update this row without restart (file-watch parity)."
+  }
+};
+
+function chipsHtml(chips) {
+  return chips.map(([cls,label]) => `<span class="chip ${cls}">${label}</span>`).join("");
+}
+
+function taskRow(t) {
+  if (t.kind === "quiet") {
+    return `<div class="task-row quiet">
+      <div class="title-row">${t.title}${chipsHtml(t.chips)}</div>
+      ${t.watchNote ? `<div class="watch-note">${t.watchNote}</div>` : ""}
+    </div>`;
+  }
+  return `<div class="task-row card">
+    <div class="title-row">${t.title}${chipsHtml(t.chips)}</div>
+    <div class="segbar">${t.segs.map(s => `<div class="seg ${s}"></div>`).join("")}</div>
+    <div class="current-step">Current: ${t.current}</div>
+    <div class="blocker-row">${t.blocker}</div>
+    <div class="blurb">${t.blurb}</div>
+  </div>`;
+}
+
+function detailPanel(t) {
+  return `<div class="detail-panel">
+    <div class="detail-section"><h3>Description</h3><p>${t.description}</p></div>
+    <div class="detail-section"><h3>Notes</h3><p>${t.notes}</p></div>
+    <div class="detail-section"><h3>Subtasks (active — drag reorder required)</h3>
+      ${t.subtasks.map(s => `<div class="subtask-row2">
+        <span class="grip">⠿</span>
+        <span class="circle ${s.status === 'done' ? 'done' : s.status === 'blocked' ? 'blocked' : ''}"></span>
+        <span class="subtext ${s.status === 'done' ? 'done' : ''}">${s.name}</span>
+      </div>`).join("")}
+    </div>
+    <div class="detail-section"><h3>Artifacts</h3>
+      ${t.artifacts.map(a => a.kind === "Html" ? `
+        <div class="artifact-row">${a.name}<span class="sandbox-badge">sandboxed preview</span>
+          <div class="html-preview-box">Script disabled · network + navigation blocked · single live instance · falls back to Source view if the runtime is missing</div>
+        </div>` : `<div class="artifact-row">${a.name} — renders via the shared Markdown view</div>`).join("")}
+    </div>
+    <div class="callouts">
+      <b>Also required here, not visible in a static mock:</b> real drag-reorder on the active subtask list only;
+      circle-glyph vs. subtask-text hit-zone split (ADR 0004); native "Open in Obsidian" / "Open externally" launch;
+      keyboard navigation + VoiceOver (macOS) / Narrator (Windows) pass; ≥1 automated desktop UI test exercising a
+      real interaction.
+    </div>
+  </div>`;
+}
+
+function myDayPage() {
+  return `<div class="page-head"><h2>My Day</h2><p class="muted">3 tasks in scope today</p></div>
+    <div class="page-body">
+      ${taskRow(tasks.budget)}
+      ${detailPanel(tasks.budget)}
+      ${taskRow(tasks.domain)}
+      ${taskRow(tasks.watcher)}
+    </div>`;
+}
+
+function plannerPage() {
+  return `<div class="page-head"><h2>Planner</h2><p class="muted">Nav entry reserved only — no Planner content in this spike</p></div>
+    <div class="planner-banner">TJ's call (2026-07-23): the spike reserves the labeled "Planner" nav item so each framework proves it can add a nav destination without restructuring later, but ships <b>no</b> Planner page content — not even a static layout. The separate Planner investigation (map: Wayfinder: Specify the capacity-first Planner) remains the source of truth for Planner A.</div>`;
+}
+
+const state = { page: "myday" };
+
+function navHtml() {
+  return `<nav class="nav">
+    <button class="nav-item ${state.page==='myday'?'active':''}" data-page="myday"><span class="nav-icon">☀</span>My Day</button>
+    <button class="nav-item ${state.page==='planner'?'active':''}" data-page="planner"><span class="nav-icon">▦</span>Planner</button>
+    <button class="nav-item"><span class="nav-icon">☷</span>Backlog</button>
+    <button class="nav-item"><span class="nav-icon">◷</span>Work Log</button>
+  </nav>`;
+}
+
+function windowHtml(os) {
+  return `<div class="window" data-os="${os}">
+    <div class="titlebar">
+      <span class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></span>
+      <span class="app-title">Glasswork</span>
+      <span class="caption"><span>—</span><span>▢</span><span>✕</span></span>
+    </div>
+    <div class="shell">
+      ${navHtml()}
+      <div class="main">${state.page === "myday" ? myDayPage() : plannerPage()}</div>
+    </div>
+    <div class="statusbar"><span>Obsidian Vault / Glasswork</span><span>3 tasks</span><span class="watching">● watching</span></div>
+  </div>`;
+}
+
+function render() {
+  const variant = document.documentElement.getAttribute("data-variant");
+  document.getElementById("panes").innerHTML = `
+    <div>
+      <div class="pane-label"><span class="os-badge mac">macOS</span></div>
+      <div data-variant="${variant}" data-os="mac">${windowHtml("mac")}</div>
+    </div>
+    <div>
+      <div class="pane-label"><span class="os-badge windows">Windows</span></div>
+      <div data-variant="${variant}" data-os="windows">${windowHtml("windows")}</div>
+    </div>`;
+  document.getElementById("variant-title").textContent = `${variant} — ${variants[variant].name}`;
+  document.getElementById("variant-question").textContent = variants[variant].question;
+  document.getElementById("switch-label").textContent = `${variant} — ${variants[variant].name}`;
+}
+
+const keys = Object.keys(variants);
+const params = new URLSearchParams(location.search);
+let current = keys.includes(params.get("variant")) ? params.get("variant") : "B";
+
+function setVariant(v) {
+  current = v;
+  document.documentElement.setAttribute("data-variant", v);
+  const url = new URL(location.href);
+  url.searchParams.set("variant", v);
+  history.replaceState(null, "", url);
+  render();
+}
+
+document.getElementById("prev").addEventListener("click", () => {
+  const i = keys.indexOf(current);
+  setVariant(keys[(i - 1 + keys.length) % keys.length]);
+});
+document.getElementById("next").addEventListener("click", () => {
+  const i = keys.indexOf(current);
+  setVariant(keys[(i + 1) % keys.length]);
+});
+document.addEventListener("keydown", (e) => {
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  if (e.key === "ArrowLeft") document.getElementById("prev").click();
+  if (e.key === "ArrowRight") document.getElementById("next").click();
+});
+document.getElementById("panes").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-page]");
+  if (!btn) return;
+  state.page = btn.getAttribute("data-page");
+  render();
+});
+
+setVariant(current);
+</script>
+</body>
+</html>
