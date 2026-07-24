@@ -65,10 +65,11 @@ public sealed class AutomationReviewQueueService
         var acceptedCount = 0;
         var rejections = new List<ReviewItemRejection>();
         var now = _clock.GetUtcNow();
+        var sourceRegistered = AllowedProposalTypesBySource.ContainsKey(submission.SourceId);
 
         foreach (var item in submission.Items)
         {
-            var rejection = ValidateSubmissionItem(item);
+            var rejection = ValidateSubmissionItem(submission, item, sourceRegistered);
             if (rejection is not null)
             {
                 rejections.Add(rejection);
@@ -85,7 +86,6 @@ public sealed class AutomationReviewQueueService
             acceptedCount++;
         }
 
-        var sourceRegistered = AllowedProposalTypesBySource.ContainsKey(submission.SourceId);
         var cursorAdvanced = false;
 
         if (sourceRegistered)
@@ -169,6 +169,9 @@ public sealed class AutomationReviewQueueService
         if (item is null)
             return new ReviewTransitionResult(false, "item_not_found");
 
+        if (item.State == ReviewItemState.NeedsRefresh && disposition == ReviewItemState.Approved)
+            return new ReviewTransitionResult(false, "needs_refresh_not_approvable");
+
         MoveToTerminal(document, item, disposition, _clock.GetUtcNow(), rejectionReason);
         CleanupDocument(document, _clock.GetUtcNow());
         WriteCanonicalDocument(document, rotateValidatedBackup: true);
@@ -234,8 +237,33 @@ public sealed class AutomationReviewQueueService
         return true;
     }
 
-    private ReviewItemRejection? ValidateSubmissionItem(ReviewItemSubmission item)
+    private ReviewItemRejection? ValidateSubmissionItem(
+        ReviewSourceRunSubmission submission,
+        ReviewItemSubmission item,
+        bool sourceRegistered)
     {
+        if (!sourceRegistered)
+        {
+            return new ReviewItemRejection(
+                item.SourceItemId,
+                submission.SourceId,
+                item.TaskId,
+                item.ProposalType,
+                "unknown_source_id",
+                $"Source '{submission.SourceId}' is not registered.");
+        }
+
+        if (!string.Equals(item.SourceId, submission.SourceId, StringComparison.Ordinal))
+        {
+            return new ReviewItemRejection(
+                item.SourceItemId,
+                item.SourceId,
+                item.TaskId,
+                item.ProposalType,
+                "source_id_mismatch",
+                $"Item source '{item.SourceId}' does not match run source '{submission.SourceId}'.");
+        }
+
         if (!AllowedProposalTypesBySource.ContainsKey(item.SourceId))
         {
             return new ReviewItemRejection(

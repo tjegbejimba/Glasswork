@@ -117,7 +117,7 @@ public class AutomationReviewQueueServiceTests
         Assert.AreEqual(2, result.Rejections.Count);
         Assert.IsFalse(result.CursorAdvanced);
         CollectionAssert.AreEquivalent(
-            new[] { "unknown_source_id", "proposal_type_not_allowed" },
+            new[] { "source_id_mismatch", "proposal_type_not_allowed" },
             result.Rejections.Select(x => x.Code).ToArray());
 
         var reloaded = new AutomationReviewQueueService(_vaultRoot, clock).LoadSnapshot();
@@ -128,6 +128,30 @@ public class AutomationReviewQueueServiceTests
         Assert.IsFalse(reloaded.SourceStates["meeting-transcript-sync"].IsDegraded);
         Assert.AreEqual(1, reloaded.SourceStates["meeting-transcript-sync"].Diagnostics.Count);
         Assert.AreEqual("failed", reloaded.SourceStates["meeting-transcript-sync"].Diagnostics[0].Status);
+    }
+
+    [TestMethod]
+    public void SubmitSourceRun_RejectsRunLevelSourceMismatch_AndDoesNotPersistItems()
+    {
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 16, 10, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+
+        var result = queue.SubmitSourceRun(new ReviewSourceRunSubmission(
+            SourceId: "unknown-source",
+            RunKind: ReviewSourceRunKind.Scheduled,
+            Cursor: "cursor-mismatch",
+            Items:
+            [
+                ValidProposal("meeting-mismatch", "task-mismatch", "fp-mismatch", "Should reject run source"),
+            ]));
+
+        Assert.AreEqual(0, result.AcceptedCount);
+        Assert.AreEqual(1, result.Rejections.Count);
+        Assert.AreEqual("unknown_source_id", result.Rejections[0].Code);
+
+        var snapshot = queue.LoadSnapshot();
+        Assert.AreEqual(0, snapshot.ActiveItems.Count);
+        Assert.AreEqual(0, snapshot.SourceStates.Count);
     }
 
     [TestMethod]
@@ -300,6 +324,9 @@ public class AutomationReviewQueueServiceTests
         Assert.IsTrue(queue.MarkNeedsRefresh(activeId).Applied);
         var afterNeedsRefresh = queue.LoadSnapshot();
         Assert.AreEqual(ReviewItemState.NeedsRefresh, afterNeedsRefresh.ActiveItems[0].State);
+        var invalidApprove = queue.TransitionItem(activeId, ReviewItemState.Approved);
+        Assert.IsFalse(invalidApprove.Applied);
+        Assert.AreEqual("needs_refresh_not_approvable", invalidApprove.ErrorCode);
 
         Assert.IsTrue(queue.TransitionItem(activeId, ReviewItemState.Withdrawn).Applied);
         var afterWithdraw = queue.LoadSnapshot();
