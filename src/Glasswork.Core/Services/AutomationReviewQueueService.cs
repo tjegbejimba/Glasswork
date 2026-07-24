@@ -40,6 +40,7 @@ public sealed class AutomationReviewQueueService
     private readonly string _backupPath;
     private readonly string _projectionPath;
     private readonly string _gitIgnorePath;
+    private readonly string _todoPath;
     private readonly TimeProvider _clock;
 
     public AutomationReviewQueueService(string vaultRoot, TimeProvider? clock = null)
@@ -53,6 +54,7 @@ public sealed class AutomationReviewQueueService
         _backupPath = Path.Combine(_glassworkDirectory, "review-queue.json.bak");
         _projectionPath = Path.Combine(_glassworkDirectory, "review-queue.md");
         _gitIgnorePath = Path.Combine(_glassworkDirectory, ".gitignore");
+        _todoPath = Path.Combine(_vaultRoot, "wiki", "todo");
         _clock = clock ?? TimeProvider.System;
     }
 
@@ -148,6 +150,7 @@ public sealed class AutomationReviewQueueService
     {
         using var lease = AcquireMutex();
         var document = LoadDocumentCore();
+        ReconcileActiveItemStates(document);
         CleanupDocument(document, _clock.GetUtcNow());
         WriteCanonicalDocument(document, rotateValidatedBackup: true);
         EnsureIgnoreFile();
@@ -198,6 +201,116 @@ public sealed class AutomationReviewQueueService
         return new ReviewTransitionResult(true, null);
     }
 
+    public ReviewApprovalAnalysis AnalyzeApprovalSelection(string taskId, IReadOnlyList<string> itemIds)
+    {
+        using var lease = AcquireMutex();
+        var document = LoadDocumentCore();
+        ReconcileActiveItemStates(document);
+        return AnalyzeApprovalSelectionCore(document, taskId, itemIds);
+    }
+
+    public ReviewApprovalResult ApproveSelection(ReviewApprovalRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        using var lease = AcquireMutex();
+        var document = LoadDocumentCore();
+        ReconcileActiveItemStates(document);
+        var analysis = AnalyzeApprovalSelectionCore(document, request.TaskId, request.ItemIds);
+        if (!analysis.CanApprove)
+            return new ReviewApprovalResult(false, analysis.BlockingReasonCodes.FirstOrDefault());
+
+        var selectedItems = document.ActiveItems
+            .Where(item => request.ItemIds.Contains(item.Id, StringComparer.Ordinal))
+            .ToList();
+
+        var vault = new VaultService(_todoPath);
+        var task = vault.Load(request.TaskId);
+        if (task is null)
+            return FailSelection(document, selectedItems, "task_not_found", "The target task could not be loaded for approval.");
+
+        var updatedTask = task.Clone();
+        foreach (var item in selectedItems
+                     .OrderBy(item => item.ProposalType == ReviewProposalType.MeetingNote ? 1 : 0)
+                     .ThenBy(item => (DeserializePayload(item) as MeetingNoteProposalPayload)?.MeetingDate ?? DateOnly.MaxValue))
+        {
+            var payload = DeserializePayload(item);
+            if (payload is MeetingNoteProposalPayload meetingNote)
+            {
+                updatedTask.Notes = AppendMeetingUpdate(updatedTask.Notes, item.SourceTitle, item.SourceUrl, meetingNote);
+                continue;
+            }
+
+            if (payload is BlockTaskProposalPayload blockTask)
+            {
+                TaskService.ApplyMarkBlocked(updatedTask, blockTask.Reason, _clock.GetUtcNow);
+                continue;
+            }
+
+            if (payload is DueDateChangeProposalPayload dueDateChange)
+            {
+                if (dueDateChange.CandidateDates.Count != 1)
+                    return FailSelection(document, selectedItems, "invalid_due_date_payload", "Due-date approval requires exactly one explicit date.");
+
+                updatedTask.Due = dueDateChange.CandidateDates[0].ToDateTime(TimeOnly.MinValue);
+                continue;
+            }
+
+            if (payload is SubtaskAdditionProposalPayload subtaskAddition)
+            {
+                if (!updatedTask.Subtasks.Any(subtask => string.Equals(subtask.Text, subtaskAddition.Title, StringComparison.Ordinal)))
+                {
+                    updatedTask.Subtasks.Add(new SubTask
+                    {
+                        Text = subtaskAddition.Title,
+                        Status = "todo",
+                    });
+                }
+                continue;
+            }
+
+            if (payload is StructuredLinkAdditionProposalPayload linkAddition)
+            {
+                var candidate = new TaskLink
+                {
+                    Type = TaskLink.Types.Normalize(linkAddition.LinkType),
+                    Value = linkAddition.Value.Trim(),
+                    Label = string.IsNullOrWhiteSpace(linkAddition.Label) ? null : linkAddition.Label.Trim(),
+                };
+
+                if (!updatedTask.Links.Any(existing => LinksEquivalent(existing, candidate)))
+                    updatedTask.Links.Add(candidate);
+                continue;
+            }
+
+            return FailSelection(document, selectedItems, "proposal_type_not_supported", "The selected batch contains a proposal type that approval does not handle yet.");
+        }
+
+        try
+        {
+            vault.Save(updatedTask);
+        }
+        catch (Exception ex)
+        {
+            return FailSelection(document, selectedItems, "task_save_failed", ex.Message);
+        }
+
+        var now = _clock.GetUtcNow();
+        foreach (var item in selectedItems)
+        {
+            item.LastApplyFailureCode = null;
+            item.LastApplyFailureMessage = null;
+            item.LastApplyFailureAt = null;
+            MoveToTerminal(document, item, ReviewItemState.Approved, now, null);
+        }
+
+        CleanupDocument(document, now);
+        WriteCanonicalDocument(document, rotateValidatedBackup: true);
+        EnsureIgnoreFile();
+        TryWriteProjection(document);
+        return new ReviewApprovalResult(true, null);
+    }
+
     public ReviewCleanupResult Cleanup()
     {
         using var lease = AcquireMutex();
@@ -213,6 +326,75 @@ public sealed class AutomationReviewQueueService
             beforeActive - document.ActiveItems.Count,
             beforeHistory - document.History.Count,
             beforeDiagnostics - document.SourceStates.Values.Sum(x => x.Diagnostics.Count));
+    }
+
+    public ReviewRefreshResult RefreshItem(ReviewRefreshRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        using var lease = AcquireMutex();
+        var document = LoadDocumentCore();
+        var item = document.ActiveItems.FirstOrDefault(candidate => candidate.Id == request.ItemId);
+        if (item is null)
+            return new ReviewRefreshResult(false, "item_not_found", null);
+
+        switch (request.Decision)
+        {
+            case ReviewRefreshDecision.Regenerate:
+                if (request.Replacement is null)
+                    return new ReviewRefreshResult(false, "replacement_required", null);
+
+                var rejection = ValidateSubmissionItem(
+                    new ReviewSourceRunSubmission(item.SourceId, ReviewSourceRunKind.Manual, string.Empty, [request.Replacement]),
+                    request.Replacement,
+                    AllowedProposalTypesBySource.ContainsKey(item.SourceId));
+                if (rejection is not null)
+                    return new ReviewRefreshResult(false, rejection.Code, null);
+
+                item.SourceItemId = request.Replacement.SourceItemId;
+                item.TaskId = request.Replacement.TaskId;
+                item.ProposalType = request.Replacement.ProposalType;
+                item.ChangeFingerprint = request.Replacement.ChangeFingerprint;
+                item.SourceUrl = request.Replacement.SourceUrl;
+                item.SourceTitle = request.Replacement.SourceTitle;
+                item.MatchingEvidence = request.Replacement.MatchingEvidence;
+                item.Rationale = request.Replacement.Rationale;
+                item.Summary = request.Replacement.Summary;
+                item.ProposedValue = request.Replacement.ProposedValue;
+                item.PayloadKind = GetPayloadKind(request.Replacement);
+                item.PayloadJson = SerializePayload(request.Replacement);
+                item.RelevantTaskFingerprint = ComputeRelevantTaskFingerprint(item.TaskId, request.Replacement.Payload);
+                item.State = ReviewItemState.Pending;
+                item.LastApplyFailureCode = null;
+                item.LastApplyFailureMessage = null;
+                item.LastApplyFailureAt = null;
+                item.RefreshUnavailableCount = 0;
+                break;
+
+            case ReviewRefreshDecision.Withdraw:
+                MoveToTerminal(document, item, ReviewItemState.Withdrawn, _clock.GetUtcNow(), request.Reason);
+                break;
+
+            case ReviewRefreshDecision.Unavailable:
+                item.State = ReviewItemState.NeedsRefresh;
+                item.RefreshUnavailableCount++;
+                if (item.RefreshUnavailableCount >= 3)
+                {
+                    MoveToTerminal(document, item, ReviewItemState.Expired, _clock.GetUtcNow(), request.Reason);
+                    CleanupDocument(document, _clock.GetUtcNow());
+                    WriteCanonicalDocument(document, rotateValidatedBackup: true);
+                    EnsureIgnoreFile();
+                    TryWriteProjection(document);
+                    return new ReviewRefreshResult(true, null, ReviewItemState.Expired);
+                }
+                break;
+        }
+
+        CleanupDocument(document, _clock.GetUtcNow());
+        WriteCanonicalDocument(document, rotateValidatedBackup: true);
+        EnsureIgnoreFile();
+        TryWriteProjection(document);
+        return new ReviewRefreshResult(true, null, item.State);
     }
 
     public bool AcknowledgeRecovery(string incidentId)
@@ -286,6 +468,28 @@ public sealed class AutomationReviewQueueService
                 $"Proposal type '{item.ProposalType}' is not allowed for source '{item.SourceId}'.");
         }
 
+        if (item.Payload is not null && item.Payload.ProposalType != item.ProposalType)
+        {
+            return new ReviewItemRejection(
+                item.SourceItemId,
+                item.SourceId,
+                item.TaskId,
+                item.ProposalType,
+                "proposal_payload_mismatch",
+                $"Payload '{item.Payload.GetType().Name}' does not match proposal type '{item.ProposalType}'.");
+        }
+
+        if (item.Payload is DueDateChangeProposalPayload dueDatePayload && dueDatePayload.CandidateDates.Count != 1)
+        {
+            return new ReviewItemRejection(
+                item.SourceItemId,
+                item.SourceId,
+                item.TaskId,
+                item.ProposalType,
+                "invalid_due_date_payload",
+                "Due-date payload must contain exactly one explicit date.");
+        }
+
         return null;
     }
 
@@ -336,6 +540,13 @@ public sealed class AutomationReviewQueueService
                 ProposedValue = item.ProposedValue,
                 State = ReviewItemState.Pending,
                 GeneratedAt = now,
+                PayloadKind = GetPayloadKind(item),
+                PayloadJson = SerializePayload(item),
+                RelevantTaskFingerprint = ComputeRelevantTaskFingerprint(item.TaskId, item.Payload),
+                LastApplyFailureCode = null,
+                LastApplyFailureMessage = null,
+                LastApplyFailureAt = null,
+                RefreshUnavailableCount = 0,
             });
             return;
         }
@@ -349,6 +560,13 @@ public sealed class AutomationReviewQueueService
         existing.ProposedValue = item.ProposedValue;
         existing.State = ReviewItemState.Pending;
         existing.GeneratedAt = now;
+        existing.PayloadKind = GetPayloadKind(item);
+        existing.PayloadJson = SerializePayload(item);
+        existing.RelevantTaskFingerprint = ComputeRelevantTaskFingerprint(item.TaskId, item.Payload);
+        existing.LastApplyFailureCode = null;
+        existing.LastApplyFailureMessage = null;
+        existing.LastApplyFailureAt = null;
+        existing.RefreshUnavailableCount = 0;
     }
 
     private void MoveToTerminal(
@@ -611,7 +829,12 @@ public sealed class AutomationReviewQueueService
                     item.Summary,
                     item.ProposedValue,
                     item.State,
-                    item.GeneratedAt))
+                    item.GeneratedAt,
+                    DeserializePayload(item),
+                    item.LastApplyFailureCode,
+                    item.LastApplyFailureMessage,
+                    item.LastApplyFailureAt,
+                    item.RefreshUnavailableCount))
                 .ToList(),
             document.SourceStates.ToDictionary(
                 pair => pair.Key,
@@ -660,6 +883,220 @@ public sealed class AutomationReviewQueueService
                 document.Recovery.IncidentId,
                 document.Recovery.Message,
                 document.Recovery.RequiresAcknowledgement));
+    }
+
+    private static ReviewApprovalAnalysis AnalyzeApprovalSelectionCore(ReviewQueueDocument document, string taskId, IReadOnlyList<string> itemIds)
+    {
+        var selectedIds = itemIds?.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal).ToList() ?? [];
+        var blockingReasons = new List<string>();
+        if (string.IsNullOrWhiteSpace(taskId))
+            blockingReasons.Add("task_id_required");
+        if (selectedIds.Count == 0)
+            blockingReasons.Add("selection_required");
+
+        var selectedItems = document.ActiveItems
+            .Where(item => selectedIds.Contains(item.Id, StringComparer.Ordinal))
+            .ToList();
+
+        if (selectedItems.Count != selectedIds.Count)
+            blockingReasons.Add("item_not_found");
+        if (selectedItems.Any(item => item.State != ReviewItemState.Pending))
+            blockingReasons.Add("selection_not_pending");
+        if (selectedItems.Select(item => item.TaskId).Distinct(StringComparer.Ordinal).Skip(1).Any())
+            blockingReasons.Add("selection_multiple_tasks");
+        if (selectedItems.Count > 0 && !string.Equals(selectedItems[0].TaskId, taskId, StringComparison.Ordinal))
+            blockingReasons.Add("selection_task_mismatch");
+        if (selectedItems.Count(item => item.ProposalType is ReviewProposalType.StatusChange or ReviewProposalType.BlockTask or ReviewProposalType.UnblockTask) > 1)
+            blockingReasons.Add("conflicting_state_outcomes");
+        if (selectedItems.Count(item => item.ProposalType == ReviewProposalType.DueDateChange) > 1)
+            blockingReasons.Add("conflicting_due_dates");
+
+        var suggestedIds = selectedItems
+            .Where(item => item.ProposalType != ReviewProposalType.MeetingNote)
+            .SelectMany(item => document.ActiveItems.Where(candidate =>
+                candidate.State == ReviewItemState.Pending
+                && candidate.ProposalType == ReviewProposalType.MeetingNote
+                && candidate.TaskId == item.TaskId
+                && candidate.SourceId == item.SourceId
+                && candidate.SourceItemId == item.SourceItemId))
+            .Select(item => item.Id)
+            .Distinct(StringComparer.Ordinal)
+            .Where(id => !selectedIds.Contains(id, StringComparer.Ordinal))
+            .ToList();
+
+        return new ReviewApprovalAnalysis(
+            CanApprove: blockingReasons.Count == 0,
+            SelectedItemIds: selectedIds,
+            SuggestedItemIds: suggestedIds,
+            BlockingReasonCodes: blockingReasons);
+    }
+
+    private static string? GetPayloadKind(ReviewItemSubmission item) => item.Payload?.GetType().Name;
+
+    private static string? SerializePayload(ReviewItemSubmission item)
+    {
+        if (item.Payload is null)
+            return null;
+
+        return JsonSerializer.Serialize(item.Payload, item.Payload.GetType(), JsonOptions);
+    }
+
+    private static ReviewProposalPayload? DeserializePayload(ReviewQueueItemDocument item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.PayloadKind) && !string.IsNullOrWhiteSpace(item.PayloadJson))
+        {
+            return item.PayloadKind switch
+            {
+                nameof(MeetingNoteProposalPayload) => JsonSerializer.Deserialize<MeetingNoteProposalPayload>(item.PayloadJson, JsonOptions),
+                nameof(StatusChangeProposalPayload) => JsonSerializer.Deserialize<StatusChangeProposalPayload>(item.PayloadJson, JsonOptions),
+                nameof(BlockTaskProposalPayload) => JsonSerializer.Deserialize<BlockTaskProposalPayload>(item.PayloadJson, JsonOptions),
+                nameof(UnblockTaskProposalPayload) => JsonSerializer.Deserialize<UnblockTaskProposalPayload>(item.PayloadJson, JsonOptions),
+                nameof(BlockerReasonChangeProposalPayload) => JsonSerializer.Deserialize<BlockerReasonChangeProposalPayload>(item.PayloadJson, JsonOptions),
+                nameof(DueDateChangeProposalPayload) => JsonSerializer.Deserialize<DueDateChangeProposalPayload>(item.PayloadJson, JsonOptions),
+                nameof(SubtaskAdditionProposalPayload) => JsonSerializer.Deserialize<SubtaskAdditionProposalPayload>(item.PayloadJson, JsonOptions),
+                nameof(StructuredLinkAdditionProposalPayload) => JsonSerializer.Deserialize<StructuredLinkAdditionProposalPayload>(item.PayloadJson, JsonOptions),
+                _ => null,
+            };
+        }
+
+        return item.ProposalType == ReviewProposalType.MeetingNote
+            ? new MeetingNoteProposalPayload(
+                MeetingDate: DateOnly.FromDateTime(item.GeneratedAt.LocalDateTime.Date),
+                RelevantUpdate: item.ProposedValue,
+                Decisions: string.Empty,
+                MyCommitments: string.Empty)
+            : null;
+    }
+
+    private void ReconcileActiveItemStates(ReviewQueueDocument document)
+    {
+        foreach (var item in document.ActiveItems)
+        {
+            if (item.State != ReviewItemState.Pending)
+                continue;
+
+            var payload = DeserializePayload(item);
+            if (!IsStatefulProposal(payload))
+                continue;
+
+            var currentFingerprint = ComputeRelevantTaskFingerprint(item.TaskId, payload);
+            if (!string.Equals(item.RelevantTaskFingerprint, currentFingerprint, StringComparison.Ordinal))
+                item.State = ReviewItemState.NeedsRefresh;
+        }
+    }
+
+    private string? ComputeRelevantTaskFingerprint(string taskId, ReviewProposalPayload? payload)
+    {
+        if (!IsStatefulProposal(payload))
+            return null;
+
+        var vault = new VaultService(_todoPath);
+        var task = vault.Load(taskId);
+        if (task is null)
+            return "__missing__";
+
+        return payload switch
+        {
+            StatusChangeProposalPayload => $"status:{task.Status}|blocked:{task.BlockedReason}|from:{task.BlockedFromStatus}|meta:{task.BlockedMetadataState}",
+            BlockTaskProposalPayload => $"status:{task.Status}|blocked:{task.BlockedReason}|from:{task.BlockedFromStatus}|meta:{task.BlockedMetadataState}",
+            UnblockTaskProposalPayload => $"status:{task.Status}|blocked:{task.BlockedReason}|from:{task.BlockedFromStatus}|meta:{task.BlockedMetadataState}",
+            BlockerReasonChangeProposalPayload => $"status:{task.Status}|blocked:{task.BlockedReason}|from:{task.BlockedFromStatus}|meta:{task.BlockedMetadataState}",
+            DueDateChangeProposalPayload => $"due:{task.Due?.ToString("yyyy-MM-dd") ?? string.Empty}",
+            _ => null,
+        };
+    }
+
+    private static bool IsStatefulProposal(ReviewProposalPayload? payload) =>
+        payload is StatusChangeProposalPayload
+            or BlockTaskProposalPayload
+            or UnblockTaskProposalPayload
+            or BlockerReasonChangeProposalPayload
+            or DueDateChangeProposalPayload;
+
+    private static string AppendMeetingUpdate(string existingNotes, string sourceTitle, string sourceUrl, MeetingNoteProposalPayload payload)
+    {
+        const string managedHeading = "### Meeting updates";
+        var entry = BuildMeetingUpdateEntry(sourceTitle, sourceUrl, payload);
+        if (existingNotes.Contains(entry, StringComparison.Ordinal))
+            return existingNotes;
+
+        var trimmed = existingNotes.TrimEnd();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return managedHeading + Environment.NewLine + Environment.NewLine + entry;
+
+        if (trimmed.Contains(managedHeading, StringComparison.Ordinal))
+            return trimmed + Environment.NewLine + Environment.NewLine + entry;
+
+        return trimmed + Environment.NewLine + Environment.NewLine + managedHeading + Environment.NewLine + Environment.NewLine + entry;
+    }
+
+    private static string BuildMeetingUpdateEntry(string sourceTitle, string sourceUrl, MeetingNoteProposalPayload payload)
+    {
+        var builder = new StringBuilder();
+        builder.Append("### ")
+            .Append(payload.MeetingDate.ToString("yyyy-MM-dd"))
+            .Append(" - [")
+            .Append(sourceTitle)
+            .Append("](")
+            .Append(sourceUrl)
+            .AppendLine(")");
+
+        AppendMeetingSection(builder, "Relevant update", payload.RelevantUpdate);
+        AppendMeetingSection(builder, "Decisions", payload.Decisions);
+        AppendMeetingSection(builder, "My commitments", payload.MyCommitments);
+        return builder.ToString().TrimEnd();
+    }
+
+    private static void AppendMeetingSection(StringBuilder builder, string title, string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return;
+
+        builder.AppendLine()
+            .Append("#### ")
+            .AppendLine(title)
+            .AppendLine(content.Trim());
+    }
+
+    private ReviewApprovalResult FailSelection(
+        ReviewQueueDocument document,
+        IReadOnlyList<ReviewQueueItemDocument> selectedItems,
+        string errorCode,
+        string message)
+    {
+        var now = _clock.GetUtcNow();
+        foreach (var item in selectedItems)
+        {
+            item.LastApplyFailureCode = errorCode;
+            item.LastApplyFailureMessage = message;
+            item.LastApplyFailureAt = now;
+        }
+
+        WriteCanonicalDocument(document, rotateValidatedBackup: true);
+        EnsureIgnoreFile();
+        TryWriteProjection(document);
+        return new ReviewApprovalResult(false, errorCode);
+    }
+
+    private static bool LinksEquivalent(TaskLink left, TaskLink right)
+    {
+        return string.Equals(TaskLink.Types.Normalize(left.Type), TaskLink.Types.Normalize(right.Type), StringComparison.OrdinalIgnoreCase)
+               && string.Equals(NormalizeLinkValue(left.Value), NormalizeLinkValue(right.Value), StringComparison.Ordinal)
+               && string.Equals(left.Label?.Trim() ?? string.Empty, right.Label?.Trim() ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeLinkValue(string value)
+    {
+        var trimmed = value.Trim();
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+            return trimmed;
+
+        var builder = new UriBuilder(uri)
+        {
+            Scheme = uri.Scheme.ToLowerInvariant(),
+            Host = uri.Host.ToLowerInvariant(),
+        };
+        return builder.Uri.AbsoluteUri.TrimEnd('/');
     }
 
     private ReviewSourceStateDocument GetOrCreateSourceState(ReviewQueueDocument document, string sourceId)
@@ -756,6 +1193,13 @@ public sealed class AutomationReviewQueueService
         public string ProposedValue { get; set; } = string.Empty;
         public ReviewItemState State { get; set; }
         public DateTimeOffset GeneratedAt { get; set; }
+        public string? PayloadKind { get; set; }
+        public string? PayloadJson { get; set; }
+        public string? RelevantTaskFingerprint { get; set; }
+        public string? LastApplyFailureCode { get; set; }
+        public string? LastApplyFailureMessage { get; set; }
+        public DateTimeOffset? LastApplyFailureAt { get; set; }
+        public int RefreshUnavailableCount { get; set; }
     }
 
     private sealed class ReviewSourceStateDocument

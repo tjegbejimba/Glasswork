@@ -34,6 +34,55 @@ public enum ReviewItemState
     Expired,
 }
 
+public abstract record ReviewProposalPayload
+{
+    public abstract ReviewProposalType ProposalType { get; }
+}
+
+public sealed record MeetingNoteProposalPayload(
+    DateOnly MeetingDate,
+    string RelevantUpdate,
+    string Decisions,
+    string MyCommitments) : ReviewProposalPayload
+{
+    public override ReviewProposalType ProposalType => ReviewProposalType.MeetingNote;
+}
+
+public sealed record StatusChangeProposalPayload(string NewStatus) : ReviewProposalPayload
+{
+    public override ReviewProposalType ProposalType => ReviewProposalType.StatusChange;
+}
+
+public sealed record BlockTaskProposalPayload(string Reason) : ReviewProposalPayload
+{
+    public override ReviewProposalType ProposalType => ReviewProposalType.BlockTask;
+}
+
+public sealed record UnblockTaskProposalPayload(string ResumeStatus) : ReviewProposalPayload
+{
+    public override ReviewProposalType ProposalType => ReviewProposalType.UnblockTask;
+}
+
+public sealed record BlockerReasonChangeProposalPayload(string Reason) : ReviewProposalPayload
+{
+    public override ReviewProposalType ProposalType => ReviewProposalType.BlockerReasonChange;
+}
+
+public sealed record DueDateChangeProposalPayload(IReadOnlyList<DateOnly> CandidateDates) : ReviewProposalPayload
+{
+    public override ReviewProposalType ProposalType => ReviewProposalType.DueDateChange;
+}
+
+public sealed record SubtaskAdditionProposalPayload(string Title) : ReviewProposalPayload
+{
+    public override ReviewProposalType ProposalType => ReviewProposalType.SubtaskAddition;
+}
+
+public sealed record StructuredLinkAdditionProposalPayload(string LinkType, string Value, string? Label) : ReviewProposalPayload
+{
+    public override ReviewProposalType ProposalType => ReviewProposalType.StructuredLinkAddition;
+}
+
 public sealed record ReviewItemSubmission(
     string SourceId,
     string SourceItemId,
@@ -45,7 +94,8 @@ public sealed record ReviewItemSubmission(
     string MatchingEvidence,
     string Rationale,
     string Summary,
-    string ProposedValue);
+    string ProposedValue,
+    ReviewProposalPayload? Payload = null);
 
 public sealed record ReviewSourceRunSubmission(
     string SourceId,
@@ -81,7 +131,12 @@ public sealed record ReviewQueueItem(
     string Summary,
     string ProposedValue,
     ReviewItemState State,
-    DateTimeOffset GeneratedAt);
+    DateTimeOffset GeneratedAt,
+    ReviewProposalPayload? Payload = null,
+    string? LastApplyFailureCode = null,
+    string? LastApplyFailureMessage = null,
+    DateTimeOffset? LastApplyFailureAt = null,
+    int RefreshUnavailableCount = 0);
 
 public sealed record ReviewSourceDiagnostic(
     DateTimeOffset RecordedAt,
@@ -143,3 +198,35 @@ public sealed record ReviewCleanupResult(
     int ExpiredActiveItemCount,
     int RemovedHistoryItemCount,
     int RemovedDiagnosticCount);
+
+public sealed record ReviewApprovalRequest(
+    string TaskId,
+    IReadOnlyList<string> ItemIds);
+
+public sealed record ReviewApprovalAnalysis(
+    bool CanApprove,
+    IReadOnlyList<string> SelectedItemIds,
+    IReadOnlyList<string> SuggestedItemIds,
+    IReadOnlyList<string> BlockingReasonCodes);
+
+public sealed record ReviewApprovalResult(
+    bool Applied,
+    string? ErrorCode);
+
+public enum ReviewRefreshDecision
+{
+    Regenerate,
+    Withdraw,
+    Unavailable,
+}
+
+public sealed record ReviewRefreshRequest(
+    string ItemId,
+    ReviewRefreshDecision Decision,
+    ReviewItemSubmission? Replacement = null,
+    string? Reason = null);
+
+public sealed record ReviewRefreshResult(
+    bool Applied,
+    string? ErrorCode,
+    ReviewItemState? NewState);

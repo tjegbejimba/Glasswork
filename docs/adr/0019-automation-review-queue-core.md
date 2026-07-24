@@ -14,7 +14,7 @@ The vault remains the user's inspectable source of truth, but queue state is not
 
 ### One deep Core module at the queue seam
 
-`AutomationReviewQueueService` is the single public Core seam for queue behavior. Callers submit source runs, load snapshots, transition items, acknowledge recovery incidents, and run cleanup through that module. Persistence layout, projection regeneration, dedupe rules, source registry trust, and backup/corruption handling stay behind the seam.
+`AutomationReviewQueueService` is the single public Core seam for queue behavior. Callers submit source runs, load snapshots, analyze coherent selections, approve/reject/refresh items, acknowledge recovery incidents, and run cleanup through that module. Persistence layout, projection regeneration, dedupe rules, source registry trust, typed proposal validation, task-fingerprint staleness checks, apply-failure metadata, and backup/corruption handling stay behind the seam.
 
 This keeps desktop and MCP transport layers thin: both compose the same Core workflow instead of reimplementing queue rules.
 
@@ -73,6 +73,18 @@ Two suppression rules coexist:
 
 1. **Rejection finality** uses logical identity (`source_id`, `source_item_id`, `task_id`, `proposal_type`) and suppresses all future variants of that logical item.
 2. **Exact terminal suppression** uses the same identity plus `change_fingerprint` and suppresses repeats for other terminal dispositions while still allowing materially different later fingerprints.
+
+### Approval is one-task, one-save, conflict-checked
+
+Approval operates on a **coherent selection** for exactly one Task. Core rejects selections that mix multiple effective state outcomes (`status-change`, `block`, `unblock`) or multiple due-date outcomes. Related meeting-note items can be suggested alongside a stateful proposal, but approval applies exactly the item ids the caller selected.
+
+Core mutates the target Task in memory first, then persists one task-file write. If that write fails, the whole selection remains Pending and each selected item records **Apply failed** metadata (`last_apply_failure_*`) instead of moving to History. Retry uses the same item ids and must therefore be idempotent.
+
+### Stateful proposals fingerprint only relevant task fields
+
+Stateful proposal types (`status-change`, `block`, `unblock`, `blocker-reason-change`, `due-date-change`) store a Core-computed fingerprint over only the task fields that matter to that mutation. Unrelated edits (for example, Notes changes during a block proposal) do not invalidate the proposal; relevant edits move the item to **Needs refresh** on the next queue load/analysis.
+
+Meeting-note proposals do not use that stateful fingerprint gate. They remain independently approvable and append under the managed **Meeting updates** subsection in Notes.
 
 ## Consequences
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Glasswork.Core.Models;
 
@@ -12,6 +13,7 @@ namespace Glasswork.Core.Services;
 /// </summary>
 public class VaultService
 {
+    private static readonly Regex SafeTaskIdRegex = new("^[a-z0-9][a-z0-9-]*$", RegexOptions.Compiled);
     private readonly string _vaultPath;
     private readonly FrontmatterParser _parser = new();
     private readonly SelfWriteCoordinator? _selfWrites;
@@ -765,5 +767,26 @@ public class VaultService
         return slug;
     }
 
-    private string GetFilePath(string taskId) => Path.Combine(_vaultPath, $"{taskId}.md");
+    private string GetFilePath(string taskId)
+    {
+        if (string.IsNullOrWhiteSpace(taskId))
+            throw new ArgumentException("Task id is required.", nameof(taskId));
+
+        var trimmed = taskId.Trim();
+        if (!SafeTaskIdRegex.IsMatch(trimmed))
+            throw new ArgumentException($"Task id '{taskId}' is invalid.", nameof(taskId));
+
+        var absoluteVault = Path.GetFullPath(_vaultPath);
+        var resolved = Path.GetFullPath(Path.Combine(absoluteVault, $"{trimmed}.md"));
+        var vaultPrefix = absoluteVault.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                         + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (!resolved.StartsWith(vaultPrefix, comparison))
+            throw new ArgumentException($"Task id '{taskId}' resolves outside the vault.", nameof(taskId));
+
+        return resolved;
+    }
 }
