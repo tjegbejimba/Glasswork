@@ -33,6 +33,7 @@ The app is intentionally single-user and agentic by design: the Vault remains th
 
 - **Obsidian-native storage** — Tasks are `.md` files in the Vault, so they can be searched, edited, linked, backed up, and versioned outside the app.
 - **My Day as a planning surface** — direct pins, due dates, flagged Subtasks, and virtual promotion decide what is **in My Day today** without polluting the task file.
+- **Blocked work stays visible without becoming actionable** — first-class task status `blocked` keeps blocked Tasks in a dedicated Backlog surface with blocker metadata, while automatically excluding them from Ready work, My Day, and suggestions.
 - **ADO-to-personal-work bridge** — Azure DevOps Links and imports keep upstream work visible while letting the user decompose it into personal execution steps.
 - **Agent-readable task state** — `_index.md`, `_today.md`, and the MCP server expose structured task context without requiring agents to scrape the UI.
 - **Rich task context** — Description, Notes, Links, Backlinks, and read-only Artifacts keep implementation plans, investigations, PRs, and wiki references next to the work.
@@ -42,7 +43,7 @@ The app is intentionally single-user and agentic by design: the Vault remains th
 | Page | What it does |
 | --- | --- |
 | **My Day** | Default landing page for tasks in focus today, including virtually promoted parent tasks and today's subtasks. |
-| **Backlog** | Active work not currently in My Day, with board-style organization by status. |
+| **Backlog** | Active work not currently in My Day, including a dedicated blocked column / list section for blocked Tasks. |
 | **Task Detail** | Full task context: Description, Subtasks, Notes, Links, Backlinks, and agent-produced Artifacts. |
 | **Work Log** | Completed work history for weekly review and connects-season reporting. |
 | **Settings** | Vault selection, update checks, feedback, and app configuration. |

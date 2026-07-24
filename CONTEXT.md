@@ -37,6 +37,11 @@ The in-memory shape of a task and its subtasks. Pure C# in
 - **Owns**: `GlassworkTask`, `SubTask`, status enums, derived helpers
   (`IsRich`, `ShowAsCard`, `IsEffectivelyDone`, etc.), and computed
   Task actionability signals (`Ready`, `Urgency score`).
+- **Blocked task metadata**: task-level blocking is first-class and lives in
+  task frontmatter (`status: blocked`, `blocked_reason`, `blocked_at`,
+  `blocked_from_status`). This is independent from blocked Subtasks: a blocked
+  Subtask still drives the card's blocker row, but only a task whose own
+  `status` is `blocked` is a **Blocked Task**.
 - **Speaks to**: Vault Sync (deserialized from), Presentation (bound to).
 - **Does not own**: persistence, file paths, watch state.
 - **Three-tier task prose model** (see ADR 0002):
@@ -94,6 +99,9 @@ initiators. See ADR 0010 and issue #184.
 - **Owns**: `IndexService`, the `TasksChanged` delta channel, the
   `_index.md` / `_today.md` writers, and the carryover / completed-between /
   by-id query surface that view models share.
+- **Blocked-task contract**: `_index.md` represents blocked state explicitly;
+  `_today.md`, carryover, and other actionable projections exclude Blocked
+  Tasks even when they have stale direct pins or overdue dates.
 - **Speaks to**: Task Model (consumes), Vault Sync (subscribes to events,
   reads on demand), Presentation (queried by pages, raises deltas to them).
 - **Does not own**: the tasks themselves (Vault Sync owns disk truth), nor
@@ -122,6 +130,10 @@ no domain logic — composes the other contexts into screens.
 
 - **Owns**: `MainWindow`, all `Pages/*`, all `Controls/*`, navigation,
   page-local view state, the `App` service-locator entry point.
+- **Blocked-task surfaces**: Backlog renders a dedicated blocked board column /
+  list section; Task Detail owns the user-facing actions to mark blocked, edit
+  blocker details, repair malformed blocked metadata, resume, override the
+  resume target, or complete directly.
 - **Speaks to**: every other context (consumes services).
 - **Default landing**: `MyDayPage` (Home Dashboard is a future concept).
 - **Wiki view**: out of scope for now. Vault is also the user's personal

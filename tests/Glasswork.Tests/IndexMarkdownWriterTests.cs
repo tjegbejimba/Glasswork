@@ -114,6 +114,31 @@ public class IndexMarkdownWriterTests
     }
 
     [TestMethod]
+    public void WriteCurrent_BlockedTaskAppearsInIndexButNotToday()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "blocked",
+            Title = "Blocked task",
+            Status = GlassworkTask.Statuses.Blocked,
+            MyDay = DateTime.Today,
+            BlockedReason = "Waiting on approval",
+            BlockedAt = DateTimeOffset.Parse("2026-07-24T20:15:30Z"),
+            BlockedFromStatus = GlassworkTask.Statuses.Todo,
+            BlockedMetadataState = BlockedMetadataState.Valid,
+        });
+        _index.EnsureLoaded();
+
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
+
+        var indexContent = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
+        var todayContent = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
+        StringAssert.Contains(indexContent, "## Blocked");
+        StringAssert.Contains(indexContent, "[[blocked|Blocked task]]");
+        Assert.IsFalse(todayContent.Contains("Blocked task", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void Dispose_UnsubscribesFromChanged()
     {
         var writer = new IndexMarkdownWriter(_index, _tempDir);

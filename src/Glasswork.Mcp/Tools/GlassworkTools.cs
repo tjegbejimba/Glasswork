@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -45,7 +46,8 @@ public sealed class GlassworkTools
         [Description("Task title (required).")] string title,
         [Description("Optional description text. Becomes the Description body section (ADR 0002).")] string? description = null,
         [Description("Optional parent task ID.")] string? parent_task_id = null,
-        [Description("Task status: todo, doing, or done. Defaults to todo.")] string? status = null,
+        [Description("Task status: todo, doing, blocked, or done. Defaults to todo. `blocked` requires blocked_reason.")] string? status = null,
+        [Description("Required when status is blocked. Concise non-empty blocker reason.")] string? blocked_reason = null,
         [Description("Optional priority: low, medium, high, or urgent. Defaults to medium.")] string? priority = null,
         [Description("Optional due date (yyyy-MM-dd format).")] string? due_date = null,
         [Description("Optional scheduled date (yyyy-MM-dd format). Sets my_day to this future date.")] string? scheduled = null,
@@ -67,6 +69,11 @@ public sealed class GlassworkTools
             {
                 scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
+            }
+            if (internalStatus == GlassworkTask.Statuses.Blocked && string.IsNullOrWhiteSpace(blocked_reason))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_blocked_reason", "blocked_reason is required when status is blocked."));
             }
 
             var ifExistsMode = if_exists ?? "error";
@@ -101,6 +108,7 @@ public sealed class GlassworkTools
                         var updateFields = new Dictionary<string, object?>();
                         if (description != null) updateFields["description"] = description;
                         if (status != null) updateFields["status"] = status;
+                        if (blocked_reason != null) updateFields["blocked_reason"] = blocked_reason;
                         if (priority != null) updateFields["priority"] = priority;
                         if (due_date != null) updateFields["due_date"] = due_date;
                         if (scheduled != null) updateFields["scheduled"] = scheduled;
@@ -146,7 +154,7 @@ public sealed class GlassworkTools
             {
                 Id = id,
                 Title = title,
-                Status = internalStatus,
+                Status = internalStatus == GlassworkTask.Statuses.Blocked ? GlassworkTask.Statuses.Todo : internalStatus,
                 Priority = taskPriority,
                 Type = taskType,
                 Created = DateTime.Today,
@@ -159,6 +167,13 @@ public sealed class GlassworkTools
 
             var writeSw = Stopwatch.StartNew();
             _vault.Save(task);
+            if (internalStatus == GlassworkTask.Statuses.Blocked)
+            {
+                var index = new IndexService(_vault);
+                index.EnsureLoaded();
+                var taskService = new TaskService(_vault, index);
+                taskService.MarkBlocked(task, blocked_reason!);
+            }
             scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
 
             return JsonSerializer.Serialize(new AddTaskResult(TaskId: id, Path: TodoRelativeTaskPath(id)));
@@ -174,7 +189,7 @@ public sealed class GlassworkTools
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("List task summaries filtered by status or parent. Re-reads from disk on every call. For topic or keyword search, use search_tasks.")]
     public string ListTasks(
-        [Description("Filter by status: todo, doing, or done.")] string? status = null,
+        [Description("Filter by status: todo, doing, blocked, or done.")] string? status = null,
         [Description("Filter by parent task ID.")] string? parent_task_id = null,
         [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values: title, status, type, parent_id, path, created, priority, due, start, my_day, defer_until, ready, urgency_score, backlink_count, in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
     {
@@ -324,7 +339,7 @@ public sealed class GlassworkTools
     public string ListSubtasks(
         [Description("Parent task ID (required).")] string parent_task_id,
         [Description("Include descendants recursively. Default false.")] bool recursive = false,
-        [Description("Filter by status: todo, doing, or done.")] string? status_filter = null)
+        [Description("Filter by status: todo, doing, blocked, or done.")] string? status_filter = null)
     {
         using var scope = _logger?.BeginCall("list_subtasks");
         try
@@ -681,6 +696,10 @@ public sealed class GlassworkTools
                 Description: task.Description,
                 Notes: task.Notes,
                 Artifacts: artifacts,
+                BlockedReason: task.BlockedReason,
+                BlockedAt: task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+                BlockedFromStatus: task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus),
+                NeedsBlockerDetails: task.NeedsBlockerDetails ? true : null,
                 DueDate: task.Due?.ToString("yyyy-MM-dd"),
                 Scheduled: task.MyDay?.ToString("yyyy-MM-dd"));
 
@@ -992,7 +1011,7 @@ public sealed class GlassworkTools
     [Description("Update an existing task. Only fields present in the fields object are written; omitted fields remain untouched.")]
     public string UpdateTask(
         [Description("Task ID to update.")] string task_id,
-        [Description("Object containing fields to update: title, status, description, notes, priority, type, parent_task_id, ado_link, ado_title, due_date, scheduled. notes may be a string/null or { value, append }. due_date and scheduled accept yyyy-MM-dd strings or null to clear.")] JsonElement fields)
+        [Description("Object containing fields to update: title, status, blocked_reason, blocked_from_status, description, notes, priority, type, parent_task_id, ado_link, ado_title, due_date, scheduled. notes may be a string/null or { value, append }. due_date and scheduled accept yyyy-MM-dd strings or null to clear. status=blocked requires blocked_reason. blocked_from_status is only used when repairing malformed blocked metadata.")] JsonElement fields)
     {
         using var scope = _logger?.BeginCall("update_task");
         try
@@ -1019,6 +1038,17 @@ public sealed class GlassworkTools
 
             var updatedFields = new List<string>();
             var hasFields = fields.ValueKind == JsonValueKind.Object;
+            var index = new IndexService(_vault);
+            index.EnsureLoaded();
+            var taskService = new TaskService(_vault, index);
+            var savedByTransition = false;
+            var originalStatus = task.Status;
+            string? requestedStatus = null;
+            bool hasStatusField = false;
+            string? blockedReason = null;
+            bool hasBlockedReasonField = false;
+            string? blockedFromStatus = null;
+            bool hasBlockedFromStatusField = false;
 
             if (hasFields && fields.TryGetProperty("title", out var titleElement))
             {
@@ -1033,7 +1063,28 @@ public sealed class GlassworkTools
                     return SerializeInputError(scope, error!);
                 if (!TryMapToInternalStatus(value, out var internalStatus, out var statusError))
                     return SerializeInputError(scope, new ErrorResult("invalid_status", statusError!));
-                UpdateIfChanged(task.Status, internalStatus, v => task.Status = v, "status", updatedFields);
+                requestedStatus = internalStatus;
+                hasStatusField = true;
+            }
+
+            if (hasFields && fields.TryGetProperty("blocked_reason", out var blockedReasonElement))
+            {
+                if (!TryReadNullableString(blockedReasonElement, "blocked_reason", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                blockedReason = value;
+                hasBlockedReasonField = true;
+            }
+
+            if (hasFields && fields.TryGetProperty("blocked_from_status", out var blockedFromStatusElement))
+            {
+                if (!TryReadNullableString(blockedFromStatusElement, "blocked_from_status", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                if (!TryMapToInternalStatus(value, out var internalStatus, out var statusError))
+                    return SerializeInputError(scope, new ErrorResult("invalid_blocked_from_status", statusError!));
+                if (internalStatus is not (GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress))
+                    return SerializeInputError(scope, new ErrorResult("invalid_blocked_from_status", "blocked_from_status must be todo or doing."));
+                blockedFromStatus = internalStatus;
+                hasBlockedFromStatusField = true;
             }
 
             if (hasFields && fields.TryGetProperty("description", out var descriptionElement))
@@ -1109,7 +1160,113 @@ public sealed class GlassworkTools
                 UpdateIfChanged(task.MyDay, value, v => task.MyDay = v, "scheduled", updatedFields);
             }
 
-            if (updatedFields.Count > 0)
+            if (hasStatusField)
+            {
+                if (requestedStatus == task.Status
+                    && !hasBlockedReasonField
+                    && !hasBlockedFromStatusField
+                    && requestedStatus != GlassworkTask.Statuses.Blocked)
+                {
+                    // No-op: preserve prior update_task behavior for unchanged status writes.
+                }
+                else
+                {
+                if (requestedStatus == GlassworkTask.Statuses.Blocked)
+                {
+                    if (string.IsNullOrWhiteSpace(blockedReason))
+                        return SerializeInputError(scope, new ErrorResult("invalid_blocked_reason", "blocked_reason is required when status is blocked."));
+
+                    if (task.Status == GlassworkTask.Statuses.Blocked)
+                    {
+                        if (task.NeedsBlockerDetails)
+                        {
+                            if (!hasBlockedFromStatusField)
+                                return SerializeInputError(scope, new ErrorResult("repair_required", "Malformed blocked tasks require blocked_from_status before they can be repaired."));
+                            var writeSw = Stopwatch.StartNew();
+                            taskService.RepairBlocked(task, blockedReason, blockedFromStatus!);
+                            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+                            AddUpdatedField(updatedFields, "blocked_reason");
+                            AddUpdatedField(updatedFields, "blocked_from_status");
+                            AddUpdatedField(updatedFields, "blocked_at");
+                        }
+                        else
+                        {
+                            var writeSw = Stopwatch.StartNew();
+                            taskService.EditBlockedReason(task, blockedReason);
+                            scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+                            AddUpdatedField(updatedFields, "blocked_reason");
+                        }
+                    }
+                    else
+                    {
+                        var writeSw = Stopwatch.StartNew();
+                        taskService.MarkBlocked(task, blockedReason);
+                        scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+                        AddUpdatedField(updatedFields, "status");
+                        AddUpdatedField(updatedFields, "blocked_reason");
+                        AddUpdatedField(updatedFields, "blocked_at");
+                        AddUpdatedField(updatedFields, "blocked_from_status");
+                    }
+                    savedByTransition = true;
+                }
+                else if (task.Status == GlassworkTask.Statuses.Blocked && requestedStatus is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress)
+                {
+                    var writeSw = Stopwatch.StartNew();
+                    taskService.ResumeBlocked(task, requestedStatus);
+                    scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+                    AddUpdatedField(updatedFields, "status");
+                    AddUpdatedField(updatedFields, "blocked_reason");
+                    AddUpdatedField(updatedFields, "blocked_at");
+                    AddUpdatedField(updatedFields, "blocked_from_status");
+                    savedByTransition = true;
+                }
+                else
+                {
+                    var writeSw = Stopwatch.StartNew();
+                    taskService.SetStatus(task, requestedStatus!);
+                    scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+                    AddUpdatedField(updatedFields, "status");
+                    if (originalStatus == GlassworkTask.Statuses.Blocked)
+                    {
+                        AddUpdatedField(updatedFields, "blocked_reason");
+                        AddUpdatedField(updatedFields, "blocked_at");
+                        AddUpdatedField(updatedFields, "blocked_from_status");
+                    }
+                    savedByTransition = true;
+                }
+                }
+            }
+            else if (hasBlockedReasonField || hasBlockedFromStatusField)
+            {
+                if (task.Status != GlassworkTask.Statuses.Blocked)
+                    return SerializeInputError(scope, new ErrorResult("invalid_blocked_state", "blocked_reason and blocked_from_status can only be changed on blocked tasks."));
+
+                if (task.NeedsBlockerDetails)
+                {
+                    if (string.IsNullOrWhiteSpace(blockedReason) || string.IsNullOrWhiteSpace(blockedFromStatus))
+                        return SerializeInputError(scope, new ErrorResult("repair_required", "Malformed blocked tasks require both blocked_reason and blocked_from_status before they can be repaired."));
+                    var writeSw = Stopwatch.StartNew();
+                    taskService.RepairBlocked(task, blockedReason!, blockedFromStatus!);
+                    scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+                    AddUpdatedField(updatedFields, "blocked_reason");
+                    AddUpdatedField(updatedFields, "blocked_from_status");
+                    AddUpdatedField(updatedFields, "blocked_at");
+                }
+                else
+                {
+                    if (hasBlockedFromStatusField)
+                        return SerializeInputError(scope, new ErrorResult("invalid_blocked_from_status", "blocked_from_status can only be changed when repairing malformed blocked metadata."));
+                    if (string.IsNullOrWhiteSpace(blockedReason))
+                        return SerializeInputError(scope, new ErrorResult("invalid_blocked_reason", "blocked_reason cannot be blank."));
+                    var writeSw = Stopwatch.StartNew();
+                    taskService.EditBlockedReason(task, blockedReason!);
+                    scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
+                    AddUpdatedField(updatedFields, "blocked_reason");
+                }
+                savedByTransition = true;
+            }
+
+            if (updatedFields.Count > 0 && !savedByTransition)
             {
                 var writeSw = Stopwatch.StartNew();
                 _vault.Save(task);
@@ -1118,7 +1275,7 @@ public sealed class GlassworkTools
 
             return JsonSerializer.Serialize(new UpdateTaskResult(
                 TaskId: safeId,
-                UpdatedFields: updatedFields.ToArray()));
+                UpdatedFields: OrderUpdatedFields(updatedFields)));
         }
         catch
         {
@@ -1332,6 +1489,31 @@ public sealed class GlassworkTools
         if (EqualityComparer<T>.Default.Equals(current, next)) return;
         assign(next);
         updatedFields.Add(fieldName);
+    }
+
+    private static void AddUpdatedField(List<string> updatedFields, string fieldName)
+    {
+        if (!updatedFields.Contains(fieldName, StringComparer.Ordinal))
+            updatedFields.Add(fieldName);
+    }
+
+    private static readonly string[] UpdatedFieldOrder =
+    [
+        "title", "status", "blocked_reason", "blocked_at", "blocked_from_status", "description", "notes",
+        "priority", "type", "parent_task_id", "ado_link", "ado_title", "due_date", "scheduled"
+    ];
+
+    private static string[] OrderUpdatedFields(List<string> updatedFields)
+    {
+        return updatedFields
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(field =>
+            {
+                var index = Array.IndexOf(UpdatedFieldOrder, field);
+                return index >= 0 ? index : int.MaxValue;
+            })
+            .ThenBy(field => field, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static bool TryReadNullableString(
@@ -1715,7 +1897,11 @@ public sealed class GlassworkTools
         Status: MapToExternalStatus(task.Status),
         ParentId: task.Parent,
         Description: task.Description,
-        Notes: task.Notes);
+        Notes: task.Notes,
+        BlockedReason: task.BlockedReason,
+        BlockedAt: task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+        BlockedFromStatus: task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus),
+        NeedsBlockerDetails: task.NeedsBlockerDetails ? true : null);
 
     private string ToVaultRelative(string fullPath)
     {
@@ -1753,13 +1939,17 @@ public sealed class GlassworkTools
                 internalStatus = GlassworkTask.Statuses.InProgress;
                 errMessage = null;
                 return true;
+            case "blocked":
+                internalStatus = GlassworkTask.Statuses.Blocked;
+                errMessage = null;
+                return true;
             case "done":
                 internalStatus = GlassworkTask.Statuses.Done;
                 errMessage = null;
                 return true;
             default:
                 internalStatus = string.Empty;
-                errMessage = $"Invalid status '{status}'. Valid values: todo, doing, done.";
+                errMessage = $"Invalid status '{status}'. Valid values: todo, doing, blocked, done.";
                 return false;
         }
     }
@@ -1804,11 +1994,11 @@ public sealed class GlassworkTools
             foreach (var raw in status)
             {
                 var s = (raw ?? string.Empty).Trim().ToLowerInvariant();
-                if (s is not ("todo" or "doing" or "done"))
+                if (s is not ("todo" or "doing" or "blocked" or "done"))
                 {
                     error = new ErrorResult(
                         "invalid_status",
-                        $"Invalid status '{raw}'. Valid values: todo, doing, done.");
+                        $"Invalid status '{raw}'. Valid values: todo, doing, blocked, done.");
                     return false;
                 }
             }
@@ -1820,7 +2010,7 @@ public sealed class GlassworkTools
     private static readonly HashSet<string> AllowedSummaryFields = new(StringComparer.Ordinal)
     {
         "title", "status", "type", "parent_id", "path", "created", "priority", "due", "start", "my_day", "defer_until",
-        "ready", "urgency_score", "backlink_count", "in_my_day_today",
+        "ready", "urgency_score", "backlink_count", "in_my_day_today", "blocked_reason", "blocked_at", "blocked_from_status", "needs_blocker_details",
     };
 
     /// <summary>
@@ -1873,6 +2063,10 @@ public sealed class GlassworkTools
         if (fields.Contains("ready")) dict["ready"] = signals.Ready;
         if (fields.Contains("urgency_score")) dict["urgency_score"] = signals.UrgencyScore;
         if (fields.Contains("backlink_count")) dict["backlink_count"] = signals.BacklinkCount;
+        if (fields.Contains("blocked_reason")) dict["blocked_reason"] = task.BlockedReason;
+        if (fields.Contains("blocked_at")) dict["blocked_at"] = task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        if (fields.Contains("blocked_from_status")) dict["blocked_from_status"] = task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus);
+        if (fields.Contains("needs_blocker_details")) dict["needs_blocker_details"] = task.NeedsBlockerDetails;
         if (fields.Contains("in_my_day_today"))
             dict["in_my_day_today"] = MyDayPromotionPolicy.IsTaskInMyDayToday(
                 task,
@@ -1984,6 +2178,10 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("description")] string Description,
         [property: JsonPropertyName("notes")] string Notes,
         [property: JsonPropertyName("artifacts")] List<ArtifactInfo> Artifacts,
+        [property: JsonPropertyName("blocked_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedReason = null,
+        [property: JsonPropertyName("blocked_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedAt = null,
+        [property: JsonPropertyName("blocked_from_status"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedFromStatus = null,
+        [property: JsonPropertyName("needs_blocker_details"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? NeedsBlockerDetails = null,
         [property: JsonPropertyName("due_date"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DueDate = null,
         [property: JsonPropertyName("scheduled"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Scheduled = null);
 
@@ -2029,7 +2227,11 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("status")] string Status,
         [property: JsonPropertyName("parent_id")] string? ParentId,
         [property: JsonPropertyName("description")] string Description,
-        [property: JsonPropertyName("notes")] string Notes);
+        [property: JsonPropertyName("notes")] string Notes,
+        [property: JsonPropertyName("blocked_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedReason = null,
+        [property: JsonPropertyName("blocked_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedAt = null,
+        [property: JsonPropertyName("blocked_from_status"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedFromStatus = null,
+        [property: JsonPropertyName("needs_blocker_details"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? NeedsBlockerDetails = null);
 
     private sealed record ArtifactWithBody(
         [property: JsonPropertyName("filename")] string Filename,

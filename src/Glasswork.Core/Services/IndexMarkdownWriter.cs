@@ -148,6 +148,9 @@ public sealed class IndexMarkdownWriter : IDisposable
         sb.AppendLine();
 
         var backlinkCounts = BuildBacklinkCounts(vaultPath, tasks);
+        WriteStatusSection(sb, "Blocked", tasks
+            .Where(t => t.Status == GlassworkTask.Statuses.Blocked)
+            .OrderBy(t => t.BlockedAt ?? DateTimeOffset.MaxValue), backlinkCounts);
         WriteStatusSection(sb, "In Progress", tasks.Where(t => t.Status == GlassworkTask.Statuses.InProgress), backlinkCounts);
         WriteStatusSection(sb, "Todo", tasks.Where(t => t.Status == GlassworkTask.Statuses.Todo), backlinkCounts);
         WriteStatusSection(sb, "Done (Recent)", tasks
@@ -160,9 +163,9 @@ public sealed class IndexMarkdownWriter : IDisposable
 
     private static void WriteToday(List<GlassworkTask> tasks, string vaultPath)
     {
-        var parentMyDay = tasks.Where(t => t.IsMyDay).ToList();
+        var parentMyDay = tasks.Where(t => t.IsMyDay && !t.IsBlocked).ToList();
         var subtaskMyDay = tasks
-            .Where(t => !t.IsMyDay && t.Subtasks.Any(s => s.IsMyDay))
+            .Where(t => !t.IsMyDay && !t.IsBlocked && t.Subtasks.Any(s => s.IsMyDay))
             .ToList();
 
         var sb = new StringBuilder();

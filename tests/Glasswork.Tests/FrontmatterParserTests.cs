@@ -1,3 +1,4 @@
+using System.Globalization;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 
@@ -121,6 +122,82 @@ public class FrontmatterParserTests
         Assert.AreEqual(original.Subtasks.Count, parsed.Subtasks.Count);
         Assert.AreEqual(original.Subtasks[0].Text, parsed.Subtasks[0].Text);
         Assert.AreEqual(original.Subtasks[0].IsCompleted, parsed.Subtasks[0].IsCompleted);
+    }
+
+    [TestMethod]
+    public void Serialize_ThenParse_BlockedTask_RoundTripsBlockingMetadata()
+    {
+        var blockedAt = DateTimeOffset.Parse("2026-07-24T20:15:30Z", CultureInfo.InvariantCulture);
+        var original = new GlassworkTask
+        {
+            Id = "blocked-round-trip",
+            Title = "Blocked round trip",
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedReason = "Waiting on deployment approval",
+            BlockedAt = blockedAt,
+            BlockedFromStatus = GlassworkTask.Statuses.InProgress,
+        };
+
+        var markdown = _parser.Serialize(original);
+        var parsed = _parser.Parse(markdown);
+
+        Assert.AreEqual(GlassworkTask.Statuses.Blocked, parsed.Status);
+        Assert.AreEqual("Waiting on deployment approval", parsed.BlockedReason);
+        Assert.AreEqual(blockedAt, parsed.BlockedAt);
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, parsed.BlockedFromStatus);
+        Assert.IsFalse(parsed.NeedsBlockerDetails);
+        StringAssert.Contains(markdown, "blocked_reason: Waiting on deployment approval");
+        StringAssert.Contains(markdown, "blocked_at: 2026-07-24T20:15:30.0000000Z");
+        StringAssert.Contains(markdown, "blocked_from_status: in-progress");
+    }
+
+    [TestMethod]
+    public void Parse_BlockedTaskMissingMetadata_FlagsNeedsBlockerDetails()
+    {
+        var markdown = """
+            ---
+            id: blocked-needs-details
+            title: Blocked needs details
+            status: blocked
+            blocked_reason: Waiting on approval
+            ---
+
+            Body
+            """;
+
+        var task = _parser.Parse(markdown);
+
+        Assert.AreEqual(GlassworkTask.Statuses.Blocked, task.Status);
+        Assert.IsTrue(task.NeedsBlockerDetails);
+        Assert.AreEqual(BlockedMetadataState.NeedsDetails, task.BlockedMetadataState);
+    }
+
+    [TestMethod]
+    public void Parse_NonBlockedTask_IgnoresStaleBlockedMetadataAndSaveDropsIt()
+    {
+        var markdown = """
+            ---
+            id: stale-blocked
+            title: Stale blocked
+            status: todo
+            blocked_reason: Old blocker
+            blocked_at: 2026-07-24T20:15:30.0000000Z
+            blocked_from_status: in-progress
+            ---
+
+            Body
+            """;
+
+        var task = _parser.Parse(markdown);
+        var roundTripped = _parser.Serialize(task);
+
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, task.Status);
+        Assert.IsNull(task.BlockedReason);
+        Assert.IsNull(task.BlockedAt);
+        Assert.IsNull(task.BlockedFromStatus);
+        Assert.IsFalse(roundTripped.Contains("blocked_reason:", StringComparison.Ordinal));
+        Assert.IsFalse(roundTripped.Contains("blocked_at:", StringComparison.Ordinal));
+        Assert.IsFalse(roundTripped.Contains("blocked_from_status:", StringComparison.Ordinal));
     }
 
     [TestMethod]

@@ -236,7 +236,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     {
         var statuses = FilterStatus switch
         {
-            "all" => new List<string> { GlassworkTask.Statuses.Todo, GlassworkTask.Statuses.InProgress },
+            "all" => new List<string> { GlassworkTask.Statuses.Todo, GlassworkTask.Statuses.InProgress, GlassworkTask.Statuses.Blocked },
             var value when string.IsNullOrWhiteSpace(value) => [],
             var value => [value],
         };

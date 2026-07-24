@@ -137,6 +137,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="16">
                     <ComboBox x:Name="StatusBox" Header="Status" Width="160" SelectionChanged="Status_Changed">
                         <ComboBoxItem Tag="todo" Content="To Do" />
+                        <ComboBoxItem Tag="blocked" Content="Blocked" />
                         <ComboBoxItem Tag="in-progress" Content="In Progress" />
                         <ComboBoxItem Tag="done" Content="Done" />
                     </ComboBox>
@@ -147,6 +148,11 @@
                         <ComboBoxItem Tag="urgent" Content="Urgent" />
                     </ComboBox>
                 </StackPanel>
+
+                <TextBlock x:Name="BlockedStatusText"
+                           Visibility="Collapsed"
+                           Foreground="#C50F1F"
+                           FontWeight="SemiBold" />
 
                 <!-- Dates -->
                 <CalendarDatePicker x:Name="DueDatePicker" Header="Due date" DateChanged="DueDate_Changed" />
@@ -588,6 +594,11 @@
                     <Button x:Name="StartWorkButton" Content="Start work" Click="StartWork_Click" />
                     <Button x:Name="ResumeButton" Content="Resume" Click="Resume_Click" />
                     <Button x:Name="WrapUpButton" Content="Wrap up" Click="WrapUp_Click" />
+                    <Button x:Name="BlockTaskButton" Content="Mark blocked..." Click="BlockTask_Click" Visibility="Collapsed" />
+                    <Button x:Name="EditBlockerButton" Content="Edit blocker..." Click="EditBlocker_Click" Visibility="Collapsed" />
+                    <Button x:Name="RepairBlockedButton" Content="Repair blocked task..." Click="RepairBlocked_Click" Visibility="Collapsed" />
+                    <Button x:Name="ResumeBlockedButton" Content="Resume..." Click="ResumeBlocked_Click" Visibility="Collapsed" />
+                    <Button x:Name="MarkBlockedDoneButton" Content="Mark done" Click="MarkBlockedDone_Click" Visibility="Collapsed" />
                     <TextBlock x:Name="ClipboardHint" VerticalAlignment="Center" Opacity="0.6" FontSize="12" />
                 </StackPanel>
 

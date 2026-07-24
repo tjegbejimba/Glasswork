@@ -134,8 +134,8 @@ public class BacklogViewModelRefreshingEventTests
 
         vm.Refresh();
 
-        Assert.AreEqual(2, observedBoardColumnsCount,
-            "Refreshing must fire before BoardColumns.Clear() — subscriber should see the 2 pre-refresh columns");
+        Assert.AreEqual(3, observedBoardColumnsCount,
+            "Refreshing must fire before BoardColumns.Clear() — subscriber should see the 3 pre-refresh columns");
         Assert.AreEqual(2, observedTotalTasksInColumns,
             "Refreshing must fire before column tasks are torn down — subscriber should see both tasks");
         Assert.AreEqual(2, observedTasksCount,

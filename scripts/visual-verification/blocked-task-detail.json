@@ -1,0 +1,63 @@
+{
+  "name": "Blocked task detail",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "vv-blocked-missing-details",
+      "title": "Blocked task missing details",
+      "description": "A blocked task with malformed blocker metadata should stay visible and expose repair actions.",
+      "status": "blocked",
+      "priority": "high"
+    },
+    {
+      "id": "vv-active-task",
+      "title": "Active comparison task",
+      "description": "A normal backlog task kept alongside the blocked section.",
+      "status": "todo",
+      "priority": "medium"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "BacklogHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Blocked",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Blocked task missing details",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Blocked task missing details",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Needs blocker details",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Repair blocked task...",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "blocked-task-detail",
+      "waitMilliseconds": 1200
+    }
+  ]
+}

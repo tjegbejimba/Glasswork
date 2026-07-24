@@ -28,6 +28,22 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial DateTime Created { get; set; } = DateTime.Today;
     [ObservableProperty] public partial DateTime? CompletedAt { get; set; }
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsBlocked))]
+    [NotifyPropertyChangedFor(nameof(NeedsBlockerDetails))]
+    [NotifyPropertyChangedFor(nameof(IsActive))]
+    [NotifyPropertyChangedFor(nameof(IsQuiet))]
+    [NotifyPropertyChangedFor(nameof(ShowCardDetails))]
+    public partial string? BlockedReason { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NeedsBlockerDetails))]
+    public partial DateTimeOffset? BlockedAt { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NeedsBlockerDetails))]
+    public partial string? BlockedFromStatus { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NeedsBlockerDetails))]
+    public partial BlockedMetadataState BlockedMetadataState { get; set; }
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DueUrgency))]
     [NotifyPropertyChangedFor(nameof(DueChipText))]
     [NotifyPropertyChangedFor(nameof(HasDue))]
@@ -83,6 +99,7 @@ public partial class GlassworkTask : ObservableObject
     {
         public const string Todo = "todo";
         public const string InProgress = "in-progress";
+        public const string Blocked = "blocked";
         public const string Done = "done";
     }
 
@@ -141,12 +158,15 @@ public partial class GlassworkTask : ObservableObject
     /// Status changes (see [NotifyPropertyChangedFor] on Status).
     /// </summary>
     public bool IsDone => Status == Statuses.Done;
+    public bool IsBlocked => Status == Statuses.Blocked;
+    public bool NeedsBlockerDetails => IsBlocked && BlockedMetadataState == BlockedMetadataState.NeedsDetails;
 
     // ===== Adaptive task row helpers (visual polish slice 3) =====
     // "Active" = has rich content worth expanding into a card.
     // "Quiet" = title only — no expand affordance.
 
     public bool IsActive =>
+        IsBlocked ||
         Subtasks.Count > 0 ||
         HasBlurb ||
         HasBlocker;
@@ -376,6 +396,10 @@ public partial class GlassworkTask : ObservableObject
             Type = Type,
             Created = Created,
             CompletedAt = CompletedAt,
+            BlockedReason = BlockedReason,
+            BlockedAt = BlockedAt,
+            BlockedFromStatus = BlockedFromStatus,
+            BlockedMetadataState = BlockedMetadataState,
             Due = Due,
             Start = Start,
             MyDay = MyDay,
@@ -490,6 +514,16 @@ public partial class GlassworkTask : ObservableObject
             OnPropertyChanged(nameof(Links));
         }
     }
+}
+
+/// <summary>
+/// Parse/validation state for task-level blocked metadata.
+/// </summary>
+public enum BlockedMetadataState
+{
+    None,
+    Valid,
+    NeedsDetails,
 }
 
 /// <summary>

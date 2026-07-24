@@ -117,13 +117,14 @@ The v1 four-tool surface (§3) was the *starting* point, not the ceiling. As of
 landed. Current surface, grouped by verb:
 
 - **Create**: `add_task` (full field coverage — description, parent, status, priority,
-  due date, scheduled, my_day, notes — plus `if_exists` idempotency), `add_artifact`,
+  due date, scheduled, my_day, notes, blocked_reason for blocked creation — plus `if_exists` idempotency), `add_artifact`,
   `add_link`
 - **Read**: `list_tasks`, `get_task`, `search_tasks`, `list_subtasks`, `get_my_day`,
   `get_artifact`, `list_backlinks`, `list_overdue`, `get_activity`,
   `get_task_context`, `load_context`
 - **Update**: `update_task` (title / status / description / notes [with append] /
-  priority / parent / ado_link / ado_title), `move_task`, `set_my_day`,
+  priority / parent / ado_link / ado_title / blocked_reason / blocked_from_status),
+  `move_task`, `set_my_day`,
   `toggle_my_day`
 - **Delete**: `remove_link`
 
@@ -145,6 +146,19 @@ landed. Current surface, grouped by verb:
 The boundaries in §9 (stdio-only, vault-only writes, path-traversal guard, optimistic
 concurrency via mtime, self-write marker) continue to govern **every** tool added
 above and every tool still to come.
+
+### Amendment — blocked task contract
+
+Task-level status `blocked` is now first-class across the MCP surface. The
+transport still delegates the transition rules to `Glasswork.Core`:
+
+- `blocked_reason` is required whenever a task is newly moved to `status: blocked`.
+- `blocked_from_status` is only agent-settable when repairing malformed blocked
+  metadata (`status: blocked` with missing / invalid blocker fields on disk).
+- Resuming a blocked task (to `todo` / `doing`) or completing it directly (`done`)
+  clears all blocker metadata.
+- Full task/context reads surface blocked metadata so agents can see when a task
+  is blocked versus when it merely **Needs blocker details**.
 
 ## Consequences
 

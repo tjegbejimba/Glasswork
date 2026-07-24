@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Glasswork.Controls;
 using Glasswork.Core.Markdown;
 using Glasswork.Core.Models;
@@ -93,6 +94,16 @@ public sealed partial class TaskDetailPage : Page
         // Set combo boxes to match task state
         SetComboByTag(StatusBox, task.Status);
         SetComboByTag(PriorityBox, task.Priority);
+        StatusBox.IsEnabled = !task.IsBlocked;
+        BlockedStatusText.Visibility = task.IsBlocked ? Visibility.Visible : Visibility.Collapsed;
+        BlockedStatusText.Text = task.IsBlocked
+            ? (task.NeedsBlockerDetails ? "Needs blocker details" : $"Blocked: {task.BlockedReason}")
+            : string.Empty;
+        BlockTaskButton.Visibility = !task.IsBlocked ? Visibility.Visible : Visibility.Collapsed;
+        EditBlockerButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
+        RepairBlockedButton.Visibility = task.IsBlocked && task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
+        ResumeBlockedButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
+        MarkBlockedDoneButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
 
         DueDatePicker.Date = task.Due.HasValue
             ? new DateTimeOffset(task.Due.Value)
@@ -810,13 +821,37 @@ public sealed partial class TaskDetailPage : Page
         Save();
     }
 
-    private void Status_Changed(object sender, SelectionChangedEventArgs e)
+    private async void Status_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_isLoading) return;
         if (StatusBox.SelectedItem is ComboBoxItem item)
         {
             var status = item.Tag?.ToString() ?? "todo";
-            App.Tasks.SetStatus(Task, status);
+            try
+            {
+                if (status == GlassworkTask.Statuses.Blocked)
+                {
+                    var reason = await PromptBlockedReasonAsync("Mark blocked", null);
+                    if (reason is null)
+                    {
+                        RestoreStatusSelection();
+                        return;
+                    }
+
+                    App.Tasks.MarkBlocked(Task, reason);
+                }
+                else
+                {
+                    App.Tasks.SetStatus(Task, status);
+                }
+
+                ReloadTaskFromVault();
+            }
+            catch (Exception ex)
+            {
+                RestoreStatusSelection();
+                await ShowOperationErrorAsync("Unable to change status", ex.Message);
+            }
         }
     }
 
@@ -1269,6 +1304,187 @@ public sealed partial class TaskDetailPage : Page
     }
 
     private void Save() => App.Vault.Save(Task);
+
+    private void RestoreStatusSelection()
+    {
+        _isLoading = true;
+        SetComboByTag(StatusBox, Task.Status);
+        _isLoading = false;
+    }
+
+    private void ReloadTaskFromVault()
+    {
+        var reloaded = App.Vault.Load(Task.Id);
+        if (reloaded is not null) ApplyTask(reloaded);
+    }
+
+    private async Task<string?> PromptBlockedReasonAsync(string title, string? initialReason)
+    {
+        var box = new TextBox
+        {
+            Text = initialReason ?? string.Empty,
+            PlaceholderText = "Why is this task blocked?",
+            MinWidth = 360
+        };
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = box,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return null;
+
+        var trimmed = box.Text?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private async Task<string?> PromptResumeStatusAsync(string? initialStatus)
+    {
+        var statusBox = new ComboBox { MinWidth = 240 };
+        statusBox.Items.Add(new ComboBoxItem { Tag = GlassworkTask.Statuses.Todo, Content = "To Do" });
+        statusBox.Items.Add(new ComboBoxItem { Tag = GlassworkTask.Statuses.InProgress, Content = "In Progress" });
+        SetComboByTag(statusBox, initialStatus is GlassworkTask.Statuses.InProgress ? GlassworkTask.Statuses.InProgress : GlassworkTask.Statuses.Todo);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Resume blocked task",
+            Content = statusBox,
+            PrimaryButtonText = "Resume",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return null;
+        return (statusBox.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+    }
+
+    private async Task<(string? Reason, string? FromStatus)> PromptBlockedRepairAsync()
+    {
+        var reasonBox = new TextBox
+        {
+            Text = Task.BlockedReason ?? string.Empty,
+            PlaceholderText = "Why is this task blocked?",
+            MinWidth = 360
+        };
+        var statusBox = new ComboBox { MinWidth = 240 };
+        statusBox.Items.Add(new ComboBoxItem { Tag = GlassworkTask.Statuses.Todo, Content = "To Do" });
+        statusBox.Items.Add(new ComboBoxItem { Tag = GlassworkTask.Statuses.InProgress, Content = "In Progress" });
+        SetComboByTag(statusBox, Task.BlockedFromStatus is GlassworkTask.Statuses.InProgress ? GlassworkTask.Statuses.InProgress : GlassworkTask.Statuses.Todo);
+
+        var panel = new StackPanel { Spacing = 12 };
+        panel.Children.Add(reasonBox);
+        panel.Children.Add(statusBox);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Repair blocked task",
+            Content = panel,
+            PrimaryButtonText = "Repair",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = this.XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return (null, null);
+        return (reasonBox.Text?.Trim(), (statusBox.SelectedItem as ComboBoxItem)?.Tag?.ToString());
+    }
+
+    private async Task ShowOperationErrorAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = message,
+            CloseButtonText = "OK",
+            XamlRoot = this.XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+        await dialog.ShowAsync();
+    }
+
+    private async void BlockTask_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var reason = await PromptBlockedReasonAsync("Mark blocked", null);
+            if (reason is null) return;
+            App.Tasks.MarkBlocked(Task, reason);
+            ReloadTaskFromVault();
+        }
+        catch (Exception ex)
+        {
+            await ShowOperationErrorAsync("Unable to mark task blocked", ex.Message);
+        }
+    }
+
+    private async void EditBlocker_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var reason = await PromptBlockedReasonAsync("Edit blocker", Task.BlockedReason);
+            if (reason is null) return;
+            App.Tasks.EditBlockedReason(Task, reason);
+            ReloadTaskFromVault();
+        }
+        catch (Exception ex)
+        {
+            await ShowOperationErrorAsync("Unable to edit blocker", ex.Message);
+        }
+    }
+
+    private async void RepairBlocked_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var repair = await PromptBlockedRepairAsync();
+            if (string.IsNullOrWhiteSpace(repair.Reason) || string.IsNullOrWhiteSpace(repair.FromStatus)) return;
+            App.Tasks.RepairBlocked(Task, repair.Reason, repair.FromStatus);
+            ReloadTaskFromVault();
+        }
+        catch (Exception ex)
+        {
+            await ShowOperationErrorAsync("Unable to repair blocked task", ex.Message);
+        }
+    }
+
+    private async void ResumeBlocked_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var status = await PromptResumeStatusAsync(Task.BlockedFromStatus);
+            if (string.IsNullOrWhiteSpace(status)) return;
+            App.Tasks.ResumeBlocked(Task, status);
+            ReloadTaskFromVault();
+        }
+        catch (Exception ex)
+        {
+            await ShowOperationErrorAsync("Unable to resume blocked task", ex.Message);
+        }
+    }
+
+    private async void MarkBlockedDone_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            App.Tasks.SetStatus(Task, GlassworkTask.Statuses.Done);
+            ReloadTaskFromVault();
+        }
+        catch (Exception ex)
+        {
+            await ShowOperationErrorAsync("Unable to complete blocked task", ex.Message);
+        }
+    }
 
     // ============================================================
     // Subtask "..." menu, detail dialog, drag-reorder

@@ -49,6 +49,28 @@ public sealed class TaskActionabilityTests
     }
 
     [TestMethod]
+    public void Compute_TaskLevelBlockedTask_IsNotReadyAndHasZeroUrgency()
+    {
+        var today = new DateOnly(2026, 6, 10);
+        var task = new GlassworkTask
+        {
+            Id = "task-blocked",
+            Title = "Task blocked",
+            Status = GlassworkTask.Statuses.Blocked,
+            Priority = GlassworkTask.Priorities.Urgent,
+            BlockedReason = "Waiting on external approval",
+            BlockedAt = DateTimeOffset.Parse("2026-07-01T12:00:00Z"),
+            BlockedFromStatus = GlassworkTask.Statuses.InProgress,
+            BlockedMetadataState = BlockedMetadataState.Valid,
+        };
+
+        var signals = TaskActionability.Compute(task, new TaskSignalContext(today, BacklinkCount: 5));
+
+        Assert.IsFalse(signals.Ready);
+        Assert.AreEqual(0d, signals.UrgencyScore);
+    }
+
+    [TestMethod]
     public void Compute_MarksFutureStartOrDeferTaskNotReady()
     {
         var today = new DateOnly(2026, 6, 10);

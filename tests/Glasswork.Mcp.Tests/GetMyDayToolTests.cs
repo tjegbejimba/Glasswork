@@ -71,4 +71,24 @@ public class GetMyDayToolTests
         Assert.AreEqual("pbi", typesById["container-pbi"], "PBI container must report type 'pbi'.");
         Assert.AreEqual("task", typesById["leaf-task"], "Default leaf must report type 'task'.");
     }
+
+    [TestMethod]
+    public void GetMyDay_ExcludesBlockedTasks()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "blocked",
+            Title = "Blocked",
+            Status = GlassworkTask.Statuses.Blocked,
+            MyDay = DateTime.Today,
+            BlockedReason = "Waiting on CAB",
+            BlockedAt = DateTimeOffset.Parse("2026-07-24T20:15:30Z"),
+            BlockedFromStatus = GlassworkTask.Statuses.Todo,
+            BlockedMetadataState = BlockedMetadataState.Valid,
+        });
+
+        var json = _tools.GetMyDay();
+        using var doc = JsonDocument.Parse(json);
+        Assert.AreEqual(0, doc.RootElement.GetProperty("tasks").GetArrayLength());
+    }
 }

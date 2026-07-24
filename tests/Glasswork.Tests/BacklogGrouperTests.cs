@@ -11,11 +11,39 @@ public class BacklogGrouperTests
     private static GlassworkTask Task(string id, string? parent = null) =>
         new() { Id = id, Title = id, Parent = parent };
 
+    private static GlassworkTask BlockedTask(string id, DateTimeOffset blockedAt) =>
+        new()
+        {
+            Id = id,
+            Title = id,
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedAt = blockedAt,
+            BlockedReason = "Waiting",
+            BlockedFromStatus = GlassworkTask.Statuses.Todo,
+            BlockedMetadataState = BlockedMetadataState.Valid
+        };
+
     [TestMethod]
     public void EmptyInput_ReturnsEmpty()
     {
         var rows = BacklogGrouper.Group([]);
         Assert.AreEqual(0, rows.Count);
+    }
+
+    [TestMethod]
+    public void BlockedTasks_AppearInDedicatedSectionOrderedOldestFirst()
+    {
+        var rows = BacklogGrouper.Group([
+            Task("active"),
+            BlockedTask("blocked-newer", DateTimeOffset.Parse("2026-07-20T10:00:00Z")),
+            BlockedTask("blocked-older", DateTimeOffset.Parse("2026-07-10T10:00:00Z")),
+        ]);
+
+        var blockedHeader = rows.OfType<BacklogParentGroupHeader>().Single(h => h.DisplayHeader == "Blocked");
+        Assert.AreEqual(2, blockedHeader.TotalCount);
+        CollectionAssert.AreEqual(
+            new[] { "blocked-older", "blocked-newer" },
+            rows.OfType<GlassworkTask>().Where(t => t.Status == GlassworkTask.Statuses.Blocked).Select(t => t.Id).ToArray());
     }
 
     [TestMethod]

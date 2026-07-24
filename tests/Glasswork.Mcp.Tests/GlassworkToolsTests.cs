@@ -148,6 +148,15 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void AddTask_BlockedStatusWithoutReason_ReturnsStructuredError()
+    {
+        var json = _tools.AddTask("Blocked task", status: "blocked");
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("invalid_blocked_reason", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
     public void AddTask_EmptyTitle_ReturnsStructuredError()
     {
         var json = _tools.AddTask("   ");
@@ -928,6 +937,21 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void GetTask_BlockedTask_ReturnsBlockingMetadata()
+    {
+        var addJson = _tools.AddTask("Blocked task", status: "blocked", blocked_reason: "Waiting on CAB");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var json = _tools.GetTask(taskId);
+        var doc = JsonDocument.Parse(json);
+
+        Assert.AreEqual("blocked", doc.RootElement.GetProperty("status").GetString());
+        Assert.AreEqual("Waiting on CAB", doc.RootElement.GetProperty("blocked_reason").GetString());
+        Assert.AreEqual("todo", doc.RootElement.GetProperty("blocked_from_status").GetString());
+        Assert.IsTrue(doc.RootElement.TryGetProperty("blocked_at", out _));
+    }
+
+    [TestMethod]
     public void GetTask_WithArtifacts_ListsArtifactFilenames()
     {
         var addJson = _tools.AddTask("Task With Artifacts");
@@ -1654,6 +1678,83 @@ public class GlassworkToolsTests
         Assert.AreEqual("invalid_status", doc.RootElement.GetProperty("error").GetString());
         Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
         Assert.AreEqual(GlassworkTask.Statuses.Todo, _vault.Load(taskId)!.Status);
+    }
+
+    [TestMethod]
+    public void UpdateTask_StatusBlocked_RequiresBlockedReason()
+    {
+        var addJson = _tools.AddTask("Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "status": "blocked" }""");
+        var doc = JsonDocument.Parse(updateJson);
+
+        Assert.AreEqual("invalid_blocked_reason", doc.RootElement.GetProperty("error").GetString());
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, _vault.Load(taskId)!.Status);
+    }
+
+    [TestMethod]
+    public void UpdateTask_StatusBlocked_WithReason_PersistsBlockingMetadata()
+    {
+        var addJson = _tools.AddTask("Task");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "status": "blocked", "blocked_reason": "Waiting on CAB approval" }""");
+        var updated = _vault.Load(taskId)!;
+
+        Assert.AreEqual(GlassworkTask.Statuses.Blocked, updated.Status);
+        Assert.AreEqual("Waiting on CAB approval", updated.BlockedReason);
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, updated.BlockedFromStatus);
+        Assert.IsNotNull(updated.BlockedAt);
+        CollectionAssert.AreEqual(
+            new[] { "status", "blocked_reason", "blocked_at", "blocked_from_status" },
+            UpdatedFieldsFrom(updateJson));
+    }
+
+    [TestMethod]
+    public void UpdateTask_ResumeBlockedToDoing_ClearsBlockingMetadata()
+    {
+        var addJson = _tools.AddTask("Task", status: "blocked", blocked_reason: "Waiting on CAB approval");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "status": "doing" }""");
+        var updated = _vault.Load(taskId)!;
+
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, updated.Status);
+        Assert.IsNull(updated.BlockedReason);
+        Assert.IsNull(updated.BlockedAt);
+        Assert.IsNull(updated.BlockedFromStatus);
+        CollectionAssert.AreEqual(
+            new[] { "status", "blocked_reason", "blocked_at", "blocked_from_status" },
+            UpdatedFieldsFrom(updateJson));
+    }
+
+    [TestMethod]
+    public void UpdateTask_RepairMalformedBlockedTask_RequiresBlockedReasonAndPriorStatus()
+    {
+        var path = Path.Combine(TasksDir, "malformed.md");
+        File.WriteAllText(path, """
+            ---
+            id: malformed
+            title: Malformed
+            status: blocked
+            blocked_reason: Waiting
+            ---
+
+            Body
+            """);
+
+        var updateJson = UpdateTask("malformed", """{ "blocked_reason": "Waiting on CAB", "blocked_from_status": "doing" }""");
+        var updated = _vault.Load("malformed")!;
+
+        Assert.AreEqual(GlassworkTask.Statuses.Blocked, updated.Status);
+        Assert.AreEqual("Waiting on CAB", updated.BlockedReason);
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, updated.BlockedFromStatus);
+        Assert.IsNotNull(updated.BlockedAt);
+        Assert.IsFalse(updated.NeedsBlockerDetails);
+        CollectionAssert.AreEqual(
+            new[] { "blocked_reason", "blocked_at", "blocked_from_status" },
+            UpdatedFieldsFrom(updateJson));
     }
 
     [TestMethod]
@@ -2650,6 +2751,3 @@ References [[{taskId}]].
         Assert.AreEqual("Completed successfully", reloaded.Subtasks[0].Notes);
     }
 }
-
-
-
