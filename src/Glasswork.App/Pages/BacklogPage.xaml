@@ -289,6 +289,7 @@
                       Width="160">
                 <ComboBoxItem Tag="all" Content="Active (not done)" />
                 <ComboBoxItem Tag="todo" Content="To Do" />
+                <ComboBoxItem Tag="blocked" Content="Blocked" />
                 <ComboBoxItem Tag="in-progress" Content="In Progress" />
                 <ComboBoxItem Tag="done" Content="Done" />
             </ComboBox>
@@ -352,7 +353,7 @@
             </ListView.ItemContainerStyle>
         </ListView>
 
-        <!-- Board view (two columns: To Do | In Progress) -->
+        <!-- Board view (blocked + active columns) -->
         <ScrollViewer
             x:Name="BoardView"
             AutomationProperties.AutomationId="BacklogBoardView"

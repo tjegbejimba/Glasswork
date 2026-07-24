@@ -200,11 +200,13 @@ public class BacklogViewModelIndexSubscriptionTests
         var vm = new BacklogViewModel(_vault, _taskService, _index);
         vm.ViewMode = "board";
         
-        Assert.AreEqual(2, vm.BoardColumns.Count,
+        Assert.AreEqual(3, vm.BoardColumns.Count,
             "Board mode should read from Index.Tasks");
         Assert.AreEqual(0, vm.BoardColumns[0].Tasks.Count,
+            "Blocked column should be empty");
+        Assert.AreEqual(0, vm.BoardColumns[1].Tasks.Count,
             "Todo column should be empty");
-        Assert.AreEqual(1, vm.BoardColumns[1].Tasks.Count,
+        Assert.AreEqual(1, vm.BoardColumns[2].Tasks.Count,
             "In Progress column should have 1 task");
     }
 

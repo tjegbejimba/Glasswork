@@ -11,12 +11,18 @@ namespace Glasswork.Core.Services;
 public static class BacklogBoardGrouper
 {
     /// <summary>
-    /// Groups tasks into board columns (To Do, In Progress).
+    /// Groups tasks into board columns (Blocked, To Do, In Progress).
     /// Excludes done tasks. Sorts within each column by urgency score, then created date descending.
     /// </summary>
     public static List<BoardColumn> GroupByStatus(IEnumerable<GlassworkTask> tasks)
     {
         var filtered = tasks.Where(t => t.Status != GlassworkTask.Statuses.Done).ToList();
+
+        var blockedTasks = filtered
+            .Where(t => t.Status == GlassworkTask.Statuses.Blocked)
+            .OrderBy(t => t.BlockedAt ?? DateTimeOffset.MaxValue)
+            .ThenBy(t => t.Id, StringComparer.Ordinal)
+            .ToList();
 
         var todoTasks = filtered
             .Where(t => t.Status == GlassworkTask.Statuses.Todo)
@@ -30,6 +36,7 @@ public static class BacklogBoardGrouper
 
         return new List<BoardColumn>
         {
+            new BoardColumn("Blocked", blockedTasks),
             new BoardColumn("To Do", todoTasks),
             new BoardColumn("In Progress", inProgressTasks)
         };

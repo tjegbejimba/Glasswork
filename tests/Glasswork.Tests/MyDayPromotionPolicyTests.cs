@@ -25,6 +25,24 @@ public class MyDayPromotionPolicyTests
     }
 
     [TestMethod]
+    public void IsTaskInMyDayToday_BlockedTask_DoesNotPromote()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "blocked",
+            Status = GlassworkTask.Statuses.Blocked,
+            MyDay = DateTime.Today,
+            Due = DateTime.Today,
+            BlockedReason = "Waiting on approval",
+            BlockedAt = DateTimeOffset.Parse("2026-07-24T20:15:30Z"),
+            BlockedFromStatus = GlassworkTask.Statuses.Todo,
+            BlockedMetadataState = BlockedMetadataState.Valid,
+        };
+
+        Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
     public void IsTaskInMyDayToday_PinnedYesterday_ReturnsFalse()
     {
         // Past-dated pin does not promote (ADR 0013)

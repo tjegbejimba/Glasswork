@@ -10,6 +10,7 @@ public class TaskServiceTests
     private VaultService _vault = null!;
     private IndexService _index = null!;
     private TaskService _taskService = null!;
+    private DateTimeOffset _blockedNow;
 
     [TestInitialize]
     public void Setup()
@@ -18,7 +19,8 @@ public class TaskServiceTests
         _vault = new VaultService(_tempDir);
         _index = new IndexService(_vault);
         _index.EnsureLoaded();
-        _taskService = new TaskService(_vault, _index);
+        _blockedNow = DateTimeOffset.Parse("2026-07-24T20:15:30Z");
+        _taskService = new TaskService(_vault, _index, () => _blockedNow);
     }
 
     [TestCleanup]
@@ -49,6 +51,159 @@ public class TaskServiceTests
         var loaded = _vault.Load("finish-me")!;
         Assert.AreEqual(GlassworkTask.Statuses.Done, loaded.Status);
         Assert.IsNotNull(loaded.CompletedAt);
+    }
+
+    [TestMethod]
+    public void MarkBlocked_FromInProgress_SetsBlockingMetadata()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "waiting-on-approval",
+            Title = "Waiting on approval",
+            Status = GlassworkTask.Statuses.InProgress,
+        };
+        _vault.Save(task);
+
+        _taskService.MarkBlocked(task, "Waiting on deployment approval");
+
+        Assert.AreEqual(GlassworkTask.Statuses.Blocked, task.Status);
+        Assert.AreEqual("Waiting on deployment approval", task.BlockedReason);
+        Assert.AreEqual(_blockedNow, task.BlockedAt);
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, task.BlockedFromStatus);
+        Assert.AreEqual(BlockedMetadataState.Valid, task.BlockedMetadataState);
+
+        var loaded = _vault.Load(task.Id)!;
+        Assert.AreEqual(GlassworkTask.Statuses.Blocked, loaded.Status);
+        Assert.AreEqual("Waiting on deployment approval", loaded.BlockedReason);
+        Assert.AreEqual(_blockedNow, loaded.BlockedAt);
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, loaded.BlockedFromStatus);
+    }
+
+    [TestMethod]
+    public void MarkBlocked_BlankReason_ThrowsWithoutWriting()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "blank-reason",
+            Title = "Blank reason",
+            Status = GlassworkTask.Statuses.Todo,
+        };
+        _vault.Save(task);
+
+        Assert.ThrowsExactly<ArgumentException>(() => _taskService.MarkBlocked(task, "   "));
+
+        var loaded = _vault.Load(task.Id)!;
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, loaded.Status);
+        Assert.IsNull(loaded.BlockedReason);
+        Assert.IsNull(loaded.BlockedAt);
+    }
+
+    [TestMethod]
+    public void ResumeBlocked_DefaultsToPriorStatusAndClearsBlockingMetadata()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "resume-me",
+            Title = "Resume me",
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedReason = "Waiting on approval",
+            BlockedAt = _blockedNow,
+            BlockedFromStatus = GlassworkTask.Statuses.Todo,
+            BlockedMetadataState = BlockedMetadataState.Valid,
+        };
+        _vault.Save(task);
+
+        _taskService.ResumeBlocked(task);
+
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, task.Status);
+        Assert.IsNull(task.BlockedReason);
+        Assert.IsNull(task.BlockedAt);
+        Assert.IsNull(task.BlockedFromStatus);
+        Assert.AreEqual(BlockedMetadataState.None, task.BlockedMetadataState);
+    }
+
+    [TestMethod]
+    public void TransitionBlockedToDone_ClearsBlockingMetadataAndSetsCompletedAt()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "blocked-done",
+            Title = "Blocked done",
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedReason = "Waiting on approval",
+            BlockedAt = _blockedNow,
+            BlockedFromStatus = GlassworkTask.Statuses.InProgress,
+            BlockedMetadataState = BlockedMetadataState.Valid,
+        };
+        _vault.Save(task);
+
+        _taskService.SetStatus(task, GlassworkTask.Statuses.Done);
+
+        Assert.AreEqual(GlassworkTask.Statuses.Done, task.Status);
+        Assert.IsNotNull(task.CompletedAt);
+        Assert.IsNull(task.BlockedReason);
+        Assert.IsNull(task.BlockedAt);
+        Assert.IsNull(task.BlockedFromStatus);
+    }
+
+    [TestMethod]
+    public void ResumeBlocked_OverrideStatus_UsesChosenStatus()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "resume-override",
+            Title = "Resume override",
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedReason = "Waiting on approval",
+            BlockedAt = _blockedNow,
+            BlockedFromStatus = GlassworkTask.Statuses.Todo,
+            BlockedMetadataState = BlockedMetadataState.Valid,
+        };
+        _vault.Save(task);
+
+        _taskService.ResumeBlocked(task, GlassworkTask.Statuses.InProgress);
+
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, task.Status);
+        Assert.IsNull(task.BlockedReason);
+        Assert.IsNull(task.BlockedAt);
+    }
+
+    [TestMethod]
+    public void RepairBlocked_MissingTimestamp_UsesRepairTime()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "repair-me",
+            Title = "Repair me",
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedReason = "Old",
+            BlockedFromStatus = GlassworkTask.Statuses.Todo,
+            BlockedMetadataState = BlockedMetadataState.NeedsDetails,
+        };
+        _vault.Save(task);
+
+        _taskService.RepairBlocked(task, "Waiting on CAB", GlassworkTask.Statuses.InProgress);
+
+        Assert.AreEqual("Waiting on CAB", task.BlockedReason);
+        Assert.AreEqual(_blockedNow, task.BlockedAt);
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, task.BlockedFromStatus);
+        Assert.AreEqual(BlockedMetadataState.Valid, task.BlockedMetadataState);
+    }
+
+    [TestMethod]
+    public void ResumeBlocked_MalformedMetadata_ThrowsUntilRepaired()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "malformed",
+            Title = "Malformed",
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedReason = "Waiting",
+            BlockedMetadataState = BlockedMetadataState.NeedsDetails,
+        };
+        _vault.Save(task);
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => _taskService.ResumeBlocked(task));
     }
 
     [TestMethod]

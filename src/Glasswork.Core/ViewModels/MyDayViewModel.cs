@@ -120,6 +120,7 @@ public partial class MyDayViewModel : ObservableObject
         }
         var suggestions = all.Values.Where(t =>
             t.Status != GlassworkTask.Statuses.Done &&
+            t.Status != GlassworkTask.Statuses.Blocked &&
             !alreadyToday.Contains(t.Id) &&
             (
                 (t.MyDay.HasValue && t.MyDay.Value.Date < System.DateTime.Today) || // carryover

@@ -16,6 +16,7 @@ public static class TaskActionability
     {
         ArgumentNullException.ThrowIfNull(task);
         var ready = task.Status != GlassworkTask.Statuses.Done
+            && task.Status != GlassworkTask.Statuses.Blocked
             && !task.HasBlocker
             && !IsFuture(task.MyDay, context.Today)
             && !IsFuture(task.Start, context.Today)
@@ -27,6 +28,9 @@ public static class TaskActionability
 
     private static double ComputeUrgencyScore(GlassworkTask task, DateOnly today, int backlinkCount)
     {
+        if (task.Status == GlassworkTask.Statuses.Blocked)
+            return 0;
+
         var score = PriorityScore(task.Priority);
 
         if (task.Status == GlassworkTask.Statuses.InProgress)

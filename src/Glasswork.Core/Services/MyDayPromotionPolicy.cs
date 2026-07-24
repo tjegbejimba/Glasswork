@@ -20,6 +20,7 @@ public static class MyDayPromotionPolicy
 
         // Done tasks belong in Recently Completed, never Today's tasks.
         if (task.Status == GlassworkTask.Statuses.Done) return false;
+        if (task.Status == GlassworkTask.Statuses.Blocked) return false;
 
         // Direct pin: my_day == today (ADR 0013 - date-scoped promotion).
         if (task.MyDay.HasValue

@@ -146,7 +146,7 @@ Topic-driven task discovery. Splits the query on whitespace and requires **all t
 
 - **`in`** (optional): restrict which fields are searched. Omit to search all five.
 - **`tags`** (optional): AND filter — every listed tag must be present on the task.
-- **`status`** (optional): include only tasks with one of the listed statuses.
+- **`status`** (optional): include only tasks with one of the listed statuses (`todo`, `doing`, `blocked`, `done`).
 - **`limit`** (optional): max results. Values outside `[1, 100]` are silently clamped.
 
 **Output**
@@ -177,7 +177,7 @@ Results are ranked: tasks with a title match score higher than body-only matches
 |---|---|
 | `invalid_query` | Empty/whitespace query or query longer than 500 characters |
 | `invalid_in_field` | Unknown value in `in[]` (allowed: `title`, `description`, `notes`, `subtasks`, `tags`) |
-| `invalid_status` | Unknown value in `status[]` (allowed: `todo`, `doing`, `done`) |
+| `invalid_status` | Unknown value in `status[]` (allowed: `todo`, `doing`, `blocked`, `done`) |
 | `invalid_argument` | Defensive fallback for any other input-validation failure surfaced from `Glasswork.Core` |
 
 ---
@@ -191,7 +191,8 @@ Results are ranked: tasks with a title match score higher than body-only matches
   "title": "string (required)",
   "description": "string (optional) — becomes the Description body section",
   "parent_task_id": "string (optional) — ID of the parent task",
-  "status": "\"todo\" | \"doing\" | \"done\" (optional, defaults to todo)"
+  "status": "\"todo\" | \"doing\" | \"blocked\" | \"done\" (optional, defaults to todo)",
+  "blocked_reason": "string (required when status is blocked)"
 }
 ```
 
@@ -209,7 +210,8 @@ Results are ranked: tasks with a title match score higher than body-only matches
 | `error` value | When |
 |---|---|
 | `invalid_title` | `title` is null, empty, or whitespace |
-| `invalid_status` | `status` is not one of `todo`, `doing`, `done` |
+| `invalid_status` | `status` is not one of `todo`, `doing`, `blocked`, `done` |
+| `invalid_blocked_reason` | `status` is `blocked` but `blocked_reason` is null, empty, or whitespace |
 
 ### `update_task`
 
@@ -222,7 +224,9 @@ Update an existing task. Only provided fields are written; omitted fields remain
   "task_id": "string (required)",
   "fields": {
     "title": "string (optional)",
-    "status": "\"todo\" | \"doing\" | \"done\" (optional)",
+    "status": "\"todo\" | \"doing\" | \"blocked\" | \"done\" (optional)",
+    "blocked_reason": "string | null (optional) — required when setting status to blocked; used alone to edit blocker details on an already-blocked task",
+    "blocked_from_status": "\"todo\" | \"doing\" | null (optional) — only used to repair malformed blocked metadata",
     "description": "string (optional)",
     "notes": {
       "value": "string | null (required in notes object)",
@@ -257,7 +261,22 @@ The `updated_fields` array lists field names that actually changed. Fields provi
 | `error` value | When |
 |---|---|
 | `not_found` | Task with `task_id` doesn't exist |
-| `invalid_status` | `status` is not one of `todo`, `doing`, `done` |
+| `invalid_status` | `status` is not one of `todo`, `doing`, `blocked`, `done` |
+| `invalid_blocked_reason` | Blocked transition attempted without a non-empty `blocked_reason` |
+| `invalid_blocked_from_status` | `blocked_from_status` is not `todo` / `doing`, or was supplied outside malformed-block repair |
+| `invalid_blocked_state` | `blocked_reason` / `blocked_from_status` were supplied for a non-blocked task |
+| `repair_required` | Task is `status: blocked` but missing valid blocker metadata; repair must provide both `blocked_reason` and `blocked_from_status` |
+
+### Blocked-task contract
+
+- `status: "blocked"` requires `blocked_reason`.
+- `update_task` routes blocked transitions through the same Core rules as the WinUI app:
+  - non-blocked -> blocked: marks blocked and stamps `blocked_at` + `blocked_from_status`
+  - blocked -> `todo` / `doing`: resumes and clears blocker metadata
+  - blocked -> `done`: completes directly and clears blocker metadata
+  - blocked + `blocked_reason` only: edits blocker text without resetting `blocked_at`
+  - malformed blocked task + `blocked_reason` + `blocked_from_status`: repairs the metadata; if `blocked_at` was missing/invalid, repair time is used
+- Task summaries and full task payloads now surface `status: "blocked"` plus optional `blocked_reason`, `blocked_at`, `blocked_from_status`, and `needs_blocker_details`.
 | `invalid_parent` | `parent_task_id` doesn't exist in the vault |
 
 ### `list_tasks`

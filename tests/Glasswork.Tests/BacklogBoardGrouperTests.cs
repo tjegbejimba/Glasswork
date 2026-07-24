@@ -18,11 +18,13 @@ public class BacklogBoardGrouperTests
 
         var grouped = BacklogBoardGrouper.GroupByStatus(tasks);
 
-        Assert.AreEqual(2, grouped.Count, "Should have 2 columns");
-        Assert.AreEqual("To Do", grouped[0].ColumnName);
-        Assert.AreEqual(2, grouped[0].Tasks.Count);
-        Assert.AreEqual("In Progress", grouped[1].ColumnName);
-        Assert.AreEqual(1, grouped[1].Tasks.Count);
+        Assert.AreEqual(3, grouped.Count, "Should have 3 columns");
+        Assert.AreEqual("Blocked", grouped[0].ColumnName);
+        Assert.AreEqual(0, grouped[0].Tasks.Count);
+        Assert.AreEqual("To Do", grouped[1].ColumnName);
+        Assert.AreEqual(2, grouped[1].Tasks.Count);
+        Assert.AreEqual("In Progress", grouped[2].ColumnName);
+        Assert.AreEqual(1, grouped[2].Tasks.Count);
     }
 
     [TestMethod]
@@ -64,11 +66,30 @@ public class BacklogBoardGrouperTests
         Assert.IsFalse(allTasks.Any(t => t.Status == GlassworkTask.Statuses.Done));
     }
 
+    [TestMethod]
+    public void GroupByStatus_PlacesBlockedTasksInOldestFirstColumn()
+    {
+        var tasks = new[]
+        {
+            TestTask("blocked-newer", status: GlassworkTask.Statuses.Blocked, blockedAt: DateTimeOffset.Parse("2026-07-20T10:00:00Z")),
+            TestTask("blocked-older", status: GlassworkTask.Statuses.Blocked, blockedAt: DateTimeOffset.Parse("2026-07-10T10:00:00Z")),
+            TestTask("todo", status: GlassworkTask.Statuses.Todo)
+        };
+
+        var grouped = BacklogBoardGrouper.GroupByStatus(tasks);
+
+        var blockedColumn = grouped.First(c => c.ColumnName == "Blocked");
+        CollectionAssert.AreEqual(
+            new[] { "blocked-older", "blocked-newer" },
+            blockedColumn.Tasks.Select(t => t.Id).ToArray());
+    }
+
     private static GlassworkTask TestTask(
         string id,
         string status = GlassworkTask.Statuses.Todo,
         string priority = GlassworkTask.Priorities.Medium,
-        DateTime? created = null)
+        DateTime? created = null,
+        DateTimeOffset? blockedAt = null)
     {
         return new GlassworkTask
         {
@@ -77,6 +98,7 @@ public class BacklogBoardGrouperTests
             Status = status,
             Priority = priority,
             Created = created ?? DateTime.UtcNow,
+            BlockedAt = blockedAt,
             Subtasks = []
         };
     }

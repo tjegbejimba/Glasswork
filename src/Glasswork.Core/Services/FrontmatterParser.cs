@@ -88,6 +88,19 @@ public partial class FrontmatterParser
             Tags = frontmatter.Tags ?? [],
         };
 
+        if (task.Status == GlassworkTask.Statuses.Blocked)
+        {
+            task.BlockedReason = frontmatter.BlockedReason;
+            task.BlockedAt = ParseBlockedAt(frontmatter.BlockedAt);
+            task.BlockedFromStatus = frontmatter.BlockedFromStatus;
+            task.BlockedMetadataState =
+                !string.IsNullOrWhiteSpace(task.BlockedReason)
+                && task.BlockedAt.HasValue
+                && task.BlockedFromStatus is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress
+                    ? BlockedMetadataState.Valid
+                    : BlockedMetadataState.NeedsDetails;
+        }
+
         // Hydrate Links from DTO
         if (frontmatter.Links is not null)
         {
@@ -128,6 +141,9 @@ public partial class FrontmatterParser
             Type = task.Type == GlassworkTask.Types.Task ? null : task.Type,
             Created = task.Created.ToString("yyyy-MM-dd"),
             CompletedAt = task.CompletedAt?.ToString("yyyy-MM-dd"),
+            BlockedReason = task.Status == GlassworkTask.Statuses.Blocked ? task.BlockedReason : null,
+            BlockedAt = task.Status == GlassworkTask.Statuses.Blocked ? task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) : null,
+            BlockedFromStatus = task.Status == GlassworkTask.Statuses.Blocked ? task.BlockedFromStatus : null,
             Due = task.Due?.ToString("yyyy-MM-dd"),
             Start = task.Start?.ToString("yyyy-MM-dd"),
             MyDay = task.MyDay?.ToString("yyyy-MM-dd"),
@@ -358,6 +374,19 @@ public partial class FrontmatterParser
         return null;
     }
 
+    private static DateTimeOffset? ParseBlockedAt(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return DateTimeOffset.TryParseExact(
+            value,
+            "O",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? parsed.ToUniversalTime()
+            : null;
+    }
+
     /// <summary>
     /// Internal DTO matching the YAML frontmatter structure.
     /// </summary>
@@ -371,6 +400,12 @@ public partial class FrontmatterParser
         public string? Created { get; set; }
         [YamlMember(Alias = "completed_at")]
         public string? CompletedAt { get; set; }
+        [YamlMember(Alias = "blocked_reason")]
+        public string? BlockedReason { get; set; }
+        [YamlMember(Alias = "blocked_at")]
+        public string? BlockedAt { get; set; }
+        [YamlMember(Alias = "blocked_from_status")]
+        public string? BlockedFromStatus { get; set; }
         public string? Due { get; set; }
         public string? Start { get; set; }
         [YamlMember(Alias = "my_day")]

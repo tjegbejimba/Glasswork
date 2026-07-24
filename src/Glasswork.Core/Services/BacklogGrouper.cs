@@ -28,17 +28,25 @@ public static class BacklogGrouper
     {
         collapseState ??= new Dictionary<string, bool>();
         var input = tasks.ToList();
+        var blocked = input
+            .Where(t => t.Status == GlassworkTask.Statuses.Blocked)
+            .OrderBy(t => t.BlockedAt ?? DateTimeOffset.MaxValue)
+            .ThenBy(t => t.Id, System.StringComparer.Ordinal)
+            .ToList();
+        var active = input
+            .Where(t => t.Status != GlassworkTask.Statuses.Blocked)
+            .ToList();
 
-        var parentless = input.Where(t => string.IsNullOrWhiteSpace(t.Parent)).ToList();
+        var parentless = active.Where(t => string.IsNullOrWhiteSpace(t.Parent)).ToList();
 
         // Group key: trimmed lowercase. Preserve first-encountered casing for display.
-        var grouped = input
+        var grouped = active
             .Where(t => !string.IsNullOrWhiteSpace(t.Parent))
             .GroupBy(t => t.Parent!.Trim().ToLowerInvariant())
             .OrderBy(g => g.Key, System.StringComparer.Ordinal)
             .ToList();
 
-        var rows = new List<object>(parentless.Count + grouped.Count * 2);
+        var rows = new List<object>(parentless.Count + grouped.Count * 2 + blocked.Count + (blocked.Count > 0 ? 1 : 0));
         rows.AddRange(parentless);
 
         foreach (var group in grouped)
@@ -58,6 +66,16 @@ public static class BacklogGrouper
             {
                 rows.AddRange(group);
             }
+        }
+
+        if (blocked.Count > 0)
+        {
+            rows.Add(new BacklogParentGroupHeader(
+                displayHeader: "Blocked",
+                key: "__blocked__",
+                totalCount: blocked.Count,
+                isCollapsed: false));
+            rows.AddRange(blocked);
         }
 
         return rows;
