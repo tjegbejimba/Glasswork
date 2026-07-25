@@ -360,7 +360,8 @@ public sealed partial class MeetingTranscriptSyncService
                 if (CountMeaningfulTokens(candidateWithoutAnchorEvidence) < 2)
                     continue;
 
-                var independentMatch = FindCorroboratorTerm(candidateWithoutAnchorEvidence, recapText);
+                var recapWithoutAnchorEvidence = RemoveAnchorEvidence(recapText, anchorTerm, anchorStructuredAliasKey);
+                var independentMatch = FindCorroboratorTerm(candidateWithoutAnchorEvidence, recapWithoutAnchorEvidence);
                 if (independentMatch is null)
                     continue;
 
