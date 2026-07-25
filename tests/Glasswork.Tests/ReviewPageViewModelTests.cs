@@ -117,6 +117,66 @@ public class ReviewPageViewModelTests
     }
 
     [TestMethod]
+    public void Refresh_SplitsMixedTaskGroupsSoNeedsRefreshRowsStayOutOfPending()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-mixed",
+            Title = "Mixed review task",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+        });
+
+        _queue.SubmitSourceRun(new ReviewSourceRunSubmission(
+            SourceId: "meeting-transcript-sync",
+            RunKind: ReviewSourceRunKind.Scheduled,
+            Cursor: "cursor-mixed-groups",
+            Items:
+            [
+                new ReviewItemSubmission(
+                    SourceId: "meeting-transcript-sync",
+                    SourceItemId: "meeting-mixed-pending",
+                    TaskId: "task-mixed",
+                    ProposalType: ReviewProposalType.BlockTask,
+                    ChangeFingerprint: "fp-mixed-pending",
+                    SourceUrl: "https://contoso.example/meetings/mixed",
+                    SourceTitle: "Mixed sync",
+                    MatchingEvidence: "Blocker captured",
+                    Rationale: "Task is blocked",
+                    Summary: "Block task",
+                    ProposedValue: "Waiting on approval",
+                    Payload: new BlockTaskProposalPayload("Waiting on approval")),
+                new ReviewItemSubmission(
+                    SourceId: "meeting-transcript-sync",
+                    SourceItemId: "meeting-mixed-refresh",
+                    TaskId: "task-mixed",
+                    ProposalType: ReviewProposalType.MeetingNote,
+                    ChangeFingerprint: "fp-mixed-refresh",
+                    SourceUrl: "https://contoso.example/meetings/mixed",
+                    SourceTitle: "Mixed sync",
+                    MatchingEvidence: "Context captured",
+                    Rationale: "Supporting note",
+                    Summary: "Append note",
+                    ProposedValue: "Supporting note",
+                    Payload: new MeetingNoteProposalPayload(new DateOnly(2026, 7, 24), "Supporting note", string.Empty, string.Empty)),
+            ]));
+
+        var noteId = _queue.LoadSnapshot().ActiveItems.Single(item => item.ProposalType == ReviewProposalType.MeetingNote).Id;
+        Assert.IsTrue(_queue.MarkNeedsRefresh(noteId).Applied);
+
+        var viewModel = new ReviewPageViewModel(_vault, _queue);
+        viewModel.Refresh();
+
+        Assert.AreEqual(1, viewModel.PendingGroups.Count);
+        Assert.AreEqual(1, viewModel.PendingGroups[0].Items.Count);
+        Assert.AreEqual(ReviewItemState.Pending, viewModel.PendingGroups[0].Items[0].State);
+
+        Assert.AreEqual(1, viewModel.WaitingForRefreshGroups.Count);
+        Assert.AreEqual(1, viewModel.WaitingForRefreshGroups[0].Items.Count);
+        Assert.AreEqual(ReviewItemState.NeedsRefresh, viewModel.WaitingForRefreshGroups[0].Items[0].State);
+    }
+
+    [TestMethod]
     public void ToggleItemSelection_StatefulSelectionPreselectsRelatedNote_AndExplicitDeselectionPersistsUntilCleared()
     {
         _vault.Save(new GlassworkTask

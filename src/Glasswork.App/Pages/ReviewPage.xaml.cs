@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Glasswork.Services;
+using Glasswork.Core.Models;
 using Glasswork.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -127,6 +128,9 @@ public sealed partial class ReviewPage : Page
     private async void OpenSourceLink_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { Tag: string url })
+            return;
+
+        if (ArtifactLinkPolicy.Decide(url) != ArtifactLinkPolicy.Decision.Allow)
             return;
 
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))

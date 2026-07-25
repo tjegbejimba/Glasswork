@@ -87,13 +87,25 @@ public partial class ReviewPageViewModel : ObservableObject
 
         foreach (var group in grouped)
         {
-            if (group.Items.All(item => item.State == ReviewItemState.NeedsRefresh))
+            var pendingItems = group.Items.Where(item => item.State == ReviewItemState.Pending).ToList();
+            if (pendingItems.Count > 0)
             {
-                WaitingForRefreshGroups.Add(group with { StartsExpanded = false });
-                continue;
+                PendingGroups.Add(group with
+                {
+                    StartsExpanded = true,
+                    Items = pendingItems,
+                });
             }
 
-            PendingGroups.Add(group with { StartsExpanded = true });
+            var refreshItems = group.Items.Where(item => item.State == ReviewItemState.NeedsRefresh).ToList();
+            if (refreshItems.Count > 0)
+            {
+                WaitingForRefreshGroups.Add(group with
+                {
+                    StartsExpanded = false,
+                    Items = refreshItems,
+                });
+            }
         }
 
         foreach (var source in snapshot.SourceStates.Values
