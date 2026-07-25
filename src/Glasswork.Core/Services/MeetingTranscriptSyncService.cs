@@ -190,7 +190,7 @@ public sealed partial class MeetingTranscriptSyncService
         if (anchor is null)
             return Array.Empty<ReviewItemSubmission>();
 
-        var corroborator = FirstCorroborator(task, recapText);
+        var corroborator = FirstCorroborator(task, recapText, anchor.Value.term, anchor.Value.exclusionKey, anchor.Value.structuredAliasKey);
         if (corroborator is null)
             return Array.Empty<ReviewItemSubmission>();
 
@@ -282,34 +282,36 @@ public sealed partial class MeetingTranscriptSyncService
         return items;
     }
 
-    private static (string description, string term)? FindAnchor(
+    private static (string description, string term, string? exclusionKey, string? structuredAliasKey)? FindAnchor(
         GlassworkTask task,
         string recapText,
         IReadOnlyDictionary<string, int> tagCounts)
     {
         if (ContainsWholeToken(recapText, task.Id))
-            return ("Task ID", task.Id);
+            return ("Task ID", task.Id, null, null);
 
         if (!string.IsNullOrWhiteSpace(task.Title)
             && recapText.Contains(task.Title.Trim(), StringComparison.OrdinalIgnoreCase))
         {
-            return ("exact Task title", task.Title.Trim());
+            return ("exact Task title", task.Title.Trim(), null, null);
         }
 
-        foreach (var link in task.Links)
+        for (var index = 0; index < task.Links.Count; index++)
         {
+            var link = task.Links[index];
+            var exclusionKey = $"link:{index}";
             if (string.Equals(TaskLink.Types.Normalize(link.Type), TaskLink.Types.Pr, StringComparison.OrdinalIgnoreCase))
             {
                 var prValue = link.Value.Trim();
                 if (prValue.Length > 0 && (ContainsWholeToken(recapText, prValue) || recapText.Contains($"PR #{prValue}", StringComparison.OrdinalIgnoreCase)))
-                    return ("linked PR identifier", prValue);
+                    return ("linked PR identifier", prValue, exclusionKey, NormalizeStructuredIdentifierAliasKey(prValue));
             }
 
             if (string.Equals(TaskLink.Types.Normalize(link.Type), TaskLink.Types.Ado, StringComparison.OrdinalIgnoreCase))
             {
                 var adoValue = link.Value.Trim();
                 if (adoValue.Length > 0 && (ContainsWholeToken(recapText, adoValue) || recapText.Contains($"ADO #{adoValue}", StringComparison.OrdinalIgnoreCase)))
-                    return ("linked ADO identifier", adoValue);
+                    return ("linked ADO identifier", adoValue, exclusionKey, NormalizeStructuredIdentifierAliasKey(adoValue));
             }
         }
 
@@ -317,25 +319,91 @@ public sealed partial class MeetingTranscriptSyncService
         {
             var normalized = tag.ToLowerInvariant();
             if (tagCounts.GetValueOrDefault(normalized) == 1 && ContainsWholeToken(recapText, tag))
-                return ("unique project term", tag);
+                return ("unique project term", tag, null, null);
         }
 
         return null;
     }
 
-    private static (string source, string term)? FirstCorroborator(GlassworkTask task, string recapText)
+    private static (string source, string term)? FirstCorroborator(
+        GlassworkTask task,
+        string recapText,
+        string anchorTerm,
+        string? anchorExclusionKey,
+        string? anchorStructuredAliasKey)
     {
-        foreach (var sentence in task.Description.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var (source, candidate, candidateExclusionKey) in EnumerateCorroboratorCandidates(task))
         {
-            if (sentence.Length >= 8 && recapText.Contains(sentence, StringComparison.OrdinalIgnoreCase))
-                return ("Description", sentence);
+            var matchedTerm = FindCorroboratorTerm(candidate, recapText);
+            if (matchedTerm is null)
+                continue;
 
-            var matchedPhrase = FindMeaningfulPhraseOverlap(sentence, recapText);
-            if (matchedPhrase is not null)
-                return ("Description", matchedPhrase);
+            if (anchorExclusionKey is not null
+                && string.Equals(candidateExclusionKey, anchorExclusionKey, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals(matchedTerm, anchorTerm, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (anchorStructuredAliasKey is not null
+                && TryGetStructuredIdentifierAliasKey(matchedTerm, out var matchedAliasKey)
+                && string.Equals(matchedAliasKey, anchorStructuredAliasKey, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var candidateWithoutAnchorEvidence = RemoveAnchorEvidence(candidate, anchorTerm, anchorStructuredAliasKey);
+            if (!string.Equals(candidateWithoutAnchorEvidence, candidate, StringComparison.Ordinal))
+            {
+                if (CountMeaningfulTokens(candidateWithoutAnchorEvidence) < 2)
+                    continue;
+
+                var recapWithoutAnchorEvidence = RemoveAnchorEvidence(recapText, anchorTerm, anchorStructuredAliasKey);
+                var independentMatch = FindCorroboratorTerm(candidateWithoutAnchorEvidence, recapWithoutAnchorEvidence);
+                if (independentMatch is null)
+                    continue;
+
+                matchedTerm = independentMatch;
+            }
+
+            return (source, matchedTerm);
         }
 
         return null;
+    }
+
+    private static IEnumerable<(string source, string text, string? exclusionKey)> EnumerateCorroboratorCandidates(GlassworkTask task)
+    {
+        foreach (var line in SplitCorroboratorLines(task.Description))
+            yield return ("Description", line, null);
+
+        foreach (var line in SplitCorroboratorLines(task.Notes))
+            yield return ("Notes", line, null);
+
+        foreach (var subtask in task.Subtasks.Select(subtask => subtask.Text).Where(text => !string.IsNullOrWhiteSpace(text)))
+            yield return ("Subtasks", subtask, null);
+
+        foreach (var tag in task.Tags.Where(tag => !string.IsNullOrWhiteSpace(tag)))
+            yield return ("Tags", tag, null);
+
+        for (var index = 0; index < task.Links.Count; index++)
+        {
+            var link = task.Links[index];
+            var exclusionKey = $"link:{index}";
+            if (!string.IsNullOrWhiteSpace(link.Label))
+                yield return ("Links", link.Label, exclusionKey);
+
+            if (!string.IsNullOrWhiteSpace(link.Value))
+                yield return ("Links", link.Value, exclusionKey);
+        }
+    }
+
+    private static IEnumerable<string> SplitCorroboratorLines(string text)
+    {
+        return text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => line.Length > 0);
     }
 
     private static string BuildCorpus(string title, string summary, IEnumerable<string> decisions, IEnumerable<string> actionItems)
@@ -449,7 +517,36 @@ public sealed partial class MeetingTranscriptSyncService
         if (stateOutcomeCount > 1)
             return Array.Empty<ReviewItemSubmission>();
 
-        return proposals;
+        return proposals
+            .Where(proposal => IsValidStateProposal(task, proposal))
+            .ToList();
+    }
+
+    private static bool IsValidStateProposal(GlassworkTask task, ReviewItemSubmission proposal)
+    {
+        return proposal.ProposalType switch
+        {
+            ReviewProposalType.BlockTask => proposal.Payload is BlockTaskProposalPayload payload
+                && !string.IsNullOrWhiteSpace(payload.Reason)
+                && !task.IsBlocked
+                && !task.IsDone
+                && task.Status is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress
+                && !string.Equals(task.BlockedReason, payload.Reason, StringComparison.Ordinal),
+            ReviewProposalType.UnblockTask => proposal.Payload is UnblockTaskProposalPayload payload
+                && task.IsBlocked
+                && !task.NeedsBlockerDetails
+                && payload.ResumeStatus is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress,
+            ReviewProposalType.BlockerReasonChange => proposal.Payload is BlockerReasonChangeProposalPayload payload
+                && !string.IsNullOrWhiteSpace(payload.Reason)
+                && task.IsBlocked
+                && !task.NeedsBlockerDetails
+                && !string.Equals(task.BlockedReason, payload.Reason, StringComparison.Ordinal),
+            ReviewProposalType.StatusChange => proposal.Payload is StatusChangeProposalPayload payload
+                && !task.IsBlocked
+                && payload.NewStatus is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress or GlassworkTask.Statuses.Done
+                && !string.Equals(task.Status, payload.NewStatus, StringComparison.Ordinal),
+            _ => true
+        };
     }
 
     private static DateOnly? ExtractDueDate(string recapText)
@@ -480,7 +577,7 @@ public sealed partial class MeetingTranscriptSyncService
         if (conjunctionIndex >= 0)
             reason = reason[..conjunctionIndex].TrimEnd();
 
-        return reason;
+        return reason.Length == 0 ? null : reason;
     }
 
     private static string? ExtractUnblockStatus(string recapText)
@@ -508,7 +605,11 @@ public sealed partial class MeetingTranscriptSyncService
     private static string? ExtractBlockerReasonChange(string recapText)
     {
         var match = BlockerReasonChangeRegex().Match(recapText);
-        return match.Success ? match.Groups["reason"].Value.Trim().TrimEnd('.', ';', ',') : null;
+        if (!match.Success)
+            return null;
+
+        var reason = match.Groups["reason"].Value.Trim().TrimEnd('.', ';', ',');
+        return reason.Length == 0 ? null : reason;
     }
 
     private static string NormalizeStatusToken(string status)
@@ -695,8 +796,106 @@ public sealed partial class MeetingTranscriptSyncService
         return null;
     }
 
+    private static string? FindCorroboratorTerm(string candidate, string recapText)
+    {
+        var trimmed = candidate.Trim();
+        if (trimmed.Length == 0)
+            return null;
+
+        if (TryGetStructuredIdentifierAliasKey(trimmed, out var structuredAliasKey))
+        {
+            if (recapText.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
+                return trimmed;
+
+            if (recapText.Contains($"PR #{structuredAliasKey}", StringComparison.OrdinalIgnoreCase))
+                return $"PR #{structuredAliasKey}";
+
+            if (recapText.Contains($"ADO #{structuredAliasKey}", StringComparison.OrdinalIgnoreCase))
+                return $"ADO #{structuredAliasKey}";
+
+            if (ContainsWholeToken(recapText, structuredAliasKey))
+                return structuredAliasKey;
+        }
+
+        if (trimmed.Length >= 8 && recapText.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
+            return trimmed;
+
+        if (!trimmed.Contains(' ') && trimmed.Length >= 4 && ContainsWholeToken(recapText, trimmed))
+            return trimmed;
+
+        return FindMeaningfulPhraseOverlap(trimmed, recapText);
+    }
+
+    private static string NormalizeStructuredIdentifierAliasKey(string value)
+    {
+        return value.Trim().TrimStart('#');
+    }
+
+    private static bool TryGetStructuredIdentifierAliasKey(string text, out string aliasKey)
+    {
+        aliasKey = string.Empty;
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0)
+            return false;
+
+        if (trimmed.All(char.IsDigit))
+        {
+            aliasKey = NormalizeStructuredIdentifierAliasKey(trimmed);
+            return aliasKey.Length > 0;
+        }
+
+        var match = StructuredIdentifierAliasRegex().Match(trimmed);
+        if (!match.Success)
+            return false;
+
+        aliasKey = NormalizeStructuredIdentifierAliasKey(match.Groups["id"].Value);
+        return aliasKey.Length > 0;
+    }
+
+    private static string RemoveStructuredIdentifierAlias(string text, string aliasKey)
+    {
+        var stripped = Regex.Replace(
+            text,
+            $@"\b(?:PR|ADO)\s*#?\s*{Regex.Escape(aliasKey)}\b|\b{Regex.Escape(aliasKey)}\b",
+            " ",
+            RegexOptions.IgnoreCase);
+
+        stripped = Regex.Replace(stripped, @"\s+", " ");
+        return stripped.Trim().Trim('.', ',', ';', ':', '-', '#');
+    }
+
+    private static string RemoveAnchorEvidence(string text, string anchorTerm, string? anchorStructuredAliasKey)
+    {
+        var stripped = text;
+        if (anchorStructuredAliasKey is not null)
+            stripped = RemoveStructuredIdentifierAlias(stripped, anchorStructuredAliasKey);
+
+        var anchorPattern = BuildAnchorPattern(anchorTerm);
+        stripped = Regex.Replace(stripped, anchorPattern, " ", RegexOptions.IgnoreCase);
+        stripped = Regex.Replace(stripped, @"\s+", " ");
+        return stripped.Trim().Trim('.', ',', ';', ':', '-', '#');
+    }
+
+    private static string BuildAnchorPattern(string anchorTerm)
+    {
+        var escaped = Regex.Escape(anchorTerm.Trim());
+        return anchorTerm.Any(char.IsWhiteSpace) || anchorTerm.Any(ch => !char.IsLetterOrDigit(ch) && ch != '-')
+            ? escaped
+            : $@"\b{escaped}\b";
+    }
+
+    private static int CountMeaningfulTokens(string text)
+    {
+        return WordRegex()
+            .Matches(text)
+            .Count(match => match.Value.Length >= 4);
+    }
+
     [GeneratedRegex("[A-Za-z0-9-]+", RegexOptions.Compiled)]
     private static partial Regex WordRegex();
+
+    [GeneratedRegex(@"^(?:PR|ADO)\s*#?\s*(?<id>\d+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex StructuredIdentifierAliasRegex();
 
     [GeneratedRegex(@"\bdue\s+(?<date>\d{4}-\d{2}-\d{2})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
     private static partial Regex DueDateRegex();
