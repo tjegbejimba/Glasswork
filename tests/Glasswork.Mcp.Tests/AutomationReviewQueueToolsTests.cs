@@ -45,6 +45,9 @@ public sealed class AutomationReviewQueueToolsTests
         Assert.AreEqual("succeeded", result.RootElement.GetProperty("run_status").GetString());
         Assert.AreEqual(1, result.RootElement.GetProperty("accepted_count").GetInt32());
         Assert.IsTrue(result.RootElement.GetProperty("cursor_advanced").GetBoolean());
+        CollectionAssert.Contains(
+            result.RootElement.GetProperty("source").GetProperty("allowed_proposal_types").EnumerateArray().Select(value => value.GetString()!).ToArray(),
+            "meeting-note");
 
         var accepted = result.RootElement.GetProperty("accepted_items").EnumerateArray().Single();
         var acceptedReviewItemId = accepted.GetProperty("review_item_id").GetString()!;

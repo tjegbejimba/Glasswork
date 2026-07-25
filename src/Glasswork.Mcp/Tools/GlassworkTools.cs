@@ -2898,6 +2898,7 @@ public sealed class GlassworkTools
 
             var after = CreateAutomationReviewQueueService().LoadSnapshot();
             var acceptedItems = BuildAcceptedRunItems(submissions, after, result.Rejections);
+            var registeredSources = AutomationReviewQueueService.GetRegisteredSources();
 
             scope?.SetResult(result.Rejections.Count == 0 && !result.RecoveryAcknowledgementRequired ? "success" : "error");
             return JsonSerializer.Serialize(new SubmitReviewSourceRunResult(
@@ -2908,7 +2909,10 @@ public sealed class GlassworkTools
                 RecoveryAcknowledgementRequired: result.RecoveryAcknowledgementRequired,
                 AcceptedItems: acceptedItems,
                 RejectedItems: result.Rejections.Select(rejection => ToRejectedRunItem(rejection)).ToList(),
-                Source: BuildSourceHealthEntry(source_id.Trim(), after.SourceStates.GetValueOrDefault(source_id.Trim())),
+                Source: BuildSourceHealthEntry(
+                    source_id.Trim(),
+                    after.SourceStates.GetValueOrDefault(source_id.Trim()),
+                    registeredSources.GetValueOrDefault(source_id.Trim())),
                 Recovery: ToRecoverySummary(after.Recovery),
                 Cursor: BuildCursorStatus(cursor ?? string.Empty, before.SourceStates.GetValueOrDefault(source_id.Trim())?.Cursor, after.SourceStates.GetValueOrDefault(source_id.Trim())?.Cursor, result.CursorAdvanced, result.Rejections.Count > 0, result.RecoveryAcknowledgementRequired)));
         }
