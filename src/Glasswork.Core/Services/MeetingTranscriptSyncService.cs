@@ -513,13 +513,14 @@ public sealed partial class MeetingTranscriptSyncService
                 AttendanceLabel: meeting.Attendance == MeetingAttendance.NotAttended ? "Not attended" : null));
         }
 
-        var stateOutcomeCount = proposals.Count(proposal => proposal.ProposalType is ReviewProposalType.BlockTask or ReviewProposalType.UnblockTask or ReviewProposalType.StatusChange or ReviewProposalType.BlockerReasonChange);
+        var validProposals = proposals
+            .Where(proposal => IsValidStateProposal(task, proposal))
+            .ToList();
+        var stateOutcomeCount = validProposals.Count(proposal => proposal.ProposalType is ReviewProposalType.BlockTask or ReviewProposalType.UnblockTask or ReviewProposalType.StatusChange or ReviewProposalType.BlockerReasonChange);
         if (stateOutcomeCount > 1)
             return Array.Empty<ReviewItemSubmission>();
 
-        return proposals
-            .Where(proposal => IsValidStateProposal(task, proposal))
-            .ToList();
+        return validProposals;
     }
 
     private static bool IsValidStateProposal(GlassworkTask task, ReviewItemSubmission proposal)
