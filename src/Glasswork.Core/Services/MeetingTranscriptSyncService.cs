@@ -190,7 +190,7 @@ public sealed partial class MeetingTranscriptSyncService
         if (anchor is null)
             return Array.Empty<ReviewItemSubmission>();
 
-        var corroborator = FirstCorroborator(task, recapText, anchor.Value.term, anchor.Value.exclusionKey);
+        var corroborator = FirstCorroborator(task, recapText, anchor.Value.term, anchor.Value.exclusionKey, anchor.Value.structuredAliasKey);
         if (corroborator is null)
             return Array.Empty<ReviewItemSubmission>();
 
@@ -282,18 +282,18 @@ public sealed partial class MeetingTranscriptSyncService
         return items;
     }
 
-    private static (string description, string term, string? exclusionKey)? FindAnchor(
+    private static (string description, string term, string? exclusionKey, string? structuredAliasKey)? FindAnchor(
         GlassworkTask task,
         string recapText,
         IReadOnlyDictionary<string, int> tagCounts)
     {
         if (ContainsWholeToken(recapText, task.Id))
-            return ("Task ID", task.Id, null);
+            return ("Task ID", task.Id, null, null);
 
         if (!string.IsNullOrWhiteSpace(task.Title)
             && recapText.Contains(task.Title.Trim(), StringComparison.OrdinalIgnoreCase))
         {
-            return ("exact Task title", task.Title.Trim(), null);
+            return ("exact Task title", task.Title.Trim(), null, null);
         }
 
         for (var index = 0; index < task.Links.Count; index++)
@@ -304,14 +304,14 @@ public sealed partial class MeetingTranscriptSyncService
             {
                 var prValue = link.Value.Trim();
                 if (prValue.Length > 0 && (ContainsWholeToken(recapText, prValue) || recapText.Contains($"PR #{prValue}", StringComparison.OrdinalIgnoreCase)))
-                    return ("linked PR identifier", prValue, exclusionKey);
+                    return ("linked PR identifier", prValue, exclusionKey, NormalizeStructuredIdentifierAliasKey(prValue));
             }
 
             if (string.Equals(TaskLink.Types.Normalize(link.Type), TaskLink.Types.Ado, StringComparison.OrdinalIgnoreCase))
             {
                 var adoValue = link.Value.Trim();
                 if (adoValue.Length > 0 && (ContainsWholeToken(recapText, adoValue) || recapText.Contains($"ADO #{adoValue}", StringComparison.OrdinalIgnoreCase)))
-                    return ("linked ADO identifier", adoValue, exclusionKey);
+                    return ("linked ADO identifier", adoValue, exclusionKey, NormalizeStructuredIdentifierAliasKey(adoValue));
             }
         }
 
@@ -319,13 +319,18 @@ public sealed partial class MeetingTranscriptSyncService
         {
             var normalized = tag.ToLowerInvariant();
             if (tagCounts.GetValueOrDefault(normalized) == 1 && ContainsWholeToken(recapText, tag))
-                return ("unique project term", tag, null);
+                return ("unique project term", tag, null, null);
         }
 
         return null;
     }
 
-    private static (string source, string term)? FirstCorroborator(GlassworkTask task, string recapText, string anchorTerm, string? anchorExclusionKey)
+    private static (string source, string term)? FirstCorroborator(
+        GlassworkTask task,
+        string recapText,
+        string anchorTerm,
+        string? anchorExclusionKey,
+        string? anchorStructuredAliasKey)
     {
         foreach (var (source, candidate, candidateExclusionKey) in EnumerateCorroboratorCandidates(task))
         {
@@ -341,6 +346,13 @@ public sealed partial class MeetingTranscriptSyncService
 
             if (string.Equals(matchedTerm, anchorTerm, StringComparison.OrdinalIgnoreCase))
                 continue;
+
+            if (anchorStructuredAliasKey is not null
+                && TryGetStructuredIdentifierAliasKey(matchedTerm, out var matchedAliasKey)
+                && string.Equals(matchedAliasKey, anchorStructuredAliasKey, StringComparison.Ordinal))
+            {
+                continue;
+            }
 
             return (source, matchedTerm);
         }
@@ -776,6 +788,21 @@ public sealed partial class MeetingTranscriptSyncService
         if (trimmed.Length == 0)
             return null;
 
+        if (TryGetStructuredIdentifierAliasKey(trimmed, out var structuredAliasKey))
+        {
+            if (recapText.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
+                return trimmed;
+
+            if (recapText.Contains($"PR #{structuredAliasKey}", StringComparison.OrdinalIgnoreCase))
+                return $"PR #{structuredAliasKey}";
+
+            if (recapText.Contains($"ADO #{structuredAliasKey}", StringComparison.OrdinalIgnoreCase))
+                return $"ADO #{structuredAliasKey}";
+
+            if (ContainsWholeToken(recapText, structuredAliasKey))
+                return structuredAliasKey;
+        }
+
         if (trimmed.Length >= 8 && recapText.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
             return trimmed;
 
@@ -785,8 +812,37 @@ public sealed partial class MeetingTranscriptSyncService
         return FindMeaningfulPhraseOverlap(trimmed, recapText);
     }
 
+    private static string NormalizeStructuredIdentifierAliasKey(string value)
+    {
+        return value.Trim().TrimStart('#');
+    }
+
+    private static bool TryGetStructuredIdentifierAliasKey(string text, out string aliasKey)
+    {
+        aliasKey = string.Empty;
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0)
+            return false;
+
+        if (trimmed.All(char.IsDigit))
+        {
+            aliasKey = NormalizeStructuredIdentifierAliasKey(trimmed);
+            return aliasKey.Length > 0;
+        }
+
+        var match = StructuredIdentifierAliasRegex().Match(trimmed);
+        if (!match.Success)
+            return false;
+
+        aliasKey = NormalizeStructuredIdentifierAliasKey(match.Groups["id"].Value);
+        return aliasKey.Length > 0;
+    }
+
     [GeneratedRegex("[A-Za-z0-9-]+", RegexOptions.Compiled)]
     private static partial Regex WordRegex();
+
+    [GeneratedRegex(@"^(?:PR|ADO)\s*#?\s*(?<id>\d+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex StructuredIdentifierAliasRegex();
 
     [GeneratedRegex(@"\bdue\s+(?<date>\d{4}-\d{2}-\d{2})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
     private static partial Regex DueDateRegex();
