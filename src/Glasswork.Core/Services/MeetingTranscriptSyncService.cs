@@ -332,9 +332,11 @@ public sealed partial class MeetingTranscriptSyncService
         string? anchorExclusionKey,
         string? anchorStructuredAliasKey)
     {
-        foreach (var (source, candidate, candidateExclusionKey) in EnumerateCorroboratorCandidates(task))
+        var restrictSingleWordProseCorroboration = string.Equals(anchorTerm, task.Id, StringComparison.OrdinalIgnoreCase);
+        foreach (var (source, candidate, candidateExclusionKey, allowSingleTokenCorroboration) in EnumerateCorroboratorCandidates(task))
         {
-            var matchedTerm = FindCorroboratorTerm(candidate, recapText);
+            var effectiveAllowSingleTokenCorroboration = allowSingleTokenCorroboration || !restrictSingleWordProseCorroboration;
+            var matchedTerm = FindCorroboratorTerm(candidate, recapText, effectiveAllowSingleTokenCorroboration);
             if (matchedTerm is null)
                 continue;
 
@@ -361,7 +363,7 @@ public sealed partial class MeetingTranscriptSyncService
                     continue;
 
                 var recapWithoutAnchorEvidence = RemoveAnchorEvidence(recapText, anchorTerm, anchorStructuredAliasKey);
-                var independentMatch = FindCorroboratorTerm(candidateWithoutAnchorEvidence, recapWithoutAnchorEvidence);
+                var independentMatch = FindCorroboratorTerm(candidateWithoutAnchorEvidence, recapWithoutAnchorEvidence, effectiveAllowSingleTokenCorroboration);
                 if (independentMatch is null)
                     continue;
 
@@ -374,29 +376,29 @@ public sealed partial class MeetingTranscriptSyncService
         return null;
     }
 
-    private static IEnumerable<(string source, string text, string? exclusionKey)> EnumerateCorroboratorCandidates(GlassworkTask task)
+    private static IEnumerable<(string source, string text, string? exclusionKey, bool allowSingleTokenCorroboration)> EnumerateCorroboratorCandidates(GlassworkTask task)
     {
         foreach (var line in SplitCorroboratorLines(task.Description))
-            yield return ("Description", line, null);
+            yield return ("Description", line, null, false);
 
         foreach (var line in SplitCorroboratorLines(task.Notes))
-            yield return ("Notes", line, null);
+            yield return ("Notes", line, null, false);
 
         foreach (var subtask in task.Subtasks.Select(subtask => subtask.Text).Where(text => !string.IsNullOrWhiteSpace(text)))
-            yield return ("Subtasks", subtask, null);
+            yield return ("Subtasks", subtask, null, false);
 
         foreach (var tag in task.Tags.Where(tag => !string.IsNullOrWhiteSpace(tag)))
-            yield return ("Tags", tag, null);
+            yield return ("Tags", tag, null, true);
 
         for (var index = 0; index < task.Links.Count; index++)
         {
             var link = task.Links[index];
             var exclusionKey = $"link:{index}";
             if (!string.IsNullOrWhiteSpace(link.Label))
-                yield return ("Links", link.Label, exclusionKey);
+                yield return ("Links", link.Label, exclusionKey, true);
 
             if (!string.IsNullOrWhiteSpace(link.Value))
-                yield return ("Links", link.Value, exclusionKey);
+                yield return ("Links", link.Value, exclusionKey, true);
         }
     }
 
@@ -513,12 +515,17 @@ public sealed partial class MeetingTranscriptSyncService
                 AttendanceLabel: meeting.Attendance == MeetingAttendance.NotAttended ? "Not attended" : null));
         }
 
+        var distinctStateOutcomes = proposals
+            .Select(GetStateConflictOutcomeKey)
+            .Where(key => key is not null)
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+        if (distinctStateOutcomes > 1)
+            return Array.Empty<ReviewItemSubmission>();
+
         var validProposals = proposals
             .Where(proposal => IsValidStateProposal(task, proposal))
             .ToList();
-        var stateOutcomeCount = validProposals.Count(proposal => proposal.ProposalType is ReviewProposalType.BlockTask or ReviewProposalType.UnblockTask or ReviewProposalType.StatusChange or ReviewProposalType.BlockerReasonChange);
-        if (stateOutcomeCount > 1)
-            return Array.Empty<ReviewItemSubmission>();
 
         return validProposals;
     }
@@ -547,6 +554,18 @@ public sealed partial class MeetingTranscriptSyncService
                 && payload.NewStatus is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress or GlassworkTask.Statuses.Done
                 && !string.Equals(task.Status, payload.NewStatus, StringComparison.Ordinal),
             _ => true
+        };
+    }
+
+    private static string? GetStateConflictOutcomeKey(ReviewItemSubmission proposal)
+    {
+        return proposal.ProposalType switch
+        {
+            ReviewProposalType.BlockTask => "blocked",
+            ReviewProposalType.BlockerReasonChange => "blocked",
+            ReviewProposalType.UnblockTask when proposal.Payload is UnblockTaskProposalPayload payload => $"active:{payload.ResumeStatus}",
+            ReviewProposalType.StatusChange when proposal.Payload is StatusChangeProposalPayload payload => $"active:{payload.NewStatus}",
+            _ => null
         };
     }
 
@@ -797,7 +816,7 @@ public sealed partial class MeetingTranscriptSyncService
         return null;
     }
 
-    private static string? FindCorroboratorTerm(string candidate, string recapText)
+    private static string? FindCorroboratorTerm(string candidate, string recapText, bool allowSingleTokenCorroboration)
     {
         var trimmed = candidate.Trim();
         if (trimmed.Length == 0)
@@ -818,6 +837,9 @@ public sealed partial class MeetingTranscriptSyncService
                 return structuredAliasKey;
         }
 
+        if (!allowSingleTokenCorroboration && IsSingleTokenCandidate(trimmed))
+            return null;
+
         if (trimmed.Length >= 8 && recapText.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
             return trimmed;
 
@@ -825,6 +847,11 @@ public sealed partial class MeetingTranscriptSyncService
             return trimmed;
 
         return FindMeaningfulPhraseOverlap(trimmed, recapText);
+    }
+
+    private static bool IsSingleTokenCandidate(string text)
+    {
+        return WordRegex().Matches(text).Count <= 1;
     }
 
     private static string NormalizeStructuredIdentifierAliasKey(string value)
