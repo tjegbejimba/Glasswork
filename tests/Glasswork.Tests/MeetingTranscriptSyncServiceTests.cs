@@ -1152,6 +1152,47 @@ public sealed class MeetingTranscriptSyncServiceTests
     }
 
     [TestMethod]
+    public void RunScheduled_ValidBlockTaskAndInvalidBlockerReasonChange_KeepsBlockTaskProposal()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-lambda-valid-state",
+            Title = "Release gate checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Ship through the dogfood ring before broad rollout."
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-valid-state",
+                startedAt: new DateTimeOffset(2026, 7, 24, 20, 32, 0, TimeSpan.Zero),
+                title: "Escalation sync",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/valid-state",
+                groundedSummary: "task-lambda-valid-state is blocked on external approval. Blocker reason: waiting on security signoff while the dogfood ring is paused before broad rollout.",
+                decisions: ["Keep task-lambda-valid-state blocked until external approval arrives."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 21, 0, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        service.RunScheduled();
+
+        var stateProposals = queue.LoadSnapshot().ActiveItems
+            .Where(item => item.ProposalType is ReviewProposalType.BlockTask
+                or ReviewProposalType.UnblockTask
+                or ReviewProposalType.StatusChange
+                or ReviewProposalType.BlockerReasonChange)
+            .ToArray();
+        Assert.AreEqual(1, stateProposals.Length);
+        Assert.AreEqual(ReviewProposalType.BlockTask, stateProposals.Single().ProposalType);
+    }
+
+    [TestMethod]
     public void RunScheduled_EmptyBlockReason_SuppressesBlockProposal()
     {
         _vault.Save(new GlassworkTask
@@ -1288,7 +1329,7 @@ public sealed class MeetingTranscriptSyncServiceTests
                 title: "Escalation sync",
                 organizer: "Pat Lee",
                 usableUrl: "https://teams.contoso.example/recaps/conflict",
-                groundedSummary: "task-nu is blocked on external approval but task-nu can proceed in-progress once external approval is resolved and the dogfood ring can continue before broad rollout.",
+                groundedSummary: "task-nu is blocked on external approval but should move to todo while the dogfood ring continues before broad rollout.",
                 decisions: ["Track the supporting doc at https://eng.ms/docs/conflict."],
                 actionItems: Array.Empty<MeetingActionItem>())
         ]);
