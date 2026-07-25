@@ -115,6 +115,13 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | `search_tasks` | v0.5.0 | Topic-driven task discovery — ranked, scoped, with per-hit snippets |
 | `set_my_day` | v0.6.0 | Direct-pin an existing task into My Day for a date |
 | `list_backlinks` | v0.7.0 | List wiki pages that reference a task via `[[task-id]]` |
+| `submit_review_source_run` | v0.9.0 | Submit a complete registered-source Automation Review Queue run |
+| `get_review_queue_actionable` | v0.9.0 | Read actionable Pending Automation Review Queue items |
+| `get_review_queue_needs_refresh` | v0.9.0 | Read active Automation Review Queue items blocked on refresh |
+| `get_review_queue_history` | v0.9.0 | Read compact terminal Automation Review Queue history |
+| `get_review_queue_source_health` | v0.9.0 | Read registered-source health and recovery state |
+| `reject_review_item` | v0.9.0 | Reject one Automation Review Queue item |
+| `acknowledge_review_queue_recovery` | v0.9.0 | Acknowledge queue-recovery diagnostics so cursors may advance again |
 
 ### When to use which tool
 
@@ -127,6 +134,9 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | Discover tasks related to a concept or keyword | `search_tasks` |
 | Add an existing task to My Day | `set_my_day` |
 | Orient before starting work on a new issue | `search_tasks` (find prior art), then `load_context` (deep-dive) |
+| Submit meeting-transcript proposals for review | `submit_review_source_run` |
+| Read queue work the user can act on now | `get_review_queue_actionable` / `get_review_queue_needs_refresh` |
+| Inspect source health or acknowledge corruption recovery | `get_review_queue_source_health` / `acknowledge_review_queue_recovery` |
 
 ### `search_tasks`
 
@@ -678,6 +688,348 @@ Returns an empty `backlinks` array (not an error) when the task exists but has n
 - **Stateless read (ADR 0007 §6)**: The backlink index is built fresh on every `list_backlinks` call. No caching, no stale results.
 
 Under `GLASSWORK_MCP_TRACE=1`, the log line for a `list_backlinks` call includes the `backlinks_scan` phase.
+
+---
+
+## Automation Review Queue tools
+
+These tools expose the Core **Automation Review Queue** seam from ADR 0019 without adding an MCP cache, network transport, authentication, or direct JSON/Markdown queue edits.
+
+### Shared constraints
+
+- **Stateless transport**: every queue tool constructs a fresh Core service and re-reads canonical state on every call.
+- **Vault-root only**: MCP resolves the queue through `VaultContext` and always delegates with the **vault root**. Queue files stay under `<vault root>/.glasswork/`.
+- **Registered-source trust stays in Core**: the source registry and allowed proposal-type matrix are code-defined by `AutomationReviewQueueService`. In v1 the only registered source is `meeting-transcript-sync`.
+- **No approval tool in v1**: MCP does **not** expose queue approval. Scheduled automation can stage work for review, read queue state, reject items, and acknowledge recovery incidents, but cannot approve proposals through MCP.
+- **Partial acceptance semantics**: a run with any Core rejection returns `run_status: "failed"` and `cursor_advanced: false`, even when some items were accepted and durably written.
+- **Recovery gate**: when Core detects corruption recovery, source runs may still add items but source cursors remain stalled until `acknowledge_review_queue_recovery` is called with the exact active `incident_id`.
+
+### Proposal type strings and payload contracts
+
+The MCP transport uses kebab-case proposal-type strings:
+
+- `meeting-note`
+- `status-change`
+- `block-task`
+- `unblock-task`
+- `blocker-reason-change`
+- `due-date-change`
+- `subtask-addition`
+- `structured-link-addition`
+- `priority-change` *(recognized so Core can return `proposal_type_not_allowed` for v1 sources)*
+
+**Payload rules**
+
+- `meeting-note` — payload optional. When present:
+  ```json
+  {
+    "meeting_date": "yyyy-MM-dd",
+    "relevant_update": "string",
+    "decisions": "string (optional, defaults to empty)",
+    "my_commitments": "string (optional, defaults to empty)"
+  }
+  ```
+- `status-change`
+  ```json
+  { "new_status": "todo | doing | blocked | done" }
+  ```
+- `block-task`
+  ```json
+  { "reason": "string" }
+  ```
+- `unblock-task`
+  ```json
+  { "resume_status": "todo | doing | blocked | done" }
+  ```
+- `blocker-reason-change`
+  ```json
+  { "reason": "string" }
+  ```
+- `due-date-change`
+  ```json
+  { "candidate_dates": ["yyyy-MM-dd"] }
+  ```
+  Exactly **one** date is allowed; Core returns `invalid_due_date_payload` otherwise.
+- `subtask-addition`
+  ```json
+  { "title": "string" }
+  ```
+- `structured-link-addition`
+  ```json
+  {
+    "link_type": "string",
+    "value": "string",
+    "label": "string | null"
+  }
+  ```
+
+### `submit_review_source_run`
+
+Submit a complete registered-source run to the Core queue seam.
+
+**Input**
+
+```json
+{
+  "source_id": "meeting-transcript-sync",
+  "run_kind": "scheduled | manual",
+  "cursor": "string",
+  "items": [
+    {
+      "source_item_id": "string",
+      "task_id": "string",
+      "proposal_type": "meeting-note | status-change | ...",
+      "change_fingerprint": "string",
+      "source_url": "string",
+      "source_title": "string",
+      "matching_evidence": "string",
+      "rationale": "string",
+      "summary": "string",
+      "proposed_value": "string",
+      "payload": { "...typed by proposal_type..." }
+    }
+  ]
+}
+```
+
+**Output**
+
+```json
+{
+  "run_status": "succeeded | failed",
+  "accepted_count": 1,
+  "rejected_count": 1,
+  "cursor_advanced": false,
+  "recovery_acknowledgement_required": false,
+  "accepted_items": [
+    {
+      "review_item_id": "review-...",
+      "source_item_id": "meeting-123",
+      "task_id": "task-1",
+      "proposal_type": "meeting-note",
+      "state": "pending"
+    }
+  ],
+  "rejected_items": [
+    {
+      "source_item_id": "meeting-124",
+      "task_id": "task-2",
+      "proposal_type": "priority-change",
+      "error": "proposal_type_not_allowed",
+      "message": "..."
+    }
+  ],
+  "source": {
+    "source_id": "meeting-transcript-sync",
+    "allowed_proposal_types": ["meeting-note", "status-change"],
+    "cursor": "string | null",
+    "last_successful_run_at": "ISO-8601 | null",
+    "is_degraded": false,
+    "consecutive_scheduled_failures": 0,
+    "diagnostics": [
+      {
+        "recorded_at": "ISO-8601",
+        "status": "succeeded | failed",
+        "message": "string"
+      }
+    ]
+  },
+  "recovery": {
+    "incident_id": "string | null",
+    "message": "string | null",
+    "requires_acknowledgement": false
+  },
+  "cursor": {
+    "submitted": "cursor-from-input",
+    "previous": "string | null",
+    "stored": "string | null",
+    "advanced": false,
+    "blocked_reason": "item_rejections | recovery_acknowledgement_required | not_advanced | null"
+  }
+}
+```
+
+**Important**
+
+- `accepted_items` are the items Core actually persisted as active queue entries after the submit call.
+- `rejected_items` come from Core source-registry / proposal validation logic.
+- When any item is rejected, the run still persists accepted items, but the run returns `run_status: "failed"` and the source cursor does **not** advance.
+- A clean zero-proposal run can still advance the cursor.
+
+### `get_review_queue_actionable`
+
+Returns only active **Pending** items.
+
+**Input**
+
+```json
+{}
+```
+
+**Output**
+
+```json
+{
+  "items": [
+    {
+      "review_item_id": "review-...",
+      "source_id": "meeting-transcript-sync",
+      "source_item_id": "meeting-123",
+      "task_id": "task-1",
+      "proposal_type": "meeting-note",
+      "state": "pending",
+      "summary": "string",
+      "proposed_value": "string",
+      "source_title": "string",
+      "source_url": "string",
+      "matching_evidence": "string",
+      "rationale": "string",
+      "generated_at": "ISO-8601",
+      "last_apply_failure_code": null,
+      "last_apply_failure_message": null,
+      "last_apply_failure_at": null,
+      "refresh_unavailable_count": 0
+    }
+  ]
+}
+```
+
+### `get_review_queue_needs_refresh`
+
+Same shape as `get_review_queue_actionable`, but returns only active items whose `state` is `needs_refresh`.
+
+### `get_review_queue_history`
+
+Read compact terminal history, newest first.
+
+**Input**
+
+```json
+{
+  "limit": "integer (optional, default 25, must be > 0)"
+}
+```
+
+**Output**
+
+```json
+{
+  "items": [
+    {
+      "review_item_id": "review-...",
+      "source_id": "meeting-transcript-sync",
+      "source_item_id": "meeting-123",
+      "task_id": "task-1",
+      "proposal_type": "meeting-note",
+      "disposition": "approved | rejected | withdrawn | expired",
+      "disposed_at": "ISO-8601"
+    }
+  ]
+}
+```
+
+### `get_review_queue_source_health`
+
+Read source health for every code-defined registered source plus the current recovery gate.
+
+**Input**
+
+```json
+{}
+```
+
+**Output**
+
+```json
+{
+  "sources": [
+    {
+      "source_id": "meeting-transcript-sync",
+      "allowed_proposal_types": ["meeting-note", "status-change", "block-task", "unblock-task", "blocker-reason-change", "due-date-change", "subtask-addition", "structured-link-addition"],
+      "cursor": "string | null",
+      "last_successful_run_at": "ISO-8601 | null",
+      "is_degraded": false,
+      "consecutive_scheduled_failures": 0,
+      "diagnostics": [
+        {
+          "recorded_at": "ISO-8601",
+          "status": "succeeded | failed",
+          "message": "string"
+        }
+      ]
+    }
+  ],
+  "recovery": {
+    "incident_id": "string | null",
+    "message": "string | null",
+    "requires_acknowledgement": false
+  }
+}
+```
+
+### `reject_review_item`
+
+Reject one review item. This tool always maps to Core `Rejected`; it cannot approve.
+
+**Input**
+
+```json
+{
+  "review_item_id": "string (required)",
+  "reason": "string (optional)"
+}
+```
+
+**Output**
+
+```json
+{
+  "review_item_id": "review-...",
+  "applied": true,
+  "disposition": "rejected",
+  "error": "string | null",
+  "message": "string | null"
+}
+```
+
+Common `error` values when `applied` is `false`:
+
+- `item_not_found`
+- `needs_refresh_not_approvable` *(should not normally occur for rejection, but is surfaced transparently from Core if returned)*
+
+### `acknowledge_review_queue_recovery`
+
+Acknowledge the active recovery incident so source cursors may advance again.
+
+**Input**
+
+```json
+{
+  "incident_id": "string (required) — must exactly match get_review_queue_source_health.recovery.incident_id"
+}
+```
+
+**Output**
+
+```json
+{
+  "incident_id": "string",
+  "acknowledged": true,
+  "recovery": {
+    "incident_id": null,
+    "message": null,
+    "requires_acknowledgement": false
+  },
+  "error": "string | null",
+  "message": "string | null"
+}
+```
+
+Common `error` values when `acknowledged` is `false`:
+
+- `no_recovery_acknowledgement_required`
+- `incident_id_mismatch`
+- `acknowledgement_failed`
 
 ---
 
