@@ -515,17 +515,17 @@ public sealed partial class MeetingTranscriptSyncService
                 AttendanceLabel: meeting.Attendance == MeetingAttendance.NotAttended ? "Not attended" : null));
         }
 
-        var distinctStateOutcomes = proposals
+        var validProposals = proposals
+            .Where(proposal => IsValidStateProposal(task, proposal))
+            .ToList();
+
+        var distinctStateOutcomes = validProposals
             .Select(GetStateConflictOutcomeKey)
             .Where(key => key is not null)
             .Distinct(StringComparer.Ordinal)
             .Count();
         if (distinctStateOutcomes > 1)
             return Array.Empty<ReviewItemSubmission>();
-
-        var validProposals = proposals
-            .Where(proposal => IsValidStateProposal(task, proposal))
-            .ToList();
 
         return validProposals;
     }

@@ -1257,16 +1257,12 @@ public sealed class MeetingTranscriptSyncServiceTests
         var queue = new AutomationReviewQueueService(_vaultRoot, clock);
         var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
 
-        service.RunScheduled();
+        var result = service.RunScheduled();
 
-        var stateProposals = queue.LoadSnapshot().ActiveItems
-            .Where(item => item.ProposalType is ReviewProposalType.BlockTask
-                or ReviewProposalType.UnblockTask
-                or ReviewProposalType.StatusChange
-                or ReviewProposalType.BlockerReasonChange)
-            .ToArray();
-        Assert.AreEqual(1, stateProposals.Length);
-        Assert.AreEqual(ReviewProposalType.BlockTask, stateProposals.Single().ProposalType);
+        Assert.AreEqual(2, result.AcceptedCount);
+        CollectionAssert.AreEquivalent(
+            new[] { ReviewProposalType.MeetingNote, ReviewProposalType.BlockTask },
+            queue.LoadSnapshot().ActiveItems.Select(item => item.ProposalType).ToArray());
     }
 
     [TestMethod]
