@@ -592,6 +592,80 @@ public sealed class MeetingTranscriptSyncServiceTests
     }
 
     [TestMethod]
+    public void RunScheduled_LinkIdentifierAnchorWrappedAliasInDescription_DoesNotQualify()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-link-wrapped-alias-self-corroboration",
+            Title = "Publish checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Tracking PR #54876",
+            Links =
+            [
+                new TaskLink { Type = TaskLink.Types.Pr, Value = "54876", Label = null }
+            ]
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-link-wrapped-alias-self-corroboration",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 54, 0, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/link-wrapped-alias-self-corroboration",
+                groundedSummary: "Tracking PR #54876 is still pending.",
+                decisions: ["Keep PR #54876 under review."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 24, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(0, result.AcceptedCount);
+        Assert.AreEqual(0, queue.LoadSnapshot().ActiveItems.Count);
+    }
+
+    [TestMethod]
+    public void RunScheduled_TaskIdAnchorWrappedInDescription_DoesNotQualify()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-alpha",
+            Title = "Publish checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Tracking task-alpha"
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-task-id-wrapped-self-corroboration",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 54, 30, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/task-id-wrapped-self-corroboration",
+                groundedSummary: "Tracking task-alpha is still pending.",
+                decisions: ["Keep task-alpha under review."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 24, 30, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(0, result.AcceptedCount);
+        Assert.AreEqual(0, queue.LoadSnapshot().ActiveItems.Count);
+    }
+
+    [TestMethod]
     public void RunScheduled_UniqueProjectTermAnchorWithoutSeparateCorroborator_DoesNotQualify()
     {
         _vault.Save(new GlassworkTask

@@ -354,6 +354,19 @@ public sealed partial class MeetingTranscriptSyncService
                 continue;
             }
 
+            var candidateWithoutAnchorEvidence = RemoveAnchorEvidence(candidate, anchorTerm, anchorStructuredAliasKey);
+            if (!string.Equals(candidateWithoutAnchorEvidence, candidate, StringComparison.Ordinal))
+            {
+                if (CountMeaningfulTokens(candidateWithoutAnchorEvidence) < 2)
+                    continue;
+
+                var independentMatch = FindCorroboratorTerm(candidateWithoutAnchorEvidence, recapText);
+                if (independentMatch is null)
+                    continue;
+
+                matchedTerm = independentMatch;
+            }
+
             return (source, matchedTerm);
         }
 
@@ -836,6 +849,43 @@ public sealed partial class MeetingTranscriptSyncService
 
         aliasKey = NormalizeStructuredIdentifierAliasKey(match.Groups["id"].Value);
         return aliasKey.Length > 0;
+    }
+
+    private static string RemoveStructuredIdentifierAlias(string text, string aliasKey)
+    {
+        var stripped = Regex.Replace(
+            text,
+            $@"\b(?:PR|ADO)\s*#?\s*{Regex.Escape(aliasKey)}\b|\b{Regex.Escape(aliasKey)}\b",
+            " ",
+            RegexOptions.IgnoreCase);
+
+        stripped = Regex.Replace(stripped, @"\s+", " ");
+        return stripped.Trim().Trim('.', ',', ';', ':', '-', '#');
+    }
+
+    private static string RemoveAnchorEvidence(string text, string anchorTerm, string? anchorStructuredAliasKey)
+    {
+        var stripped = text;
+        if (anchorStructuredAliasKey is not null)
+            stripped = RemoveStructuredIdentifierAlias(stripped, anchorStructuredAliasKey);
+
+        var anchorPattern = BuildAnchorPattern(anchorTerm);
+        stripped = Regex.Replace(stripped, anchorPattern, " ", RegexOptions.IgnoreCase);
+        stripped = Regex.Replace(stripped, @"\s+", " ");
+        return stripped.Trim().Trim('.', ',', ';', ':', '-', '#');
+    }
+
+    private static string BuildAnchorPattern(string anchorTerm)
+    {
+        var escaped = Regex.Escape(anchorTerm.Trim());
+        return anchorTerm.Any(char.IsWhiteSpace) || anchorTerm.Any(ch => !char.IsLetterOrDigit(ch) && ch != '-')
+            ? escaped
+            : $@"\b{escaped}\b";
+    }
+
+    private static int CountMeaningfulTokens(string text)
+    {
+        return WordRegex().Matches(text).Count;
     }
 
     [GeneratedRegex("[A-Za-z0-9-]+", RegexOptions.Compiled)]
