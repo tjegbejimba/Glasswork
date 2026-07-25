@@ -2847,6 +2847,280 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "submit_review_source_run")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Submit a complete registered-source Automation Review Queue run. Delegates to Core for registry checks, validation, lifecycle, source health, and recovery gating.")]
+    public string SubmitReviewSourceRun(
+        [Description("Registered review source ID. In v1 this must be 'meeting-transcript-sync'.")] string source_id,
+        [Description("Run kind: 'scheduled' or 'manual'.")] string run_kind,
+        [Description("Opaque source cursor for this run.")] string cursor,
+        [Description("JSON array of review items for this run. Each item must include source_item_id, task_id, proposal_type, change_fingerprint, source_url, source_title, matching_evidence, rationale, summary, proposed_value, and an optional typed payload.")] JsonElement items)
+    {
+        using var scope = _logger?.BeginCall("submit_review_source_run");
+        try
+        {
+            if (string.IsNullOrWhiteSpace(source_id))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_source_id", "source_id is required."));
+            }
+
+            if (!TryParseRunKind(run_kind, out var parsedRunKind))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_run_kind", "run_kind must be 'scheduled' or 'manual'."));
+            }
+
+            if (items.ValueKind != JsonValueKind.Array)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_items", "items must be a JSON array."));
+            }
+
+            var before = CreateAutomationReviewQueueService().LoadSnapshot();
+            var submissions = new List<ReviewItemSubmission>();
+            foreach (var item in items.EnumerateArray())
+            {
+                if (!TryParseReviewItemSubmission(source_id, item, out var submission, out var errorCode, out var errorMessage))
+                {
+                    scope?.SetResult("error");
+                    return JsonSerializer.Serialize(new ErrorResult(errorCode!, errorMessage!));
+                }
+
+                submissions.Add(submission!);
+            }
+
+            var result = CreateAutomationReviewQueueService().SubmitSourceRun(new ReviewSourceRunSubmission(
+                SourceId: source_id.Trim(),
+                RunKind: parsedRunKind,
+                Cursor: cursor ?? string.Empty,
+                Items: submissions));
+
+            var after = CreateAutomationReviewQueueService().LoadSnapshot();
+            var acceptedItems = BuildAcceptedRunItems(submissions, after, result.Rejections);
+            var registeredSources = AutomationReviewQueueService.GetRegisteredSources();
+
+            scope?.SetResult(result.Rejections.Count == 0 && !result.RecoveryAcknowledgementRequired ? "success" : "error");
+            return JsonSerializer.Serialize(new SubmitReviewSourceRunResult(
+                RunStatus: result.Rejections.Count == 0 && !result.RecoveryAcknowledgementRequired ? "succeeded" : "failed",
+                AcceptedCount: result.AcceptedCount,
+                RejectedCount: result.Rejections.Count,
+                CursorAdvanced: result.CursorAdvanced,
+                RecoveryAcknowledgementRequired: result.RecoveryAcknowledgementRequired,
+                AcceptedItems: acceptedItems,
+                RejectedItems: result.Rejections.Select(rejection => ToRejectedRunItem(rejection)).ToList(),
+                Source: BuildSourceHealthEntry(
+                    source_id.Trim(),
+                    after.SourceStates.GetValueOrDefault(source_id.Trim()),
+                    registeredSources.GetValueOrDefault(source_id.Trim())),
+                Recovery: ToRecoverySummary(after.Recovery),
+                Cursor: BuildCursorStatus(cursor ?? string.Empty, before.SourceStates.GetValueOrDefault(source_id.Trim())?.Cursor, after.SourceStates.GetValueOrDefault(source_id.Trim())?.Cursor, result.CursorAdvanced, result.Rejections.Count > 0, result.RecoveryAcknowledgementRequired)));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "get_review_queue_actionable")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Read actionable Automation Review Queue items (Pending only). Re-reads canonical queue state on every call.")]
+    public string GetReviewQueueActionable()
+    {
+        using var scope = _logger?.BeginCall("get_review_queue_actionable");
+        try
+        {
+            var snapshot = CreateAutomationReviewQueueService().LoadSnapshot();
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(new ReviewQueueItemsResult(
+                Items: snapshot.ActiveItems
+                    .Where(item => item.State == ReviewItemState.Pending)
+                    .OrderBy(item => item.GeneratedAt)
+                    .Select(ToQueueItemSummary)
+                    .ToList()));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "get_review_queue_needs_refresh")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Read Automation Review Queue items that need refresh before they can be approved.")]
+    public string GetReviewQueueNeedsRefresh()
+    {
+        using var scope = _logger?.BeginCall("get_review_queue_needs_refresh");
+        try
+        {
+            var snapshot = CreateAutomationReviewQueueService().LoadSnapshot();
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(new ReviewQueueItemsResult(
+                Items: snapshot.ActiveItems
+                    .Where(item => item.State == ReviewItemState.NeedsRefresh)
+                    .OrderBy(item => item.GeneratedAt)
+                    .Select(ToQueueItemSummary)
+                    .ToList()));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "get_review_queue_history")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Read the compact Automation Review Queue history of terminal dispositions. Returns most recent entries first.")]
+    public string GetReviewQueueHistory(
+        [Description("Maximum number of history entries to return. Defaults to 25.")] int limit = 25)
+    {
+        using var scope = _logger?.BeginCall("get_review_queue_history");
+        try
+        {
+            if (limit <= 0)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_limit", "limit must be greater than zero."));
+            }
+
+            var snapshot = CreateAutomationReviewQueueService().LoadSnapshot();
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(new ReviewQueueHistoryResult(
+                Items: snapshot.History
+                    .OrderByDescending(item => item.DisposedAt)
+                    .Take(limit)
+                    .Select(ToHistorySummary)
+                    .ToList()));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "get_review_queue_source_health")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Read Automation Review Queue source health and recovery state. Includes the code-defined v1 registered-source matrix.")]
+    public string GetReviewQueueSourceHealth()
+    {
+        using var scope = _logger?.BeginCall("get_review_queue_source_health");
+        try
+        {
+            var snapshot = CreateAutomationReviewQueueService().LoadSnapshot();
+            var registeredSources = AutomationReviewQueueService.GetRegisteredSources();
+            var sources = registeredSources
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair =>
+                {
+                    snapshot.SourceStates.TryGetValue(pair.Key, out var state);
+                    return BuildSourceHealthEntry(pair.Key, state, pair.Value);
+                })
+                .ToList();
+
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(new ReviewQueueSourceHealthResult(
+                Sources: sources,
+                Recovery: ToRecoverySummary(snapshot.Recovery)));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "reject_review_item")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Reject one Automation Review Queue item. This MCP wrapper hard-codes the Rejected terminal state and cannot approve items.")]
+    public string RejectReviewItem(
+        [Description("Review item ID to reject.")] string review_item_id,
+        [Description("Optional rejection reason stored in queue history.")] string? reason = null)
+    {
+        using var scope = _logger?.BeginCall("reject_review_item");
+        try
+        {
+            if (string.IsNullOrWhiteSpace(review_item_id))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_review_item_id", "review_item_id is required."));
+            }
+
+            var result = CreateAutomationReviewQueueService().TransitionItem(review_item_id.Trim(), ReviewItemState.Rejected, reason);
+            scope?.SetResult(result.Applied ? "success" : "error");
+            return JsonSerializer.Serialize(new RejectReviewItemResult(
+                ReviewItemId: review_item_id.Trim(),
+                Applied: result.Applied,
+                Disposition: "rejected",
+                Error: result.ErrorCode,
+                Message: result.ErrorCode is null ? null : $"Review item '{review_item_id.Trim()}' could not be rejected: {result.ErrorCode}."));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "acknowledge_review_queue_recovery")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Acknowledge the current Automation Review Queue recovery incident so source cursors may advance again.")]
+    public string AcknowledgeReviewQueueRecovery(
+        [Description("Exact recovery incident ID returned by get_review_queue_source_health.")] string incident_id)
+    {
+        using var scope = _logger?.BeginCall("acknowledge_review_queue_recovery");
+        try
+        {
+            if (string.IsNullOrWhiteSpace(incident_id))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_incident_id", "incident_id is required."));
+            }
+
+            var queue = CreateAutomationReviewQueueService();
+            var before = queue.LoadSnapshot();
+            var acknowledged = queue.AcknowledgeRecovery(incident_id.Trim());
+            var after = CreateAutomationReviewQueueService().LoadSnapshot();
+            string? error = null;
+            string? message = null;
+
+            if (!acknowledged)
+            {
+                if (!before.Recovery.RequiresAcknowledgement)
+                {
+                    error = "no_recovery_acknowledgement_required";
+                    message = "The queue does not currently require recovery acknowledgement.";
+                }
+                else if (!string.Equals(before.Recovery.IncidentId, incident_id.Trim(), StringComparison.Ordinal))
+                {
+                    error = "incident_id_mismatch";
+                    message = $"Incident id '{incident_id.Trim()}' does not match the active recovery incident.";
+                }
+                else
+                {
+                    error = "acknowledgement_failed";
+                    message = "Recovery acknowledgement did not succeed.";
+                }
+            }
+
+            scope?.SetResult(acknowledged ? "success" : "error");
+            return JsonSerializer.Serialize(new AcknowledgeReviewQueueRecoveryResult(
+                IncidentId: incident_id.Trim(),
+                Acknowledged: acknowledged,
+                Recovery: ToRecoverySummary(after.Recovery),
+                Error: error,
+                Message: message));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
     private sealed record PromoteSubtaskResult(
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("path")] string Path);
@@ -2909,5 +3183,565 @@ public sealed class GlassworkTools
             scope?.SetResult("error");
             throw;
         }
+    }
+
+    private sealed record SubmitReviewSourceRunResult(
+        [property: JsonPropertyName("run_status")] string RunStatus,
+        [property: JsonPropertyName("accepted_count")] int AcceptedCount,
+        [property: JsonPropertyName("rejected_count")] int RejectedCount,
+        [property: JsonPropertyName("cursor_advanced")] bool CursorAdvanced,
+        [property: JsonPropertyName("recovery_acknowledgement_required")] bool RecoveryAcknowledgementRequired,
+        [property: JsonPropertyName("accepted_items")] List<AcceptedRunItem> AcceptedItems,
+        [property: JsonPropertyName("rejected_items")] List<RejectedRunItem> RejectedItems,
+        [property: JsonPropertyName("source")] ReviewQueueSourceSummary Source,
+        [property: JsonPropertyName("recovery")] ReviewQueueRecoverySummary Recovery,
+        [property: JsonPropertyName("cursor")] CursorStatus Cursor);
+
+    private sealed record AcceptedRunItem(
+        [property: JsonPropertyName("review_item_id")] string ReviewItemId,
+        [property: JsonPropertyName("source_item_id")] string SourceItemId,
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("proposal_type")] string ProposalType,
+        [property: JsonPropertyName("state")] string State);
+
+    private sealed record RejectedRunItem(
+        [property: JsonPropertyName("source_item_id")] string SourceItemId,
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("proposal_type")] string ProposalType,
+        [property: JsonPropertyName("error")] string Error,
+        [property: JsonPropertyName("message")] string Message);
+
+    private sealed record CursorStatus(
+        [property: JsonPropertyName("submitted")] string Submitted,
+        [property: JsonPropertyName("previous"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Previous,
+        [property: JsonPropertyName("stored"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Stored,
+        [property: JsonPropertyName("advanced")] bool Advanced,
+        [property: JsonPropertyName("blocked_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedReason);
+
+    private sealed record ReviewQueueItemsResult(
+        [property: JsonPropertyName("items")] List<ReviewQueueItemSummary> Items);
+
+    private sealed record ReviewQueueItemSummary(
+        [property: JsonPropertyName("review_item_id")] string ReviewItemId,
+        [property: JsonPropertyName("source_id")] string SourceId,
+        [property: JsonPropertyName("source_item_id")] string SourceItemId,
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("proposal_type")] string ProposalType,
+        [property: JsonPropertyName("state")] string State,
+        [property: JsonPropertyName("summary")] string Summary,
+        [property: JsonPropertyName("proposed_value")] string ProposedValue,
+        [property: JsonPropertyName("source_title")] string SourceTitle,
+        [property: JsonPropertyName("source_url")] string SourceUrl,
+        [property: JsonPropertyName("matching_evidence")] string MatchingEvidence,
+        [property: JsonPropertyName("rationale")] string Rationale,
+        [property: JsonPropertyName("generated_at")] string GeneratedAt,
+        [property: JsonPropertyName("last_apply_failure_code"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LastApplyFailureCode,
+        [property: JsonPropertyName("last_apply_failure_message"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LastApplyFailureMessage,
+        [property: JsonPropertyName("last_apply_failure_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LastApplyFailureAt,
+        [property: JsonPropertyName("refresh_unavailable_count")] int RefreshUnavailableCount);
+
+    private sealed record ReviewQueueHistoryResult(
+        [property: JsonPropertyName("items")] List<ReviewQueueHistorySummary> Items);
+
+    private sealed record ReviewQueueHistorySummary(
+        [property: JsonPropertyName("review_item_id")] string ReviewItemId,
+        [property: JsonPropertyName("source_id")] string SourceId,
+        [property: JsonPropertyName("source_item_id")] string SourceItemId,
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("proposal_type")] string ProposalType,
+        [property: JsonPropertyName("disposition")] string Disposition,
+        [property: JsonPropertyName("disposed_at")] string DisposedAt);
+
+    private sealed record ReviewQueueSourceHealthResult(
+        [property: JsonPropertyName("sources")] List<ReviewQueueSourceSummary> Sources,
+        [property: JsonPropertyName("recovery")] ReviewQueueRecoverySummary Recovery);
+
+    private sealed record ReviewQueueSourceSummary(
+        [property: JsonPropertyName("source_id")] string SourceId,
+        [property: JsonPropertyName("allowed_proposal_types")] List<string> AllowedProposalTypes,
+        [property: JsonPropertyName("cursor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Cursor,
+        [property: JsonPropertyName("last_successful_run_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LastSuccessfulRunAt,
+        [property: JsonPropertyName("is_degraded")] bool IsDegraded,
+        [property: JsonPropertyName("consecutive_scheduled_failures")] int ConsecutiveScheduledFailures,
+        [property: JsonPropertyName("diagnostics")] List<ReviewQueueSourceDiagnosticSummary> Diagnostics);
+
+    private sealed record ReviewQueueSourceDiagnosticSummary(
+        [property: JsonPropertyName("recorded_at")] string RecordedAt,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("message")] string Message);
+
+    private sealed record ReviewQueueRecoverySummary(
+        [property: JsonPropertyName("incident_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? IncidentId,
+        [property: JsonPropertyName("message"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Message,
+        [property: JsonPropertyName("requires_acknowledgement")] bool RequiresAcknowledgement);
+
+    private sealed record RejectReviewItemResult(
+        [property: JsonPropertyName("review_item_id")] string ReviewItemId,
+        [property: JsonPropertyName("applied")] bool Applied,
+        [property: JsonPropertyName("disposition")] string Disposition,
+        [property: JsonPropertyName("error"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error,
+        [property: JsonPropertyName("message"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Message);
+
+    private sealed record AcknowledgeReviewQueueRecoveryResult(
+        [property: JsonPropertyName("incident_id")] string IncidentId,
+        [property: JsonPropertyName("acknowledged")] bool Acknowledged,
+        [property: JsonPropertyName("recovery")] ReviewQueueRecoverySummary Recovery,
+        [property: JsonPropertyName("error"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error,
+        [property: JsonPropertyName("message"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Message);
+
+    private AutomationReviewQueueService CreateAutomationReviewQueueService() => new(_vaultRoot);
+
+    private static bool TryParseRunKind(string? value, out ReviewSourceRunKind runKind)
+    {
+        runKind = default;
+        if (string.Equals(value, "scheduled", StringComparison.OrdinalIgnoreCase))
+        {
+            runKind = ReviewSourceRunKind.Scheduled;
+            return true;
+        }
+
+        if (string.Equals(value, "manual", StringComparison.OrdinalIgnoreCase))
+        {
+            runKind = ReviewSourceRunKind.Manual;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryParseReviewItemSubmission(
+        string sourceId,
+        JsonElement item,
+        out ReviewItemSubmission? submission,
+        out string? errorCode,
+        out string? errorMessage)
+    {
+        submission = null;
+        errorCode = null;
+        errorMessage = null;
+
+        if (item.ValueKind != JsonValueKind.Object)
+        {
+            errorCode = "invalid_item";
+            errorMessage = "Each review item must be a JSON object.";
+            return false;
+        }
+
+        if (!TryGetRequiredString(item, "source_item_id", out var sourceItemId, out errorCode, out errorMessage)
+            || !TryGetRequiredString(item, "task_id", out var taskId, out errorCode, out errorMessage)
+            || !TryGetRequiredString(item, "proposal_type", out var proposalTypeRaw, out errorCode, out errorMessage)
+            || !TryGetRequiredString(item, "change_fingerprint", out var changeFingerprint, out errorCode, out errorMessage)
+            || !TryGetRequiredString(item, "source_url", out var sourceUrl, out errorCode, out errorMessage)
+            || !TryGetRequiredString(item, "source_title", out var sourceTitle, out errorCode, out errorMessage)
+            || !TryGetRequiredString(item, "matching_evidence", out var matchingEvidence, out errorCode, out errorMessage)
+            || !TryGetRequiredString(item, "rationale", out var rationale, out errorCode, out errorMessage)
+            || !TryGetRequiredString(item, "summary", out var summary, out errorCode, out errorMessage)
+            || !TryGetRequiredString(item, "proposed_value", out var proposedValue, out errorCode, out errorMessage))
+        {
+            return false;
+        }
+
+        if (!TryParseProposalType(proposalTypeRaw, out var proposalType))
+        {
+            errorCode = "invalid_proposal_type";
+            errorMessage = $"proposal_type '{proposalTypeRaw}' is not recognized.";
+            return false;
+        }
+
+        if (!TryParseReviewPayload(item, proposalType, out var payload, out errorCode, out errorMessage))
+            return false;
+
+        submission = new ReviewItemSubmission(
+            SourceId: sourceId.Trim(),
+            SourceItemId: sourceItemId,
+            TaskId: taskId,
+            ProposalType: proposalType,
+            ChangeFingerprint: changeFingerprint,
+            SourceUrl: sourceUrl,
+            SourceTitle: sourceTitle,
+            MatchingEvidence: matchingEvidence,
+            Rationale: rationale,
+            Summary: summary,
+            ProposedValue: proposedValue,
+            Payload: payload);
+        return true;
+    }
+
+    private bool TryParseReviewPayload(
+        JsonElement item,
+        ReviewProposalType proposalType,
+        out ReviewProposalPayload? payload,
+        out string? errorCode,
+        out string? errorMessage)
+    {
+        payload = null;
+        errorCode = null;
+        errorMessage = null;
+
+        if (!item.TryGetProperty("payload", out var payloadElement) || payloadElement.ValueKind == JsonValueKind.Null)
+        {
+            if (proposalType is ReviewProposalType.StatusChange
+                or ReviewProposalType.BlockTask
+                or ReviewProposalType.UnblockTask
+                or ReviewProposalType.BlockerReasonChange
+                or ReviewProposalType.DueDateChange
+                or ReviewProposalType.SubtaskAddition
+                or ReviewProposalType.StructuredLinkAddition)
+            {
+                errorCode = "invalid_payload";
+                errorMessage = $"proposal_type '{ProposalTypeToExternal(proposalType)}' requires a payload object.";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (payloadElement.ValueKind != JsonValueKind.Object)
+        {
+            errorCode = "invalid_payload";
+            errorMessage = "payload must be a JSON object when provided.";
+            return false;
+        }
+
+        switch (proposalType)
+        {
+            case ReviewProposalType.MeetingNote:
+                if (!TryGetRequiredString(payloadElement, "meeting_date", out var meetingDateRaw, out errorCode, out errorMessage)
+                    || !DateOnly.TryParseExact(meetingDateRaw, "yyyy-MM-dd", out var meetingDate))
+                {
+                    errorCode ??= "invalid_payload";
+                    errorMessage ??= "payload.meeting_date must be yyyy-MM-dd.";
+                    return false;
+                }
+
+                if (!TryGetRequiredString(payloadElement, "relevant_update", out var relevantUpdate, out errorCode, out errorMessage))
+                    return false;
+
+                var decisions = GetOptionalString(payloadElement, "decisions") ?? string.Empty;
+                var myCommitments = GetOptionalString(payloadElement, "my_commitments") ?? string.Empty;
+                payload = new MeetingNoteProposalPayload(meetingDate, relevantUpdate, decisions, myCommitments);
+                return true;
+
+            case ReviewProposalType.StatusChange:
+                string? statusError = null;
+                if (!TryGetRequiredString(payloadElement, "new_status", out var newStatus, out errorCode, out errorMessage)
+                    || !TryMapToInternalStatus(newStatus, out var mappedStatus, out statusError))
+                {
+                    errorCode = "invalid_payload";
+                    errorMessage = statusError ?? "payload.new_status is required.";
+                    return false;
+                }
+
+                payload = new StatusChangeProposalPayload(mappedStatus);
+                return true;
+
+            case ReviewProposalType.BlockTask:
+                if (!TryGetRequiredString(payloadElement, "reason", out var blockReason, out errorCode, out errorMessage))
+                    return false;
+
+                payload = new BlockTaskProposalPayload(blockReason);
+                return true;
+
+            case ReviewProposalType.UnblockTask:
+                string? resumeError = null;
+                if (!TryGetRequiredString(payloadElement, "resume_status", out var resumeStatus, out errorCode, out errorMessage)
+                    || !TryMapToInternalStatus(resumeStatus, out var mappedResumeStatus, out resumeError))
+                {
+                    errorCode = "invalid_payload";
+                    errorMessage = resumeError ?? "payload.resume_status is required.";
+                    return false;
+                }
+
+                payload = new UnblockTaskProposalPayload(mappedResumeStatus);
+                return true;
+
+            case ReviewProposalType.BlockerReasonChange:
+                if (!TryGetRequiredString(payloadElement, "reason", out var blockerReason, out errorCode, out errorMessage))
+                    return false;
+
+                payload = new BlockerReasonChangeProposalPayload(blockerReason);
+                return true;
+
+            case ReviewProposalType.DueDateChange:
+                if (!payloadElement.TryGetProperty("candidate_dates", out var candidateDates)
+                    || candidateDates.ValueKind != JsonValueKind.Array)
+                {
+                    errorCode = "invalid_payload";
+                    errorMessage = "payload.candidate_dates must be a JSON array.";
+                    return false;
+                }
+
+                var dates = new List<DateOnly>();
+                foreach (var candidate in candidateDates.EnumerateArray())
+                {
+                    if (candidate.ValueKind != JsonValueKind.String
+                        || !DateOnly.TryParseExact(candidate.GetString(), "yyyy-MM-dd", out var parsedDate))
+                    {
+                        errorCode = "invalid_payload";
+                        errorMessage = "Each payload.candidate_dates value must be yyyy-MM-dd.";
+                        return false;
+                    }
+
+                    dates.Add(parsedDate);
+                }
+
+                payload = new DueDateChangeProposalPayload(dates);
+                return true;
+
+            case ReviewProposalType.SubtaskAddition:
+                if (!TryGetRequiredString(payloadElement, "title", out var subtaskTitle, out errorCode, out errorMessage))
+                    return false;
+
+                payload = new SubtaskAdditionProposalPayload(subtaskTitle);
+                return true;
+
+            case ReviewProposalType.StructuredLinkAddition:
+                if (!TryGetRequiredString(payloadElement, "link_type", out var linkType, out errorCode, out errorMessage)
+                    || !TryGetRequiredString(payloadElement, "value", out var linkValue, out errorCode, out errorMessage))
+                    return false;
+
+                payload = new StructuredLinkAdditionProposalPayload(linkType, linkValue, GetOptionalString(payloadElement, "label"));
+                return true;
+
+            case ReviewProposalType.PriorityChange:
+                payload = null;
+                return true;
+
+            default:
+                errorCode = "invalid_payload";
+                errorMessage = $"proposal_type '{ProposalTypeToExternal(proposalType)}' is not supported by this MCP wrapper.";
+                return false;
+        }
+    }
+
+    private static bool TryGetRequiredString(
+        JsonElement element,
+        string propertyName,
+        out string value,
+        out string? errorCode,
+        out string? errorMessage)
+    {
+        value = string.Empty;
+        errorCode = null;
+        errorMessage = null;
+
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String)
+        {
+            errorCode = "invalid_item";
+            errorMessage = $"{propertyName} is required and must be a string.";
+            return false;
+        }
+
+        value = property.GetString()!.Trim();
+        if (value.Length == 0)
+        {
+            errorCode = "invalid_item";
+            errorMessage = $"{propertyName} must not be empty.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string? GetOptionalString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+    }
+
+    private static bool TryParseProposalType(string value, out ReviewProposalType proposalType)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "meeting-note":
+                proposalType = ReviewProposalType.MeetingNote;
+                return true;
+            case "status-change":
+                proposalType = ReviewProposalType.StatusChange;
+                return true;
+            case "block-task":
+                proposalType = ReviewProposalType.BlockTask;
+                return true;
+            case "unblock-task":
+                proposalType = ReviewProposalType.UnblockTask;
+                return true;
+            case "blocker-reason-change":
+                proposalType = ReviewProposalType.BlockerReasonChange;
+                return true;
+            case "due-date-change":
+                proposalType = ReviewProposalType.DueDateChange;
+                return true;
+            case "subtask-addition":
+                proposalType = ReviewProposalType.SubtaskAddition;
+                return true;
+            case "structured-link-addition":
+                proposalType = ReviewProposalType.StructuredLinkAddition;
+                return true;
+            case "priority-change":
+                proposalType = ReviewProposalType.PriorityChange;
+                return true;
+            default:
+                proposalType = default;
+                return false;
+        }
+    }
+
+    private static string ProposalTypeToExternal(ReviewProposalType proposalType) => proposalType switch
+    {
+        ReviewProposalType.MeetingNote => "meeting-note",
+        ReviewProposalType.StatusChange => "status-change",
+        ReviewProposalType.BlockTask => "block-task",
+        ReviewProposalType.UnblockTask => "unblock-task",
+        ReviewProposalType.BlockerReasonChange => "blocker-reason-change",
+        ReviewProposalType.DueDateChange => "due-date-change",
+        ReviewProposalType.SubtaskAddition => "subtask-addition",
+        ReviewProposalType.StructuredLinkAddition => "structured-link-addition",
+        ReviewProposalType.PriorityChange => "priority-change",
+        _ => proposalType.ToString()
+    };
+
+    private static string ReviewItemStateToExternal(ReviewItemState state) => state switch
+    {
+        ReviewItemState.NeedsRefresh => "needs_refresh",
+        ReviewItemState.Pending => "pending",
+        ReviewItemState.Approved => "approved",
+        ReviewItemState.Rejected => "rejected",
+        ReviewItemState.Withdrawn => "withdrawn",
+        ReviewItemState.Expired => "expired",
+        _ => state.ToString().ToLowerInvariant()
+    };
+
+    private static string? SourceRunKindToExternal(ReviewSourceRunKind? runKind) => runKind switch
+    {
+        ReviewSourceRunKind.Scheduled => "scheduled",
+        ReviewSourceRunKind.Manual => "manual",
+        _ => null
+    };
+
+    private static List<AcceptedRunItem> BuildAcceptedRunItems(
+        IReadOnlyList<ReviewItemSubmission> submissions,
+        AutomationReviewQueueSnapshot snapshot,
+        IReadOnlyList<ReviewItemRejection> rejections)
+    {
+        var rejectedKeys = rejections
+            .Select(rejection => BuildLogicalSubmissionKey(rejection.SourceId, rejection.SourceItemId, rejection.TaskId, rejection.ProposalType))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var accepted = new List<AcceptedRunItem>();
+        foreach (var submission in submissions)
+        {
+            var key = BuildLogicalSubmissionKey(submission.SourceId, submission.SourceItemId, submission.TaskId, submission.ProposalType);
+            if (rejectedKeys.Contains(key))
+                continue;
+
+            var item = snapshot.ActiveItems.FirstOrDefault(candidate =>
+                candidate.SourceId == submission.SourceId
+                && candidate.SourceItemId == submission.SourceItemId
+                && candidate.TaskId == submission.TaskId
+                && candidate.ProposalType == submission.ProposalType);
+
+            if (item is null)
+                continue;
+
+            accepted.Add(new AcceptedRunItem(
+                ReviewItemId: item.Id,
+                SourceItemId: item.SourceItemId,
+                TaskId: item.TaskId,
+                ProposalType: ProposalTypeToExternal(item.ProposalType),
+                State: ReviewItemStateToExternal(item.State)));
+        }
+
+        return accepted;
+    }
+
+    private static string BuildLogicalSubmissionKey(string sourceId, string sourceItemId, string taskId, ReviewProposalType proposalType) =>
+        string.Join("|", sourceId, sourceItemId, taskId, proposalType);
+
+    private static RejectedRunItem ToRejectedRunItem(ReviewItemRejection rejection) =>
+        new(
+            SourceItemId: rejection.SourceItemId,
+            TaskId: rejection.TaskId,
+            ProposalType: ProposalTypeToExternal(rejection.ProposalType),
+            Error: rejection.Code,
+            Message: rejection.Message);
+
+    private static ReviewQueueItemSummary ToQueueItemSummary(ReviewQueueItem item) =>
+        new(
+            ReviewItemId: item.Id,
+            SourceId: item.SourceId,
+            SourceItemId: item.SourceItemId,
+            TaskId: item.TaskId,
+            ProposalType: ProposalTypeToExternal(item.ProposalType),
+            State: ReviewItemStateToExternal(item.State),
+            Summary: item.Summary,
+            ProposedValue: item.ProposedValue,
+            SourceTitle: item.SourceTitle,
+            SourceUrl: item.SourceUrl,
+            MatchingEvidence: item.MatchingEvidence,
+            Rationale: item.Rationale,
+            GeneratedAt: item.GeneratedAt.ToString("O", CultureInfo.InvariantCulture),
+            LastApplyFailureCode: item.LastApplyFailureCode,
+            LastApplyFailureMessage: item.LastApplyFailureMessage,
+            LastApplyFailureAt: item.LastApplyFailureAt?.ToString("O", CultureInfo.InvariantCulture),
+            RefreshUnavailableCount: item.RefreshUnavailableCount);
+
+    private static ReviewQueueHistorySummary ToHistorySummary(ReviewQueueHistoryItem item) =>
+        new(
+            ReviewItemId: item.Id,
+            SourceId: item.SourceId,
+            SourceItemId: item.SourceItemId,
+            TaskId: item.TaskId,
+            ProposalType: ProposalTypeToExternal(item.ProposalType),
+            Disposition: ReviewItemStateToExternal(item.Disposition),
+            DisposedAt: item.DisposedAt.ToString("O", CultureInfo.InvariantCulture));
+
+    private static ReviewQueueSourceSummary BuildSourceHealthEntry(
+        string sourceId,
+        ReviewSourceState? state,
+        IReadOnlyList<ReviewProposalType>? allowedProposalTypes = null) =>
+        new(
+            SourceId: sourceId,
+            AllowedProposalTypes: (allowedProposalTypes ?? Array.Empty<ReviewProposalType>()).Select(ProposalTypeToExternal).ToList(),
+            Cursor: state?.Cursor,
+            LastSuccessfulRunAt: state?.LastSuccessfulRunAt?.ToString("O", CultureInfo.InvariantCulture),
+            IsDegraded: state?.IsDegraded ?? false,
+            ConsecutiveScheduledFailures: state?.ConsecutiveScheduledFailures ?? 0,
+            Diagnostics: state?.Diagnostics
+                .OrderBy(diagnostic => diagnostic.RecordedAt)
+                .Select(diagnostic => new ReviewQueueSourceDiagnosticSummary(
+                    RecordedAt: diagnostic.RecordedAt.ToString("O", CultureInfo.InvariantCulture),
+                    Status: diagnostic.Status,
+                    Message: diagnostic.Message))
+                .ToList() ?? []);
+
+    private static ReviewQueueRecoverySummary ToRecoverySummary(ReviewQueueRecoveryState recovery) =>
+        new(
+            IncidentId: recovery.IncidentId,
+            Message: recovery.Message,
+            RequiresAcknowledgement: recovery.RequiresAcknowledgement);
+
+    private static CursorStatus BuildCursorStatus(
+        string submittedCursor,
+        string? previousCursor,
+        string? storedCursor,
+        bool advanced,
+        bool hasRejections,
+        bool recoveryAcknowledgementRequired)
+    {
+        var blockedReason = advanced
+            ? null
+            : recoveryAcknowledgementRequired
+                ? "recovery_acknowledgement_required"
+                : hasRejections
+                    ? "item_rejections"
+                    : "not_advanced";
+
+        return new CursorStatus(
+            Submitted: submittedCursor,
+            Previous: previousCursor,
+            Stored: storedCursor,
+            Advanced: advanced,
+            BlockedReason: blockedReason);
     }
 }
