@@ -1,0 +1,55 @@
+{
+  "name": "Review pending",
+  "tasks": [
+    {
+      "id": "review-pending-task",
+      "title": "Review pending task",
+      "status": "todo"
+    }
+  ],
+  "reviewQueue": {
+    "activeItems": [
+      {
+        "id": "review-pending-block",
+        "sourceId": "meeting-transcript-sync",
+        "sourceItemId": "meeting-pending",
+        "taskId": "review-pending-task",
+        "proposalType": "BlockTask",
+        "changeFingerprint": "fp-pending-block",
+        "sourceUrl": "https://contoso.example/meetings/pending",
+        "sourceTitle": "Pending sync",
+        "matchingEvidence": "Task id captured in the recap",
+        "rationale": "The task is blocked on an external approval.",
+        "summary": "Mark the Task blocked",
+        "proposedValue": "Waiting on the external approver",
+        "state": "Pending",
+        "generatedAt": "2026-07-24T16:00:00Z"
+      },
+      {
+        "id": "review-pending-note",
+        "sourceId": "meeting-transcript-sync",
+        "sourceItemId": "meeting-pending",
+        "taskId": "review-pending-task",
+        "proposalType": "MeetingNote",
+        "changeFingerprint": "fp-pending-note",
+        "sourceUrl": "https://contoso.example/meetings/pending",
+        "sourceTitle": "Pending sync",
+        "matchingEvidence": "Task id captured in the recap",
+        "rationale": "Preserve the supporting context.",
+        "summary": "Append the meeting note",
+        "proposedValue": "Follow up with the external approver before Friday.",
+        "attendanceLabel": "Not attended",
+        "state": "Pending",
+        "generatedAt": "2026-07-24T16:02:00Z"
+      }
+    ]
+  },
+  "actions": [
+    { "type": "select", "automationId": "NavReview", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ReviewHeader", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "name": "Mark the Task blocked", "timeoutMilliseconds": 10000 }
+  ],
+  "captures": [
+    { "name": "review-pending" }
+  ]
+}
