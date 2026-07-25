@@ -205,6 +205,43 @@ public sealed class MeetingTranscriptSyncServiceTests
     }
 
     [TestMethod]
+    public void RunScheduled_ExactTaskTitleAnchorWithSingleWordDescriptionCorroborator_StillQualifies()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-beta-single-word",
+            Title = "Release gate checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "deploy"
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-title-anchor-single-word-description",
+                startedAt: new DateTimeOffset(2026, 7, 24, 17, 5, 0, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/title-anchor-single-word-description",
+                groundedSummary: "Release gate checklist deploy before broad rollout.",
+                decisions: ["Keep the release gate checklist moving toward deploy."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 18, 5, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        var pending = queue.LoadSnapshot().ActiveItems.Single();
+        Assert.AreEqual("task-beta-single-word", pending.TaskId);
+        StringAssert.Contains(pending.MatchingEvidence, "exact Task title");
+    }
+
+    [TestMethod]
     public void RunScheduled_LinkedPrIdentifierAnchorAndDescriptionCorroborator_QualifiesIndependently()
     {
         _vault.Save(new GlassworkTask

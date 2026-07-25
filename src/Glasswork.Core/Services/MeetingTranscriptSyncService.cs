@@ -332,9 +332,11 @@ public sealed partial class MeetingTranscriptSyncService
         string? anchorExclusionKey,
         string? anchorStructuredAliasKey)
     {
+        var restrictSingleWordProseCorroboration = string.Equals(anchorTerm, task.Id, StringComparison.OrdinalIgnoreCase);
         foreach (var (source, candidate, candidateExclusionKey, allowSingleTokenCorroboration) in EnumerateCorroboratorCandidates(task))
         {
-            var matchedTerm = FindCorroboratorTerm(candidate, recapText, allowSingleTokenCorroboration);
+            var effectiveAllowSingleTokenCorroboration = allowSingleTokenCorroboration || !restrictSingleWordProseCorroboration;
+            var matchedTerm = FindCorroboratorTerm(candidate, recapText, effectiveAllowSingleTokenCorroboration);
             if (matchedTerm is null)
                 continue;
 
@@ -361,7 +363,7 @@ public sealed partial class MeetingTranscriptSyncService
                     continue;
 
                 var recapWithoutAnchorEvidence = RemoveAnchorEvidence(recapText, anchorTerm, anchorStructuredAliasKey);
-                var independentMatch = FindCorroboratorTerm(candidateWithoutAnchorEvidence, recapWithoutAnchorEvidence, allowSingleTokenCorroboration);
+                var independentMatch = FindCorroboratorTerm(candidateWithoutAnchorEvidence, recapWithoutAnchorEvidence, effectiveAllowSingleTokenCorroboration);
                 if (independentMatch is null)
                     continue;
 
