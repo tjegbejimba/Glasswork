@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Glasswork.Core.Models;
 
 namespace Glasswork.Core.Services;
@@ -11,6 +12,7 @@ public sealed class AutomationReviewQueueService
     private const int CurrentVersion = 1;
     private const string MeetingTranscriptSyncSourceId = "meeting-transcript-sync";
     private static readonly TimeSpan RetentionWindow = TimeSpan.FromDays(30);
+    private static readonly Regex SafeTaskIdRegex = new("^[a-z0-9][a-z0-9-]*$", RegexOptions.Compiled);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -42,8 +44,9 @@ public sealed class AutomationReviewQueueService
     private readonly string _gitIgnorePath;
     private readonly string _todoPath;
     private readonly TimeProvider _clock;
+    private readonly Action? _beforeApprovalQueueCommit;
 
-    public AutomationReviewQueueService(string vaultRoot, TimeProvider? clock = null)
+    public AutomationReviewQueueService(string vaultRoot, TimeProvider? clock = null, Action? beforeApprovalQueueCommit = null)
     {
         if (string.IsNullOrWhiteSpace(vaultRoot))
             throw new ArgumentException("Vault root is required.", nameof(vaultRoot));
@@ -56,6 +59,7 @@ public sealed class AutomationReviewQueueService
         _gitIgnorePath = Path.Combine(_glassworkDirectory, ".gitignore");
         _todoPath = Path.Combine(_vaultRoot, "wiki", "todo");
         _clock = clock ?? TimeProvider.System;
+        _beforeApprovalQueueCommit = beforeApprovalQueueCommit;
     }
 
     public ReviewSourceRunResult SubmitSourceRun(ReviewSourceRunSubmission submission)
@@ -216,74 +220,50 @@ public sealed class AutomationReviewQueueService
         using var lease = AcquireMutex();
         var document = LoadDocumentCore();
         ReconcileActiveItemStates(document);
-        var analysis = AnalyzeApprovalSelectionCore(document, request.TaskId, request.ItemIds);
-        if (!analysis.CanApprove)
-            return new ReviewApprovalResult(false, analysis.BlockingReasonCodes.FirstOrDefault());
-
         var selectedItems = document.ActiveItems
             .Where(item => request.ItemIds.Contains(item.Id, StringComparer.Ordinal))
             .ToList();
 
+        if (!IsValidTaskId(request.TaskId))
+            return FailSelection(document, selectedItems, "invalid_task_id", $"Task id '{request.TaskId}' is invalid.");
+
+        var analysis = AnalyzeApprovalSelectionCore(document, request.TaskId, request.ItemIds);
         var vault = new VaultService(_todoPath);
-        var task = vault.Load(request.TaskId);
+        GlassworkTask? task;
+        try
+        {
+            task = vault.Load(request.TaskId);
+        }
+        catch (ArgumentException ex)
+        {
+            return FailSelection(document, selectedItems, "invalid_task_id", ex.Message);
+        }
+
         if (task is null)
             return FailSelection(document, selectedItems, "task_not_found", "The target task could not be loaded for approval.");
+
+        if (SelectedItemsAlreadyApplied(task, selectedItems))
+        {
+            MarkSelectionApproved(document, selectedItems);
+            return new ReviewApprovalResult(true, null);
+        }
+
+        var recoverableRetry = !analysis.CanApprove
+                               && analysis.BlockingReasonCodes.All(code => code == "selection_not_pending")
+                               && selectedItems.All(item => item.State is ReviewItemState.Pending or ReviewItemState.NeedsRefresh)
+                               && selectedItems.Where(item => item.State == ReviewItemState.NeedsRefresh).All(item => ItemAlreadyApplied(task, item));
+
+        if (!analysis.CanApprove && !recoverableRetry)
+            return new ReviewApprovalResult(false, analysis.BlockingReasonCodes.FirstOrDefault());
 
         var updatedTask = task.Clone();
         foreach (var item in selectedItems
                      .OrderBy(item => item.ProposalType == ReviewProposalType.MeetingNote ? 1 : 0)
                      .ThenBy(item => (DeserializePayload(item) as MeetingNoteProposalPayload)?.MeetingDate ?? DateOnly.MaxValue))
         {
-            var payload = DeserializePayload(item);
-            if (payload is MeetingNoteProposalPayload meetingNote)
-            {
-                updatedTask.Notes = AppendMeetingUpdate(updatedTask.Notes, item.SourceTitle, item.SourceUrl, meetingNote);
-                continue;
-            }
-
-            if (payload is BlockTaskProposalPayload blockTask)
-            {
-                TaskService.ApplyMarkBlocked(updatedTask, blockTask.Reason, _clock.GetUtcNow);
-                continue;
-            }
-
-            if (payload is DueDateChangeProposalPayload dueDateChange)
-            {
-                if (dueDateChange.CandidateDates.Count != 1)
-                    return FailSelection(document, selectedItems, "invalid_due_date_payload", "Due-date approval requires exactly one explicit date.");
-
-                updatedTask.Due = dueDateChange.CandidateDates[0].ToDateTime(TimeOnly.MinValue);
-                continue;
-            }
-
-            if (payload is SubtaskAdditionProposalPayload subtaskAddition)
-            {
-                if (!updatedTask.Subtasks.Any(subtask => string.Equals(subtask.Text, subtaskAddition.Title, StringComparison.Ordinal)))
-                {
-                    updatedTask.Subtasks.Add(new SubTask
-                    {
-                        Text = subtaskAddition.Title,
-                        Status = "todo",
-                    });
-                }
-                continue;
-            }
-
-            if (payload is StructuredLinkAdditionProposalPayload linkAddition)
-            {
-                var candidate = new TaskLink
-                {
-                    Type = TaskLink.Types.Normalize(linkAddition.LinkType),
-                    Value = linkAddition.Value.Trim(),
-                    Label = string.IsNullOrWhiteSpace(linkAddition.Label) ? null : linkAddition.Label.Trim(),
-                };
-
-                if (!updatedTask.Links.Any(existing => LinksEquivalent(existing, candidate)))
-                    updatedTask.Links.Add(candidate);
-                continue;
-            }
-
-            return FailSelection(document, selectedItems, "proposal_type_not_supported", "The selected batch contains a proposal type that approval does not handle yet.");
+            var applyError = TryApplyProposal(updatedTask, item);
+            if (applyError is not null)
+                return FailSelection(document, selectedItems, applyError.Value.code, applyError.Value.message);
         }
 
         try
@@ -295,19 +275,16 @@ public sealed class AutomationReviewQueueService
             return FailSelection(document, selectedItems, "task_save_failed", ex.Message);
         }
 
-        var now = _clock.GetUtcNow();
-        foreach (var item in selectedItems)
+        try
         {
-            item.LastApplyFailureCode = null;
-            item.LastApplyFailureMessage = null;
-            item.LastApplyFailureAt = null;
-            MoveToTerminal(document, item, ReviewItemState.Approved, now, null);
+            _beforeApprovalQueueCommit?.Invoke();
+        }
+        catch
+        {
+            return new ReviewApprovalResult(false, "queue_commit_failed");
         }
 
-        CleanupDocument(document, now);
-        WriteCanonicalDocument(document, rotateValidatedBackup: true);
-        EnsureIgnoreFile();
-        TryWriteProjection(document);
+        MarkSelectionApproved(document, selectedItems);
         return new ReviewApprovalResult(true, null);
     }
 
@@ -488,6 +465,17 @@ public sealed class AutomationReviewQueueService
                 item.ProposalType,
                 "invalid_due_date_payload",
                 "Due-date payload must contain exactly one explicit date.");
+        }
+
+        if (!IsValidTaskId(item.TaskId))
+        {
+            return new ReviewItemRejection(
+                item.SourceItemId,
+                item.SourceId,
+                item.TaskId,
+                item.ProposalType,
+                "invalid_task_id",
+                $"Task id '{item.TaskId}' is invalid.");
         }
 
         return null;
@@ -891,6 +879,8 @@ public sealed class AutomationReviewQueueService
         var blockingReasons = new List<string>();
         if (string.IsNullOrWhiteSpace(taskId))
             blockingReasons.Add("task_id_required");
+        else if (!IsValidTaskId(taskId))
+            blockingReasons.Add("invalid_task_id");
         if (selectedIds.Count == 0)
             blockingReasons.Add("selection_required");
 
@@ -1032,14 +1022,16 @@ public sealed class AutomationReviewQueueService
 
     private static string BuildMeetingUpdateEntry(string sourceTitle, string sourceUrl, MeetingNoteProposalPayload payload)
     {
+        var safeTitle = SanitizeMeetingLinkTitle(sourceTitle);
+        var safeUrl = SanitizeMeetingLinkUrl(sourceUrl);
         var builder = new StringBuilder();
         builder.Append("### ")
             .Append(payload.MeetingDate.ToString("yyyy-MM-dd"))
             .Append(" - [")
-            .Append(sourceTitle)
-            .Append("](")
-            .Append(sourceUrl)
-            .AppendLine(")");
+            .Append(safeTitle)
+            .Append("](<")
+            .Append(safeUrl)
+            .AppendLine(">)");
 
         AppendMeetingSection(builder, "Relevant update", payload.RelevantUpdate);
         AppendMeetingSection(builder, "Decisions", payload.Decisions);
@@ -1055,7 +1047,180 @@ public sealed class AutomationReviewQueueService
         builder.AppendLine()
             .Append("#### ")
             .AppendLine(title)
-            .AppendLine(content.Trim());
+            .AppendLine(SanitizeMeetingSectionContent(content));
+    }
+
+    private static string SanitizeMeetingSectionContent(string content)
+    {
+        var normalized = content.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        var lines = normalized.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (line.StartsWith("## ", StringComparison.Ordinal) || line.StartsWith("# ", StringComparison.Ordinal))
+                lines[i] = "\\" + line;
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string SanitizeMeetingLinkTitle(string sourceTitle)
+    {
+        return sourceTitle
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Replace("[", "\\[", StringComparison.Ordinal)
+            .Replace("]", "\\]", StringComparison.Ordinal)
+            .Trim();
+    }
+
+    private static string SanitizeMeetingLinkUrl(string sourceUrl)
+    {
+        var normalized = sourceUrl
+            .Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Replace("\n", string.Empty, StringComparison.Ordinal)
+            .Trim();
+
+        return Uri.TryCreate(normalized, UriKind.Absolute, out var uri)
+               && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? uri.AbsoluteUri
+            : normalized.Replace(">", "%3E", StringComparison.Ordinal).Replace("<", "%3C", StringComparison.Ordinal);
+    }
+
+    private static bool IsValidTaskId(string taskId) =>
+        !string.IsNullOrWhiteSpace(taskId) && SafeTaskIdRegex.IsMatch(taskId.Trim());
+
+    private (string code, string message)? TryApplyProposal(GlassworkTask updatedTask, ReviewQueueItemDocument item)
+    {
+        if (ItemAlreadyApplied(updatedTask, item))
+            return null;
+
+        var payload = DeserializePayload(item);
+
+        try
+        {
+            if (payload is MeetingNoteProposalPayload meetingNote)
+            {
+                updatedTask.Notes = AppendMeetingUpdate(updatedTask.Notes, item.SourceTitle, item.SourceUrl, meetingNote);
+                return null;
+            }
+
+            if (payload is BlockTaskProposalPayload blockTask)
+            {
+                TaskService.ApplyMarkBlocked(updatedTask, blockTask.Reason, _clock.GetUtcNow);
+                return null;
+            }
+
+            if (payload is StatusChangeProposalPayload statusChange)
+            {
+                TaskService.ApplySetStatus(updatedTask, statusChange.NewStatus, () => _clock.GetUtcNow().LocalDateTime);
+                return null;
+            }
+
+            if (payload is UnblockTaskProposalPayload unblockTask)
+            {
+                TaskService.ApplyResumeBlocked(updatedTask, unblockTask.ResumeStatus);
+                return null;
+            }
+
+            if (payload is BlockerReasonChangeProposalPayload blockerReasonChange)
+            {
+                TaskService.ApplyEditBlockedReason(updatedTask, blockerReasonChange.Reason);
+                return null;
+            }
+
+            if (payload is DueDateChangeProposalPayload dueDateChange)
+            {
+                if (dueDateChange.CandidateDates.Count != 1)
+                    return ("invalid_due_date_payload", "Due-date approval requires exactly one explicit date.");
+
+                updatedTask.Due = dueDateChange.CandidateDates[0].ToDateTime(TimeOnly.MinValue);
+                return null;
+            }
+
+            if (payload is SubtaskAdditionProposalPayload subtaskAddition)
+            {
+                if (!updatedTask.Subtasks.Any(subtask => string.Equals(subtask.Text, subtaskAddition.Title, StringComparison.Ordinal)))
+                {
+                    updatedTask.Subtasks.Add(new SubTask
+                    {
+                        Text = subtaskAddition.Title,
+                        Status = "todo",
+                    });
+                }
+
+                return null;
+            }
+
+            if (payload is StructuredLinkAdditionProposalPayload linkAddition)
+            {
+                var candidate = new TaskLink
+                {
+                    Type = TaskLink.Types.Normalize(linkAddition.LinkType),
+                    Value = linkAddition.Value.Trim(),
+                    Label = string.IsNullOrWhiteSpace(linkAddition.Label) ? null : linkAddition.Label.Trim(),
+                };
+
+                if (!updatedTask.Links.Any(existing => LinksEquivalent(existing, candidate)))
+                    updatedTask.Links.Add(candidate);
+
+                return null;
+            }
+        }
+        catch (ArgumentException ex)
+        {
+            return ("invalid_proposal_payload", ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ("invalid_task_transition", ex.Message);
+        }
+
+        return ("proposal_type_not_supported", "The selected batch contains a proposal type that approval does not handle yet.");
+    }
+
+    private bool SelectedItemsAlreadyApplied(GlassworkTask task, IReadOnlyList<ReviewQueueItemDocument> selectedItems)
+    {
+        return selectedItems.Count > 0 && selectedItems.All(item => ItemAlreadyApplied(task, item));
+    }
+
+    private bool ItemAlreadyApplied(GlassworkTask task, ReviewQueueItemDocument item)
+    {
+        var payload = DeserializePayload(item);
+        return payload switch
+        {
+            MeetingNoteProposalPayload meetingNote => task.Notes.Contains(BuildMeetingUpdateEntry(item.SourceTitle, item.SourceUrl, meetingNote), StringComparison.Ordinal),
+            BlockTaskProposalPayload blockTask => task.IsBlocked && string.Equals(task.BlockedReason, blockTask.Reason, StringComparison.Ordinal),
+            StatusChangeProposalPayload statusChange => string.Equals(task.Status, statusChange.NewStatus, StringComparison.Ordinal),
+            UnblockTaskProposalPayload unblockTask => !task.IsBlocked && string.Equals(task.Status, unblockTask.ResumeStatus, StringComparison.Ordinal),
+            BlockerReasonChangeProposalPayload blockerReasonChange => task.IsBlocked && string.Equals(task.BlockedReason, blockerReasonChange.Reason, StringComparison.Ordinal),
+            DueDateChangeProposalPayload dueDateChange => dueDateChange.CandidateDates.Count == 1 && task.Due?.Date == dueDateChange.CandidateDates[0].ToDateTime(TimeOnly.MinValue).Date,
+            SubtaskAdditionProposalPayload subtaskAddition => task.Subtasks.Any(subtask => string.Equals(subtask.Text, subtaskAddition.Title, StringComparison.Ordinal)),
+            StructuredLinkAdditionProposalPayload linkAddition => task.Links.Any(existing => LinksEquivalent(existing, new TaskLink
+            {
+                Type = TaskLink.Types.Normalize(linkAddition.LinkType),
+                Value = linkAddition.Value.Trim(),
+                Label = string.IsNullOrWhiteSpace(linkAddition.Label) ? null : linkAddition.Label.Trim(),
+            })),
+            _ => false,
+        };
+    }
+
+    private void MarkSelectionApproved(ReviewQueueDocument document, IReadOnlyList<ReviewQueueItemDocument> selectedItems)
+    {
+        var now = _clock.GetUtcNow();
+        foreach (var item in selectedItems)
+        {
+            item.LastApplyFailureCode = null;
+            item.LastApplyFailureMessage = null;
+            item.LastApplyFailureAt = null;
+            MoveToTerminal(document, item, ReviewItemState.Approved, now, null);
+        }
+
+        CleanupDocument(document, now);
+        WriteCanonicalDocument(document, rotateValidatedBackup: true);
+        EnsureIgnoreFile();
+        TryWriteProjection(document);
     }
 
     private ReviewApprovalResult FailSelection(

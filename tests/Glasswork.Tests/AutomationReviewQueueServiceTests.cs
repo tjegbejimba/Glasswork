@@ -118,7 +118,7 @@ public class AutomationReviewQueueServiceTests
         var reloadedTask = _vault.Load("task-approve-note")!;
         StringAssert.Contains(reloadedTask.Notes, "Keep this scratch note exactly as-is.");
         StringAssert.Contains(reloadedTask.Notes, "### Meeting updates");
-        StringAssert.Contains(reloadedTask.Notes, "### 2026-07-24 - [Weekly sync](https://contoso.example/meetings/approve-note)");
+        StringAssert.Contains(reloadedTask.Notes, "### 2026-07-24 - [Weekly sync](<https://contoso.example/meetings/approve-note>)");
         StringAssert.Contains(reloadedTask.Notes, "#### Relevant update");
         StringAssert.Contains(reloadedTask.Notes, "Queued approval workflow needs an atomic apply path.");
         StringAssert.Contains(reloadedTask.Notes, "#### Decisions");
@@ -204,6 +204,82 @@ public class AutomationReviewQueueServiceTests
         Assert.AreEqual(ReviewProposalType.MeetingNote, afterApproval.ActiveItems[0].ProposalType);
         Assert.AreEqual(1, afterApproval.History.Count);
         Assert.AreEqual(ReviewProposalType.BlockTask, afterApproval.History[0].ProposalType);
+    }
+
+    [TestMethod]
+    public void ApproveSelection_AppliesStatusChange_BlockerReasonChange_AndUnblockPayloads()
+    {
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 16, 5, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-stateful",
+            Title = "Stateful task",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24)
+        });
+
+        queue.SubmitSourceRun(new ReviewSourceRunSubmission(
+            SourceId: "meeting-transcript-sync",
+            RunKind: ReviewSourceRunKind.Scheduled,
+            Cursor: "cursor-stateful-1",
+            Items:
+            [
+                new ReviewItemSubmission(
+                    SourceId: "meeting-transcript-sync", SourceItemId: "meeting-stateful-status", TaskId: "task-stateful",
+                    ProposalType: ReviewProposalType.StatusChange, ChangeFingerprint: "fp-stateful-status", SourceUrl: "https://contoso.example/meetings/stateful-status",
+                    SourceTitle: "Stateful sync", MatchingEvidence: "Status captured", Rationale: "Set in-progress", Summary: "Move to in-progress", ProposedValue: "in-progress",
+                    Payload: new StatusChangeProposalPayload(GlassworkTask.Statuses.InProgress))
+            ]));
+
+        var pendingIds = queue.LoadSnapshot().ActiveItems.Select(item => item.Id).ToArray();
+        Assert.IsTrue(queue.ApproveSelection(new ReviewApprovalRequest("task-stateful", pendingIds)).Applied);
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, _vault.Load("task-stateful")!.Status);
+
+        var blocked = _vault.Load("task-stateful")!;
+        blocked.Status = GlassworkTask.Statuses.Blocked;
+        blocked.BlockedReason = "Waiting on old approval";
+        blocked.BlockedAt = DateTimeOffset.Parse("2026-07-24T16:00:00Z");
+        blocked.BlockedFromStatus = GlassworkTask.Statuses.InProgress;
+        blocked.BlockedMetadataState = BlockedMetadataState.Valid;
+        _vault.Save(blocked);
+
+        queue.SubmitSourceRun(new ReviewSourceRunSubmission(
+            SourceId: "meeting-transcript-sync",
+            RunKind: ReviewSourceRunKind.Scheduled,
+            Cursor: "cursor-stateful-2",
+            Items:
+            [
+                new ReviewItemSubmission(
+                    SourceId: "meeting-transcript-sync", SourceItemId: "meeting-stateful-reason", TaskId: "task-stateful",
+                    ProposalType: ReviewProposalType.BlockerReasonChange, ChangeFingerprint: "fp-stateful-reason", SourceUrl: "https://contoso.example/meetings/stateful-reason",
+                    SourceTitle: "Stateful sync", MatchingEvidence: "Updated blocker captured", Rationale: "Edit blocker", Summary: "Update blocker reason", ProposedValue: "Waiting on final approval",
+                    Payload: new BlockerReasonChangeProposalPayload("Waiting on final approval"))
+            ]));
+
+        pendingIds = queue.LoadSnapshot().ActiveItems.Select(item => item.Id).ToArray();
+        Assert.IsTrue(queue.ApproveSelection(new ReviewApprovalRequest("task-stateful", pendingIds)).Applied);
+        Assert.AreEqual("Waiting on final approval", _vault.Load("task-stateful")!.BlockedReason);
+
+        queue.SubmitSourceRun(new ReviewSourceRunSubmission(
+            SourceId: "meeting-transcript-sync",
+            RunKind: ReviewSourceRunKind.Scheduled,
+            Cursor: "cursor-stateful-3",
+            Items:
+            [
+                new ReviewItemSubmission(
+                    SourceId: "meeting-transcript-sync", SourceItemId: "meeting-stateful-unblock", TaskId: "task-stateful",
+                    ProposalType: ReviewProposalType.UnblockTask, ChangeFingerprint: "fp-stateful-unblock", SourceUrl: "https://contoso.example/meetings/stateful-unblock",
+                    SourceTitle: "Stateful sync", MatchingEvidence: "Resume captured", Rationale: "Resume task", Summary: "Resume blocked task", ProposedValue: "in-progress",
+                    Payload: new UnblockTaskProposalPayload(GlassworkTask.Statuses.InProgress))
+            ]));
+
+        pendingIds = queue.LoadSnapshot().ActiveItems.Select(item => item.Id).ToArray();
+        Assert.IsTrue(queue.ApproveSelection(new ReviewApprovalRequest("task-stateful", pendingIds)).Applied);
+        var reloaded = _vault.Load("task-stateful")!;
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress, reloaded.Status);
+        Assert.IsNull(reloaded.BlockedReason);
+        Assert.IsNull(reloaded.BlockedFromStatus);
     }
 
     [TestMethod]
@@ -413,10 +489,45 @@ public class AutomationReviewQueueServiceTests
         Assert.IsTrue(approval.Applied);
 
         var notes = _vault.Load("task-note-order")!.Notes;
-        var earlyIndex = notes.IndexOf("### 2026-07-23 - [Early sync](https://contoso.example/meetings/early)", StringComparison.Ordinal);
-        var lateIndex = notes.IndexOf("### 2026-07-25 - [Late sync](https://contoso.example/meetings/late)", StringComparison.Ordinal);
+        var earlyIndex = notes.IndexOf("### 2026-07-23 - [Early sync](<https://contoso.example/meetings/early>)", StringComparison.Ordinal);
+        var lateIndex = notes.IndexOf("### 2026-07-25 - [Late sync](<https://contoso.example/meetings/late>)", StringComparison.Ordinal);
         Assert.IsTrue(earlyIndex >= 0);
         Assert.IsTrue(lateIndex > earlyIndex);
+    }
+
+    [TestMethod]
+    public void ApproveSelection_SanitizesMeetingUpdatesSoTheyCannotBreakNotesOrRelatedParsing()
+    {
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 16, 45, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-note-sanitize",
+            Title = "Sanitize note",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Notes = "Keep intro."
+        });
+
+        queue.SubmitSourceRun(new ReviewSourceRunSubmission(
+            SourceId: "meeting-transcript-sync",
+            RunKind: ReviewSourceRunKind.Scheduled,
+            Cursor: "cursor-note-sanitize",
+            Items:
+            [
+                new ReviewItemSubmission(
+                    SourceId: "meeting-transcript-sync", SourceItemId: "meeting-note-sanitize", TaskId: "task-note-sanitize",
+                    ProposalType: ReviewProposalType.MeetingNote, ChangeFingerprint: "fp-note-sanitize", SourceUrl: "https://contoso.example/meetings/sanitize\n## Related",
+                    SourceTitle: "Sanitize sync\n## Related", MatchingEvidence: "Task update captured", Rationale: "Append note", Summary: "Append sanitized note", ProposedValue: "Legacy sanitize",
+                    Payload: new MeetingNoteProposalPayload(new DateOnly(2026, 7, 24), "First line\n## Related\n[[evil-link]]", string.Empty, string.Empty))
+            ]));
+
+        var pendingIds = queue.LoadSnapshot().ActiveItems.Select(item => item.Id).ToArray();
+        Assert.IsTrue(queue.ApproveSelection(new ReviewApprovalRequest("task-note-sanitize", pendingIds)).Applied);
+
+        var reloaded = _vault.Load("task-note-sanitize")!;
+        StringAssert.Contains(reloaded.Notes, "\\## Related");
+        Assert.AreEqual(0, reloaded.RelatedLinks.Count);
     }
 
     [TestMethod]
@@ -600,6 +711,64 @@ public class AutomationReviewQueueServiceTests
     }
 
     [TestMethod]
+    public void ApproveSelection_WhenQueueCommitFailsAfterTaskSave_RetryMarksAlreadyAppliedBatchApproved()
+    {
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 17, 15, 0, TimeSpan.Zero));
+        var shouldThrow = true;
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock, () =>
+        {
+            if (shouldThrow)
+            {
+                shouldThrow = false;
+                throw new InvalidOperationException("Simulated queue commit failure");
+            }
+        });
+
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-commit-retry",
+            Title = "Commit retry",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24)
+        });
+
+        queue.SubmitSourceRun(new ReviewSourceRunSubmission(
+            SourceId: "meeting-transcript-sync",
+            RunKind: ReviewSourceRunKind.Scheduled,
+            Cursor: "cursor-commit-retry",
+            Items:
+            [
+                new ReviewItemSubmission(
+                    SourceId: "meeting-transcript-sync", SourceItemId: "meeting-commit-retry", TaskId: "task-commit-retry",
+                    ProposalType: ReviewProposalType.BlockTask, ChangeFingerprint: "fp-commit-retry-block", SourceUrl: "https://contoso.example/meetings/commit-retry",
+                    SourceTitle: "Commit retry sync", MatchingEvidence: "Blocker captured", Rationale: "Mark blocked", Summary: "Block task", ProposedValue: "Waiting on external signoff",
+                    Payload: new BlockTaskProposalPayload("Waiting on external signoff")),
+                new ReviewItemSubmission(
+                    SourceId: "meeting-transcript-sync", SourceItemId: "meeting-commit-retry", TaskId: "task-commit-retry",
+                    ProposalType: ReviewProposalType.MeetingNote, ChangeFingerprint: "fp-commit-retry-note", SourceUrl: "https://contoso.example/meetings/commit-retry",
+                    SourceTitle: "Commit retry sync", MatchingEvidence: "Task update captured", Rationale: "Append note", Summary: "Append note", ProposedValue: "Legacy retry",
+                    Payload: new MeetingNoteProposalPayload(new DateOnly(2026, 7, 24), "Already applied note.", string.Empty, string.Empty))
+            ]));
+
+        var pendingIds = queue.LoadSnapshot().ActiveItems.Select(item => item.Id).ToArray();
+        var failedApproval = queue.ApproveSelection(new ReviewApprovalRequest("task-commit-retry", pendingIds));
+        Assert.IsFalse(failedApproval.Applied);
+        Assert.AreEqual("queue_commit_failed", failedApproval.ErrorCode);
+
+        var savedTask = _vault.Load("task-commit-retry")!;
+        Assert.AreEqual(GlassworkTask.Statuses.Blocked, savedTask.Status);
+        StringAssert.Contains(savedTask.Notes, "Already applied note.");
+
+        var retryQueue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var retryResult = retryQueue.ApproveSelection(new ReviewApprovalRequest("task-commit-retry", pendingIds));
+        Assert.IsTrue(retryResult.Applied);
+
+        var afterRetry = retryQueue.LoadSnapshot();
+        Assert.AreEqual(0, afterRetry.ActiveItems.Count);
+        Assert.AreEqual(2, afterRetry.History.Count);
+    }
+
+    [TestMethod]
     public void SubmitSourceRun_RejectsAmbiguousDueDatePayload()
     {
         var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 17, 20, 0, TimeSpan.Zero));
@@ -620,6 +789,29 @@ public class AutomationReviewQueueServiceTests
 
         Assert.AreEqual(0, result.AcceptedCount);
         Assert.AreEqual("invalid_due_date_payload", result.Rejections.Single().Code);
+    }
+
+    [TestMethod]
+    public void SubmitSourceRun_RejectsInvalidTaskId()
+    {
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 17, 25, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+
+        var result = queue.SubmitSourceRun(new ReviewSourceRunSubmission(
+            SourceId: "meeting-transcript-sync",
+            RunKind: ReviewSourceRunKind.Scheduled,
+            Cursor: "cursor-invalid-task-id",
+            Items:
+            [
+                new ReviewItemSubmission(
+                    SourceId: "meeting-transcript-sync", SourceItemId: "meeting-invalid-task-id", TaskId: "..\\outside-vault",
+                    ProposalType: ReviewProposalType.MeetingNote, ChangeFingerprint: "fp-invalid-task-id", SourceUrl: "https://contoso.example/meetings/invalid-task-id",
+                    SourceTitle: "Invalid task id sync", MatchingEvidence: "Bad task id", Rationale: "Append note", Summary: "Reject invalid task id", ProposedValue: "Legacy invalid",
+                    Payload: new MeetingNoteProposalPayload(new DateOnly(2026, 7, 24), "Should be rejected.", string.Empty, string.Empty))
+            ]));
+
+        Assert.AreEqual(0, result.AcceptedCount);
+        Assert.AreEqual("invalid_task_id", result.Rejections.Single().Code);
     }
 
     [TestMethod]
