@@ -666,6 +666,41 @@ public sealed class MeetingTranscriptSyncServiceTests
     }
 
     [TestMethod]
+    public void RunScheduled_TaskIdAnchorWrappedWithOnlyStopwordPhrase_DoesNotQualify()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-alpha-stopwords",
+            Title = "Publish checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "task-alpha-stopwords is pending"
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-task-id-stopword-self-corroboration",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 54, 45, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/task-id-stopword-self-corroboration",
+                groundedSummary: "task-alpha-stopwords is pending.",
+                decisions: ["Keep task-alpha-stopwords under review."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 24, 45, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(0, result.AcceptedCount);
+        Assert.AreEqual(0, queue.LoadSnapshot().ActiveItems.Count);
+    }
+
+    [TestMethod]
     public void RunScheduled_UniqueProjectTermAnchorWithoutSeparateCorroborator_DoesNotQualify()
     {
         _vault.Save(new GlassworkTask

@@ -885,7 +885,9 @@ public sealed partial class MeetingTranscriptSyncService
 
     private static int CountMeaningfulTokens(string text)
     {
-        return WordRegex().Matches(text).Count;
+        return WordRegex()
+            .Matches(text)
+            .Count(match => match.Value.Length >= 4);
     }
 
     [GeneratedRegex("[A-Za-z0-9-]+", RegexOptions.Compiled)]
