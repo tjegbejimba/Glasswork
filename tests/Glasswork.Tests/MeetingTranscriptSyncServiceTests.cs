@@ -736,6 +736,46 @@ public sealed class MeetingTranscriptSyncServiceTests
     }
 
     [TestMethod]
+    public void RunScheduled_TaskIdAnchorWithSingleWordProseCorroborators_DoesNotQualify()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-alpha-single-word",
+            Title = "Publish checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "deploy",
+            Notes = "rollout",
+            Subtasks =
+            [
+                new SubTask { Text = "launch" }
+            ]
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-task-id-single-word-prose",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 55, 15, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/task-id-single-word-prose",
+                groundedSummary: "task-alpha-single-word deploy rollout launch is still pending.",
+                decisions: ["Keep task-alpha-single-word under review."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 25, 15, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(0, result.AcceptedCount);
+        Assert.AreEqual(0, queue.LoadSnapshot().ActiveItems.Count);
+    }
+
+    [TestMethod]
     public void RunScheduled_UniqueProjectTermAnchorWithoutSeparateCorroborator_DoesNotQualify()
     {
         _vault.Save(new GlassworkTask
@@ -1468,6 +1508,45 @@ public sealed class MeetingTranscriptSyncServiceTests
             new[] { ReviewProposalType.MeetingNote, ReviewProposalType.BlockerReasonChange },
             pending.Select(item => item.ProposalType).ToArray());
         Assert.AreEqual("waiting on security signoff while the dogfood ring is paused before broad rollout", pending.Single(item => item.ProposalType == ReviewProposalType.BlockerReasonChange).ProposedValue);
+    }
+
+    [TestMethod]
+    public void RunScheduled_InvalidBlockerReasonProposal_DoesNotSuppressValidBlockTask()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-rho",
+            Title = "Release gate checklist",
+            Status = GlassworkTask.Statuses.InProgress,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Ship through the dogfood ring before broad rollout."
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-block-with-invalid-blocker-reason",
+                startedAt: new DateTimeOffset(2026, 7, 24, 21, 46, 0, TimeSpan.Zero),
+                title: "Escalation sync",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/block-with-invalid-blocker-reason",
+                groundedSummary: "task-rho is blocked on external approval and the dogfood ring cannot proceed before broad rollout. task-rho blocker reason: external approval.",
+                decisions: ["Keep task-rho blocked on external approval until the broad rollout gate clears."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 22, 1, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(2, result.AcceptedCount);
+        var pending = queue.LoadSnapshot().ActiveItems.ToArray();
+        CollectionAssert.AreEquivalent(
+            new[] { ReviewProposalType.MeetingNote, ReviewProposalType.BlockTask },
+            pending.Select(item => item.ProposalType).ToArray());
+        Assert.AreEqual("external approval", pending.Single(item => item.ProposalType == ReviewProposalType.BlockTask).ProposedValue);
     }
 
     [TestMethod]
