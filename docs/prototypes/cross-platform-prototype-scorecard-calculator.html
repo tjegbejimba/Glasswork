@@ -1,0 +1,538 @@
+<!--
+  PROTOTYPE ONLY — throwaway calculator for Wayfinder ticket #376
+  "Fix the cross-platform prototype scorecard" (map #369).
+
+  Applies the locked rubric in
+  docs/research/cross-platform-prototype-scorecard.md to the three
+  disposable spikes (Tauri / Avalonia / Uno) once they're built. Nothing
+  here is persisted: enter values, read the computed score, done. This is
+  a decision aid, not a production surface, and it does not implement or
+  validate the rubric's process rules (evidence freeze, environment freeze,
+  invalid-run handling); those are procedural, not something a calculator
+  can enforce. Always cross-check the written scorecard doc for the rules
+  behind these numbers.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cross-Platform Prototype Scorecard Calculator</title>
+<style>
+  :root {
+    --cp-bg: #f7f4ef; --cp-bg-elevated: #fcfbf8; --cp-surface: #ffffff;
+    --cp-surface-soft: #f5f5f5; --cp-border: #dedede; --cp-border-strong: #919191;
+    --cp-text: #242424; --cp-text-muted: #5c5c5c; --cp-text-soft: #6f6f6f;
+    --cp-accent: #b11f4b; --cp-accent-soft: rgba(177,31,75,.08); --cp-accent-fg:#fff;
+    --cp-success:#16a34a; --cp-danger:#dc2626; --cp-warning:#f59e0b; --cp-link:#0078d4;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--cp-bg); color: var(--cp-text);
+    font-family: "Segoe UI", Aptos, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px; padding-bottom: 60px;
+  }
+  h1,h2,h3,p { margin: 0; }
+  .muted { color: var(--cp-text-muted); }
+  .throwaway {
+    position: sticky; top: 0; z-index: 30; text-align: center; padding: 6px 0;
+    color: var(--cp-text-muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+    background: var(--cp-bg); border-bottom: 1px solid var(--cp-border);
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+  .brief { padding: 26px 0 14px; }
+  .brief h1 { font-size: 22px; }
+  .brief p { margin-top: 6px; max-width: 820px; }
+  .question-label { color: var(--cp-accent); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+
+  section.card {
+    background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 18px;
+  }
+  section.card h2 { font-size: 15px; margin-bottom: 4px; }
+  section.card > p.hint { margin-top: 2px; margin-bottom: 12px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--cp-border); vertical-align: middle; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--cp-text-soft); font-weight: 650; }
+  td.framework-col, th.framework-col { font-weight: 650; }
+  input[type=number] {
+    width: 76px; padding: 5px 6px; border: 1px solid var(--cp-border-strong); border-radius: 6px;
+    font: inherit; background: var(--cp-surface);
+  }
+  input[type=checkbox] { width: 16px; height: 16px; }
+  textarea {
+    width: 100%; min-height: 54px; resize: vertical; padding: 6px 8px; border: 1px solid var(--cp-border-strong);
+    border-radius: 6px; font: inherit; background: var(--cp-surface);
+  }
+  .gate-row td { font-size: 12.5px; }
+  .disqualified-badge {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+    background: rgba(220,38,38,.1); color: var(--cp-danger); font-size: 11px; font-weight: 700;
+  }
+  .ok-badge {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+    background: rgba(22,163,74,.1); color: var(--cp-success); font-size: 11px; font-weight: 700;
+  }
+
+  .score-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .score-tile {
+    border: 1px solid var(--cp-border); border-radius: 10px; padding: 14px; background: var(--cp-surface-soft);
+  }
+  .score-tile.winner { border-color: var(--cp-accent); box-shadow: 0 0 0 2px var(--cp-accent-soft); }
+  .score-tile h3 { font-size: 14px; }
+  .score-tile .big { font-size: 30px; font-weight: 700; margin: 6px 0 2px; }
+  .score-tile .sub { font-size: 11.5px; color: var(--cp-text-soft); }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 11.5px; }
+  .bar-track { flex: 1; height: 6px; border-radius: 3px; background: var(--cp-border); overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--cp-accent); }
+  .tie-banner {
+    margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: rgba(245,158,11,.12);
+    color: #8a5a00; font-size: 12.5px; font-weight: 600;
+  }
+  .winner-banner {
+    margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: var(--cp-accent-soft);
+    color: var(--cp-accent); font-size: 12.5px; font-weight: 600;
+  }
+  select {
+    font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--cp-border-strong);
+    background: var(--cp-surface);
+  }
+  footer.note { max-width: 820px; margin: 10px auto 0; padding: 0 20px; }
+</style>
+</head>
+<body>
+<div class="throwaway">throwaway prototype: decision aid only, nothing persists on reload</div>
+<div class="wrap">
+
+  <div class="brief">
+    <div class="question-label">Applies: docs/research/cross-platform-prototype-scorecard.md</div>
+    <h1>Cross-Platform Prototype Scorecard Calculator</h1>
+    <p class="muted">Enter each spike's gate results, TJ's four visual ratings, the 8 measured metrics, and the PWA-reuse module classification. The combined score is 70% visual + 30% measured, computed only among gate survivors. This tool is advisory; see Phase 2 of the written rubric for override, tie, and non-scoring-considerations rules.</p>
+  </div>
+
+  <section class="card">
+    <h2>Phase 0 — Hard safety gates</h2>
+    <p class="hint muted">Check a box only when that gate's locked acceptance script passed for that framework. Any unchecked gate disqualifies the framework from Phase 1 scoring entirely.</p>
+    <table>
+      <thead>
+        <tr>
+          <th class="framework-col">Gate</th>
+          <th>Tauri</th>
+          <th>Avalonia</th>
+          <th>Uno</th>
+        </tr>
+      </thead>
+      <tbody id="gates-body"></tbody>
+      <tbody>
+        <tr class="gate-row">
+          <td class="framework-col">Status</td>
+          <td id="status-tauri"></td>
+          <td id="status-avalonia"></td>
+          <td id="status-uno"></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>70% — Visual/interaction judgment</h2>
+    <p class="hint muted">Rate all three side by side per sub-criterion (1–10), not one framework in isolation at a time.</p>
+    <table>
+      <thead>
+        <tr>
+          <th class="framework-col">Sub-criterion</th>
+          <th>Tauri</th>
+          <th>Avalonia</th>
+          <th>Uno</th>
+        </tr>
+      </thead>
+      <tbody id="visual-body"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>30% — Measured evidence</h2>
+    <p class="hint muted">Enter each framework's raw measured value. Leave a field blank if evidence is missing: it scores 0 for that metric per the rubric's missing-evidence rule. Direction (lower/higher-is-better) and equivalence bands are applied automatically per the written rubric.</p>
+    <table>
+      <thead>
+        <tr>
+          <th class="framework-col">Metric</th>
+          <th>Tauri</th>
+          <th>Avalonia</th>
+          <th>Uno</th>
+        </tr>
+      </thead>
+      <tbody id="measured-body"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>PWA-reuse bonus (fixed module inventory)</h2>
+    <p class="hint muted">For each of the 6 locked modules, classify against the Tailscale-only PWA target. Reuse score = (reusable×1.0 + adaptable×0.5) / 6, then relative-ranked into a bonus of up to +1.0 added on top of the measured average.</p>
+    <table>
+      <thead>
+        <tr>
+          <th class="framework-col">Module</th>
+          <th>Tauri</th>
+          <th>Avalonia</th>
+          <th>Uno</th>
+        </tr>
+      </thead>
+      <tbody id="pwa-body"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Framework-specific considerations <span class="muted" style="font-weight:400;">(non-scoring)</span></h2>
+    <p class="hint muted">Free text: informs TJ's override judgment, never counted in the 70/30 number.</p>
+    <div class="score-grid">
+      <div><label class="muted">Tauri</label><textarea id="notes-tauri" placeholder="e.g. capability-scoped security model, two-runtime operational cost..."></textarea></div>
+      <div><label class="muted">Avalonia</label><textarea id="notes-avalonia" placeholder="e.g. single-process simplicity, drawn-control accessibility risk..."></textarea></div>
+      <div><label class="muted">Uno</label><textarea id="notes-uno" placeholder="e.g. WinUI migration code-sharing claim, desktop testing maturity..."></textarea></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Combined score</h2>
+    <div class="score-grid" id="score-grid"></div>
+    <div id="decision-banner"></div>
+  </section>
+
+  <footer class="note muted">
+    Score = 0.7 × visual + 0.3 × measured, gate survivors only, on a 0–10 scale.
+    Ties within 0.10 fall back to the measured bucket alone, then to TJ's written,
+    justified override. See the written rubric for the full formula and process rules.
+  </footer>
+</div>
+
+<script>
+const FRAMEWORKS = ["tauri", "avalonia", "uno"];
+const FRAMEWORK_LABEL = { tauri: "Tauri", avalonia: "Avalonia", uno: "Uno" };
+
+const GATES = [
+  "Full slice behavior (My Day both row forms, Task Detail + drag-reorder, both Artifact kinds, subtask hit-zone split, live file-watch, Planner nav stub, keyboard nav)",
+  "Genuine HTML sandbox (script + outbound network blocked in the preview)",
+  "Native file/Obsidian launching works on both macOS and Windows",
+  "Every interactive element reachable by VoiceOver AND Narrator",
+  "\u22651 passing automated UI test on a real fixture interaction",
+  "No crash or hang (>10s unresponsive) during evidence capture"
+];
+
+const VISUAL_CRITERIA = [
+  "Platform-native chrome fidelity (Variant B)",
+  "Shared layout/visual polish",
+  "Animation/transition smoothness",
+  "Perceived interaction snappiness"
+];
+
+// direction: "lower" or "higher" is better. band: relative equivalence band (0-1).
+const MEASURED_METRICS = [
+  { key: "coldLaunch", label: "Cold launch time (ms, 3-run median)", direction: "lower", band: 0.10 },
+  { key: "interactionLatency", label: "Task-detail interaction latency (ms, 3-run median)", direction: "lower", band: 0.10 },
+  { key: "memory", label: "Idle resident memory (MB, 3-run median)", direction: "lower", band: 0.05 },
+  { key: "packageSize", label: "Installed package size (MB)", direction: "lower", band: 0.05 },
+  { key: "fileWatch", label: "File-watch response latency (ms, 3-run median)", direction: "lower", band: 0.10 },
+  { key: "accessibility", label: "Accessibility completeness (%)", direction: "higher", band: 0.0 },
+  { key: "testability", label: "Testability breadth (distinct catalog interactions covered)", direction: "higher", band: 0.0 },
+  { key: "complexity", label: "Implementation complexity (new LOC, framework UI layer only)", direction: "lower", band: 0.10 }
+];
+
+const PWA_MODULES = [
+  "My Day list rendering",
+  "Task card rendering",
+  "Task Detail shell",
+  "Subtask row rendering",
+  "Artifact-kind rendering/routing",
+  "Nav rail"
+];
+const PWA_CLASS_VALUE = { reusable: 1.0, adaptable: 0.5, notreusable: 0.0 };
+
+function el(tag, attrs, children) {
+  const e = document.createElement(tag);
+  if (attrs) for (const k in attrs) {
+    if (k === "class") e.className = attrs[k];
+    else if (k === "text") e.textContent = attrs[k];
+    else e.setAttribute(k, attrs[k]);
+  }
+  (children || []).forEach(c => e.appendChild(c));
+  return e;
+}
+
+// ---- Build Phase 0 gate table ----
+const gatesBody = document.getElementById("gates-body");
+GATES.forEach((label, gi) => {
+  const tr = el("tr", { class: "gate-row" });
+  tr.appendChild(el("td", { class: "framework-col", text: label }));
+  FRAMEWORKS.forEach(fw => {
+    const td = el("td");
+    const cb = el("input", { type: "checkbox", id: `gate-${fw}-${gi}` });
+    cb.addEventListener("change", recompute);
+    td.appendChild(cb);
+    tr.appendChild(td);
+  });
+  gatesBody.appendChild(tr);
+});
+
+// ---- Build Phase 1 visual table ----
+const visualBody = document.getElementById("visual-body");
+VISUAL_CRITERIA.forEach((label, vi) => {
+  const tr = el("tr");
+  tr.appendChild(el("td", { class: "framework-col", text: label }));
+  FRAMEWORKS.forEach(fw => {
+    const td = el("td");
+    const input = el("input", { type: "number", min: "1", max: "10", step: "0.5", id: `visual-${fw}-${vi}` });
+    input.addEventListener("input", recompute);
+    td.appendChild(input);
+    tr.appendChild(td);
+  });
+  visualBody.appendChild(tr);
+});
+
+// ---- Build measured metrics table ----
+const measuredBody = document.getElementById("measured-body");
+MEASURED_METRICS.forEach(metric => {
+  const tr = el("tr");
+  tr.appendChild(el("td", { class: "framework-col", text: metric.label }));
+  FRAMEWORKS.forEach(fw => {
+    const td = el("td");
+    const input = el("input", { type: "number", step: "any", id: `metric-${fw}-${metric.key}`, placeholder: "blank = missing" });
+    input.addEventListener("input", recompute);
+    td.appendChild(input);
+    tr.appendChild(td);
+  });
+  measuredBody.appendChild(tr);
+});
+
+// ---- Build PWA module classification table ----
+const pwaBody = document.getElementById("pwa-body");
+PWA_MODULES.forEach((label, mi) => {
+  const tr = el("tr");
+  tr.appendChild(el("td", { class: "framework-col", text: label }));
+  FRAMEWORKS.forEach(fw => {
+    const td = el("td");
+    const select = el("select", { id: `pwa-${fw}-${mi}` });
+    select.appendChild(el("option", { value: "", text: "\u2014" }));
+    select.appendChild(el("option", { value: "reusable", text: "Reusable-as-is" }));
+    select.appendChild(el("option", { value: "adaptable", text: "Adaptable" }));
+    select.appendChild(el("option", { value: "notreusable", text: "Not-reusable" }));
+    select.addEventListener("change", recompute);
+    td.appendChild(select);
+    tr.appendChild(td);
+  });
+  pwaBody.appendChild(tr);
+});
+
+// ---- Clustering / relative-ranking normalization ----
+// Values: array of {fw, value} among gate survivors that have a present (non-missing) value.
+// Returns map fw -> score (0-10), applying equivalence-band clustering.
+function clusterRank(entries, direction, band) {
+  const scores = {};
+  if (entries.length === 0) return scores;
+  if (entries.length === 1) {
+    scores[entries[0].fw] = 10; // nothing to rank against
+    return scores;
+  }
+  const sorted = entries.slice().sort((a, b) => a.value - b.value);
+  // group into clusters where consecutive values are within `band` relative difference
+  const clusters = [];
+  let current = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1].value;
+    const cur = sorted[i].value;
+    const denom = Math.max(Math.abs(prev), Math.abs(cur), 1e-9);
+    const relDiff = Math.abs(cur - prev) / denom;
+    if (relDiff <= band) {
+      current.push(sorted[i]);
+    } else {
+      clusters.push(current);
+      current = [sorted[i]];
+    }
+  }
+  clusters.push(current);
+
+  if (clusters.length === 1) {
+    // no discriminating signal at all
+    entries.forEach(e => { scores[e.fw] = 5; });
+    return scores;
+  }
+
+  const clusterMean = c => c.reduce((s, e) => s + e.value, 0) / c.length;
+  // order clusters from "worst" to "best" per direction
+  // `clusters` is ascending by value. `ordered` must run worst-to-best:
+  // for "lower is better" the largest value is worst, so reverse to descending;
+  // for "higher is better" the smallest value is worst, so ascending is already correct.
+  const ordered = direction === "lower" ? clusters.slice().reverse() : clusters;
+  const worstVal = clusterMean(ordered[0]);
+  const bestVal = clusterMean(ordered[ordered.length - 1]);
+  const range = bestVal - worstVal;
+
+  ordered.forEach((cluster, idx) => {
+    let score;
+    if (idx === 0) score = 0;
+    else if (idx === ordered.length - 1) score = 10;
+    else {
+      const mean = clusterMean(cluster);
+      score = range === 0 ? 5 : ((mean - worstVal) / range) * 10;
+    }
+    cluster.forEach(e => { scores[e.fw] = score; });
+  });
+  return scores;
+}
+
+function getGateSurvivors() {
+  const survivors = {};
+  FRAMEWORKS.forEach(fw => {
+    let allPass = true;
+    GATES.forEach((_, gi) => {
+      const cb = document.getElementById(`gate-${fw}-${gi}`);
+      if (!cb.checked) allPass = false;
+    });
+    survivors[fw] = allPass;
+  });
+  return survivors;
+}
+
+function recompute() {
+  const survivors = getGateSurvivors();
+
+  FRAMEWORKS.forEach(fw => {
+    const statusCell = document.getElementById(`status-${fw}`);
+    statusCell.innerHTML = "";
+    statusCell.appendChild(survivors[fw]
+      ? el("span", { class: "ok-badge", text: "Gate survivor" })
+      : el("span", { class: "disqualified-badge", text: "Disqualified" }));
+  });
+
+  const survivorList = FRAMEWORKS.filter(fw => survivors[fw]);
+
+  // --- Visual bucket ---
+  const visualScore = {};
+  FRAMEWORKS.forEach(fw => {
+    const vals = VISUAL_CRITERIA.map((_, vi) => parseFloat(document.getElementById(`visual-${fw}-${vi}`).value)).filter(v => !isNaN(v));
+    visualScore[fw] = vals.length ? vals.reduce((a, b) => a + b, 0) / VISUAL_CRITERIA.length : null;
+  });
+
+  // --- Measured bucket: 8 metrics ---
+  const metricScores = {}; // fw -> [scores]
+  FRAMEWORKS.forEach(fw => metricScores[fw] = []);
+
+  MEASURED_METRICS.forEach(metric => {
+    const entries = [];
+    const missing = [];
+    survivorList.forEach(fw => {
+      const raw = document.getElementById(`metric-${fw}-${metric.key}`).value;
+      if (raw === "" || raw === null) missing.push(fw);
+      else entries.push({ fw, value: parseFloat(raw) });
+    });
+    const ranked = clusterRank(entries, metric.direction, metric.band);
+    survivorList.forEach(fw => {
+      const score = missing.includes(fw) ? 0 : (ranked[fw] !== undefined ? ranked[fw] : 0);
+      metricScores[fw].push(score);
+    });
+  });
+
+  // --- PWA bonus ---
+  const pwaBonus = {};
+  {
+    const entries = [];
+    const missing = [];
+    survivorList.forEach(fw => {
+      let classified = 0, sum = 0;
+      PWA_MODULES.forEach((_, mi) => {
+        const val = document.getElementById(`pwa-${fw}-${mi}`).value;
+        if (val) { classified++; sum += PWA_CLASS_VALUE[val]; }
+      });
+      if (classified < PWA_MODULES.length) missing.push(fw);
+      else entries.push({ fw, value: sum / PWA_MODULES.length });
+    });
+    const ranked = clusterRank(entries, "higher", 0);
+    survivorList.forEach(fw => {
+      pwaBonus[fw] = missing.includes(fw) ? 0 : ((ranked[fw] !== undefined ? ranked[fw] : 0) / 10); // scale 0-10 -> 0-1.0 bonus
+    });
+  }
+
+  const measuredScore = {};
+  survivorList.forEach(fw => {
+    const base = metricScores[fw].reduce((a, b) => a + b, 0) / MEASURED_METRICS.length;
+    measuredScore[fw] = Math.min(10, base + pwaBonus[fw]);
+  });
+
+  // --- Combined ---
+  const combined = {};
+  survivorList.forEach(fw => {
+    if (visualScore[fw] === null) { combined[fw] = null; return; }
+    combined[fw] = 0.7 * visualScore[fw] + 0.3 * measuredScore[fw];
+  });
+
+  renderScores(survivors, survivorList, visualScore, measuredScore, combined);
+}
+
+function renderScores(survivors, survivorList, visualScore, measuredScore, combined) {
+  const grid = document.getElementById("score-grid");
+  grid.innerHTML = "";
+
+  let best = null, bestVal = -Infinity;
+  survivorList.forEach(fw => {
+    if (combined[fw] !== null && combined[fw] > bestVal) { bestVal = combined[fw]; best = fw; }
+  });
+
+  FRAMEWORKS.forEach(fw => {
+    const tile = el("div", { class: "score-tile" + (fw === best ? " winner" : "") });
+    tile.appendChild(el("h3", { text: FRAMEWORK_LABEL[fw] }));
+    if (!survivors[fw]) {
+      tile.appendChild(el("div", { class: "big", text: "\u2014" }));
+      tile.appendChild(el("div", { class: "sub", text: "Disqualified at Phase 0" }));
+    } else if (combined[fw] === null) {
+      tile.appendChild(el("div", { class: "big", text: "\u2013" }));
+      tile.appendChild(el("div", { class: "sub", text: "Enter visual ratings to compute" }));
+    } else {
+      tile.appendChild(el("div", { class: "big", text: combined[fw].toFixed(2) }));
+      tile.appendChild(el("div", { class: "sub", text: "combined score (0\u201310)" }));
+      const visualPct = (visualScore[fw] / 10) * 100;
+      const measuredPct = (measuredScore[fw] / 10) * 100;
+      const barRowV = el("div", { class: "bar-row" });
+      barRowV.appendChild(el("span", { text: `Visual ${visualScore[fw].toFixed(2)}` }));
+      const trackV = el("div", { class: "bar-track" });
+      trackV.appendChild(el("div", { class: "bar-fill", style: `width:${visualPct}%` }));
+      barRowV.appendChild(trackV);
+      tile.appendChild(barRowV);
+
+      const barRowM = el("div", { class: "bar-row" });
+      barRowM.appendChild(el("span", { text: `Measured ${measuredScore[fw].toFixed(2)}` }));
+      const trackM = el("div", { class: "bar-track" });
+      trackM.appendChild(el("div", { class: "bar-fill", style: `width:${measuredPct}%` }));
+      barRowM.appendChild(trackM);
+      tile.appendChild(barRowM);
+    }
+    grid.appendChild(tile);
+  });
+
+  const banner = document.getElementById("decision-banner");
+  banner.innerHTML = "";
+  const scored = survivorList.filter(fw => combined[fw] !== null);
+  if (scored.length >= 2) {
+    const sortedScored = scored.slice().sort((a, b) => combined[b] - combined[a]);
+    const top = sortedScored[0], second = sortedScored[1];
+    const margin = combined[top] - combined[second];
+    if (margin <= 0.10) {
+      banner.appendChild(el("div", {
+        class: "tie-banner",
+        text: `Tie: ${FRAMEWORK_LABEL[top]} and ${FRAMEWORK_LABEL[second]} are within 0.10 (margin ${margin.toFixed(3)}). Per the rubric, break by comparing the measured-evidence bucket alone (${FRAMEWORK_LABEL[top]}: ${measuredScore[top].toFixed(2)}, ${FRAMEWORK_LABEL[second]}: ${measuredScore[second].toFixed(2)}); if still tied there, this falls to TJ's written, justified override.`
+      }));
+    } else {
+      banner.appendChild(el("div", {
+        class: "winner-banner",
+        text: `${FRAMEWORK_LABEL[top]} leads with a combined score of ${combined[top].toFixed(2)} (margin ${margin.toFixed(2)} over ${FRAMEWORK_LABEL[second]}). This is advisory: TJ may override, but must write and justify it in the resolution of "Select the cross-platform framework and Core direction."`
+      }));
+    }
+  } else if (scored.length === 1) {
+    banner.appendChild(el("div", { class: "winner-banner", text: `${FRAMEWORK_LABEL[scored[0]]} is the only gate survivor with a computed score; no ranking to perform.` }));
+  }
+}
+
+recompute();
+</script>
+</body>
+</html>
