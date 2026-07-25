@@ -3121,6 +3121,92 @@ public sealed class GlassworkTools
         }
     }
 
+    [McpServerTool(Name = "get_meeting_transcript_sync_unmatched")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Read unmatched meeting-transcript-sync meetings retained for manual attachment.")]
+    public string GetMeetingTranscriptSyncUnmatched()
+    {
+        using var scope = _logger?.BeginCall("get_meeting_transcript_sync_unmatched");
+        try
+        {
+            var meetings = CreateMeetingTranscriptSyncService().GetUnmatchedMeetings();
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(new MeetingTranscriptSyncUnmatchedResult(
+                Meetings: meetings.Select(meeting => new MeetingTranscriptSyncUnmatchedSummary(
+                    StableMeetingId: meeting.StableMeetingId,
+                    Title: meeting.Title,
+                    StartedAt: meeting.StartedAt.ToString("O", CultureInfo.InvariantCulture),
+                    Organizer: meeting.Organizer,
+                    Attendance: meeting.Attendance.ToString().ToLowerInvariant(),
+                    UsableUrl: meeting.UsableUrl)).ToList()));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "get_meeting_transcript_sync_attachable_tasks")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("List non-terminal Tasks eligible for manual attachment of unmatched meeting-transcript-sync meetings.")]
+    public string GetMeetingTranscriptSyncAttachableTasks()
+    {
+        using var scope = _logger?.BeginCall("get_meeting_transcript_sync_attachable_tasks");
+        try
+        {
+            var tasks = CreateMeetingTranscriptSyncService().GetAttachableTasks();
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(new MeetingTranscriptSyncAttachableTasksResult(
+                Tasks: tasks.Select(task => new MeetingTranscriptSyncAttachableTaskSummary(
+                    TaskId: task.TaskId,
+                    Title: task.Title,
+                    Status: task.Status)).ToList()));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
+    [McpServerTool(Name = "attach_meeting_transcript_sync_unmatched")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Attach one unmatched meeting-transcript-sync meeting to a non-terminal Task. Matching is bypassed, but proposal evidence rules still apply.")]
+    public string AttachMeetingTranscriptSyncUnmatched(
+        [Description("Stable unmatched meeting id.")] string stable_meeting_id,
+        [Description("Target non-terminal Task id.")] string task_id)
+    {
+        using var scope = _logger?.BeginCall("attach_meeting_transcript_sync_unmatched");
+        try
+        {
+            if (string.IsNullOrWhiteSpace(stable_meeting_id))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_stable_meeting_id", "stable_meeting_id is required."));
+            }
+
+            if (string.IsNullOrWhiteSpace(task_id))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_task_id", "task_id is required."));
+            }
+
+            var result = CreateMeetingTranscriptSyncService().AttachUnmatchedMeeting(stable_meeting_id.Trim(), task_id.Trim());
+            scope?.SetResult("success");
+            return JsonSerializer.Serialize(new MeetingTranscriptSyncManualAttachToolResult(
+                StableMeetingId: stable_meeting_id.Trim(),
+                TaskId: task_id.Trim(),
+                DispositionCode: result.DispositionCode,
+                CreatedReviewItems: result.CreatedReviewItems));
+        }
+        catch
+        {
+            scope?.SetResult("error");
+            throw;
+        }
+    }
+
     private sealed record PromoteSubtaskResult(
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("path")] string Path);
@@ -3289,7 +3375,33 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("error"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error,
         [property: JsonPropertyName("message"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Message);
 
+    private sealed record MeetingTranscriptSyncUnmatchedResult(
+        [property: JsonPropertyName("meetings")] List<MeetingTranscriptSyncUnmatchedSummary> Meetings);
+
+    private sealed record MeetingTranscriptSyncUnmatchedSummary(
+        [property: JsonPropertyName("stable_meeting_id")] string StableMeetingId,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("started_at")] string StartedAt,
+        [property: JsonPropertyName("organizer")] string Organizer,
+        [property: JsonPropertyName("attendance")] string Attendance,
+        [property: JsonPropertyName("usable_url")] string UsableUrl);
+
+    private sealed record MeetingTranscriptSyncAttachableTasksResult(
+        [property: JsonPropertyName("tasks")] List<MeetingTranscriptSyncAttachableTaskSummary> Tasks);
+
+    private sealed record MeetingTranscriptSyncAttachableTaskSummary(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("status")] string Status);
+
+    private sealed record MeetingTranscriptSyncManualAttachToolResult(
+        [property: JsonPropertyName("stable_meeting_id")] string StableMeetingId,
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("disposition_code")] string DispositionCode,
+        [property: JsonPropertyName("created_review_items")] bool CreatedReviewItems);
+
     private AutomationReviewQueueService CreateAutomationReviewQueueService() => new(_vaultRoot);
+    private MeetingTranscriptSyncService CreateMeetingTranscriptSyncService() => new(_vaultRoot, _vault, CreateAutomationReviewQueueService());
 
     private static bool TryParseRunKind(string? value, out ReviewSourceRunKind runKind)
     {

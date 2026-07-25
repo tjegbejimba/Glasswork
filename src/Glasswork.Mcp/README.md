@@ -122,6 +122,9 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | `get_review_queue_source_health` | v0.9.0 | Read registered-source health and recovery state |
 | `reject_review_item` | v0.9.0 | Reject one Automation Review Queue item |
 | `acknowledge_review_queue_recovery` | v0.9.0 | Acknowledge queue-recovery diagnostics so cursors may advance again |
+| `get_meeting_transcript_sync_unmatched` | v0.10.0 | Read unmatched meeting-transcript-sync recaps retained for manual attachment |
+| `get_meeting_transcript_sync_attachable_tasks` | v0.10.0 | List non-terminal Tasks eligible for unmatched-meeting attachment |
+| `attach_meeting_transcript_sync_unmatched` | v0.10.0 | Attach one unmatched meeting-transcript-sync recap to a non-terminal Task |
 
 ### When to use which tool
 
@@ -137,6 +140,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | Submit meeting-transcript proposals for review | `submit_review_source_run` |
 | Read queue work the user can act on now | `get_review_queue_actionable` / `get_review_queue_needs_refresh` |
 | Inspect source health or acknowledge corruption recovery | `get_review_queue_source_health` / `acknowledge_review_queue_recovery` |
+| Inspect unmatched meeting recaps or manually attach one to a Task | `get_meeting_transcript_sync_unmatched` / `get_meeting_transcript_sync_attachable_tasks` / `attach_meeting_transcript_sync_unmatched` |
 
 ### `search_tasks`
 
@@ -855,6 +859,7 @@ Submit a complete registered-source run to the Core queue seam.
 - `rejected_items` come from Core source-registry / proposal validation logic.
 - When any item is rejected, the run still persists accepted items, but the run returns `run_status: "failed"` and the source cursor does **not** advance.
 - A clean zero-proposal run can still advance the cursor.
+- Source-authored diagnostics (for example "missing usable URL") are retained alongside the generic success/failure queue diagnostics and surface through `source.diagnostics`.
 
 ### `get_review_queue_actionable`
 
@@ -1006,6 +1011,81 @@ Acknowledge the active recovery incident so source cursors may advance again.
 ```json
 {
   "incident_id": "string (required) — must exactly match get_review_queue_source_health.recovery.incident_id"
+}
+```
+
+### `get_meeting_transcript_sync_unmatched`
+
+Read unmatched `meeting-transcript-sync` recaps that were retained for manual attachment.
+
+**Input**
+
+```json
+{}
+```
+
+**Output**
+
+```json
+{
+  "meetings": [
+    {
+      "stable_meeting_id": "meeting-123",
+      "title": "Weekly sync",
+      "started_at": "ISO-8601",
+      "organizer": "Pat Lee",
+      "attendance": "attended | unknown | notattended",
+      "usable_url": "https://..."
+    }
+  ]
+}
+```
+
+### `get_meeting_transcript_sync_attachable_tasks`
+
+List the Tasks eligible for unmatched-meeting manual attachment. The tool excludes `done` Tasks by design.
+
+**Input**
+
+```json
+{}
+```
+
+**Output**
+
+```json
+{
+  "tasks": [
+    {
+      "task_id": "task-1",
+      "title": "Release gate checklist",
+      "status": "todo | in-progress | blocked"
+    }
+  ]
+}
+```
+
+### `attach_meeting_transcript_sync_unmatched`
+
+Attach one unmatched meeting recap to a non-terminal Task. This bypasses only automatic Task matching; proposal evidence rules still apply.
+
+**Input**
+
+```json
+{
+  "stable_meeting_id": "string (required)",
+  "task_id": "string (required, must not be a done Task)"
+}
+```
+
+**Output**
+
+```json
+{
+  "stable_meeting_id": "meeting-123",
+  "task_id": "task-1",
+  "disposition_code": "submitted | no_eligible_proposal | task_not_attachable | meeting_not_found",
+  "created_review_items": true
 }
 ```
 
