@@ -346,6 +346,7 @@ public sealed class AutomationReviewQueueService
                 item.Rationale = request.Replacement.Rationale;
                 item.Summary = request.Replacement.Summary;
                 item.ProposedValue = request.Replacement.ProposedValue;
+                item.AttendanceLabel = request.Replacement.AttendanceLabel;
                 item.PayloadKind = GetPayloadKind(request.Replacement);
                 item.PayloadJson = SerializePayload(request.Replacement);
                 item.RelevantTaskFingerprint = ComputeRelevantTaskFingerprint(item.TaskId, request.Replacement.Payload);
@@ -534,6 +535,7 @@ public sealed class AutomationReviewQueueService
                 Rationale = item.Rationale,
                 Summary = item.Summary,
                 ProposedValue = item.ProposedValue,
+                AttendanceLabel = item.AttendanceLabel,
                 State = ReviewItemState.Pending,
                 GeneratedAt = now,
                 PayloadKind = GetPayloadKind(item),
@@ -554,6 +556,7 @@ public sealed class AutomationReviewQueueService
         existing.Rationale = item.Rationale;
         existing.Summary = item.Summary;
         existing.ProposedValue = item.ProposedValue;
+        existing.AttendanceLabel = item.AttendanceLabel;
         existing.State = ReviewItemState.Pending;
         existing.GeneratedAt = now;
         existing.PayloadKind = GetPayloadKind(item);
@@ -581,6 +584,11 @@ public sealed class AutomationReviewQueueService
             TaskId = item.TaskId,
             ProposalType = item.ProposalType,
             ChangeFingerprint = item.ChangeFingerprint,
+            SourceTitle = item.SourceTitle,
+            SourceUrl = item.SourceUrl,
+            Summary = item.Summary,
+            ProposedValue = item.ProposedValue,
+            AttendanceLabel = item.AttendanceLabel,
             Disposition = disposition,
             DisposedAt = disposedAt,
         });
@@ -824,6 +832,7 @@ public sealed class AutomationReviewQueueService
                     item.Rationale,
                     item.Summary,
                     item.ProposedValue,
+                    item.AttendanceLabel,
                     item.State,
                     item.GeneratedAt,
                     DeserializePayload(item),
@@ -855,6 +864,11 @@ public sealed class AutomationReviewQueueService
                     item.TaskId,
                     item.ProposalType,
                     item.ChangeFingerprint,
+                    item.SourceTitle,
+                    item.SourceUrl,
+                    item.Summary,
+                    item.ProposedValue,
+                    item.AttendanceLabel,
                     item.Disposition,
                     item.DisposedAt))
                 .ToList(),
@@ -1364,6 +1378,7 @@ public sealed class AutomationReviewQueueService
         public string Rationale { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
         public string ProposedValue { get; set; } = string.Empty;
+        public string? AttendanceLabel { get; set; }
         public ReviewItemState State { get; set; }
         public DateTimeOffset GeneratedAt { get; set; }
         public string? PayloadKind { get; set; }
@@ -1400,6 +1415,11 @@ public sealed class AutomationReviewQueueService
         public string TaskId { get; set; } = string.Empty;
         public ReviewProposalType ProposalType { get; set; }
         public string ChangeFingerprint { get; set; } = string.Empty;
+        public string SourceTitle { get; set; } = string.Empty;
+        public string SourceUrl { get; set; } = string.Empty;
+        public string Summary { get; set; } = string.Empty;
+        public string ProposedValue { get; set; } = string.Empty;
+        public string? AttendanceLabel { get; set; }
         public ReviewItemState Disposition { get; set; }
         public DateTimeOffset DisposedAt { get; set; }
     }

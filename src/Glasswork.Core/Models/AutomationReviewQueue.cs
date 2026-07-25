@@ -95,7 +95,8 @@ public sealed record ReviewItemSubmission(
     string Rationale,
     string Summary,
     string ProposedValue,
-    ReviewProposalPayload? Payload = null);
+    ReviewProposalPayload? Payload = null,
+    string? AttendanceLabel = null);
 
 public sealed record ReviewSourceRunSubmission(
     string SourceId,
@@ -130,6 +131,7 @@ public sealed record ReviewQueueItem(
     string Rationale,
     string Summary,
     string ProposedValue,
+    string? AttendanceLabel,
     ReviewItemState State,
     DateTimeOffset GeneratedAt,
     ReviewProposalPayload? Payload = null,
@@ -166,6 +168,11 @@ public sealed record ReviewQueueHistoryItem(
     string TaskId,
     ReviewProposalType ProposalType,
     string ChangeFingerprint,
+    string SourceTitle,
+    string SourceUrl,
+    string Summary,
+    string ProposedValue,
+    string? AttendanceLabel,
     ReviewItemState Disposition,
     DateTimeOffset DisposedAt);
 

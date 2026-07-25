@@ -21,6 +21,7 @@ public sealed partial class VisualVerificationScenario
     public int LaunchTimeoutSeconds { get; init; } = 20;
     public int InitialWaitMilliseconds { get; init; } = 800;
     public List<VisualVerificationTask> Tasks { get; init; } = [];
+    public VisualVerificationReviewQueue? ReviewQueue { get; init; }
     public List<VisualVerificationAction> Actions { get; init; } = [];
     public List<VisualVerificationCapture> Captures { get; init; } = [];
 
@@ -34,6 +35,78 @@ public sealed partial class VisualVerificationScenario
 
         scenario.Validate();
         return scenario;
+    }
+
+    public sealed class VisualVerificationReviewQueue
+    {
+        public List<VisualVerificationReviewQueueItem> ActiveItems { get; init; } = [];
+        public List<VisualVerificationReviewHistoryItem> History { get; init; } = [];
+        public List<VisualVerificationReviewSourceState> SourceStates { get; init; } = [];
+        public VisualVerificationReviewRecovery? Recovery { get; init; }
+    }
+
+    public sealed class VisualVerificationReviewQueueItem
+    {
+        public string Id { get; init; } = string.Empty;
+        public string SourceId { get; init; } = "meeting-transcript-sync";
+        public string SourceItemId { get; init; } = string.Empty;
+        public string TaskId { get; init; } = string.Empty;
+        public string ProposalType { get; init; } = "MeetingNote";
+        public string ChangeFingerprint { get; init; } = string.Empty;
+        public string SourceUrl { get; init; } = string.Empty;
+        public string SourceTitle { get; init; } = string.Empty;
+        public string MatchingEvidence { get; init; } = string.Empty;
+        public string Rationale { get; init; } = string.Empty;
+        public string Summary { get; init; } = string.Empty;
+        public string ProposedValue { get; init; } = string.Empty;
+        public string? AttendanceLabel { get; init; }
+        public string State { get; init; } = "Pending";
+        public string GeneratedAt { get; init; } = string.Empty;
+        public string? LastApplyFailureCode { get; init; }
+        public string? LastApplyFailureMessage { get; init; }
+        public string? LastApplyFailureAt { get; init; }
+        public int RefreshUnavailableCount { get; init; }
+    }
+
+    public sealed class VisualVerificationReviewHistoryItem
+    {
+        public string Id { get; init; } = string.Empty;
+        public string SourceId { get; init; } = "meeting-transcript-sync";
+        public string SourceItemId { get; init; } = string.Empty;
+        public string TaskId { get; init; } = string.Empty;
+        public string ProposalType { get; init; } = "MeetingNote";
+        public string ChangeFingerprint { get; init; } = string.Empty;
+        public string SourceTitle { get; init; } = string.Empty;
+        public string SourceUrl { get; init; } = string.Empty;
+        public string Summary { get; init; } = string.Empty;
+        public string ProposedValue { get; init; } = string.Empty;
+        public string? AttendanceLabel { get; init; }
+        public string Disposition { get; init; } = "Approved";
+        public string DisposedAt { get; init; } = string.Empty;
+    }
+
+    public sealed class VisualVerificationReviewSourceState
+    {
+        public string SourceId { get; init; } = "meeting-transcript-sync";
+        public string? Cursor { get; init; }
+        public string? LastSuccessfulRunAt { get; init; }
+        public bool IsDegraded { get; init; }
+        public int ConsecutiveScheduledFailures { get; init; }
+        public List<VisualVerificationReviewDiagnostic> Diagnostics { get; init; } = [];
+    }
+
+    public sealed class VisualVerificationReviewDiagnostic
+    {
+        public string RecordedAt { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public string Message { get; init; } = string.Empty;
+    }
+
+    public sealed class VisualVerificationReviewRecovery
+    {
+        public string? IncidentId { get; init; }
+        public string? Message { get; init; }
+        public bool RequiresAcknowledgement { get; init; }
     }
 
     public void Validate()

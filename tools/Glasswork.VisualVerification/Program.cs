@@ -170,6 +170,101 @@ internal static partial class VisualVerificationRunner
                 }
             }
         }
+
+        if (scenario.ReviewQueue is not null)
+        {
+            var glassworkDir = Path.Combine(vaultRoot, ".glasswork");
+            Directory.CreateDirectory(glassworkDir);
+            File.WriteAllText(Path.Combine(glassworkDir, ".gitignore"), "review-queue*" + Environment.NewLine);
+
+            var approvedCount = scenario.ReviewQueue.History.Count(item => string.Equals(item.Disposition, "Approved", StringComparison.Ordinal));
+            var rejectedCount = scenario.ReviewQueue.History.Count(item => string.Equals(item.Disposition, "Rejected", StringComparison.Ordinal));
+            var withdrawnCount = scenario.ReviewQueue.History.Count(item => string.Equals(item.Disposition, "Withdrawn", StringComparison.Ordinal));
+            var expiredCount = scenario.ReviewQueue.History.Count(item => string.Equals(item.Disposition, "Expired", StringComparison.Ordinal));
+
+            var canonical = new
+            {
+                Version = 1,
+                ActiveItems = scenario.ReviewQueue.ActiveItems.Select(item => new
+                {
+                    Id = item.Id,
+                    SourceId = item.SourceId,
+                    SourceItemId = item.SourceItemId,
+                    TaskId = item.TaskId,
+                    ProposalType = item.ProposalType,
+                    ChangeFingerprint = item.ChangeFingerprint,
+                    SourceUrl = item.SourceUrl,
+                    SourceTitle = item.SourceTitle,
+                    MatchingEvidence = item.MatchingEvidence,
+                    Rationale = item.Rationale,
+                    Summary = item.Summary,
+                    ProposedValue = item.ProposedValue,
+                    AttendanceLabel = item.AttendanceLabel,
+                    State = item.State,
+                    GeneratedAt = item.GeneratedAt,
+                    PayloadKind = (string?)null,
+                    PayloadJson = (string?)null,
+                    RelevantTaskFingerprint = (string?)null,
+                    LastApplyFailureCode = item.LastApplyFailureCode,
+                    LastApplyFailureMessage = item.LastApplyFailureMessage,
+                    LastApplyFailureAt = item.LastApplyFailureAt,
+                    RefreshUnavailableCount = item.RefreshUnavailableCount,
+                }).ToList(),
+                SourceStates = scenario.ReviewQueue.SourceStates.ToDictionary(
+                    source => source.SourceId,
+                    source => new
+                    {
+                        SourceId = source.SourceId,
+                        Cursor = source.Cursor,
+                        LastSuccessfulRunAt = source.LastSuccessfulRunAt,
+                        IsDegraded = source.IsDegraded,
+                        ConsecutiveScheduledFailures = source.ConsecutiveScheduledFailures,
+                        Diagnostics = source.Diagnostics.Select(diagnostic => new
+                        {
+                            RecordedAt = diagnostic.RecordedAt,
+                            Status = diagnostic.Status,
+                            Message = diagnostic.Message,
+                        }).ToList(),
+                    },
+                    StringComparer.Ordinal),
+                History = scenario.ReviewQueue.History.Select(item => new
+                {
+                    Id = item.Id,
+                    SourceId = item.SourceId,
+                    SourceItemId = item.SourceItemId,
+                    TaskId = item.TaskId,
+                    ProposalType = item.ProposalType,
+                    ChangeFingerprint = item.ChangeFingerprint,
+                    SourceTitle = item.SourceTitle,
+                    SourceUrl = item.SourceUrl,
+                    Summary = item.Summary,
+                    ProposedValue = item.ProposedValue,
+                    AttendanceLabel = item.AttendanceLabel,
+                    Disposition = item.Disposition,
+                    DisposedAt = item.DisposedAt,
+                }).ToList(),
+                DedupeRecords = new List<object>(),
+                Metrics = new
+                {
+                    ApprovedCount = approvedCount,
+                    RejectedCount = rejectedCount,
+                    WithdrawnCount = withdrawnCount,
+                    ExpiredCount = expiredCount,
+                    RejectionReasons = new Dictionary<string, int>(StringComparer.Ordinal),
+                    ReviewLatencyHours = new List<double>(),
+                },
+                Recovery = new
+                {
+                    IncidentId = scenario.ReviewQueue.Recovery?.IncidentId,
+                    Message = scenario.ReviewQueue.Recovery?.Message,
+                    RequiresAcknowledgement = scenario.ReviewQueue.Recovery?.RequiresAcknowledgement ?? false,
+                },
+            };
+
+            File.WriteAllText(
+                Path.Combine(glassworkDir, "review-queue.json"),
+                JsonSerializer.Serialize(canonical, new JsonSerializerOptions { WriteIndented = true }));
+        }
     }
 
     private static Process LaunchApp(string appExe, string? startUri, string vaultPath, string uiStatePath, string instanceKey)
@@ -491,6 +586,13 @@ internal static partial class VisualVerificationRunner
             pattern is InvokePattern invoke)
         {
             invoke.Invoke();
+            return;
+        }
+
+        if (element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern) &&
+            togglePattern is TogglePattern toggle)
+        {
+            toggle.Toggle();
             return;
         }
 

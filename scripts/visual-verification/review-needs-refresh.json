@@ -1,0 +1,42 @@
+{
+  "name": "Review needs refresh",
+  "tasks": [
+    {
+      "id": "review-refresh-task",
+      "title": "Review refresh task",
+      "status": "todo"
+    }
+  ],
+  "reviewQueue": {
+    "activeItems": [
+      {
+        "id": "review-refresh-item",
+        "sourceId": "meeting-transcript-sync",
+        "sourceItemId": "meeting-refresh",
+        "taskId": "review-refresh-task",
+        "proposalType": "DueDateChange",
+        "changeFingerprint": "fp-refresh",
+        "sourceUrl": "https://contoso.example/meetings/refresh",
+        "sourceTitle": "Refresh sync",
+        "matchingEvidence": "Due date captured in the recap",
+        "rationale": "Revalidate the due date.",
+        "summary": "Refresh the due date",
+        "proposedValue": "2026-08-01",
+        "state": "NeedsRefresh",
+        "generatedAt": "2026-07-24T14:00:00Z",
+        "lastApplyFailureCode": "task_not_found",
+        "lastApplyFailureMessage": "The target Task could not be loaded for approval.",
+        "lastApplyFailureAt": "2026-07-24T14:10:00Z",
+        "refreshUnavailableCount": 1
+      }
+    ]
+  },
+  "actions": [
+    { "type": "select", "automationId": "NavReview", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ReviewHeader", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "name": "Waiting for refresh", "timeoutMilliseconds": 10000 }
+  ],
+  "captures": [
+    { "name": "review-needs-refresh" }
+  ]
+}

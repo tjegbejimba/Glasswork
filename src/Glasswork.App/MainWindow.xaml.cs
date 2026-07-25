@@ -9,6 +9,7 @@ using Glasswork.Core.Feedback;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Pages;
+using Glasswork.ViewModels;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -43,6 +44,7 @@ public sealed partial class MainWindow : Window
         // ResultChanged covers the fire-and-forget startup check landing after construction.
         NavView.Loaded += (_, _) => RefreshUpdateBadge();
         App.Updater.ResultChanged += OnUpdaterResultChanged;
+        RefreshReviewNavigationState();
 
         // Status bar: vault path + task count + watcher dot + last-reload time.
         InitStatusBar();
@@ -200,6 +202,9 @@ public sealed partial class MainWindow : Window
             case "backlog":
                 NavigateToTopLevel(typeof(BacklogPage));
                 break;
+            case "review":
+                NavigateToTopLevel(typeof(ReviewPage));
+                break;
             case "worklog":
                 NavigateToTopLevel(typeof(WorkLogPage));
                 break;
@@ -286,6 +291,24 @@ public sealed partial class MainWindow : Window
             badge.Style = dotStyle;
         }
         return badge;
+    }
+
+    public void RefreshReviewNavigationState()
+    {
+        if (NavReview is null || NavReviewWarningDot is null)
+            return;
+
+        try
+        {
+            var summary = ReviewPageViewModel.BuildNavigationSummary(App.ReviewQueue.LoadSnapshot());
+            NavReview.InfoBadge = summary.PendingCount > 0 ? new InfoBadge { Value = summary.PendingCount } : null;
+            NavReviewWarningDot.Visibility = summary.HasWarningDot ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch
+        {
+            NavReview.InfoBadge = null;
+            NavReviewWarningDot.Visibility = Visibility.Collapsed;
+        }
     }
 
     /// <summary>
