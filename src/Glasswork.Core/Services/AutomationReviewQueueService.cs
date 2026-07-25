@@ -148,7 +148,7 @@ public sealed class AutomationReviewQueueService
                     sourceState.IsDegraded = false;
                 }
 
-                if (!document.Recovery.RequiresAcknowledgement)
+                if (!document.Recovery.RequiresAcknowledgement && submission.RunKind == ReviewSourceRunKind.Scheduled)
                 {
                     sourceState.Cursor = submission.Cursor;
                     cursorAdvanced = true;

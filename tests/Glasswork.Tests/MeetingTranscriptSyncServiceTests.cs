@@ -328,6 +328,189 @@ public sealed class MeetingTranscriptSyncServiceTests
     }
 
     [TestMethod]
+    public void RunScheduled_TaskIdAnchorAndNotesCorroborator_QualifiesIndependently()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-zeta-notes",
+            Title = "Publish checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Unrelated framing.",
+            Notes = "Track the operator handoff checklist before final release."
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-notes-corroborator",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 35, 0, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/notes-corroborator",
+                groundedSummary: "task-zeta-notes still needs the operator handoff checklist before final release.",
+                decisions: ["Keep the operator handoff checklist in sync."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 5, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        StringAssert.Contains(queue.LoadSnapshot().ActiveItems.Single().MatchingEvidence, "Notes");
+    }
+
+    [TestMethod]
+    public void RunScheduled_TaskIdAnchorAndSubtaskCorroborator_QualifiesIndependently()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-eta-subtasks",
+            Title = "Publish checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Unrelated framing.",
+            Subtasks = [new SubTask { Text = "Validate rollback checklist with ops before final release." }]
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-subtask-corroborator",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 40, 0, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/subtask-corroborator",
+                groundedSummary: "task-eta-subtasks still needs to validate rollback checklist with ops before final release.",
+                decisions: ["Keep the rollback checklist with ops on track."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 10, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        StringAssert.Contains(queue.LoadSnapshot().ActiveItems.Single().MatchingEvidence, "Subtasks");
+    }
+
+    [TestMethod]
+    public void RunScheduled_TaskIdAnchorAndTagsCorroborator_QualifiesIndependently()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-theta-tags",
+            Title = "Publish checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Unrelated framing.",
+            Tags = ["operator handoff"]
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-tags-corroborator",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 45, 0, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/tags-corroborator",
+                groundedSummary: "task-theta-tags still needs the operator handoff completed before final release.",
+                decisions: ["Operator handoff is the only blocker left."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 15, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        StringAssert.Contains(queue.LoadSnapshot().ActiveItems.Single().MatchingEvidence, "Tags");
+    }
+
+    [TestMethod]
+    public void RunScheduled_TaskIdAnchorAndLinksCorroborator_QualifiesIndependently()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-iota-links",
+            Title = "Publish checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Unrelated framing.",
+            Links =
+            [
+                new TaskLink { Type = TaskLink.Types.Doc, Value = "https://eng.ms/docs/operator-handoff-runbook", Label = "Operator handoff runbook" }
+            ]
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-links-corroborator",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 50, 0, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/links-corroborator",
+                groundedSummary: "task-iota-links still needs the operator handoff runbook before final release.",
+                decisions: ["Keep the operator handoff runbook linked from the task."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 20, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        StringAssert.Contains(queue.LoadSnapshot().ActiveItems.Single().MatchingEvidence, "Links");
+    }
+
+    [TestMethod]
+    public void RunScheduled_UniqueProjectTermAnchorWithoutSeparateCorroborator_DoesNotQualify()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-lambda-tag",
+            Title = "Rollout tracker",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Unrelated framing.",
+            Tags = ["pegasus"]
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-tag-self-corroboration",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 55, 0, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/tag-self-corroboration",
+                groundedSummary: "Pegasus still needs attention.",
+                decisions: ["Keep Pegasus on the radar."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 25, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(0, result.AcceptedCount);
+        Assert.AreEqual(0, queue.LoadSnapshot().ActiveItems.Count);
+    }
+
+    [TestMethod]
     public void RunScheduled_SemanticSimilarityOrOrganizerOverlapAlone_DoesNotQualify()
     {
         _vault.Save(new GlassworkTask
@@ -579,6 +762,45 @@ public sealed class MeetingTranscriptSyncServiceTests
     }
 
     [TestMethod]
+    public void AttachUnmatchedMeeting_PreservesScheduledCursorWhileSubmittingManualReviewItems()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-manual-cursor",
+            Title = "Rollout tracker",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Track the dogfood ring."
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-manual-cursor",
+                startedAt: new DateTimeOffset(2026, 7, 24, 20, 15, 0, TimeSpan.Zero),
+                title: "Status update",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/manual-cursor",
+                groundedSummary: "The follow-up is due 2026-08-12 after the dogfood ring completes.",
+                decisions: ["Keep the due date at 2026-08-12."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 20, 30, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+        service.RunScheduled();
+
+        var attachResult = service.AttachUnmatchedMeeting("meeting-manual-cursor", "task-manual-cursor");
+
+        Assert.IsTrue(attachResult.CreatedReviewItems);
+        var snapshot = queue.LoadSnapshot();
+        Assert.AreEqual(
+            "meeting-manual-cursor",
+            snapshot.SourceStates[MeetingTranscriptSyncService.SourceId].Cursor);
+    }
+
+    [TestMethod]
     public void RunScheduled_ExplicitDueDateUserCommitmentAndDirectUrlEvidence_GeneratesAllowedProposalTypesWithFingerprints()
     {
         _vault.Save(new GlassworkTask
@@ -709,6 +931,43 @@ public sealed class MeetingTranscriptSyncServiceTests
             new[] { ReviewProposalType.MeetingNote, ReviewProposalType.UnblockTask },
             pending.Select(item => item.ProposalType).ToArray());
         Assert.AreEqual(GlassworkTask.Statuses.InProgress, pending.Single(item => item.ProposalType == ReviewProposalType.UnblockTask).ProposedValue);
+    }
+
+    [TestMethod]
+    public void RunScheduled_NonBlockedTask_SuppressesUnblockProposal()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-unblock-invalid",
+            Title = "Release gate checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Ship through the dogfood ring before broad rollout."
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-unblock-invalid",
+                startedAt: new DateTimeOffset(2026, 7, 24, 20, 45, 0, TimeSpan.Zero),
+                title: "Escalation sync",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/unblock-invalid",
+                groundedSummary: "task-unblock-invalid can proceed in-progress now that external approval is resolved and the dogfood ring can continue before broad rollout.",
+                decisions: ["Keep task-unblock-invalid moving once external approval is resolved."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 21, 0, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        CollectionAssert.AreEqual(
+            new[] { ReviewProposalType.MeetingNote },
+            queue.LoadSnapshot().ActiveItems.Select(item => item.ProposalType).ToArray());
     }
 
     [TestMethod]
@@ -870,6 +1129,121 @@ public sealed class MeetingTranscriptSyncServiceTests
             new[] { ReviewProposalType.MeetingNote, ReviewProposalType.BlockerReasonChange },
             pending.Select(item => item.ProposalType).ToArray());
         Assert.AreEqual("waiting on security signoff while the dogfood ring is paused before broad rollout", pending.Single(item => item.ProposalType == ReviewProposalType.BlockerReasonChange).ProposedValue);
+    }
+
+    [TestMethod]
+    public void RunScheduled_NonBlockedTask_SuppressesBlockerReasonProposal()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-pi-invalid",
+            Title = "Release gate checklist",
+            Status = GlassworkTask.Statuses.InProgress,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Ship through the dogfood ring before broad rollout."
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-blocker-reason-invalid",
+                startedAt: new DateTimeOffset(2026, 7, 24, 21, 45, 0, TimeSpan.Zero),
+                title: "Escalation sync",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/blocker-reason-invalid",
+                groundedSummary: "task-pi-invalid blocker reason: waiting on security signoff while the dogfood ring is paused before broad rollout.",
+                decisions: ["Keep task-pi-invalid moving while security signoff is tracked separately."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 22, 0, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        CollectionAssert.AreEqual(
+            new[] { ReviewProposalType.MeetingNote },
+            queue.LoadSnapshot().ActiveItems.Select(item => item.ProposalType).ToArray());
+    }
+
+    [TestMethod]
+    public void RunScheduled_DoneTask_SuppressesBlockProposal()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-block-invalid",
+            Title = "Release gate checklist",
+            Status = GlassworkTask.Statuses.Done,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Ship through the dogfood ring before broad rollout."
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-block-invalid",
+                startedAt: new DateTimeOffset(2026, 7, 24, 22, 5, 0, TimeSpan.Zero),
+                title: "Escalation sync",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/block-invalid",
+                groundedSummary: "task-block-invalid is blocked on external approval before broad rollout.",
+                decisions: ["No further work should reopen task-block-invalid."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 22, 15, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        CollectionAssert.AreEqual(
+            new[] { ReviewProposalType.MeetingNote },
+            queue.LoadSnapshot().ActiveItems.Select(item => item.ProposalType).ToArray());
+    }
+
+    [TestMethod]
+    public void RunScheduled_BlockedTask_SuppressesStatusChangeProposal()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-status-invalid",
+            Title = "Release gate checklist",
+            Status = GlassworkTask.Statuses.Blocked,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Ship through the dogfood ring before broad rollout.",
+            BlockedReason = "Waiting on external approval",
+            BlockedAt = DateTimeOffset.Parse("2026-07-24T12:00:00Z"),
+            BlockedFromStatus = GlassworkTask.Statuses.InProgress,
+            BlockedMetadataState = BlockedMetadataState.Valid
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-status-invalid",
+                startedAt: new DateTimeOffset(2026, 7, 24, 22, 20, 0, TimeSpan.Zero),
+                title: "Planning sync",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/status-invalid",
+                groundedSummary: "task-status-invalid is now done even though external approval is still pending before broad rollout.",
+                decisions: ["Do not auto-finish task-status-invalid while it remains blocked."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 22, 30, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        CollectionAssert.AreEqual(
+            new[] { ReviewProposalType.MeetingNote },
+            queue.LoadSnapshot().ActiveItems.Select(item => item.ProposalType).ToArray());
     }
 
     [TestMethod]

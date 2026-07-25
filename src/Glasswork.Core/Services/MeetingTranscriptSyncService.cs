@@ -190,7 +190,7 @@ public sealed partial class MeetingTranscriptSyncService
         if (anchor is null)
             return Array.Empty<ReviewItemSubmission>();
 
-        var corroborator = FirstCorroborator(task, recapText);
+        var corroborator = FirstCorroborator(task, recapText, anchor.Value.term);
         if (corroborator is null)
             return Array.Empty<ReviewItemSubmission>();
 
@@ -323,19 +323,51 @@ public sealed partial class MeetingTranscriptSyncService
         return null;
     }
 
-    private static (string source, string term)? FirstCorroborator(GlassworkTask task, string recapText)
+    private static (string source, string term)? FirstCorroborator(GlassworkTask task, string recapText, string anchorTerm)
     {
-        foreach (var sentence in task.Description.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var (source, candidate) in EnumerateCorroboratorCandidates(task))
         {
-            if (sentence.Length >= 8 && recapText.Contains(sentence, StringComparison.OrdinalIgnoreCase))
-                return ("Description", sentence);
+            var matchedTerm = FindCorroboratorTerm(candidate, recapText);
+            if (matchedTerm is null)
+                continue;
 
-            var matchedPhrase = FindMeaningfulPhraseOverlap(sentence, recapText);
-            if (matchedPhrase is not null)
-                return ("Description", matchedPhrase);
+            if (string.Equals(matchedTerm, anchorTerm, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return (source, matchedTerm);
         }
 
         return null;
+    }
+
+    private static IEnumerable<(string source, string text)> EnumerateCorroboratorCandidates(GlassworkTask task)
+    {
+        foreach (var line in SplitCorroboratorLines(task.Description))
+            yield return ("Description", line);
+
+        foreach (var line in SplitCorroboratorLines(task.Notes))
+            yield return ("Notes", line);
+
+        foreach (var subtask in task.Subtasks.Select(subtask => subtask.Text).Where(text => !string.IsNullOrWhiteSpace(text)))
+            yield return ("Subtasks", subtask);
+
+        foreach (var tag in task.Tags.Where(tag => !string.IsNullOrWhiteSpace(tag)))
+            yield return ("Tags", tag);
+
+        foreach (var link in task.Links)
+        {
+            if (!string.IsNullOrWhiteSpace(link.Label))
+                yield return ("Links", link.Label);
+
+            if (!string.IsNullOrWhiteSpace(link.Value))
+                yield return ("Links", link.Value);
+        }
+    }
+
+    private static IEnumerable<string> SplitCorroboratorLines(string text)
+    {
+        return text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => line.Length > 0);
     }
 
     private static string BuildCorpus(string title, string summary, IEnumerable<string> decisions, IEnumerable<string> actionItems)
@@ -449,7 +481,34 @@ public sealed partial class MeetingTranscriptSyncService
         if (stateOutcomeCount > 1)
             return Array.Empty<ReviewItemSubmission>();
 
-        return proposals;
+        return proposals
+            .Where(proposal => IsValidStateProposal(task, proposal))
+            .ToList();
+    }
+
+    private static bool IsValidStateProposal(GlassworkTask task, ReviewItemSubmission proposal)
+    {
+        return proposal.ProposalType switch
+        {
+            ReviewProposalType.BlockTask => proposal.Payload is BlockTaskProposalPayload payload
+                && !task.IsBlocked
+                && !task.IsDone
+                && task.Status is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress
+                && !string.Equals(task.BlockedReason, payload.Reason, StringComparison.Ordinal),
+            ReviewProposalType.UnblockTask => proposal.Payload is UnblockTaskProposalPayload payload
+                && task.IsBlocked
+                && !task.NeedsBlockerDetails
+                && payload.ResumeStatus is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress,
+            ReviewProposalType.BlockerReasonChange => proposal.Payload is BlockerReasonChangeProposalPayload payload
+                && task.IsBlocked
+                && !task.NeedsBlockerDetails
+                && !string.Equals(task.BlockedReason, payload.Reason, StringComparison.Ordinal),
+            ReviewProposalType.StatusChange => proposal.Payload is StatusChangeProposalPayload payload
+                && !task.IsBlocked
+                && payload.NewStatus is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress or GlassworkTask.Statuses.Done
+                && !string.Equals(task.Status, payload.NewStatus, StringComparison.Ordinal),
+            _ => true
+        };
     }
 
     private static DateOnly? ExtractDueDate(string recapText)
@@ -693,6 +752,21 @@ public sealed partial class MeetingTranscriptSyncService
         }
 
         return null;
+    }
+
+    private static string? FindCorroboratorTerm(string candidate, string recapText)
+    {
+        var trimmed = candidate.Trim();
+        if (trimmed.Length == 0)
+            return null;
+
+        if (trimmed.Length >= 8 && recapText.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
+            return trimmed;
+
+        if (!trimmed.Contains(' ') && trimmed.Length >= 4 && ContainsWholeToken(recapText, trimmed))
+            return trimmed;
+
+        return FindMeaningfulPhraseOverlap(trimmed, recapText);
     }
 
     [GeneratedRegex("[A-Za-z0-9-]+", RegexOptions.Compiled)]
