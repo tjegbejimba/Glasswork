@@ -475,6 +475,45 @@ public sealed class MeetingTranscriptSyncServiceTests
     }
 
     [TestMethod]
+    public void RunScheduled_LinkAnchorCannotSelfCorroborateFromSameStructuredLink()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-kappa-link-anchor",
+            Title = "Publish checklist",
+            Status = GlassworkTask.Statuses.Todo,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Unrelated framing.",
+            Links =
+            [
+                new TaskLink { Type = TaskLink.Types.Pr, Value = "54876", Label = "PR #54876" }
+            ]
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-link-anchor-self-corroboration",
+                startedAt: new DateTimeOffset(2026, 7, 24, 18, 52, 0, TimeSpan.Zero),
+                title: "Readout",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/link-anchor-self-corroboration",
+                groundedSummary: "PR #54876 is still pending.",
+                decisions: ["Keep PR #54876 under review."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 19, 22, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(0, result.AcceptedCount);
+        Assert.AreEqual(0, queue.LoadSnapshot().ActiveItems.Count);
+    }
+
+    [TestMethod]
     public void RunScheduled_UniqueProjectTermAnchorWithoutSeparateCorroborator_DoesNotQualify()
     {
         _vault.Save(new GlassworkTask
@@ -891,6 +930,43 @@ public sealed class MeetingTranscriptSyncServiceTests
     }
 
     [TestMethod]
+    public void RunScheduled_EmptyBlockReason_SuppressesBlockProposal()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-lambda-empty-reason",
+            Title = "Release gate checklist",
+            Status = GlassworkTask.Statuses.InProgress,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Ship through the dogfood ring before broad rollout."
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-blocked-empty-reason",
+                startedAt: new DateTimeOffset(2026, 7, 24, 20, 35, 0, TimeSpan.Zero),
+                title: "Escalation sync",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/blocked-empty-reason",
+                groundedSummary: "task-lambda-empty-reason is blocked on    . The dogfood ring still cannot proceed before broad rollout.",
+                decisions: ["Capture the blocker before updating the task state."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 21, 5, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        CollectionAssert.AreEqual(
+            new[] { ReviewProposalType.MeetingNote },
+            queue.LoadSnapshot().ActiveItems.Select(item => item.ProposalType).ToArray());
+    }
+
+    [TestMethod]
     public void RunScheduled_ExplicitUnblockEvidence_GeneratesUnblockTaskProposal()
     {
         _vault.Save(new GlassworkTask
@@ -1129,6 +1205,47 @@ public sealed class MeetingTranscriptSyncServiceTests
             new[] { ReviewProposalType.MeetingNote, ReviewProposalType.BlockerReasonChange },
             pending.Select(item => item.ProposalType).ToArray());
         Assert.AreEqual("waiting on security signoff while the dogfood ring is paused before broad rollout", pending.Single(item => item.ProposalType == ReviewProposalType.BlockerReasonChange).ProposedValue);
+    }
+
+    [TestMethod]
+    public void RunScheduled_EmptyBlockerReason_SuppressesBlockerReasonProposal()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task-pi-empty-reason",
+            Title = "Release gate checklist",
+            Status = GlassworkTask.Statuses.Blocked,
+            Created = new DateTime(2026, 7, 24),
+            Description = "Ship through the dogfood ring before broad rollout.",
+            BlockedReason = "Waiting on external approval",
+            BlockedAt = DateTimeOffset.Parse("2026-07-24T12:00:00Z"),
+            BlockedFromStatus = GlassworkTask.Statuses.InProgress,
+            BlockedMetadataState = BlockedMetadataState.Valid
+        });
+
+        var adapter = new FixtureMeetingRecapSourceAdapter(
+        [
+            MeetingRecapFixture.Available(
+                stableMeetingId: "meeting-blocker-reason-empty",
+                startedAt: new DateTimeOffset(2026, 7, 24, 21, 47, 0, TimeSpan.Zero),
+                title: "Escalation sync",
+                organizer: "Pat Lee",
+                usableUrl: "https://teams.contoso.example/recaps/blocker-reason-empty",
+                groundedSummary: "task-pi-empty-reason blocker reason:    . The dogfood ring is still paused before broad rollout.",
+                decisions: ["Capture the blocker details before changing the task metadata."],
+                actionItems: Array.Empty<MeetingActionItem>())
+        ]);
+
+        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 22, 2, 0, TimeSpan.Zero));
+        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
+        var service = new MeetingTranscriptSyncService(_vaultRoot, _vault, queue, adapter, clock);
+
+        var result = service.RunScheduled();
+
+        Assert.AreEqual(1, result.AcceptedCount);
+        CollectionAssert.AreEqual(
+            new[] { ReviewProposalType.MeetingNote },
+            queue.LoadSnapshot().ActiveItems.Select(item => item.ProposalType).ToArray());
     }
 
     [TestMethod]

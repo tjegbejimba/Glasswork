@@ -190,7 +190,7 @@ public sealed partial class MeetingTranscriptSyncService
         if (anchor is null)
             return Array.Empty<ReviewItemSubmission>();
 
-        var corroborator = FirstCorroborator(task, recapText, anchor.Value.term);
+        var corroborator = FirstCorroborator(task, recapText, anchor.Value.term, anchor.Value.exclusionKey);
         if (corroborator is null)
             return Array.Empty<ReviewItemSubmission>();
 
@@ -282,34 +282,36 @@ public sealed partial class MeetingTranscriptSyncService
         return items;
     }
 
-    private static (string description, string term)? FindAnchor(
+    private static (string description, string term, string? exclusionKey)? FindAnchor(
         GlassworkTask task,
         string recapText,
         IReadOnlyDictionary<string, int> tagCounts)
     {
         if (ContainsWholeToken(recapText, task.Id))
-            return ("Task ID", task.Id);
+            return ("Task ID", task.Id, null);
 
         if (!string.IsNullOrWhiteSpace(task.Title)
             && recapText.Contains(task.Title.Trim(), StringComparison.OrdinalIgnoreCase))
         {
-            return ("exact Task title", task.Title.Trim());
+            return ("exact Task title", task.Title.Trim(), null);
         }
 
-        foreach (var link in task.Links)
+        for (var index = 0; index < task.Links.Count; index++)
         {
+            var link = task.Links[index];
+            var exclusionKey = $"link:{index}";
             if (string.Equals(TaskLink.Types.Normalize(link.Type), TaskLink.Types.Pr, StringComparison.OrdinalIgnoreCase))
             {
                 var prValue = link.Value.Trim();
                 if (prValue.Length > 0 && (ContainsWholeToken(recapText, prValue) || recapText.Contains($"PR #{prValue}", StringComparison.OrdinalIgnoreCase)))
-                    return ("linked PR identifier", prValue);
+                    return ("linked PR identifier", prValue, exclusionKey);
             }
 
             if (string.Equals(TaskLink.Types.Normalize(link.Type), TaskLink.Types.Ado, StringComparison.OrdinalIgnoreCase))
             {
                 var adoValue = link.Value.Trim();
                 if (adoValue.Length > 0 && (ContainsWholeToken(recapText, adoValue) || recapText.Contains($"ADO #{adoValue}", StringComparison.OrdinalIgnoreCase)))
-                    return ("linked ADO identifier", adoValue);
+                    return ("linked ADO identifier", adoValue, exclusionKey);
             }
         }
 
@@ -317,19 +319,25 @@ public sealed partial class MeetingTranscriptSyncService
         {
             var normalized = tag.ToLowerInvariant();
             if (tagCounts.GetValueOrDefault(normalized) == 1 && ContainsWholeToken(recapText, tag))
-                return ("unique project term", tag);
+                return ("unique project term", tag, null);
         }
 
         return null;
     }
 
-    private static (string source, string term)? FirstCorroborator(GlassworkTask task, string recapText, string anchorTerm)
+    private static (string source, string term)? FirstCorroborator(GlassworkTask task, string recapText, string anchorTerm, string? anchorExclusionKey)
     {
-        foreach (var (source, candidate) in EnumerateCorroboratorCandidates(task))
+        foreach (var (source, candidate, candidateExclusionKey) in EnumerateCorroboratorCandidates(task))
         {
             var matchedTerm = FindCorroboratorTerm(candidate, recapText);
             if (matchedTerm is null)
                 continue;
+
+            if (anchorExclusionKey is not null
+                && string.Equals(candidateExclusionKey, anchorExclusionKey, StringComparison.Ordinal))
+            {
+                continue;
+            }
 
             if (string.Equals(matchedTerm, anchorTerm, StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -340,27 +348,29 @@ public sealed partial class MeetingTranscriptSyncService
         return null;
     }
 
-    private static IEnumerable<(string source, string text)> EnumerateCorroboratorCandidates(GlassworkTask task)
+    private static IEnumerable<(string source, string text, string? exclusionKey)> EnumerateCorroboratorCandidates(GlassworkTask task)
     {
         foreach (var line in SplitCorroboratorLines(task.Description))
-            yield return ("Description", line);
+            yield return ("Description", line, null);
 
         foreach (var line in SplitCorroboratorLines(task.Notes))
-            yield return ("Notes", line);
+            yield return ("Notes", line, null);
 
         foreach (var subtask in task.Subtasks.Select(subtask => subtask.Text).Where(text => !string.IsNullOrWhiteSpace(text)))
-            yield return ("Subtasks", subtask);
+            yield return ("Subtasks", subtask, null);
 
         foreach (var tag in task.Tags.Where(tag => !string.IsNullOrWhiteSpace(tag)))
-            yield return ("Tags", tag);
+            yield return ("Tags", tag, null);
 
-        foreach (var link in task.Links)
+        for (var index = 0; index < task.Links.Count; index++)
         {
+            var link = task.Links[index];
+            var exclusionKey = $"link:{index}";
             if (!string.IsNullOrWhiteSpace(link.Label))
-                yield return ("Links", link.Label);
+                yield return ("Links", link.Label, exclusionKey);
 
             if (!string.IsNullOrWhiteSpace(link.Value))
-                yield return ("Links", link.Value);
+                yield return ("Links", link.Value, exclusionKey);
         }
     }
 
@@ -491,6 +501,7 @@ public sealed partial class MeetingTranscriptSyncService
         return proposal.ProposalType switch
         {
             ReviewProposalType.BlockTask => proposal.Payload is BlockTaskProposalPayload payload
+                && !string.IsNullOrWhiteSpace(payload.Reason)
                 && !task.IsBlocked
                 && !task.IsDone
                 && task.Status is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress
@@ -500,6 +511,7 @@ public sealed partial class MeetingTranscriptSyncService
                 && !task.NeedsBlockerDetails
                 && payload.ResumeStatus is GlassworkTask.Statuses.Todo or GlassworkTask.Statuses.InProgress,
             ReviewProposalType.BlockerReasonChange => proposal.Payload is BlockerReasonChangeProposalPayload payload
+                && !string.IsNullOrWhiteSpace(payload.Reason)
                 && task.IsBlocked
                 && !task.NeedsBlockerDetails
                 && !string.Equals(task.BlockedReason, payload.Reason, StringComparison.Ordinal),
@@ -539,7 +551,7 @@ public sealed partial class MeetingTranscriptSyncService
         if (conjunctionIndex >= 0)
             reason = reason[..conjunctionIndex].TrimEnd();
 
-        return reason;
+        return reason.Length == 0 ? null : reason;
     }
 
     private static string? ExtractUnblockStatus(string recapText)
@@ -567,7 +579,11 @@ public sealed partial class MeetingTranscriptSyncService
     private static string? ExtractBlockerReasonChange(string recapText)
     {
         var match = BlockerReasonChangeRegex().Match(recapText);
-        return match.Success ? match.Groups["reason"].Value.Trim().TrimEnd('.', ';', ',') : null;
+        if (!match.Success)
+            return null;
+
+        var reason = match.Groups["reason"].Value.Trim().TrimEnd('.', ';', ',');
+        return reason.Length == 0 ? null : reason;
     }
 
     private static string NormalizeStatusToken(string status)
