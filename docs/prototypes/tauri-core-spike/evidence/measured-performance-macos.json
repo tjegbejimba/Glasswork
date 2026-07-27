@@ -1,0 +1,37 @@
+{
+  "cold_launch_ms": {
+    "runs": [
+      118.00000000000001,
+      103.00000000000001,
+      117
+    ],
+    "median": 117
+  },
+  "interaction_latency_ms": {
+    "runs": [
+      0.9999999999995453,
+      0,
+      1
+    ],
+    "median": 0.9999999999995453
+  },
+  "idle_memory_mb": {
+    "runs": [
+      88.34375,
+      84.96875,
+      82.640625
+    ],
+    "median": 84.96875
+  },
+  "installed_package_size": {
+    "app_bundle": "15 MB (Glasswork (Tauri spike).app)",
+    "dmg": "4.3 MB (Glasswork (Tauri spike)_0.1.0_aarch64.dmg)",
+    "caveat": "Includes tauri-plugin-wdio + tauri-plugin-wdio-webdriver (test-only WebDriver bridge, see src-tauri/Cargo.toml) -- inflates size vs. a real production build that would feature-gate these out."
+  },
+  "measurement_notes": [
+    "Measured on macOS via direct release-binary launch (built through `npm run tauri build`, NOT raw `cargo build --release` -- see README.md's 'Framework-specific considerations' for why that distinction matters).",
+    "cold_launch_ms and interaction_latency_ms captured via in-page performance.now() timestamps (instrumented in src/main.js), read through the WebdriverIO embedded provider -- avoids needing macOS Accessibility/Automation permission, which proved to require a fresh manual grant on every binary rebuild (ad-hoc-signed dev binary) and was abandoned as impractical for a repeatable measurement loop.",
+    "idle_memory_mb captured via `ps -o rss=` on the real OS process, 30s after launch, no interaction -- per #370's exact procedure.",
+    "'Cold launch' here is NOT preceded by a full reboot/disk-cache purge (no sudo/purge available in this environment) -- a real gap relative to the scorecard's frozen-cold-cache requirement. Must be redone in a true frozen measurement environment (reboot immediately before first run) alongside the Windows pass, per the scorecard's Measurement Environment Freeze section."
+  ]
+}

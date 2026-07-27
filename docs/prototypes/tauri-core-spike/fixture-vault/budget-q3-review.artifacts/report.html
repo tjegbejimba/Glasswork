@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Untrusted Artifact -- Sandbox Canary</title></head>
+<body>
+  <h1>Q3 Spend Report (agent-generated)</h1>
+  <p>This HTML artifact is untrusted (agent-produced). It intentionally
+     attempts two breakout probes so the sandbox gate can be verified by
+     watching the network panel / console for failures:</p>
+  <ul>
+    <li>Outbound network request to a canary URL</li>
+    <li>Parent-window/document access attempt</li>
+  </ul>
+  <script>
+    // Probe 1: outbound network request -- must be blocked by connect-src 'none'.
+    fetch('https://example.invalid/canary').catch(() => {});
+    // Probe 2: parent-window/document access -- must throw or no-op under sandboxing.
+    try { window.parent.document.title = 'BREACHED'; } catch (e) { /* expected */ }
+  </script>
+</body>
+</html>

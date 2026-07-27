@@ -1,0 +1,162 @@
+/* PROTOTYPE ONLY -- Wayfinder ticket #372 (map #369). Variant B "Deliberate
+   Adaptation" chrome tokens ported from the accepted design-brief prototype
+   (docs/prototypes/cross-platform-vertical-slice-prototype.html, commit
+   d8a6f734f). This spike renders exactly one platform's chrome at a time
+   (whichever OS it's actually running on) rather than side-by-side panes --
+   the design-brief prototype already settled that question. */
+
+:root {
+  --cp-bg: #f7f4ef;
+  --cp-bg-elevated: #fcfbf8;
+  --cp-surface: #ffffff;
+  --cp-surface-soft: #f5f5f5;
+  --cp-border: #dedede;
+  --cp-border-strong: #919191;
+  --cp-text: #242424;
+  --cp-text-muted: #5c5c5c;
+  --cp-text-soft: #6f6f6f;
+  --cp-accent: #b11f4b;
+  --cp-accent-soft: rgba(177, 31, 75, 0.08);
+  --cp-accent-fg: #fff;
+  --cp-success: #16a34a;
+  --cp-danger: #dc2626;
+  --cp-warning: #f59e0b;
+  --cp-link: #0078d4;
+  --cp-focus: #0a84ff;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--cp-bg);
+  color: var(--cp-text);
+  font-family: "Segoe UI", Aptos, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+h1, h2, h3, p { margin: 0; }
+button { font: inherit; cursor: pointer; }
+button:focus-visible, [tabindex]:focus-visible, a:focus-visible {
+  outline: 2px solid var(--cp-focus);
+  outline-offset: 1px;
+}
+.muted { color: var(--cp-text-muted); }
+
+.app-shell {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--cp-bg-elevated);
+}
+
+/* ---- macOS: native traffic lights (titleBarStyle Overlay), content starts
+   below the ~28px traffic-light zone; vibrancy tint comes from the real
+   NSVisualEffectView applied in Rust (window_vibrancy::apply_vibrancy) --
+   the CSS below just keeps the nav semi-transparent so it shows through. */
+html[data-os="mac"] .app-shell { padding-top: 28px; }
+html[data-os="mac"] .win-caption { display: none; }
+html[data-os="mac"] .nav {
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(10px);
+}
+
+/* ---- Windows: custom caption row (decorations:false) + Mica-like tint from
+   the real DWM backdrop (window_vibrancy::apply_mica) showing through a
+   translucent titlebar/nav. */
+html[data-os="windows"] .win-caption {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  background: linear-gradient(180deg, #eef2f8cc, #e4eaf2cc);
+  border-bottom: 1px solid var(--cp-border);
+}
+html[data-os="windows"] .win-caption[data-tauri-drag-region] { flex: 1; padding-left: 12px; font-weight: 650; }
+html[data-os="windows"] .caption-btn {
+  width: 44px; height: 32px; border: 0; background: transparent; color: var(--cp-text-muted);
+}
+html[data-os="windows"] .caption-btn:hover { background: #dfe4ec; }
+html[data-os="windows"] .caption-btn.close:hover { background: #e81123; color: #fff; }
+html[data-os="windows"] .nav {
+  background: linear-gradient(180deg, #eef2f8cc, #e4eaf2cc);
+}
+
+.nav {
+  display: flex; flex-direction: column; gap: 3px; padding: 10px 7px;
+  border-right: 1px solid var(--cp-border);
+}
+.nav-item {
+  height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 10px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--cp-text);
+  text-align: left; width: 100%;
+}
+.nav-item.active { background: var(--cp-accent-soft); font-weight: 650; color: var(--cp-accent); }
+.nav-icon { width: 16px; text-align: center; color: var(--cp-text-soft); }
+
+.body-row { min-height: 0; display: grid; grid-template-columns: 180px minmax(0, 1fr); }
+.main { min-width: 0; min-height: 0; overflow: auto; background: var(--cp-bg); }
+
+.statusbar {
+  display: flex; align-items: center; gap: 14px; padding: 0 10px; height: 24px;
+  border-top: 1px solid var(--cp-border); color: var(--cp-text-muted); font-size: 10px;
+}
+.statusbar span:first-child { flex: 1; }
+.watching { color: var(--cp-success); }
+
+.page-head { padding: 14px 18px 10px; border-bottom: 1px solid var(--cp-border); }
+.page-head h2 { font-size: 16px; }
+.page-body { padding: 12px 18px 18px; display: flex; flex-direction: column; gap: 8px; }
+
+.task-row { border: 1px solid var(--cp-border); border-radius: 9px; background: var(--cp-surface); overflow: hidden; }
+.task-row-btn { width: 100%; text-align: left; border: 0; background: transparent; padding: 0; }
+.task-row.quiet .task-row-btn { padding: 9px 12px; display: flex; align-items: center; gap: 8px; }
+.task-row.card .task-row-btn { padding: 10px 12px; }
+.title-row { display: flex; align-items: baseline; gap: 8px; font-weight: 650; }
+.chip { display: inline-flex; align-items: center; height: 17px; padding: 0 6px; border-radius: 4px; font-size: 9px; font-weight: 650; }
+.chip.priority-high { background: #fde2e2; color: #b3261e; }
+.chip.priority-low { background: #eef1f4; color: var(--cp-text-muted); }
+.chip.priority-medium { background: #fef3d9; color: #9a6a00; }
+.chip.due-today { background: #ffe9d6; color: #b3540a; }
+.chip.ado { background: #e4eef9; color: #0057a3; }
+.segbar { display: flex; gap: 2px; height: 6px; margin: 7px 0 5px; border-radius: 3px; overflow: hidden; }
+.seg { flex: 1; }
+.seg.done { background: var(--cp-accent); }
+.seg.in_progress { background: #e79fb3; }
+.seg.blocked { background: var(--cp-danger); }
+.seg.todo { background: var(--cp-border); }
+.current-step { font-size: 11px; color: var(--cp-text-soft); }
+.blocker-row { margin-top: 5px; font-size: 11px; color: var(--cp-danger); }
+.blurb { margin-top: 5px; font-size: 11px; color: var(--cp-text-muted); }
+
+.detail-panel { margin: 0 18px 8px; border: 1px dashed var(--cp-border-strong); border-radius: 9px; padding: 12px; background: var(--cp-surface-soft); }
+.detail-section { margin-top: 10px; }
+.detail-section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--cp-text-muted); margin-bottom: 4px; }
+.subtask-row2 {
+  display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 8px;
+  padding: 5px 4px; border-bottom: 1px solid var(--cp-border); font-size: 11.5px;
+}
+.subtask-row2:last-child { border-bottom: 0; }
+.subtask-row2.dragging { opacity: 0.4; }
+.grip { color: var(--cp-text-soft); cursor: grab; border: 0; background: transparent; padding: 2px; }
+.circle-btn { width: 17px; height: 17px; border-radius: 50%; border: 1.5px solid var(--cp-border-strong); background: var(--cp-surface); padding: 0; }
+.circle-btn.done { background: var(--cp-accent); border-color: var(--cp-accent); }
+.circle-btn.blocked { border-color: var(--cp-danger); }
+.subtext-btn { border: 0; background: transparent; text-align: left; padding: 2px 4px; text-decoration: none; color: var(--cp-text); }
+.subtext-btn.done { text-decoration: line-through; color: var(--cp-text-muted); }
+.subtask-expand { grid-column: 1 / -1; font-size: 10.5px; color: var(--cp-text-muted); padding: 2px 4px 6px 4px; }
+
+.artifact-row { border: 1px solid var(--cp-border); border-radius: 7px; padding: 7px 9px; margin-bottom: 6px; font-size: 11.5px; }
+.sandbox-badge { display: inline-flex; align-items: center; height: 16px; padding: 0 6px; border-radius: 4px; font-size: 9px; background: #eafaf0; color: var(--cp-success); margin-left: 6px; }
+.html-preview-frame { margin-top: 6px; width: 100%; height: 160px; border: 1px solid var(--cp-border); border-radius: 6px; background: #fff; }
+.artifact-toggle { margin-top: 6px; border: 1px solid var(--cp-border); border-radius: 5px; padding: 3px 8px; font-size: 10.5px; background: var(--cp-surface); }
+.artifact-source { margin-top: 6px; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 10px; background: #fafafa; border: 1px solid var(--cp-border); border-radius: 6px; padding: 8px; max-height: 160px; overflow: auto; }
+.md-body :is(h1, h2, h3) { font-size: 12px; margin: 6px 0 3px; }
+.md-body ul { margin: 4px 0; padding-left: 18px; }
+.md-body p { margin: 4px 0; }
+.md-body a.blocked-link { color: var(--cp-text-muted); text-decoration: line-through; cursor: not-allowed; }
+
+.planner-banner { margin: 0 18px 8px; padding: 8px 10px; border: 1px solid var(--cp-warning); background: #fff7e6; border-radius: 6px; font-size: 11px; color: #8a5a00; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}

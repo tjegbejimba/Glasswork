@@ -1,0 +1,50 @@
+<!--
+  PROTOTYPE ONLY -- Wayfinder ticket #372 (map #369). Disposable Tauri 2
+  spike for the shared cross-platform vertical slice (#370): My Day, Task
+  Detail, reserved Planner nav stub. Bounded Rust Core lives in ../core.
+  Not production Glasswork -- does not touch src/Glasswork.App or
+  src/Glasswork.Core.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Glasswork -- Tauri/Rust Core spike</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <div class="win-caption" data-tauri-drag-region>
+      <span data-tauri-drag-region>Glasswork</span>
+      <button class="caption-btn" id="win-minimize" aria-label="Minimize window">&#8211;</button>
+      <button class="caption-btn" id="win-maximize" aria-label="Maximize window">&#9633;</button>
+      <button class="caption-btn close" id="win-close" aria-label="Close window">&#10005;</button>
+    </div>
+
+    <div class="body-row">
+      <nav class="nav" aria-label="Primary">
+        <button class="nav-item active" data-page="myday" aria-current="page">
+          <span class="nav-icon" aria-hidden="true">&#9728;</span>My Day
+        </button>
+        <button class="nav-item" data-page="planner">
+          <span class="nav-icon" aria-hidden="true">&#9638;</span>Planner
+        </button>
+      </nav>
+      <main class="main" id="main-content" tabindex="-1"></main>
+    </div>
+
+    <div class="statusbar">
+      <span id="status-vault">Loading fixture Vault&hellip;</span>
+      <span id="status-count"></span>
+      <span class="watching" id="status-watching">&#9679; watching</span>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+  <!-- PROTOTYPE-ONLY: enables the automated WebdriverIO desktop UI test (hard
+       scorecard gate #5). Vendored copy of @wdio/tauri-plugin; harmless if
+       loaded outside a WebDriver session. See test/wdio.conf.ts. -->
+  <script type="module" src="vendor/wdio-tauri-plugin.js"></script>
+</body>
+</html>

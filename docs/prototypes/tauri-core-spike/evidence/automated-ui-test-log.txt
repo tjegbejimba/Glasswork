@@ -1,0 +1,95 @@
+=== Bounded Rust Core: cargo test --release (Mon Jul 27 09:08:34 PDT 2026) ===
+    Finished `release` profile [optimized] target(s) in 0.16s
+     Running unittests src/lib.rs (/Users/tjegbejimba/Code/copilot-worktrees/Glasswork/tjegbejimba-issue-372-prototype-tauri-with-a-bounded-rust-core-90fb95/docs/prototypes/tauri-core-spike/target/release/deps/glasswork_core_spike-f75df2fb86b28a13)
+
+running 3 tests
+test self_write::tests::does_not_suppress_a_change_it_never_marked ... ok
+test self_write::tests::a_suppression_is_single_use_so_the_next_real_external_edit_still_fires ... ok
+test self_write::tests::suppresses_a_change_it_just_marked_as_its_own_write ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/artifact_sandbox.rs (/Users/tjegbejimba/Code/copilot-worktrees/Glasswork/tjegbejimba-issue-372-prototype-tauri-with-a-bounded-rust-core-90fb95/docs/prototypes/tauri-core-spike/target/release/deps/artifact_sandbox-bd819afe3e9f0213)
+
+running 4 tests
+test classifies_html_extension ... ok
+test html_sandbox_csp_blocks_script_and_network_and_framing_out ... ok
+test unknown_extension_is_other ... ok
+test classifies_markdown_extension ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/obsidian_uri.rs (/Users/tjegbejimba/Code/copilot-worktrees/Glasswork/tjegbejimba-issue-372-prototype-tauri-with-a-bounded-rust-core-90fb95/docs/prototypes/tauri-core-spike/target/release/deps/obsidian_uri-d674137364bee1f5)
+
+running 3 tests
+test builds_deep_link_for_a_task_file_in_the_vault_root ... ok
+test drops_the_md_extension_but_preserves_other_extensions ... ok
+test rejects_paths_that_escape_the_vault_root ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/parser_roundtrip.rs (/Users/tjegbejimba/Code/copilot-worktrees/Glasswork/tjegbejimba-issue-372-prototype-tauri-with-a-bounded-rust-core-90fb95/docs/prototypes/tauri-core-spike/target/release/deps/parser_roundtrip-0be05d16f2980a51)
+
+running 7 tests
+test missing_frontmatter_delimiters_is_an_error ... ok
+test parses_blocked_task_metadata ... ok
+test parses_four_subtasks_with_status_and_blocker_metadata ... ok
+test parses_notes_section ... ok
+test parses_description_separately_from_subtasks_section ... ok
+test parses_frontmatter_fields ... ok
+test round_trips_through_serialize_then_parse ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vault_load.rs (/Users/tjegbejimba/Code/copilot-worktrees/Glasswork/tjegbejimba-issue-372-prototype-tauri-with-a-bounded-rust-core-90fb95/docs/prototypes/tauri-core-spike/target/release/deps/vault_load-5c89e0f0a388e963)
+
+running 2 tests
+test empty_vault_folder_loads_zero_tasks ... ok
+test loads_every_markdown_task_file_in_the_vault_folder ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/watcher_live_update.rs (/Users/tjegbejimba/Code/copilot-worktrees/Glasswork/tjegbejimba-issue-372-prototype-tauri-with-a-bounded-rust-core-90fb95/docs/prototypes/tauri-core-spike/target/release/deps/watcher_live_update-c8dff5d93af0a251)
+
+running 1 test
+test detects_external_edit_to_a_watched_file ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+   Doc-tests glasswork_core_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+=== WebDriverIO: vertical-slice.spec.js (run separately for reliability) ===
+[webkit 605.1.15 macos #0-0]    ✓ loads My Day with the fixed 3-task fixture
+[webkit 605.1.15 macos #0-0]    ✓ opens Task Detail for the rich card task on click (real interaction #1)
+[webkit 605.1.15 macos #0-0]    ✓ toggles a subtask's done state via the circle hit-zone (real interaction #2, ADR 0004)
+[webkit 605.1.15 macos #0-0]    ✓ navigates to the reserved Planner nav stub via keyboard (real interaction #3)
+[webkit 605.1.15 macos #0-0]
+[webkit 605.1.15 macos #0-0] 4 passing (1.5s)
+
+
+
+=== WebDriverIO: subtask-reorder.spec.js (run separately for reliability) ===
+[webkit 605.1.15 macos #0-0]    ✓ moves a subtask down via Alt+ArrowDown and persists the new order
+[webkit 605.1.15 macos #0-0]
+[webkit 605.1.15 macos #0-0] 1 passing (2s)
+
+
+
+=== WebDriverIO: sandbox-verify.spec.js (run separately for reliability) ===
+[webkit 605.1.15 macos #0-0]    ✓ blocks the untrusted artifact's breakout probes
+[webkit 605.1.15 macos #0-0]
+[webkit 605.1.15 macos #0-0] 1 passing (1.2s)
+
+
+
+=== WebDriverIO: filewatch-live-update.spec.js (run separately for reliability) ===
+[webkit 605.1.15 macos #0-0]    ✓ reflects an external frontmatter edit without restart
+[webkit 605.1.15 macos #0-0]
+[webkit 605.1.15 macos #0-0] 1 passing (128ms)
+
+

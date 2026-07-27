@@ -1,0 +1,5 @@
+{
+  "before": "\n        Renew domain registrationLowDue 2026-07-24\n      ",
+  "after": "\n        Renew domain registrationHighDue 2026-07-25\n      ",
+  "verdict": "LIVE_UPDATE_CONFIRMED"
+}

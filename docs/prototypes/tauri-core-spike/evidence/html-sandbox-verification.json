@@ -1,0 +1,8 @@
+{
+  "titleBefore": "Glasswork -- Tauri/Rust Core spike",
+  "titleAfter": "Glasswork -- Tauri/Rust Core spike",
+  "breakoutSucceeded": false,
+  "sandboxAttr": "allow-same-origin",
+  "allowScriptsPresent": false,
+  "verdict": "SANDBOX_HELD"
+}
