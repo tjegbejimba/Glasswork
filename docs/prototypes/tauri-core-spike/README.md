@@ -27,10 +27,13 @@ Do not close #372 or append the #369 decision pointer until all of the
 following exist:
 
 - [x] macOS: full slice built and gate-checked
-- [x] macOS: measured evidence (8 metrics) captured, with caveats noted below
-- [x] macOS: automated tests passing (27 total)
+- [x] macOS: automated tests passing (37 total — 26 Rust Core, 11 WebDriverIO)
 - [x] macOS: HITL evidence artifacts prepared (screenshots + recording) for
       TJ to review
+- [ ] macOS: measured evidence is **incomplete** — 3 of 8 metrics fully meet
+      their locked procedure, 1 is measured with an interpretation note, and
+      4 have real gaps. See "Measured evidence" below; nothing here is ready
+      for the calculator.
 - [ ] macOS: TJ's hands-on visual/interaction ratings (4 sub-criteria,
       scorecard Phase 1, rated alongside the other two spikes once they exist)
 - [ ] macOS: live VoiceOver pass (Gate 4 + metric 6) — **automation proved
@@ -42,6 +45,32 @@ following exist:
       confidence will improve once the PWA target itself is scoped, but the
       6-module classification recorded here is real, not a placeholder
 
+### Correction history
+
+An earlier revision of this spike overstated parts of its evidence. A
+two-axis code review against the locked specs caught it, and the following
+were fixed rather than argued down (all are real changes, not re-wordings):
+
+- **Live file-watch used the wrong fixture task.** #370 names "Confirm
+  Tailscale ACL update" as the file-watch demo task; the test exercised
+  `renew-domain`. Now corrected, and the evidence regenerated.
+- **The HTML sandbox gate claimed PASS without testing the network probe.**
+  It only checked that the parent title was unmutated and that
+  `allow-scripts` was absent — inferring the network block rather than
+  observing it. Now proven with a local canary HTTP server plus a control
+  request that proves the detector works before the negative result counts.
+- **Untrusted Vault prose was injected raw into `innerHTML`.** A live XSS:
+  an `onerror` payload in a Task's Notes actually executed. Now escaped, with
+  regression tests carrying real executable payloads.
+- **Planner shipped explanatory Page content**, contradicting #370's "no
+  Planner content, not even a static layout". The nav entry is now reserved
+  and non-routable, and its Page renders nothing.
+- **Task Detail was an inline row expansion**, not the third Page of #370's
+  three-page shell. It is now a distinct Page with its own navigation.
+- **Measured evidence was summarized as "8 metrics captured"** when several
+  did not meet their locked procedure. Each metric now carries an explicit
+  status and, where applicable, the exact gap.
+
 ## What was built
 
 - **Bounded Rust Core** (`core/`) — a from-scratch Rust reimplementation of
@@ -52,16 +81,18 @@ following exist:
   with vault-escape rejection, and HTML/Markdown artifact-kind
   classification + sandboxed-HTML CSP policy. It is **not** a port of the
   whole product — no Planner, no backlinks, no UI state, no full task
-  catalog beyond the fixed fixture. 20 passing tests (`cargo test --release`,
+  catalog beyond the fixed fixture. 26 passing tests (`cargo test --release`,
   see `evidence/automated-ui-test-log.txt`).
 - **Tauri 2 shell** (`src-tauri/`) — thin IPC layer exposing the Core's
-  operations to the frontend (`src-tauri/src/lib.rs`, 205 LOC), plus
+  operations to the frontend (`src-tauri/src/lib.rs`, 224 LOC), plus
   platform-conditional window chrome config
   (`tauri.macos.conf.json`: overlay title bar + `macOSPrivateApi` for native
   traffic lights and vibrancy; `tauri.windows.conf.json`: `decorations:
   false` + `transparent: true` for the custom-caption/Mica-tint path).
-- **Frontend** (`src/`, vanilla JS/HTML/CSS, 586 LOC) — shared layout
-  (My Day list with rich/quiet row forms, Task Detail, subtask rows with the
+- **Frontend** (`src/`, vanilla JS/HTML/CSS, 644 LOC) — the three-Page shell
+  (My Day, Task Detail as its own Page reached by navigation, and a reserved
+  **non-routable** Planner nav entry that renders no Page content at all),
+  with rich/quiet My Day row forms, subtask rows with the
   circle-vs-text hit-zone split per ADR 0004, sandboxed HTML artifact
   preview, reserved Planner nav stub with zero content) plus the accepted
   Deliberate Adaptation chrome split: native traffic lights + subtle
@@ -80,37 +111,40 @@ build:
 
 | # | Gate | macOS result |
 |---|---|---|
-| 1 | Full slice behavior | **PASS** — every item in the checklist present and functional against the fixture (verified via screenshots + `vertical-slice.spec.js` + `subtask-reorder.spec.js`) |
-| 2 | Genuine HTML sandbox | **PASS** — `evidence/html-sandbox-verification.json` (`verdict: "SANDBOX_HELD"`), corroborated by `tests/artifact_sandbox.rs`'s `html_sandbox_csp_blocks_script_and_network_and_framing_out` and `sandbox-verify.spec.js` |
-| 3 | Native file/Obsidian launching | **macOS: PASS.** Deep-link build verified by `core/tests/obsidian_uri.rs`; a real gap was found and fixed this session (an earlier version dropped `.md` incorrectly for compound extensions — see `obsidian_uri.rs::drops_the_md_extension_but_preserves_other_extensions`). **Windows: NOT YET RUN** — no Windows device available this session |
-| 4 | Accessibility reachability | **macOS: NOT YET CONFIRMED via live VoiceOver.** Keyboard-focus reachability for every zone is exercised by `vertical-slice.spec.js` and `subtask-reorder.spec.js`, but a spoken-announcement check requires a human with VoiceOver running — see "VoiceOver — required HITL step". **Windows/Narrator: NOT YET RUN** |
-| 5 | A real automated test passes | **PASS** — 7 WebDriverIO specs (27 tests total incl. Rust), each exercising a real fixture interaction, not app-launch smoke tests |
-| 6 | No crash or hang | **PASS** on macOS across all evidence-capture sessions this segment; no crash or >10s unresponsive period observed. **Windows: NOT YET RUN** |
+| 1 | Full slice behavior | **PASS** — every item in the checklist present and functional against the fixture: both My Day row forms, Task Detail as a distinct Page with working subtask reorder, both Artifact kinds, the ADR 0004 hit-zone split, live file-watch on the "Confirm Tailscale ACL update" task, the reserved Planner nav entry with zero content, and keyboard reach to nav/rows/subtasks. Verified by screenshots plus `vertical-slice.spec.js`, `subtask-reorder.spec.js`, `filewatch-live-update.spec.js`. |
+| 2 | Genuine HTML sandbox | **PASS**, now on direct evidence for *both* probes — `evidence/html-sandbox-verification.json` records a local canary server seeing 1 control request (proving the detector works) and **0** requests from the sandboxed artifact, alongside an unmutated parent title and unset parent flag. Corroborated by `tests/artifact_sandbox.rs` and `sandbox-verify.spec.js`. |
+| 3 | Native file/Obsidian launching | **macOS: PASS.** Deep-link build verified by `core/tests/obsidian_uri.rs`; a real bug was found and fixed (compound extensions). The OS-default-handler fallback has been **removed** (ADR 0006) — a deep link that can't be built now fails loudly instead of opening an arbitrary editor against real notes, and `opener:allow-open-path` is no longer granted in `capabilities/default.json`. **Windows: NOT YET RUN.** |
+| 4 | Accessibility reachability | **NOT YET CONFIRMED.** Keyboard-focus reachability for every zone (including the reserved Planner entry, which uses `aria-disabled` precisely so it stays focusable) is exercised by the automated specs, but the spoken-announcement half needs a human running VoiceOver. **Windows/Narrator: NOT YET RUN.** |
+| 5 | A real automated test passes | **PASS** — 37 tests total (26 Rust Core, 11 WebDriverIO), each WebDriverIO spec exercising a real fixture interaction rather than an app-launch smoke test. |
+| 6 | No crash or hang | **PASS** on macOS across all evidence-capture sessions; no crash or >10s unresponsive period observed. **Windows: NOT YET RUN.** |
 
-**Gates 3 and 4 cannot be marked fully PASS until the Windows half runs.**
-Per the gate definition ("succeeds on both macOS and Windows" / "both
-VoiceOver ... and Narrator"), this ticket treats them as open until that
-evidence exists — this is intentional, not an oversight.
+**Gates 3, 4 and 6 cannot be marked fully PASS until the Windows half runs**,
+and Gate 4 additionally needs the VoiceOver pass. Per the gate definitions
+("succeeds on both macOS and Windows" / "both VoiceOver ... and Narrator"),
+this ticket treats them as open — intentionally, not as an oversight.
 
 ## Measured evidence (Phase 1, 30% bucket) — macOS raw numbers
 
-Raw values in `evidence/measured-performance-macos.json` (median of 3 runs
-each; per-run values in `evidence/measured-performance-macos-raw.jsonl`).
-**These are not yet scoreable** — the scorecard's normalization is a
-relative ranking among gate-surviving candidates in the *same* round, and no
-other spike (Avalonia, Uno) has been built yet in this ticket's scope. What
-follows is raw evidence only, for #381 to rank once all three exist.
+Raw per-run values in `evidence/measured-performance-macos-raw.jsonl`;
+per-metric status and gaps in `evidence/measured-performance-macos.json`.
 
-| # | Metric | macOS value | Caveat |
+**Nothing here is ready for the calculator**, for two independent reasons:
+the scorecard normalizes by relative ranking among gate-surviving candidates
+(and Avalonia/Uno don't exist yet), *and* four of the eight metrics do not
+yet meet their locked measurement procedure. Per the scorecard's
+missing-evidence rule those score **0** if they stay uncaptured — that is
+the honest current position, not a placeholder to be quietly upgraded later.
+
+| # | Metric | macOS value | Status |
 |---|---|---|---|
-| 1 | Cold launch time | 117 ms (median) | **Not a true frozen-cache cold launch** — no reboot/disk-cache purge was available in this environment (no `sudo`/`purge`). Must be redone in a genuinely frozen environment per the scorecard's "Measurement Environment Freeze" section, alongside the Windows pass. |
-| 2 | Task-detail interaction latency | ~1 ms (median) | Captured via in-page `performance.now()` timestamps instrumented in `src/main.js`, read through the WebDriverIO embedded provider (see note below on why not native OS Accessibility APIs). |
-| 3 | Idle resident memory | 84.97 MB (median) | Via `ps -o rss=`, 30s post-launch, no interaction — matches #370's procedure. |
-| 4 | Installed package size | App bundle 15 MB / DMG 4.3 MB | **Inflated vs. a real production build** — includes `@wdio/tauri-service`'s test-only WebDriver bridge plugin, which a real release build would feature-gate out. Flagged explicitly so this isn't silently compared against Avalonia/Uno builds that won't carry test-only weight. |
-| 5 | File-watch response latency | not separately stopwatched | The live-update *behavior* is proven (`evidence/filewatch-live-update.json`, `verdict: "LIVE_UPDATE_CONFIRMED"`, corroborated by `tests/watcher_live_update.rs` and the `filewatch-live-update.spec.js` WDIO test), but a clean 3-run stopwatch timing from "external save" to "on-screen update," timestamped from the recording, was **not captured this session** — the recording evidence covers the reorder interaction only (see "Recording evidence" below). This metric currently has **no timing value**, only a pass/fail behavioral confirmation. Must be captured before scoring. |
-| 6 | Accessibility completeness | not yet measured | Depends on the live VoiceOver/Narrator pass (see gate 4). |
-| 7 | Testability breadth | **6 / 6** catalog interactions covered | toggle a subtask (`vertical-slice.spec.js`), open Task Detail (`vertical-slice.spec.js`), drag-reorder a subtask (`subtask-reorder.spec.js`, via the accessible keyboard alternative — see UX finding below), trigger the HTML preview (`sandbox-verify.spec.js`), trigger a live file-watch update (`filewatch-live-update.spec.js`), navigate via keyboard (`vertical-slice.spec.js`'s Planner-nav test). Each test asserts on one catalog action's result, no inflation via trivial sub-assertions. |
-| 8 | Implementation complexity | see LOC breakdown below | |
+| 1 | Cold launch time | 89 ms (median of 89 / 86 / 90) | **Procedure not met.** The Measurement Environment Freeze defines cold launch as following a reboot or guaranteed cold cache. No reboot/`purge` was available here, so these are warm-cache launches. Must be re-measured in a frozen environment. |
+| 2 | Task-detail interaction latency | 1 ms (median of 1 / 1 / 2) | **Measured.** In-page `performance.now()` delta from the Task Detail navigation click to the Page rendering, read via the WebDriverIO embedded provider. |
+| 3 | Idle resident memory | 96.4 MB (median of 100.8 / 88.9 / 96.4) | **Measured.** `ps -o rss=` on the real process, 30s post-launch, no interaction — #370's exact procedure. |
+| 4 | Installed package size | app bundle 15 MB / DMG 4.3 MB | **Partial — one OS only.** The scorecard averages both OSes; Windows is pending. Also inflated by the test-only WebDriver bridge, which a production build would feature-gate out. |
+| 5 | File-watch response latency | *no value* | **Not measured.** The *behavior* is proven (`evidence/filewatch-live-update.json`, verdict `LIVE_UPDATE_CONFIRMED`, on the locked Tailscale ACL task) and a single WebDriver-polled observation of ~23 ms exists, but the metric requires a 3-run median timestamped from the acceptance recording. The single observation is deliberately **not** presented as the metric value. |
+| 6 | Accessibility completeness | *no value* | **Not measured.** Requires live VoiceOver + Narrator passes scoring correct name/role/state per zone, averaged across both OSes. HITL, and half of it needs a Windows device. |
+| 7 | Testability breadth | **6 / 6** catalog interactions | **Measured.** toggle a subtask, open Task Detail, drag-reorder (via the accessible keyboard alternative), trigger the HTML preview, trigger a live file-watch update, navigate via keyboard — each asserted by a spec performing that one action, with no inflation via trivial sub-assertions. |
+| 8 | Implementation complexity | 868 LOC framework UI (+635 Core, reported separately) | **Measured, with an interpretation note** — see below. |
 
 ### Implementation-complexity LOC breakdown (metric 8)
 
@@ -123,10 +157,10 @@ compare fairly, rather than silently picking one framing:
 
 | Layer | LOC | Included in metric 8? |
 |---|---|---|
-| Frontend UI (`src/*.js`, `*.html`, `*.css`, excluding vendored libs) | 586 | Yes — framework-specific UI/presentation layer |
-| Tauri IPC shell (`src-tauri/src/*.rs`, hand-written, excludes `src-tauri/gen/`) | 211 | Yes — framework-specific UI/presentation layer |
-| **Framework-specific UI total** | **797** | — |
-| Bounded Rust Core (`core/src/*.rs`) | 608 | **Reported separately, not counted in the 797** — this is new Core-equivalent logic, not "presentation," but also not reusing an existing Core the way Avalonia/Uno do. Flagged for #381 to decide the fair comparison basis (e.g. compare 797 head-to-head, or compare 797+608 against Avalonia/Uno's own incremental C# Core changes, if any). |
+| Frontend UI (`src/*.js`, `*.html`, `*.css`, excluding vendored libs) | 644 | Yes — framework-specific UI/presentation layer |
+| Tauri IPC shell (`src-tauri/src/*.rs`, hand-written, excludes `src-tauri/gen/`) | 224 | Yes — framework-specific UI/presentation layer |
+| **Framework-specific UI total** | **868** | — |
+| Bounded Rust Core (`core/src/*.rs`) | 635 | **Reported separately, not counted in the 868** — this is new Core-equivalent logic, not "presentation," but also not reusing an existing Core the way Avalonia/Uno do. Flagged for #381 to decide the fair comparison basis (e.g. compare 868 head-to-head, or compare 868+635 against Avalonia/Uno's own incremental C# Core changes, if any). |
 | Rust Core tests (`core/tests/*.rs`, for reference only) | 299 | No — tests are not "implementation" |
 
 ## PWA-reuse bonus — module classification (provisional)
@@ -162,10 +196,16 @@ capture-timing limitation (not a script bug — see below):
   reorder interaction only: Task Detail open → a single Alt+ArrowDown
   keyboard reorder → the reordered state holding stably (no oscillation).
   Trimmed to remove dead air after the driver tears down the app window.
+  **Note:** this recording predates the three-Page-shell correction, so it
+  shows Task Detail as an inline row expansion. The reorder interaction it
+  demonstrates is unchanged, but the navigation model in it is stale — the
+  current shape is in `evidence/screenshot-task-detail-blocked-subtask.png`.
+  It should be re-recorded alongside the pending file-watch timing capture.
 - **`evidence/filewatch-live-update.json`** (`verdict:
   "LIVE_UPDATE_CONFIRMED"`) + `tests/watcher_live_update.rs` +
   `filewatch-live-update.spec.js` — proves the live file-watch update
-  (external frontmatter edit → on-screen update with no restart) via
+  (external frontmatter edit → on-screen update with no restart) on the
+  **locked "Confirm Tailscale ACL update" fixture task** (#370), via
   structured before/after DOM text and a passing automated test, **not**
   via the recording.
 
@@ -210,7 +250,26 @@ job includes surfacing exactly this kind of thing):
    key injection. This is a test-infrastructure limitation, not a product
    bug — flagged so it isn't mistaken for one if Avalonia/Uno's WDIO-
    equivalent tooling behaves differently.
-4. **Real keyboard-accessibility UX finding: focus-restoration oscillation.**
+4. **Live XSS through untrusted Task prose.** Description/Notes were
+   interpolated straight into `innerHTML`. An `<img onerror>` payload in a
+   Task's Notes genuinely executed — confirmed by a failing test before the
+   fix (`Expected: false, Received: true`). Notable because an `escapeHtml`
+   helper already existed in the same file and was applied to Artifact
+   content and wiki links, just not to task prose: the boundary was
+   inconsistent rather than absent. Now a single module-scope helper, with
+   prose routed through the same bounded Markdown renderer as Artifacts, and
+   `untrusted-content.spec.js` carrying real executable payloads.
+5. **Presentation was re-deriving domain rules.** `isRich` / `showAsCard`
+   existed in both `core/src/model.rs` and `src/main.js`. The Core copy is
+   now the only one: `TaskView` serializes the derivations onto the payload
+   (`core/tests/task_view.rs`), so the UI reads the decision instead of
+   recomputing it.
+6. **The Obsidian launcher had an ADR 0006-rejected fallback**, handing raw
+   Vault files to the OS default handler when a deep link couldn't be built
+   — an arbitrary-editor/data-loss risk that also masked broken deep links.
+   Removed, and the `opener:allow-open-path` capability withdrawn so the
+   privileged bridge no longer exists to be called.
+7. **Real keyboard-accessibility UX finding: focus-restoration oscillation.**
    After a subtask reorder, focus is restored **by list position**, not by
    element identity. Reordering once moves the subtask and correctly
    restores focus to "whatever is now at that position" — but pressing the
@@ -274,6 +333,7 @@ npx tauri build --no-bundle
 #      }]]
 #    Then run each spec separately (do not batch):
 npx wdio run test/wdio.conf.js --spec test/specs/vertical-slice.spec.js
+npx wdio run test/wdio.conf.js --spec test/specs/untrusted-content.spec.js
 npx wdio run test/wdio.conf.js --spec test/specs/subtask-reorder.spec.js
 npx wdio run test/wdio.conf.js --spec test/specs/sandbox-verify.spec.js
 npx wdio run test/wdio.conf.js --spec test/specs/filewatch-live-update.spec.js
@@ -316,10 +376,15 @@ npm install
 cargo test --release                       # bounded Rust Core: 20 tests
 npx tauri build --no-bundle                 # release build (never raw cargo build --release)
 npx wdio run test/wdio.conf.js --spec test/specs/vertical-slice.spec.js
+npx wdio run test/wdio.conf.js --spec test/specs/untrusted-content.spec.js
 npx wdio run test/wdio.conf.js --spec test/specs/subtask-reorder.spec.js
 npx wdio run test/wdio.conf.js --spec test/specs/sandbox-verify.spec.js
 npx wdio run test/wdio.conf.js --spec test/specs/filewatch-live-update.spec.js
 ```
+
+Run each spec as its own `wdio run` invocation — batching them is unreliable
+with this driver. Specs that mutate the fixture snapshot and restore it, so
+the locked 3-task fixture stays byte-identical (see Fixture integrity below).
 
 ## Fixture integrity (tamper-evidence)
 
@@ -341,7 +406,7 @@ Per the scorecard's Phase 2 non-scoring notes section, carried here for
 - **Two-runtime operational cost**: Tauri pairs a Rust backend process with
   a system WebView frontend — two languages/runtimes in one app, versus a
   single-process C#/XAML app for Avalonia/Uno. This spike's bounded Rust
-  Core (608 LOC) is the concrete cost of that split; a production port
+  Core (635 LOC) is the concrete cost of that split; a production port
   would need to either grow this considerably or keep more logic on the JS
   side (with attendant trust/validation tradeoffs, especially given ADR
   0006's "all rendered content is untrusted" rule).

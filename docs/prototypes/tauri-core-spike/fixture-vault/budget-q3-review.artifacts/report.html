@@ -11,10 +11,14 @@
     <li>Parent-window/document access attempt</li>
   </ul>
   <script>
-    // Probe 1: outbound network request -- must be blocked by connect-src 'none'.
-    fetch('https://example.invalid/canary').catch(() => {});
+    // Probe 1: outbound network request -- aimed at a LOCAL canary endpoint
+    // (127.0.0.1:8787) rather than a public URL, so the sandbox test can
+    // deterministically assert "zero requests arrived" instead of relying on
+    // reading a network panel by eye. See test/specs/sandbox-verify.spec.js.
+    fetch('http://127.0.0.1:8787/canary?probe=artifact').catch(() => {});
     // Probe 2: parent-window/document access -- must throw or no-op under sandboxing.
     try { window.parent.document.title = 'BREACHED'; } catch (e) { /* expected */ }
+    try { window.parent.__sandboxBreached = true; } catch (e) { /* expected */ }
   </script>
 </body>
 </html>

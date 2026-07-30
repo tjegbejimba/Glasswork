@@ -1,6 +1,9 @@
-{"metric":"cold_launch_ms","value":118.00000000000001}
-{"metric":"interaction_latency_ms","value":0.9999999999995453}
-{"metric":"cold_launch_ms","value":103.00000000000001}
-{"metric":"interaction_latency_ms","value":0}
-{"metric":"cold_launch_ms","value":117}
+{"metric":"cold_launch_ms","value":89}
 {"metric":"interaction_latency_ms","value":1}
+{"metric":"cold_launch_ms","value":86}
+{"metric":"interaction_latency_ms","value":1.0000000000002274}
+{"metric":"cold_launch_ms","value":90}
+{"metric":"interaction_latency_ms","value":2}
+{"metric":"idle_memory_mb","value":100.828}
+{"metric":"idle_memory_mb","value":88.922}
+{"metric":"idle_memory_mb","value":96.391}

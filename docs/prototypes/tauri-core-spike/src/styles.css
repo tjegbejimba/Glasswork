@@ -154,9 +154,23 @@ html[data-os="windows"] .nav {
 .md-body p { margin: 4px 0; }
 .md-body a.blocked-link { color: var(--cp-text-muted); text-decoration: line-through; cursor: not-allowed; }
 
-.planner-banner { margin: 0 18px 8px; padding: 8px 10px; border: 1px solid var(--cp-warning); background: #fff7e6; border-radius: 6px; font-size: 11px; color: #8a5a00; }
 
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
+
+/* Task Detail is its own Page (#370 three-page shell): its header carries a
+   back affordance to My Day rather than the row-expansion affordance the
+   earlier inline version used. */
+.detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.back-btn {
+  background: transparent; border: 1px solid var(--stroke, rgba(128,128,128,.35));
+  border-radius: 6px; padding: 4px 10px; font: inherit; color: inherit; cursor: pointer;
+}
+.back-btn:hover { background: rgba(128,128,128,.12); }
+.detail-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Reserved-but-not-routable nav entry (#370): visibly de-emphasized, still
+   keyboard-reachable so the accessibility gate's "every zone reachable"
+   requirement still holds. */
+.nav-item[aria-disabled="true"] { opacity: .45; cursor: default; }

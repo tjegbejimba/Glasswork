@@ -12,5 +12,5 @@ pub mod self_write;
 pub mod vault;
 pub mod watcher;
 
-pub use model::{GlassworkTask, SubTask};
+pub use model::{GlassworkTask, SubTask, TaskView};
 pub use self_write::SelfWriteCoordinator;

@@ -3,7 +3,10 @@
 // every command below is a direct call into the Core crate, mirroring how
 // `Glasswork.App`'s service locator composes `Glasswork.Core` today.
 
-use glasswork_core_spike::{artifact, obsidian_uri, parser, self_write::SelfWriteCoordinator, vault, watcher, GlassworkTask};
+use glasswork_core_spike::{
+    artifact, obsidian_uri, parser, self_write::SelfWriteCoordinator, vault, watcher, GlassworkTask,
+    TaskView,
+};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -38,6 +41,14 @@ fn load_task(state: &AppState, task_id: &str) -> Result<GlassworkTask, String> {
     parser::parse(&content).map_err(|e| e.to_string())
 }
 
+/// Serialize a task as the Presentation-facing payload, i.e. the underlying
+/// fields *plus* the Core's row-form derivations. Every command that hands a
+/// task to the frontend goes through here, so the UI never has to (and never
+/// gets the chance to) recompute domain rules itself.
+fn view_of(task: &GlassworkTask) -> Result<serde_json::Value, String> {
+    serde_json::to_value(TaskView::of(task)).map_err(|e| e.to_string())
+}
+
 fn write_task(state: &AppState, task: &GlassworkTask) -> Result<(), String> {
     let path = task_file_path(state, &task.id);
     state.coordinator.mark_self_write(&path);
@@ -45,12 +56,13 @@ fn write_task(state: &AppState, task: &GlassworkTask) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn load_tasks(state: State<AppState>) -> Result<Vec<GlassworkTask>, String> {
-    vault::load_all(&state.vault_dir).map_err(|e| e.to_string())
+fn load_tasks(state: State<AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let tasks = vault::load_all(&state.vault_dir).map_err(|e| e.to_string())?;
+    tasks.iter().map(view_of).collect()
 }
 
 #[tauri::command]
-fn toggle_subtask(state: State<AppState>, task_id: String, index: usize) -> Result<GlassworkTask, String> {
+fn toggle_subtask(state: State<AppState>, task_id: String, index: usize) -> Result<serde_json::Value, String> {
     let mut task = load_task(&state, &task_id)?;
     let sub = task
         .subtasks
@@ -64,11 +76,11 @@ fn toggle_subtask(state: State<AppState>, task_id: String, index: usize) -> Resu
         sub.status = Some(if sub.is_completed { "done".into() } else { "todo".into() });
     }
     write_task(&state, &task)?;
-    Ok(task)
+    view_of(&task)
 }
 
 #[tauri::command]
-fn reorder_subtasks(state: State<AppState>, task_id: String, new_order: Vec<usize>) -> Result<GlassworkTask, String> {
+fn reorder_subtasks(state: State<AppState>, task_id: String, new_order: Vec<usize>) -> Result<serde_json::Value, String> {
     let mut task = load_task(&state, &task_id)?;
     if new_order.len() != task.subtasks.len() {
         return Err("reorder length mismatch".into());
@@ -84,7 +96,7 @@ fn reorder_subtasks(state: State<AppState>, task_id: String, new_order: Vec<usiz
     }
     task.subtasks = reordered;
     write_task(&state, &task)?;
-    Ok(task)
+    view_of(&task)
 }
 
 #[derive(Serialize)]
@@ -109,10 +121,14 @@ fn read_artifact(state: State<AppState>, task_id: String, filename: String) -> R
 
 /// Native launch (ADR-required real OS API, not a browser mock): deep-links
 /// into Obsidian via `obsidian://open?vault=...&file=...`, mirroring
-/// production's `ObsidianUriBuilder.ForVaultRelativePath`. Falls back to
-/// opening the raw file with the OS default handler only if a well-formed
-/// deep link can't be constructed (e.g. the task file somehow resolves
-/// outside the vault root).
+/// production's `ObsidianUriBuilder.ForVaultRelativePath`.
+///
+/// There is deliberately **no** default-handler fallback. ADR 0006 rejects
+/// handing raw Vault files to whatever the OS has registered — that can open
+/// an arbitrary editor against the user's real notes, which is a data-loss
+/// risk, and it silently masks a broken deep link instead of surfacing it.
+/// If a well-formed `obsidian://` URI can't be built, this fails loudly and
+/// the UI says so.
 #[tauri::command]
 fn open_in_obsidian(state: State<AppState>, task_id: String, app: tauri::AppHandle) -> Result<(), String> {
     let vault_root = state
@@ -121,21 +137,16 @@ fn open_in_obsidian(state: State<AppState>, task_id: String, app: tauri::AppHand
         .unwrap_or_else(|_| state.vault_dir.clone());
     let vault_relative = format!("{task_id}.md");
 
-    if let Some(uri) =
-        obsidian_uri::for_vault_relative_path(&vault_root.to_string_lossy(), &vault_relative)
-    {
-        return app.opener().open_url(uri, None::<String>).map_err(|e| e.to_string());
-    }
+    let uri = obsidian_uri::for_vault_relative_path(&vault_root.to_string_lossy(), &vault_relative)
+        .ok_or_else(|| {
+            format!(
+                "Could not build an obsidian:// deep link for '{vault_relative}' \
+                 (it does not resolve inside the Vault root). Refusing to fall back to \
+                 the OS default handler -- see ADR 0006."
+            )
+        })?;
 
-    let path = task_file_path(&state, &task_id);
-    let path_str = path
-        .canonicalize()
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string();
-    app.opener()
-        .open_path(path_str, None::<String>)
-        .map_err(|e| e.to_string())
+    app.opener().open_url(uri, None::<String>).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -185,7 +196,9 @@ pub fn run() {
                     }
                     if let Some(stem) = change.path.file_stem().and_then(|s| s.to_str()) {
                         if let Ok(task) = load_task(&state, stem) {
-                            let _ = handle.emit("task-changed", &task);
+                            if let Ok(payload) = view_of(&task) {
+                                let _ = handle.emit("task-changed", payload);
+                            }
                         }
                     }
                 }

@@ -8,6 +8,14 @@ import { expect } from "@wdio/globals";
 import fs from "fs";
 import path from "path";
 
+// Task Detail is a real Page now, so specs no longer implicitly start on
+// My Day -- navigate back explicitly where a test needs the list.
+async function goToMyDay() {
+  const back = await $$("[data-back-to-myday]");
+  if (back.length > 0) await $("[data-back-to-myday]").click();
+  await $("h2=My Day").waitForExist({ timeout: 5000 });
+}
+
 describe("Glasswork Tauri spike -- shared vertical slice", () => {
   it("loads My Day with the fixed 3-task fixture", async () => {
     await browser.pause(1000); // allow Rust Core vault load + first render
@@ -51,13 +59,48 @@ describe("Glasswork Tauri spike -- shared vertical slice", () => {
     }
   });
 
-  it("navigates to the reserved Planner nav stub via keyboard (real interaction #3)", async () => {
+  it("keeps Planner a reserved, non-routable nav entry with zero content (real interaction #3)", async () => {
+    // #370: the Planner nav item exists so the framework proves it can host
+    // another destination later, but "ships no Planner content, not even a
+    // static layout". So the entry must be present and reachable, yet must
+    // not navigate anywhere -- not even to text explaining that it's
+    // reserved, which is itself Planner Page content.
+    await goToMyDay();
     const plannerNavItem = await $("[data-page='planner']");
+    await expect(plannerNavItem).toExist();
+    await expect(plannerNavItem).toHaveAttribute("aria-disabled", "true");
+
     await plannerNavItem.click();
 
-    const heading = await $("h2=Planner");
-    await expect(heading).toExist();
-    const banner = await $(".planner-banner");
-    await expect(banner).toHaveText("no Planner content", { containing: true });
+    // Still on My Day -- the click did not route.
+    const myDayHeading = await $("h2=My Day");
+    await expect(myDayHeading).toExist();
+    const plannerHeading = await $$("h2=Planner");
+    await expect(plannerHeading).toBeElementsArrayOfSize(0);
+
+    // Reachable by keyboard focus (accessibility gate 4 requires every zone
+    // to be focus-reachable; aria-disabled keeps it announced-but-inert
+    // rather than removing it from the tab order the way `disabled` would).
+    const isFocusable = await browser.execute(() => {
+      const el = document.querySelector("[data-page='planner']");
+      el.focus();
+      return document.activeElement === el;
+    });
+    await expect(isFocusable).toBe(true);
+  });
+
+  it("opens Task Detail as its own Page and navigates back to My Day", async () => {
+    // #370's three-page shell: Task Detail is a distinct destination, not an
+    // inline expansion of the My Day row.
+    await goToMyDay();
+    await $("[data-open-task='budget-q3-review']").click();
+
+    await expect(await $("h3=Description")).toExist();
+    // My Day's list is gone -- we navigated, not expanded.
+    await expect(await $$("h2=My Day")).toBeElementsArrayOfSize(0);
+
+    await $("[data-back-to-myday]").click();
+    await expect(await $("h2=My Day")).toExist();
+    await expect(await $$("h3=Description")).toBeElementsArrayOfSize(0);
   });
 });

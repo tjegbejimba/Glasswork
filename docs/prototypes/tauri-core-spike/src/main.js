@@ -7,8 +7,19 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const { getCurrentWindow } = window.__TAURI__.window;
 
+// ---- Untrusted-content boundary -----------------------------------------
+// Everything in the Vault is untrusted (CONTEXT.md / ADR 0006): task prose is
+// largely agent-authored, so Description, Notes, titles, subtask text and
+// blocker strings can all contain markup. Nothing from a Task reaches
+// innerHTML without passing through here (or through renderMarkdown, which
+// escapes first). Defined once at module scope so there is a single boundary
+// to audit rather than per-function copies that can drift.
+const escapeHtml = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
 const state = {
   page: "myday",
+  selectedTaskId: null,
   tasks: [],
   expandedTaskId: null,
   expandedSubtaskIndex: null,
@@ -37,7 +48,6 @@ document.getElementById("win-close").addEventListener("click", () => getCurrentW
 // scope for this slice per #370). All artifact content is treated as
 // untrusted, matching CONTEXT.md's markdown-rendering rule.
 function renderMarkdown(md) {
-  const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const lines = md.split("\n");
   let html = "";
   let inList = false;
@@ -80,47 +90,40 @@ function chipsHtml(task) {
   if (task.priority === "high") chips.push(['priority-high', 'High']);
   if (task.priority === "medium") chips.push(['priority-medium', 'Med']);
   if (task.priority === "low") chips.push(['priority-low', 'Low']);
-  if (task.due) chips.push(['due-today', `Due ${task.due}`]);
-  if (task.ado_title) chips.push(['ado', task.ado_title]);
+  if (task.due) chips.push(['due-today', `Due ${escapeHtml(task.due)}`]);
+  if (task.ado_title) chips.push(['ado', escapeHtml(task.ado_title)]);
   return chips.map(([cls, label]) => `<span class="chip ${cls}">${label}</span>`).join("");
-}
-
-function isRich(task) {
-  return task.subtasks.length > 0 || (task.notes && task.notes.trim().length > 0);
-}
-function showAsCard(task) {
-  return isRich(task) && task.status !== "done";
 }
 
 function currentStepText(task) {
   const step = task.subtasks.find((s) => s.status === "in_progress");
-  return step ? step.text : "";
+  return step ? escapeHtml(step.text) : "";
 }
 function blockerRow(task) {
   const blocked = task.subtasks.find((s) => s.status === "blocked" && s.metadata.blocker);
-  return blocked ? `&#128683; ${blocked.metadata.blocker}` : "";
+  return blocked ? `&#128683; ${escapeHtml(blocked.metadata.blocker)}` : "";
 }
 
 function taskRowHtml(task) {
-  const expanded = state.expandedTaskId === task.id;
-  if (!showAsCard(task)) {
+  // `show_as_card` is decided by the bounded Rust Core and travels on the
+  // payload (CONTEXT.md: Presentation holds no domain logic). The frontend
+  // reads the decision; it does not re-derive it.
+  if (!task.show_as_card) {
     return `<div class="task-row quiet">
-      <button class="task-row-btn" data-open-task="${task.id}" aria-expanded="${expanded}">
-        <div class="title-row">${task.title}${chipsHtml(task)}</div>
+      <button class="task-row-btn" data-open-task="${escapeHtml(task.id)}">
+        <div class="title-row">${escapeHtml(task.title)}${chipsHtml(task)}</div>
       </button>
-      ${expanded ? detailPanelHtml(task) : ""}
     </div>`;
   }
   const segs = task.subtasks.map((s) => `<div class="seg ${s.status || (s.is_completed ? 'done' : 'todo')}"></div>`).join("");
   return `<div class="task-row card">
-    <button class="task-row-btn" data-open-task="${task.id}" aria-expanded="${expanded}">
-      <div class="title-row">${task.title}${chipsHtml(task)}</div>
+    <button class="task-row-btn" data-open-task="${escapeHtml(task.id)}">
+      <div class="title-row">${escapeHtml(task.title)}${chipsHtml(task)}</div>
       <div class="segbar">${segs}</div>
       <div class="current-step">Current: ${currentStepText(task)}</div>
       <div class="blocker-row">${blockerRow(task)}</div>
-      <div class="blurb">${task.description ? task.description.slice(0, 140) : ""}</div>
+      <div class="blurb">${escapeHtml(task.description ? task.description.slice(0, 140) : "")}</div>
     </button>
-    ${expanded ? detailPanelHtml(task) : ""}
   </div>`;
 }
 
@@ -131,13 +134,13 @@ function subtaskRowHtml(task, sub, index) {
   const hasExpandable = (sub.status === "blocked" && sub.metadata.blocker) || (sub.notes && sub.notes.trim());
   return `
     <div class="subtask-row2" draggable="true" data-subtask-index="${index}">
-      <button class="grip" aria-label="Drag to reorder '${sub.text}', or use Alt+Up / Alt+Down while focused" data-drag-handle="${index}">&#10241;</button>
+      <button class="grip" aria-label="Drag to reorder '${escapeHtml(sub.text)}', or use Alt+Up / Alt+Down while focused" data-drag-handle="${index}">&#10241;</button>
       <button class="circle-btn ${circleCls}" data-toggle-subtask="${index}" aria-pressed="${done}"
-        aria-label="Mark '${sub.text}' ${done ? 'not done' : 'done'}"></button>
+        aria-label="Mark '${escapeHtml(sub.text)}' ${done ? 'not done' : 'done'}"></button>
       <button class="subtext-btn ${done ? 'done' : ''}" data-expand-subtask="${index}"
-        aria-expanded="${expanded}" aria-label="Open detail for '${sub.text}'">${sub.text}</button>
+        aria-expanded="${expanded}" aria-label="Open detail for '${escapeHtml(sub.text)}'">${escapeHtml(sub.text)}</button>
     </div>
-    ${expanded && hasExpandable ? `<div class="subtask-expand">${sub.status === 'blocked' ? `Blocked: ${sub.metadata.blocker || ''}` : ''} ${sub.notes || ''}</div>` : ""}
+    ${expanded && hasExpandable ? `<div class="subtask-expand">${sub.status === 'blocked' ? `Blocked: ${escapeHtml(sub.metadata.blocker || '')}` : ''} ${escapeHtml(sub.notes || '')}</div>` : ""}
   `;
 }
 
@@ -150,37 +153,42 @@ function artifactHtml(task, filename, kindHint) {
       state.artifactCache.set(key, payload);
       render();
     });
-    return `<div class="artifact-row">${filename} <span class="muted">loading&hellip;</span></div>`;
+    return `<div class="artifact-row">${escapeHtml(filename)} <span class="muted">loading&hellip;</span></div>`;
   }
   if (cached.kind === "Markdown") {
-    return `<div class="artifact-row">${filename} &mdash; shared Markdown view
+    return `<div class="artifact-row">${escapeHtml(filename)} &mdash; shared Markdown view
       <div class="md-body">${renderMarkdown(cached.content)}</div>
     </div>`;
   }
   if (cached.kind === "Html") {
     const sourceOpen = state.artifactSourceOpen.has(key);
-    const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const meta = cached.csp ? `<meta http-equiv="Content-Security-Policy" content="${cached.csp}">` : "";
     const srcdoc = `${meta}${cached.content}`;
-    return `<div class="artifact-row">${filename}<span class="sandbox-badge">sandboxed preview</span>
-      <button class="artifact-toggle" data-toggle-source="${key}">${sourceOpen ? "Show preview" : "Show source"}</button>
-      <button class="artifact-toggle" data-open-externally="${task.id}/${filename}">Open externally</button>
+    return `<div class="artifact-row">${escapeHtml(filename)}<span class="sandbox-badge">sandboxed preview</span>
+      <button class="artifact-toggle" data-toggle-source="${escapeHtml(key)}">${sourceOpen ? "Show preview" : "Show source"}</button>
+      <button class="artifact-toggle" data-open-externally="${escapeHtml(task.id)}/${escapeHtml(filename)}">Open externally</button>
       ${sourceOpen
         ? `<div class="artifact-source">${escapeHtml(cached.content)}</div>`
-        : `<iframe class="html-preview-frame" sandbox="allow-same-origin" title="Sandboxed preview of ${filename}" srcdoc="${srcdoc.replace(/"/g, "&quot;")}"></iframe>`}
+        : `<iframe class="html-preview-frame" sandbox="allow-same-origin" title="Sandboxed preview of ${escapeHtml(filename)}" srcdoc="${srcdoc.replace(/"/g, "&quot;")}"></iframe>`}
     </div>`;
   }
-  return `<div class="artifact-row">${filename} &mdash; unsupported kind, open externally only</div>`;
+  return `<div class="artifact-row">${escapeHtml(filename)} &mdash; unsupported kind, open externally only</div>`;
 }
 
 function detailPanelHtml(task) {
   const hasArtifacts = task.id === "budget-q3-review";
+  // Description and Notes are agent-authored Vault prose -- untrusted. They
+  // go through the same bounded Markdown renderer as Artifact content
+  // (ADR 0006: one renderer, all rendered content untrusted), which escapes
+  // before applying any inline formatting.
   return `<div class="detail-panel">
-    <div class="detail-section"><h3>Description</h3><p>${task.description || "<span class=\"muted\">No description.</span>"}</p></div>
-    <div class="detail-section"><h3>Notes</h3><p>${task.notes || "<span class=\"muted\">No notes.</span>"}</p></div>
+    <div class="detail-section"><h3>Description</h3>
+      ${task.description ? renderMarkdown(task.description) : `<p class="muted">No description.</p>`}</div>
+    <div class="detail-section"><h3>Notes</h3>
+      ${task.notes ? renderMarkdown(task.notes) : `<p class="muted">No notes.</p>`}</div>
     ${task.subtasks.length > 0 ? `
     <div class="detail-section"><h3>Subtasks (active -- drag to reorder)</h3>
-      <div id="subtask-list" data-task-id="${task.id}">
+      <div id="subtask-list" data-task-id="${escapeHtml(task.id)}">
         ${task.subtasks.map((s, i) => subtaskRowHtml(task, s, i)).join("")}
       </div>
     </div>` : ""}
@@ -197,11 +205,27 @@ function myDayPageHtml() {
     <div class="page-body">${state.tasks.map(taskRowHtml).join("")}</div>`;
 }
 
+// Task Detail is its own Page in the three-page shell (#370), reached by
+// navigating away from My Day -- not an inline expansion of the row.
+function taskDetailPageHtml() {
+  const task = state.tasks.find((t) => t.id === state.selectedTaskId);
+  if (!task) return myDayPageHtml();
+  return `<div class="page-head detail-head">
+      <button class="back-btn" data-back-to-myday aria-label="Back to My Day">&#8592; My Day</button>
+      <h2>${escapeHtml(task.title)}</h2>
+      <div class="detail-chips">${chipsHtml(task)}</div>
+    </div>
+    <div class="page-body">${detailPanelHtml(task)}</div>`;
+}
+
+// Reserved nav destination only. Per #370 the Planner "ships no Planner
+// content, not even a static layout", so this Page renders nothing at all --
+// the nav item exists purely to prove the framework can host another
+// destination later. The nav item itself is aria-disabled and never routes
+// here; this function is the belt-and-braces guarantee that even if it did,
+// there is no Planner content to show.
 function plannerPageHtml() {
-  return `<div class="page-head"><h2>Planner</h2><p class="muted">Nav entry reserved only -- no Planner content in this spike</p></div>
-    <div class="planner-banner">TJ's call (2026-07-23): this nav item is reserved so the framework proves it can add a
-    nav destination later, but ships no Planner content -- not even a static layout. Wayfinder map "Specify the
-    capacity-first Planner" remains the sole source of truth for Planner A.</div>`;
+  return "";
 }
 
 function captureFocus() {
@@ -220,12 +244,18 @@ function restoreFocus(captured) {
   if (el) el.focus();
 }
 
+function pageHtml() {
+  if (state.page === "planner") return plannerPageHtml();
+  if (state.page === "detail") return taskDetailPageHtml();
+  return myDayPageHtml();
+}
+
 function render() {
   const focused = captureFocus();
   const main = document.getElementById("main-content");
-  main.innerHTML = state.page === "myday" ? myDayPageHtml() : plannerPageHtml();
+  main.innerHTML = pageHtml();
   document.querySelectorAll(".nav-item").forEach((btn) => {
-    const active = btn.dataset.page === state.page;
+    const active = btn.dataset.page === (state.page === "detail" ? "myday" : state.page);
     btn.classList.toggle("active", active);
     if (active) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
   });
@@ -238,7 +268,11 @@ function render() {
 document.querySelector(".nav").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-page]");
   if (!btn) return;
+  // The Planner nav entry is reserved, not routable: it must not navigate to
+  // any content, explanatory or otherwise (#370).
+  if (btn.getAttribute("aria-disabled") === "true") return;
   state.page = btn.dataset.page;
+  state.selectedTaskId = null;
   render();
 });
 
@@ -247,15 +281,24 @@ document.getElementById("main-content").addEventListener("click", async (e) => {
   if (openTask) {
     const clickStart = performance.now();
     const id = openTask.dataset.openTask;
-    state.expandedTaskId = state.expandedTaskId === id ? null : id;
+    state.selectedTaskId = id;
+    state.expandedTaskId = id;
+    state.page = "detail";
     state.expandedSubtaskIndex = null;
     render();
     // Perf-measurement hook (scorecard #376 "task-detail interaction
     // latency"): click to Task Detail fully rendered. Only meaningful when
     // opening (not collapsing) a task.
-    if (state.expandedTaskId === id) {
-      window.__lastInteractionLatencyMs = performance.now() - clickStart;
-    }
+    window.__lastInteractionLatencyMs = performance.now() - clickStart;
+    return;
+  }
+  const back = e.target.closest("[data-back-to-myday]");
+  if (back) {
+    state.page = "myday";
+    state.selectedTaskId = null;
+    state.expandedTaskId = null;
+    state.expandedSubtaskIndex = null;
+    render();
     return;
   }
   const toggleSub = e.target.closest("[data-toggle-subtask]");

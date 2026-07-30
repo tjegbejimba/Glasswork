@@ -64,3 +64,30 @@ impl GlassworkTask {
         self.status == "blocked"
     }
 }
+
+/// The serialized shape the Presentation layer receives over IPC.
+///
+/// `CONTEXT.md` puts domain derivations in the Core, not in Presentation, so
+/// the My Day row-form decision travels *with* the task rather than being
+/// recomputed by whatever UI happens to be rendering it. Borrowing + flatten
+/// keeps the methods above the single source of truth — there is no second
+/// copy of the rule to drift.
+#[derive(Debug, serde::Serialize)]
+pub struct TaskView<'a> {
+    #[serde(flatten)]
+    task: &'a GlassworkTask,
+    is_rich: bool,
+    show_as_card: bool,
+    is_blocked: bool,
+}
+
+impl<'a> TaskView<'a> {
+    pub fn of(task: &'a GlassworkTask) -> Self {
+        Self {
+            task,
+            is_rich: task.is_rich(),
+            show_as_card: task.show_as_card(),
+            is_blocked: task.is_blocked(),
+        }
+    }
+}

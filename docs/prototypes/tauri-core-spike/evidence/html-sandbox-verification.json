@@ -1,8 +1,14 @@
 {
-  "titleBefore": "Glasswork -- Tauri/Rust Core spike",
-  "titleAfter": "Glasswork -- Tauri/Rust Core spike",
-  "breakoutSucceeded": false,
-  "sandboxAttr": "allow-same-origin",
-  "allowScriptsPresent": false,
+  "gate": "Scorecard Phase 0 Gate 2 -- genuine HTML sandbox",
+  "method": "Local canary HTTP server on 127.0.0.1:8787 counts real inbound requests; a control request from the app's trusted context proves the detector works before the artifact's probe is judged.",
+  "control_request_hits": 1,
+  "artifact_network_probe_hits": 0,
+  "network_probe_blocked": true,
+  "parent_title_before": "Glasswork -- Tauri/Rust Core spike",
+  "parent_title_after": "Glasswork -- Tauri/Rust Core spike",
+  "parent_flag_set": false,
+  "parent_probe_blocked": true,
+  "sandbox_attr": "allow-same-origin",
+  "allow_scripts_present": false,
   "verdict": "SANDBOX_HELD"
 }

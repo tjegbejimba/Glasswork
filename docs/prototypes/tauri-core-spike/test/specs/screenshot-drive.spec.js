@@ -8,6 +8,13 @@ describe("screenshot drive", () => {
   it("drives to the requested state and pauses", async () => {
     const targetState = process.env.SCREENSHOT_STATE || "myday-initial";
 
+    // Wait for the bounded Rust Core's vault load to reach the DOM before
+    // driving any state -- otherwise fast states race the first render.
+    await browser.waitUntil(async () => (await $$(".task-row")).length === 3, {
+      timeout: 10000,
+      timeoutMsg: "My Day never rendered the fixed 3-task fixture",
+    });
+
     if (targetState === "myday-initial") {
       // Default My Day view -- nothing to do.
     }
@@ -31,7 +38,13 @@ describe("screenshot drive", () => {
     }
 
     if (targetState === "planner-stub") {
-      await $("[data-page='planner']").click();
+      // Planner is a reserved, non-routable nav entry (#370) -- clicking it
+      // deliberately does nothing. Focus it instead so the screenshot shows
+      // the reserved entry in its dimmed/announced state alongside My Day,
+      // which is the whole of what this spike ships for Planner.
+      await browser.execute(() => {
+        document.querySelector("[data-page='planner']")?.focus();
+      });
     }
 
     if (targetState === "expanded-subtask-blocker") {
@@ -39,6 +52,16 @@ describe("screenshot drive", () => {
       await $("[data-expand-subtask='2']").click(); // "Get sign-off from manager" (blocked)
     }
 
+    // Two capture modes:
+    //  - SCREENSHOT_OUT set  -> save a WebDriver screenshot of the webview.
+    //    Deterministic, immune to window stacking/focus, but shows page
+    //    content only (no native traffic lights / vibrancy).
+    //  - otherwise           -> long pause so an external `screencapture`
+    //    can grab the real OS window *with* its native chrome.
+    if (process.env.SCREENSHOT_OUT) {
+      await browser.saveScreenshot(process.env.SCREENSHOT_OUT);
+      return;
+    }
     await browser.pause(60000);
   });
 });
