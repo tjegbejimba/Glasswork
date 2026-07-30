@@ -354,9 +354,11 @@ document.getElementById("main-content").addEventListener("click", async (e) => {
   const extLink = e.target.closest("a.ext-link");
   if (extLink) {
     e.preventDefault();
-    // ArtifactLinkPolicy-equivalent: allowed scheme, but still routed through
-    // the native opener rather than an in-app navigation.
-    invoke("open_in_obsidian", { vaultRelativePath: `${state.selectedTaskId}.md` });
+    // ADR 0006: an allowed external link is launched as a URL, via the Core's
+    // policy check -- not as an in-app navigation, and not as a Vault file
+    // open. The Core re-validates the scheme; the render-time gate is a
+    // convenience, not the security boundary.
+    invoke("open_external_url", { url: extLink.dataset.externalUrl });
   }
 });
 

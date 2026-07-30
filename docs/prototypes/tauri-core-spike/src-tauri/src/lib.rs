@@ -116,7 +116,21 @@ fn read_artifact(state: State<AppState>, task_id: String, filename: String) -> R
         .ok_or_else(|| {
             format!("Refusing to read '{filename}': it does not resolve to a real file inside the Vault root.")
         })?;
-    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    // Read from one opened handle rather than re-resolving the path:
+    // `read_to_string(&path)` would resolve the path a second time, widening
+    // the window between the containment check and the read.
+    //
+    // Residual risk, stated plainly rather than papered over: a check-then-open
+    // race still exists in principle (an attacker swapping a component of the
+    // canonical path between `canonicalize` and `open`). Closing it fully needs
+    // openat/O_NOFOLLOW, which std does not expose portably. The attacker model
+    // it requires -- local write access inside the user's Vault -- already
+    // implies they can put hostile content directly in an Artifact, so the
+    // marginal gain is small for a disposable prototype. Flagged here so a real
+    // port makes the call deliberately.
+    let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let mut content = String::new();
+    std::io::Read::read_to_string(&mut file, &mut content).map_err(|e| e.to_string())?;
     let kind = artifact::classify_kind(&filename);
     let (kind_str, csp) = match kind {
         artifact::ArtifactKind::Markdown => ("Markdown".to_string(), None),
@@ -165,6 +179,22 @@ fn open_in_obsidian(
     })?;
 
     app.opener().open_url(uri, None::<String>).map_err(|e| e.to_string())
+}
+
+/// Launch an external link found in untrusted Vault markdown.
+///
+/// ADR 0006 routes such links through one policy and, when allowed, opens
+/// them as **URLs**. An earlier version invoked the Obsidian deep-link
+/// command with the current task instead, so clicking an `https://` link in
+/// an Artifact opened the task in Obsidian rather than the link.
+#[tauri::command]
+fn open_external_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
+    if !artifact::is_allowed_external_url(&url) {
+        return Err(format!(
+            "Refusing to launch '{url}': only http/https links are allowed (ArtifactLinkPolicy)."
+        ));
+    }
+    app.opener().open_url(url, None::<String>).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -229,7 +259,8 @@ pub fn run() {
             toggle_subtask,
             reorder_subtasks,
             read_artifact,
-            open_in_obsidian
+            open_in_obsidian,
+            open_external_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

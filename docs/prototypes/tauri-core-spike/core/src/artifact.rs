@@ -31,3 +31,22 @@ pub fn sandbox_csp() -> &'static str {
     "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; \
      script-src 'none'; connect-src 'none'; frame-ancestors 'none'; form-action 'none';"
 }
+
+/// ArtifactLinkPolicy-equivalent gate for links embedded in untrusted,
+/// agent-authored markdown (ADR 0006): only `http`/`https` may be launched,
+/// and they are launched as URLs — never as a Vault file open.
+///
+/// Lives in the Core, not the webview, because the webview is the thing being
+/// defended: a check that only exists in rendered markup is bypassable by
+/// whatever produced that markup.
+pub fn is_allowed_external_url(url: &str) -> bool {
+    // Reject anything with leading/embedded whitespace or control characters
+    // before scheme-matching: `java\tscript:` is a classic filter bypass, and
+    // browsers have historically stripped such characters when resolving.
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+
+    let lowered = url.to_ascii_lowercase();
+    lowered.starts_with("http://") || lowered.starts_with("https://")
+}

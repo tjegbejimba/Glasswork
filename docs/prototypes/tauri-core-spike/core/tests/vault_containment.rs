@@ -158,3 +158,46 @@ fn canonical_contained_refuses_a_lexical_traversal_too() {
         None
     );
 }
+
+#[test]
+fn canonical_contained_refuses_a_missing_file_rather_than_assuming_it_is_safe() {
+    // Containment is decided from the *real* path, so a file that isn't there
+    // has no real path to check. Refusing is the conservative answer: it must
+    // not fall through to "no traversal detected, therefore fine".
+    let vault = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(vault.path().join("budget-q3-review.artifacts")).unwrap();
+
+    assert_eq!(
+        vault::canonical_contained(
+            vault.path(),
+            "budget-q3-review.artifacts",
+            "does-not-exist.html"
+        ),
+        None
+    );
+}
+
+#[test]
+fn canonical_contained_refuses_a_sibling_dir_whose_name_merely_prefixes_the_vault() {
+    // `starts_with` on Path compares whole components, so "/tmp/vault-evil"
+    // must not count as inside "/tmp/vault". Pinning this because a naive
+    // string-prefix implementation would wrongly allow it.
+    let base = tempfile::tempdir().unwrap();
+    let vault_root = base.path().join("vault");
+    let evil_sibling = base.path().join("vault-evil");
+    std::fs::create_dir_all(vault_root.join("budget-q3-review.artifacts")).unwrap();
+    std::fs::create_dir_all(&evil_sibling).unwrap();
+    std::fs::write(evil_sibling.join("secret.txt"), "TOP SECRET").unwrap();
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        evil_sibling.join("secret.txt"),
+        vault_root.join("budget-q3-review.artifacts").join("leak.html"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        vault::canonical_contained(&vault_root, "budget-q3-review.artifacts", "leak.html"),
+        None
+    );
+}
