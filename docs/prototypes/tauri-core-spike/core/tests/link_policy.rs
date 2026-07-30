@@ -43,3 +43,40 @@ fn refuses_a_scheme_relative_or_bare_path() {
     assert!(!is_allowed_external_url("/etc/passwd"));
     assert!(!is_allowed_external_url(""));
 }
+
+// --- Beyond a scheme prefix ---------------------------------------------
+// A prefix check alone accepts strings that are http(s)-shaped but not
+// meaningfully a link, and forms whose displayed text misleads about the real
+// destination. Since the result is handed to the OS to launch, the policy has
+// to look at the authority too, not just the first seven characters.
+
+#[test]
+fn refuses_a_scheme_with_no_host() {
+    assert!(!is_allowed_external_url("https://"));
+    assert!(!is_allowed_external_url("http://"));
+    assert!(!is_allowed_external_url("https:///path-only"));
+}
+
+#[test]
+fn refuses_embedded_credentials_in_the_authority() {
+    // Classic misdirection: the eye reads example.com, the browser goes to
+    // evil.example.
+    assert!(!is_allowed_external_url("https://example.com@evil.example/"));
+    assert!(!is_allowed_external_url("https://user:pass@evil.example/"));
+}
+
+#[test]
+fn refuses_backslashes_in_the_authority() {
+    // Several resolvers normalize `\` to `/`, so `https://evil.example\@x`
+    // can resolve somewhere other than it appears to.
+    assert!(!is_allowed_external_url("https://example.com\\@evil.example/"));
+    assert!(!is_allowed_external_url("http:/\\example.com/"));
+}
+
+#[test]
+fn still_allows_ordinary_links_with_ports_paths_queries_and_fragments() {
+    assert!(is_allowed_external_url("https://example.com"));
+    assert!(is_allowed_external_url("https://example.com:8443/a/b?c=1#d"));
+    assert!(is_allowed_external_url("http://localhost:3000/health"));
+    assert!(is_allowed_external_url("https://sub.domain.example.com/path"));
+}

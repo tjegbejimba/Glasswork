@@ -1,4 +1,4 @@
-=== Bounded Rust Core: cargo test --release (Wed Jul 29 19:30:23 PDT 2026) ===
+=== Bounded Rust Core: cargo test --release (Wed Jul 29 19:38:24 PDT 2026) ===
      Running unittests src/lib.rs (target/release/deps/glasswork_core_spike-722aa25ea3e90a4f)
 
 running 3 tests
@@ -20,21 +20,25 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
      Running tests/link_policy.rs (target/release/deps/link_policy-b2d3e11d29f29576)
 
-running 5 tests
+running 9 tests
+test refuses_a_scheme_relative_or_bare_path ... ok
 test is_case_insensitive_about_the_scheme ... ok
 test allows_http_and_https ... ok
-test refuses_a_scheme_relative_or_bare_path ... ok
+test refuses_backslashes_in_the_authority ... ok
+test refuses_a_scheme_with_no_host ... ok
+test refuses_embedded_credentials_in_the_authority ... ok
 test refuses_file_and_data_and_other_schemes ... ok
 test refuses_javascript_urls ... ok
+test still_allows_ordinary_links_with_ports_paths_queries_and_fragments ... ok
 
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
      Running tests/obsidian_uri.rs (target/release/deps/obsidian_uri-c20bd77defb6c302)
 
 running 4 tests
 test builds_deep_link_for_a_task_file_in_the_vault_root ... ok
-test refuses_an_artifact_path_that_escapes_the_vault_via_traversal ... ok
 test drops_the_md_extension_but_preserves_other_extensions ... ok
+test refuses_an_artifact_path_that_escapes_the_vault_via_traversal ... ok
 test rejects_paths_that_escape_the_vault_root ... ok
 
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -44,10 +48,10 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 running 7 tests
 test missing_frontmatter_delimiters_is_an_error ... ok
 test parses_blocked_task_metadata ... ok
-test parses_notes_section ... ok
-test parses_four_subtasks_with_status_and_blocker_metadata ... ok
 test parses_frontmatter_fields ... ok
 test parses_description_separately_from_subtasks_section ... ok
+test parses_four_subtasks_with_status_and_blocker_metadata ... ok
+test parses_notes_section ... ok
 test round_trips_through_serialize_then_parse ... ok
 
 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -55,11 +59,11 @@ test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running tests/task_view.rs (target/release/deps/task_view-bafd7c8aa3a0887a)
 
 running 6 tests
-test a_rich_task_that_is_done_stops_showing_as_a_card ... ok
 test blocked_status_crosses_the_wire_as_a_derived_flag ... ok
 test a_task_with_no_subtasks_and_no_notes_is_quiet_not_a_card ... ok
-test the_view_still_carries_every_underlying_task_field ... ok
+test a_rich_task_that_is_done_stops_showing_as_a_card ... ok
 test notes_alone_are_enough_to_make_a_task_rich ... ok
+test the_view_still_carries_every_underlying_task_field ... ok
 test serialized_payload_exposes_the_row_form_derivations ... ok
 
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -136,11 +140,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 [webkit 605.1.15 macos #0-0]    ✓ does not execute markup embedded in a Task's Notes
 [webkit 605.1.15 macos #0-0]    ✓ does not let a subtask's status break out of the class attribute
 [webkit 605.1.15 macos #0-0]    ✓ does not let a Markdown link URL break out of the href attribute
-[webkit 605.1.15 macos #0-0] 5 passing (7.8s)
+[webkit 605.1.15 macos #0-0] 5 passing (7.6s)
 
 === WebDriverIO: subtask-reorder.spec.js (run separately for reliability) ===
 [webkit 605.1.15 macos #0-0]    ✓ moves a subtask down via Alt+ArrowDown and persists the new order
-[webkit 605.1.15 macos #0-0] 1 passing (2.2s)
+[webkit 605.1.15 macos #0-0] 1 passing (2s)
 
 === WebDriverIO: sandbox-verify.spec.js (run separately for reliability) ===
 [webkit 605.1.15 macos #0-0]    ✓ blocks both the artifact's network probe and its parent-access probe
@@ -148,4 +152,4 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 === WebDriverIO: filewatch-live-update.spec.js (run separately for reliability) ===
 [webkit 605.1.15 macos #0-0]    ✓ reflects an external frontmatter edit to the Tailscale ACL task without restart
-[webkit 605.1.15 macos #0-0] 1 passing (147ms)
+[webkit 605.1.15 macos #0-0] 1 passing (154ms)

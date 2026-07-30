@@ -48,5 +48,36 @@ pub fn is_allowed_external_url(url: &str) -> bool {
     }
 
     let lowered = url.to_ascii_lowercase();
-    lowered.starts_with("http://") || lowered.starts_with("https://")
+    let rest = match lowered.strip_prefix("https://") {
+        Some(rest) => rest,
+        None => match lowered.strip_prefix("http://") {
+            Some(rest) => rest,
+            None => return false,
+        },
+    };
+
+    // A scheme prefix alone is not enough: the result is handed to the OS to
+    // launch, so the authority has to be checked too.
+    let authority = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("");
+
+    if authority.is_empty() {
+        return false;
+    }
+
+    // Embedded credentials are misdirection: `https://example.com@evil.test`
+    // reads as example.com but resolves to evil.test.
+    if authority.contains('@') {
+        return false;
+    }
+
+    // Some resolvers normalize `\` to `/`, so a backslash anywhere can move
+    // the effective authority boundary.
+    if url.contains('\\') {
+        return false;
+    }
+
+    true
 }
