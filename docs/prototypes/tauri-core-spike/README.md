@@ -27,7 +27,7 @@ Do not close #372 or append the #369 decision pointer until all of the
 following exist:
 
 - [x] macOS: full slice built and gate-checked
-- [x] macOS: automated tests passing (46 total — 33 Rust Core, 13 WebDriverIO)
+- [x] macOS: automated tests passing (50 total — 37 Rust Core, 13 WebDriverIO)
 - [x] macOS: HITL evidence artifacts prepared (screenshots + recording) for
       TJ to review
 - [ ] macOS: measured evidence is **incomplete** — 3 of 8 metrics fully meet
@@ -114,6 +114,17 @@ A third and fourth round caught six more:
 - **The Rust test count was understated** in the run instructions.
 - **The stale recording was only footnoted**, not listed as outstanding.
 
+A fifth round found the Artifact-path fix was only half done:
+
+- **Containment was lexical only, so a symlink still escaped.** A link living
+  *inside* the Vault but pointing outside passes every `..`/absolute check and
+  still yields foreign content once opened — and `read_artifact` then calls
+  `read_to_string`, which follows symlinks. Reading now goes through
+  `vault::canonical_contained`, which canonicalizes both sides so the
+  comparison is between real paths. Tests cover an escaping symlink, a
+  legitimate in-Vault symlink (which must still work), and a non-existent
+  path (refused rather than assumed safe).
+
 ## What was built
 
 - **Bounded Rust Core** (`core/`) — a from-scratch Rust reimplementation of
@@ -124,7 +135,7 @@ A third and fourth round caught six more:
   with vault-escape rejection, and HTML/Markdown artifact-kind
   classification + sandboxed-HTML CSP policy. It is **not** a port of the
   whole product — no Planner, no backlinks, no UI state, no full task
-  catalog beyond the fixed fixture. 33 passing tests (`cargo test --release`,
+  catalog beyond the fixed fixture. 37 passing tests (`cargo test --release`,
   see `evidence/automated-ui-test-log.txt`).
 - **Tauri 2 shell** (`src-tauri/`) — thin IPC layer exposing the Core's
   operations to the frontend (`src-tauri/src/lib.rs`, 224 LOC), plus
@@ -160,7 +171,7 @@ build:
 | 2 | Genuine HTML sandbox | **PASS**, now on direct evidence for *both* probes — `evidence/html-sandbox-verification.json` records a local canary server seeing 1 control request (proving the detector works) and **0** requests from the sandboxed artifact, alongside an unmutated parent title and unset parent flag. Corroborated by `tests/artifact_sandbox.rs` and `sandbox-verify.spec.js`. |
 | 3 | Native file/Obsidian launching | **NOT YET VERIFIED on either OS.** The scorecard's acceptance script is "trigger it once per OS; both must open the correct file in the correct external application" — that is an observed native launch, which has not been done. What exists is unit coverage of the URI builder (`core/tests/obsidian_uri.rs`, including a real compound-extension bug found and fixed) and the removal of the ADR 0006-rejected default-handler fallback. An earlier revision of this README marked macOS PASS on that basis; that was an overstatement and is retracted. Needs a HITL launch check on both macOS and Windows. |
 | 4 | Accessibility reachability | **NOT YET CONFIRMED.** Keyboard-focus reachability for every zone (including the reserved Planner entry, which uses `aria-disabled` precisely so it stays focusable) is exercised by the automated specs, but the spoken-announcement half needs a human running VoiceOver. **Windows/Narrator: NOT YET RUN.** |
-| 5 | A real automated test passes | **PASS** — 46 tests total (33 Rust Core, 13 WebDriverIO), each WebDriverIO spec exercising a real fixture interaction rather than an app-launch smoke test. |
+| 5 | A real automated test passes | **PASS** — 50 tests total (37 Rust Core, 13 WebDriverIO), each WebDriverIO spec exercising a real fixture interaction rather than an app-launch smoke test. |
 | 6 | No crash or hang | **PASS** on macOS across all evidence-capture sessions; no crash or >10s unresponsive period observed. **Windows: NOT YET RUN.** |
 
 **Gates 3, 4 and 6 are not PASS.** Gate 3 needs an observed native Obsidian
@@ -445,7 +456,7 @@ none is available; keep this ticket open and report the gap.
 ```bash
 cd docs/prototypes/tauri-core-spike
 npm install
-cargo test --release                       # bounded Rust Core: 33 tests
+cargo test --release                       # bounded Rust Core: 37 tests
 npx tauri build --no-bundle                 # release build (never raw cargo build --release)
 npx wdio run test/wdio.conf.js --spec test/specs/vertical-slice.spec.js
 npx wdio run test/wdio.conf.js --spec test/specs/untrusted-content.spec.js

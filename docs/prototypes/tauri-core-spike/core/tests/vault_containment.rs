@@ -87,3 +87,74 @@ fn allows_a_nested_subfolder_that_stays_inside_the_vault() {
         )
     );
 }
+
+// --- Symlink escape ------------------------------------------------------
+// Lexical containment alone cannot see through a symlink: a link that lives
+// *inside* the Vault but points outside passes every `..`/absolute check and
+// still reads foreign content once opened. Closing that needs the real
+// filesystem, so it is a separate function from the pure lexical one.
+
+#[test]
+fn canonical_contained_accepts_a_real_file_inside_the_vault() {
+    let vault = tempfile::tempdir().unwrap();
+    let artifacts = vault.path().join("budget-q3-review.artifacts");
+    std::fs::create_dir_all(&artifacts).unwrap();
+    std::fs::write(artifacts.join("report.html"), "<p>ok</p>").unwrap();
+
+    let resolved = vault::canonical_contained(
+        vault.path(),
+        "budget-q3-review.artifacts",
+        "report.html",
+    );
+    assert!(resolved.is_some(), "a genuine in-vault artifact must resolve");
+}
+
+#[cfg(unix)]
+#[test]
+fn canonical_contained_refuses_a_symlink_that_escapes_the_vault() {
+    let vault = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.txt"), "TOP SECRET").unwrap();
+
+    let artifacts = vault.path().join("budget-q3-review.artifacts");
+    std::fs::create_dir_all(&artifacts).unwrap();
+    // Lives inside the Vault, points outside it.
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.txt"),
+        artifacts.join("leak.html"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        vault::canonical_contained(vault.path(), "budget-q3-review.artifacts", "leak.html"),
+        None,
+        "a symlink pointing outside the Vault must be refused"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn canonical_contained_allows_a_symlink_that_stays_inside_the_vault() {
+    let vault = tempfile::tempdir().unwrap();
+    let artifacts = vault.path().join("budget-q3-review.artifacts");
+    std::fs::create_dir_all(&artifacts).unwrap();
+    std::fs::write(artifacts.join("real.html"), "<p>ok</p>").unwrap();
+    std::os::unix::fs::symlink(artifacts.join("real.html"), artifacts.join("alias.html")).unwrap();
+
+    assert!(
+        vault::canonical_contained(vault.path(), "budget-q3-review.artifacts", "alias.html")
+            .is_some(),
+        "a symlink resolving back inside the Vault is legitimate and must be allowed"
+    );
+}
+
+#[test]
+fn canonical_contained_refuses_a_lexical_traversal_too() {
+    let vault = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(vault.path().join("budget-q3-review.artifacts")).unwrap();
+
+    assert_eq!(
+        vault::canonical_contained(vault.path(), "budget-q3-review.artifacts", "../../etc/passwd"),
+        None
+    );
+}

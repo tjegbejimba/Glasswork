@@ -34,6 +34,11 @@ pub fn load_all(vault_dir: &Path) -> io::Result<Vec<GlassworkTask>> {
 /// without any `..` present. Containment is therefore checked explicitly,
 /// lexically (no filesystem access), mirroring the same approach
 /// `obsidian_uri` already takes for deep links.
+///
+/// **Lexical only.** This cannot see through symlinks, so it is *not*
+/// sufficient on its own before reading a file — use [`canonical_contained`]
+/// for that. This function is for cases where no read happens (e.g. building
+/// a deep link), or as the first stage of the stricter check.
 pub fn resolve_contained(
     vault_root: &Path,
     artifact_folder: &str,
@@ -75,4 +80,33 @@ fn lexically_normalize(path: &Path) -> std::path::PathBuf {
         }
     }
     out
+}
+
+/// Filesystem-level containment: like [`resolve_contained`], but also follows
+/// symlinks and re-checks the *real* location.
+///
+/// [`resolve_contained`] is purely lexical, which cannot see through a
+/// symlink that lives inside the Vault but points outside it — such a path
+/// passes every `..`/absolute check and still yields foreign content when
+/// opened. Any caller that is about to actually *read* the file must use this
+/// function; the lexical one is only sufficient for building a link.
+///
+/// Both sides are canonicalized so the comparison is between real paths (this
+/// also resolves a symlinked Vault root, e.g. macOS `/tmp` -> `/private/tmp`).
+/// A path that does not exist is refused rather than assumed safe.
+pub fn canonical_contained(
+    vault_root: &Path,
+    artifact_folder: &str,
+    filename: &str,
+) -> Option<std::path::PathBuf> {
+    let lexical = resolve_contained(vault_root, artifact_folder, filename)?;
+
+    let real_root = vault_root.canonicalize().ok()?;
+    let real_path = lexical.canonicalize().ok()?;
+
+    if real_path.starts_with(&real_root) {
+        Some(real_path)
+    } else {
+        None
+    }
 }
