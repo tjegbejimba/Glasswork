@@ -109,3 +109,69 @@ describe("untrusted Vault content boundary", () => {
     }
   });
 });
+
+// Attribute-context injection. Escaping element *text* is not enough: Vault
+// values also land inside HTML attributes (a subtask's `status` becomes a CSS
+// class; a Markdown link's URL becomes an href). A value that closes the
+// quote can inject sibling markup, so these need their own coverage.
+describe("untrusted Vault content in attribute contexts", () => {
+  const ATTR_BREAKOUT = `todo"><img src=y onerror="window.__xssAttr = true">`;
+
+  beforeEach(async () => {
+    await browser.execute(() => {
+      delete window.__xssAttr;
+      delete window.__xssHref;
+    });
+  });
+
+  it("does not let a subtask's status break out of the class attribute", async () => {
+    const original = fs.readFileSync(FIXTURE, "utf8");
+    try {
+      fs.writeFileSync(
+        FIXTURE,
+        original.replace("- status: todo", `- status: ${ATTR_BREAKOUT}`),
+        "utf8"
+      );
+      await browser.pause(1200);
+
+      // The segmented progress bar renders on the My Day card, so the payload
+      // lands there rather than in Task Detail.
+      const back = await $$("[data-back-to-myday]");
+      if (back.length > 0) await $("[data-back-to-myday]").click();
+      await browser.pause(500);
+
+      const fired = await browser.execute(() => window.__xssAttr === true);
+      expect(fired).toBe(false);
+
+      const injected = await $$("img[src='y']");
+      expect(injected).toBeElementsArrayOfSize(0);
+    } finally {
+      fs.writeFileSync(FIXTURE, original, "utf8");
+    }
+  });
+
+  it("does not let a Markdown link URL break out of the href attribute", async () => {
+    const original = fs.readFileSync(FIXTURE, "utf8");
+    try {
+      // Only http/https URLs are rendered as links at all (the
+      // ArtifactLinkPolicy-equivalent gate), so the payload has to start
+      // with a permitted scheme to reach the href in the first place.
+      const payload = `[click](https://example.com/a"><img src=z onerror="window.__xssHref=true">)`;
+      fs.writeFileSync(
+        FIXTURE,
+        original.replace("## Subtasks", `${payload}\n\n## Subtasks`),
+        "utf8"
+      );
+      await browser.pause(1200);
+      await openDetailFor("budget-q3-review");
+
+      const fired = await browser.execute(() => window.__xssHref === true);
+      expect(fired).toBe(false);
+
+      const injected = await $$("img[src='z']");
+      expect(injected).toBeElementsArrayOfSize(0);
+    } finally {
+      fs.writeFileSync(FIXTURE, original, "utf8");
+    }
+  });
+});

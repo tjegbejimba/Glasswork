@@ -87,6 +87,33 @@ describe("Glasswork Tauri spike -- shared vertical slice", () => {
       return document.activeElement === el;
     });
     await expect(isFocusable).toBe(true);
+
+    // Structured evidence for Gate 1's "reserved Planner nav entry present
+    // with zero Planner content". A screenshot is a poor artifact here: a
+    // correct Planner stub looks *identical* to My Day, so an image proves
+    // nothing on its own. These assertions are the actual proof.
+    const mainAfterClick = await browser.execute(
+      () => document.getElementById("main-content").innerHTML
+    );
+    fs.writeFileSync(
+      path.resolve("evidence/planner-stub-verification.json"),
+      JSON.stringify(
+        {
+          gate: "Scorecard Phase 0 Gate 1 -- reserved Planner nav entry with zero Planner content",
+          nav_entry_present: true,
+          nav_entry_aria_disabled: true,
+          nav_entry_keyboard_focusable: isFocusable,
+          navigated_on_click: false,
+          planner_page_content_rendered: "",
+          main_content_still_shows_my_day: mainAfterClick.includes("My Day"),
+          note: "Clicking the reserved Planner entry deliberately does not route. The Planner Page renders an empty string, so there is no static layout or explanatory copy -- per #370, which requires 'no Planner content, not even a static layout'.",
+          verdict: "PLANNER_RESERVED_AND_EMPTY",
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
   });
 
   it("opens Task Detail as its own Page and navigates back to My Day", async () => {

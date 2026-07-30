@@ -4,33 +4,37 @@
   "build_configuration": "Release, built via `npx tauri build` (NOT raw `cargo build --release`).",
   "metric_1_cold_launch_ms": {
     "runs": [
-      89,
-      86,
-      90
+      118.00000000000001,
+      40,
+      95
     ],
-    "median": 89,
+    "median": 95,
     "status": "PROCEDURE_NOT_MET",
-    "gap": "The scorecard's Measurement Environment Freeze defines cold launch as preceded by a reboot or equivalent guaranteed cold-cache state. No reboot/`purge` was possible in this environment, so these are warm-cache launches. Value recorded for transparency; it must be re-measured in a frozen environment before it is entered into the calculator."
+    "gap": "The scorecard's Measurement Environment Freeze defines cold launch as preceded by a reboot or equivalent guaranteed cold-cache state. No reboot/`purge` was possible in this environment, so these are warm-cache launches. Value recorded for transparency; it must be re-measured in a frozen environment before it is entered into the calculator.",
+    "variance_note": "High spread across runs (40-118.00000000000001 ms), consistent with warm-cache launches on a machine doing other work. Another reason this metric must be re-taken in a frozen environment."
   },
   "metric_2_interaction_latency_ms": {
     "runs": [
-      1,
-      1.0000000000002274,
-      2
+      16,
+      13.000000000000227,
+      13
     ],
-    "median": 1.0000000000002274,
+    "median": 13.000000000000227,
     "status": "MEASURED",
-    "method": "In-page performance.now() delta from the Task Detail navigation click to the Page being rendered, instrumented in src/main.js and read via the WebDriverIO embedded provider. Chosen over OS-level automation because macOS Accessibility permission for this ad-hoc-signed dev binary requires a fresh manual grant on every rebuild."
+    "method": "In-page performance.now() delta from the Task Detail navigation click until every artifact load has settled and the resulting re-render is committed to the DOM.",
+    "correction_note": "An earlier revision stamped this at first synchronous paint, while Artifact rows were still showing 'loading...' placeholders. That reported ~1 ms and did not match the scorecard's 'fully rendered and interactive' definition. Corrected to wait for artifact settle, which is why the value rose to ~13 ms. It still excludes the final compositor paint, so treat it as a lower bound."
   },
   "metric_3_idle_memory_mb": {
     "runs": [
-      100.828,
-      88.922,
-      96.391
+      96.344,
+      96.281,
+      96.094
     ],
-    "median": 96.391,
+    "median": 96.281,
     "status": "MEASURED",
-    "method": "`ps -o rss=` against the real OS process, sampled 30s after launch with no interaction -- #370's exact procedure."
+    "method": "`ps -o rss=` against the real OS process, sampled 30s after launch with no interaction -- #370's exact procedure.",
+    "invalid_run_note": "One earlier sample read 45.7 MB against ~96 MB for every other run -- an incomplete launch where the webview had not finished coming up. Discarded and re-run per the scorecard's invalid-run rule rather than averaged in.",
+    "comparability_caveat": "This is RSS of the Tauri main process only. WKWebView renders content in separate WebKit helper processes, so this UNDERCOUNTS true footprint -- and it undercounts in a way single-process Avalonia/Uno spikes will not. #381 must not compare these numbers naively; a like-for-like comparison needs whole-process-tree accounting on every candidate."
   },
   "metric_4_installed_package_size": {
     "macos_app_bundle_kb": 14992,
@@ -73,5 +77,5 @@
     "status": "MEASURED_WITH_INTERPRETATION_NOTE",
     "note": "The scorecard excludes 'shared Glasswork.Core logic', written with Avalonia/Uno in mind since they reuse the existing C# Core. Tauri has no such reuse path -- its Core is new code this framework required. Both figures are reported so #381 can pick a fair comparison basis rather than one being silently chosen here."
   },
-  "overall_status": "INCOMPLETE -- 3 of 8 metrics fully meet their locked procedure (2, 3, 7); metric 8 is measured with an interpretation note; metric 1 does not meet the cold-cache procedure; metric 4 covers one OS; metrics 5 and 6 are not measured. No value here should be entered into the scorecard calculator until the gaps above are closed."
+  "overall_status": "INCOMPLETE -- metrics 2, 3 and 7 meet their locked procedure (with metric 3 carrying a cross-framework comparability caveat); metric 8 is measured with an interpretation note; metric 1 does not meet the cold-cache procedure; metric 4 covers one OS; metrics 5 and 6 are not measured. No value here should be entered into the scorecard calculator until those gaps close."
 }

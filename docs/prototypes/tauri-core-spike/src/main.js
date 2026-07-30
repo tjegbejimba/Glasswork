@@ -25,6 +25,7 @@ const state = {
   expandedSubtaskIndex: null,
   artifactCache: new Map(), // `${taskId}/${filename}` -> payload
   artifactSourceOpen: new Set(),
+  pendingArtifactLoads: 0,
 };
 
 // ---- OS detection: toggles the Variant B chrome rules in styles.css.
@@ -115,7 +116,14 @@ function taskRowHtml(task) {
       </button>
     </div>`;
   }
-  const segs = task.subtasks.map((s) => `<div class="seg ${s.status || (s.is_completed ? 'done' : 'todo')}"></div>`).join("");
+  // `status` is Vault-authored subtask metadata, so it is untrusted even
+  // though it only ever *should* be one of a few known keywords. It lands in
+  // a class attribute, where an unescaped quote would let it close the
+  // attribute and inject sibling markup -- so it is escaped like any other
+  // Vault value, not trusted because of where it came from.
+  const segs = task.subtasks
+    .map((s) => `<div class="seg ${escapeHtml(s.status || (s.is_completed ? "done" : "todo"))}"></div>`)
+    .join("");
   return `<div class="task-row card">
     <button class="task-row-btn" data-open-task="${escapeHtml(task.id)}">
       <div class="title-row">${escapeHtml(task.title)}${chipsHtml(task)}</div>
@@ -149,8 +157,10 @@ function artifactHtml(task, filename, kindHint) {
   const cached = state.artifactCache.get(key);
   if (!cached) {
     // Fire the load; render a placeholder now, re-render on arrival.
+    state.pendingArtifactLoads += 1;
     invoke("read_artifact", { taskId: task.id, filename }).then((payload) => {
       state.artifactCache.set(key, payload);
+      state.pendingArtifactLoads -= 1;
       render();
     });
     return `<div class="artifact-row">${escapeHtml(filename)} <span class="muted">loading&hellip;</span></div>`;
@@ -289,7 +299,12 @@ document.getElementById("main-content").addEventListener("click", async (e) => {
     // Perf-measurement hook (scorecard #376 "task-detail interaction
     // latency"): click to Task Detail fully rendered. Only meaningful when
     // opening (not collapsing) a task.
-    window.__lastInteractionLatencyMs = performance.now() - clickStart;
+    // Scorecard metric 2 is "click to Task Detail fully rendered and
+    // interactive". The first paint can still contain artifact placeholders,
+    // so only stamp the metric once every artifact load has settled and the
+    // final re-render has happened -- otherwise this measures first paint and
+    // flatters the number.
+    stampInteractionLatencyWhenSettled(clickStart);
     return;
   }
   const back = e.target.closest("[data-back-to-myday]");
@@ -390,6 +405,22 @@ document.getElementById("main-content").addEventListener("drop", async (e) => {
   const updated = await invoke("reorder_subtasks", { taskId, newOrder: order });
   applyTaskUpdate(updated);
 });
+
+// Uses timers rather than requestAnimationFrame: rAF is throttled (often
+// stopped entirely) while the window is not frontmost, which made this
+// measurement drop out under WebDriver. This stamps once every artifact load
+// has settled and the resulting re-render has been committed to the DOM --
+// i.e. "click -> Task Detail fully rendered", not first paint. It does not
+// claim to include the final compositor paint.
+function stampInteractionLatencyWhenSettled(clickStart) {
+  if (state.pendingArtifactLoads > 0) {
+    setTimeout(() => stampInteractionLatencyWhenSettled(clickStart), 4);
+    return;
+  }
+  setTimeout(() => {
+    window.__lastInteractionLatencyMs = performance.now() - clickStart;
+  }, 0);
+}
 
 function applyTaskUpdate(updatedTask) {
   const i = state.tasks.findIndex((t) => t.id === updatedTask.id);

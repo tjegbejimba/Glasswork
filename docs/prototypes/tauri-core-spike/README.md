@@ -71,6 +71,22 @@ were fixed rather than argued down (all are real changes, not re-wordings):
   did not meet their locked procedure. Each metric now carries an explicit
   status and, where applicable, the exact gap.
 
+A second review round then caught four more, also fixed rather than argued
+down:
+
+- **Vault values were still unescaped in attribute contexts.** A subtask's
+  `status` went raw into a `class` attribute; a payload closing the quote
+  executed. Escaped, with a regression test. (A companion test confirms the
+  Markdown link `href` path was *not* exploitable — the earlier escape pass
+  already neutralized it — and is kept as a guard.)
+- **The fixture was missing the `in_progress` subtask state** #370 requires,
+  which is also why the My Day card's "Current:" line rendered empty.
+- **Gate 3 was marked PASS on unit tests**, not the observed native launch
+  its acceptance script requires. Retracted.
+- **Interaction latency was stamped at first paint** while Artifact rows
+  still showed placeholders, reporting ~1 ms against a "fully rendered and
+  interactive" definition. Corrected to ~13 ms.
+
 ## What was built
 
 - **Bounded Rust Core** (`core/`) — a from-scratch Rust reimplementation of
@@ -99,10 +115,12 @@ were fixed rather than argued down (all are real changes, not re-wordings):
   vibrancy tint on macOS, custom caption buttons + Mica-like tint on
   Windows, identical shared layout otherwise.
 - **Fixed 3-task fixture** (`fixture-vault/`) — byte-identical to the
-  fixture locked in #370: `budget-q3-review.md` (rich card, active, with a
-  blocked subtask and an HTML artifact), `confirm-tailscale-acl.md` (rich
-  card, active, the file-watch demo task), `renew-domain.md` (quiet/single-
-  line row, low priority). MD5s recorded below for tamper-evidence.
+  fixture locked in #370: `budget-q3-review.md` (rich card, active, four
+  subtasks covering done / in_progress / blocked / todo, plus a Markdown and
+  an untrusted HTML artifact), `confirm-tailscale-acl.md` (quiet/single-line
+  row, medium priority — it exists purely to demonstrate live file-watch),
+  `renew-domain.md` (quiet/single-line row, low priority). MD5s recorded
+  below for tamper-evidence.
 
 ## Hard safety gates (Phase 0) — macOS results
 
@@ -113,13 +131,14 @@ build:
 |---|---|---|
 | 1 | Full slice behavior | **PASS** — every item in the checklist present and functional against the fixture: both My Day row forms, Task Detail as a distinct Page with working subtask reorder, both Artifact kinds, the ADR 0004 hit-zone split, live file-watch on the "Confirm Tailscale ACL update" task, the reserved Planner nav entry with zero content, and keyboard reach to nav/rows/subtasks. Verified by screenshots plus `vertical-slice.spec.js`, `subtask-reorder.spec.js`, `filewatch-live-update.spec.js`. |
 | 2 | Genuine HTML sandbox | **PASS**, now on direct evidence for *both* probes — `evidence/html-sandbox-verification.json` records a local canary server seeing 1 control request (proving the detector works) and **0** requests from the sandboxed artifact, alongside an unmutated parent title and unset parent flag. Corroborated by `tests/artifact_sandbox.rs` and `sandbox-verify.spec.js`. |
-| 3 | Native file/Obsidian launching | **macOS: PASS.** Deep-link build verified by `core/tests/obsidian_uri.rs`; a real bug was found and fixed (compound extensions). The OS-default-handler fallback has been **removed** (ADR 0006) — a deep link that can't be built now fails loudly instead of opening an arbitrary editor against real notes, and `opener:allow-open-path` is no longer granted in `capabilities/default.json`. **Windows: NOT YET RUN.** |
+| 3 | Native file/Obsidian launching | **NOT YET VERIFIED on either OS.** The scorecard's acceptance script is "trigger it once per OS; both must open the correct file in the correct external application" — that is an observed native launch, which has not been done. What exists is unit coverage of the URI builder (`core/tests/obsidian_uri.rs`, including a real compound-extension bug found and fixed) and the removal of the ADR 0006-rejected default-handler fallback. An earlier revision of this README marked macOS PASS on that basis; that was an overstatement and is retracted. Needs a HITL launch check on both macOS and Windows. |
 | 4 | Accessibility reachability | **NOT YET CONFIRMED.** Keyboard-focus reachability for every zone (including the reserved Planner entry, which uses `aria-disabled` precisely so it stays focusable) is exercised by the automated specs, but the spoken-announcement half needs a human running VoiceOver. **Windows/Narrator: NOT YET RUN.** |
 | 5 | A real automated test passes | **PASS** — 37 tests total (26 Rust Core, 11 WebDriverIO), each WebDriverIO spec exercising a real fixture interaction rather than an app-launch smoke test. |
 | 6 | No crash or hang | **PASS** on macOS across all evidence-capture sessions; no crash or >10s unresponsive period observed. **Windows: NOT YET RUN.** |
 
-**Gates 3, 4 and 6 cannot be marked fully PASS until the Windows half runs**,
-and Gate 4 additionally needs the VoiceOver pass. Per the gate definitions
+**Gates 3, 4 and 6 are not PASS.** Gate 3 needs an observed native Obsidian
+launch on both OSes (unit-tested URI building is not the acceptance script);
+Gate 4 needs live VoiceOver + Narrator passes; Gate 6 needs the Windows run. Per the gate definitions
 ("succeeds on both macOS and Windows" / "both VoiceOver ... and Narrator"),
 this ticket treats them as open — intentionally, not as an oversight.
 
@@ -137,9 +156,9 @@ the honest current position, not a placeholder to be quietly upgraded later.
 
 | # | Metric | macOS value | Status |
 |---|---|---|---|
-| 1 | Cold launch time | 89 ms (median of 89 / 86 / 90) | **Procedure not met.** The Measurement Environment Freeze defines cold launch as following a reboot or guaranteed cold cache. No reboot/`purge` was available here, so these are warm-cache launches. Must be re-measured in a frozen environment. |
-| 2 | Task-detail interaction latency | 1 ms (median of 1 / 1 / 2) | **Measured.** In-page `performance.now()` delta from the Task Detail navigation click to the Page rendering, read via the WebDriverIO embedded provider. |
-| 3 | Idle resident memory | 96.4 MB (median of 100.8 / 88.9 / 96.4) | **Measured.** `ps -o rss=` on the real process, 30s post-launch, no interaction — #370's exact procedure. |
+| 1 | Cold launch time | 95 ms (median of 118 / 40 / 95) | **Procedure not met.** The wide spread is itself a warning sign. The Measurement Environment Freeze defines cold launch as following a reboot or guaranteed cold cache. No reboot/`purge` was available here, so these are warm-cache launches. Must be re-measured in a frozen environment. |
+| 2 | Task-detail interaction latency | 13 ms (median of 16 / 13 / 13) | **Measured.** Delta from the navigation click until every Artifact load has settled and the re-render is committed. An earlier revision stamped this at first paint while Artifact rows still read "loading…", reporting ~1 ms — that did not meet the scorecard's "fully rendered and interactive" wording and has been corrected, which is why the number went up. Still excludes the final compositor paint, so it is a lower bound. |
+| 3 | Idle resident memory | 96.3 MB (median of 96.3 / 96.3 / 96.1) | **Measured**, with a comparability caveat: this is RSS of the Tauri **main process only**, and WKWebView runs page content in separate WebKit helper processes — so it undercounts, in a way single-process Avalonia/Uno spikes will not. #381 needs whole-process-tree accounting before comparing. One earlier 45.7 MB sample was an incomplete launch and was re-run, not averaged in, per the invalid-run rule. |
 | 4 | Installed package size | app bundle 15 MB / DMG 4.3 MB | **Partial — one OS only.** The scorecard averages both OSes; Windows is pending. Also inflated by the test-only WebDriver bridge, which a production build would feature-gate out. |
 | 5 | File-watch response latency | *no value* | **Not measured.** The *behavior* is proven (`evidence/filewatch-live-update.json`, verdict `LIVE_UPDATE_CONFIRMED`, on the locked Tailscale ACL task) and a single WebDriver-polled observation of ~23 ms exists, but the metric requires a 3-run median timestamped from the acceptance recording. The single observation is deliberately **not** presented as the metric value. |
 | 6 | Accessibility completeness | *no value* | **Not measured.** Requires live VoiceOver + Narrator passes scoring correct name/role/state per zone, averaged across both OSes. HITL, and half of it needs a Windows device. |
@@ -185,6 +204,32 @@ real, defensible classification of this spike's actual code, but per the
 scorecard the bonus is *relative-ranked against the other gate-surviving
 candidates* — it can't be turned into a final +bonus value until Avalonia
 and Uno's own classifications exist.
+
+## Screenshot evidence — and what it does *not* show
+
+`evidence/screenshot-*.png` are **WebDriver captures of the webview**, so
+they show layout, content and interaction states faithfully but **not** the
+native window chrome (macOS traffic lights, vibrancy tint). Those are the
+subject of the scorecard's "Platform-native chrome fidelity" sub-rating, so
+this gap matters and is called out rather than glossed:
+
+- The native chrome **was** verified by direct inspection of a real OS-level
+  screen capture during this session — native traffic lights, the vibrancy
+  tinted nav rail, and the dimmed reserved Planner entry all rendered as the
+  Variant B brief specifies.
+- A fresh OS-level capture could not be re-taken after the final fixture fix:
+  the machine's display slept and then locked, and `screencapture` cannot
+  photograph an app window in that state. **Capturing the chrome screenshots
+  is therefore a HITL step**, same as the VoiceOver pass — it needs a human
+  at an unlocked display. TJ will in any case be judging chrome fidelity
+  hands-on against the live app, which is stronger evidence than a PNG.
+
+There is deliberately **no** `screenshot-planner-stub.png`. A correct Planner
+stub renders identically to My Day (that is the whole contract), so the image
+proved nothing — two byte-identical PNGs. It is replaced by
+`evidence/planner-stub-verification.json`, which records the assertions that
+actually establish the contract: entry present, `aria-disabled`, keyboard
+focusable, click does not route, Planner Page content is the empty string.
 
 ## Recording evidence — what each artifact proves (read this before scoring)
 
@@ -390,10 +435,13 @@ the locked 3-task fixture stays byte-identical (see Fixture integrity below).
 
 The fixed 3-task fixture in `fixture-vault/` must remain byte-identical to
 the state locked by #370 for every screenshot/recording/test to remain
-valid evidence. MD5s at time of evidence capture:
+valid evidence. MD5s at time of evidence capture (`budget-q3-review.md` changed from an
+earlier revision: its second subtask was `todo`, which left the fixture
+without the `in_progress` state #370 requires and made the card's "Current:"
+line render empty. Now `in_progress`, matching the locked fixture spec):
 
 ```
-043616756669e7b1123aa072e23947ab  fixture-vault/budget-q3-review.md
+7d1100f3da795d367d825106f7b490d2  fixture-vault/budget-q3-review.md
 d695b88a3101d5436ebc9d4d49eeddd9  fixture-vault/confirm-tailscale-acl.md
 527e1aeeafd01da4c23b797be7e0545b  fixture-vault/renew-domain.md
 ```

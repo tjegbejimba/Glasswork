@@ -20,7 +20,7 @@ finance before the Thursday standup.
 - status: done
 
 ### [ ] Reconcile NAS hosting costs
-- status: todo
+- status: in_progress
 
 ### [ ] Get sign-off from manager
 - status: blocked

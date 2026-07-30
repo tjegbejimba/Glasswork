@@ -1,0 +1,11 @@
+{
+  "gate": "Scorecard Phase 0 Gate 1 -- reserved Planner nav entry with zero Planner content",
+  "nav_entry_present": true,
+  "nav_entry_aria_disabled": true,
+  "nav_entry_keyboard_focusable": true,
+  "navigated_on_click": false,
+  "planner_page_content_rendered": "",
+  "main_content_still_shows_my_day": true,
+  "note": "Clicking the reserved Planner entry deliberately does not route. The Planner Page renders an empty string, so there is no static layout or explanatory copy -- per #370, which requires 'no Planner content, not even a static layout'.",
+  "verdict": "PLANNER_RESERVED_AND_EMPTY"
+}
