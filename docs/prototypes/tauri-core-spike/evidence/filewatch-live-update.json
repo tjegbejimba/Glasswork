@@ -3,7 +3,7 @@
   "fixture_task_title": "Confirm Tailscale ACL update",
   "before": "\n        Confirm Tailscale ACL updateMedDue 2026-07-24\n      ",
   "after": "\n        Confirm Tailscale ACL updateHighDue 2026-07-25\n      ",
-  "observed_round_trip_ms": 26,
+  "observed_round_trip_ms": 25,
   "observed_round_trip_caveat": "Single observation, WebDriver-polled wall clock. NOT the scorecard metric-5 value (3-run median timestamped from the acceptance recording), which remains pending.",
   "verdict": "LIVE_UPDATE_CONFIRMED"
 }

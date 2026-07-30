@@ -69,9 +69,18 @@ describe("html artifact sandbox boundary (real WKWebView)", () => {
     const back = await $$("[data-back-to-myday]");
     if (back.length > 0) await $("[data-back-to-myday]").click();
     await $("[data-open-task='budget-q3-review']").click();
+
+    // ADR 0015: HTML artifacts open as Source, and the Preview is created
+    // only on click. So the preview has to be genuinely *triggered* here --
+    // this is the catalog interaction "trigger the HTML preview", not an
+    // iframe that was already on screen.
+    await $("[data-toggle-preview]").waitForExist({ timeout: 5000 });
+    await expect(await $$(".html-preview-frame")).toBeElementsArrayOfSize(0);
+    await $("[data-toggle-preview]").click();
+
     await browser.waitUntil(async () => (await $$(".html-preview-frame")).length > 0, {
       timeout: 5000,
-      timeoutMsg: "sandboxed preview iframe never rendered",
+      timeoutMsg: "sandboxed preview iframe never rendered after clicking Show preview",
     });
 
     // Give the (expected non-executing) script every chance to run.
@@ -99,6 +108,8 @@ describe("html artifact sandbox boundary (real WKWebView)", () => {
       parent_title_after: titleAfter,
       parent_flag_set: parentFlagSet === true,
       parent_probe_blocked: parentProbeBlocked,
+      preview_is_opt_in: true,
+      preview_default_state: "source view (ADR 0015: Source default, Preview created only on click)",
       sandbox_attr: sandboxAttr,
       allow_scripts_present: (sandboxAttr || "").includes("allow-scripts"),
       verdict:

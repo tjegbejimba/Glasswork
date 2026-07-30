@@ -24,7 +24,7 @@ const state = {
   expandedTaskId: null,
   expandedSubtaskIndex: null,
   artifactCache: new Map(), // `${taskId}/${filename}` -> payload
-  artifactSourceOpen: new Set(),
+  artifactPreviewOpen: new Set(), // ADR 0015: Source is the default; Preview is opt-in.
   pendingArtifactLoads: 0,
 };
 
@@ -171,15 +171,19 @@ function artifactHtml(task, filename, kindHint) {
     </div>`;
   }
   if (cached.kind === "Html") {
-    const sourceOpen = state.artifactSourceOpen.has(key);
+    // ADR 0015: untrusted HTML renders as **Source by default**, with an
+    // opt-in Preview that is only created on click ("Lazy (created only on
+    // Preview click)"). Defaulting to Preview would auto-render
+    // agent-authored HTML the user never asked to see.
+    const previewOpen = state.artifactPreviewOpen.has(key);
     const meta = cached.csp ? `<meta http-equiv="Content-Security-Policy" content="${cached.csp}">` : "";
     const srcdoc = `${meta}${cached.content}`;
-    return `<div class="artifact-row">${escapeHtml(filename)}<span class="sandbox-badge">sandboxed preview</span>
-      <button class="artifact-toggle" data-toggle-source="${escapeHtml(key)}">${sourceOpen ? "Show preview" : "Show source"}</button>
+    return `<div class="artifact-row">${escapeHtml(filename)}<span class="sandbox-badge">${previewOpen ? "sandboxed preview" : "source view"}</span>
+      <button class="artifact-toggle" data-toggle-preview="${escapeHtml(key)}">${previewOpen ? "Show source" : "Show preview"}</button>
       <button class="artifact-toggle" data-open-externally="${escapeHtml(task.id)}/${escapeHtml(filename)}">Open externally</button>
-      ${sourceOpen
-        ? `<div class="artifact-source">${escapeHtml(cached.content)}</div>`
-        : `<iframe class="html-preview-frame" sandbox="allow-same-origin" title="Sandboxed preview of ${escapeHtml(filename)}" srcdoc="${srcdoc.replace(/"/g, "&quot;")}"></iframe>`}
+      ${previewOpen
+        ? `<iframe class="html-preview-frame" sandbox="allow-same-origin" title="Sandboxed preview of ${escapeHtml(filename)}" srcdoc="${srcdoc.replace(/"/g, "&quot;")}"></iframe>`
+        : `<div class="artifact-source">${escapeHtml(cached.content)}</div>`}
     </div>`;
   }
   return `<div class="artifact-row">${escapeHtml(filename)} &mdash; unsupported kind, open externally only</div>`;
@@ -331,11 +335,11 @@ document.getElementById("main-content").addEventListener("click", async (e) => {
     render();
     return;
   }
-  const toggleSource = e.target.closest("[data-toggle-source]");
-  if (toggleSource) {
-    const key = toggleSource.dataset.toggleSource;
-    if (state.artifactSourceOpen.has(key)) state.artifactSourceOpen.delete(key);
-    else state.artifactSourceOpen.add(key);
+  const togglePreview = e.target.closest("[data-toggle-preview]");
+  if (togglePreview) {
+    const key = togglePreview.dataset.togglePreview;
+    if (state.artifactPreviewOpen.has(key)) state.artifactPreviewOpen.delete(key);
+    else state.artifactPreviewOpen.add(key);
     render();
     return;
   }

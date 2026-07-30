@@ -8,6 +8,8 @@
   "parent_title_after": "Glasswork -- Tauri/Rust Core spike",
   "parent_flag_set": false,
   "parent_probe_blocked": true,
+  "preview_is_opt_in": true,
+  "preview_default_state": "source view (ADR 0015: Source default, Preview created only on click)",
   "sandbox_attr": "allow-same-origin",
   "allow_scripts_present": false,
   "verdict": "SANDBOX_HELD"

@@ -108,7 +108,13 @@ struct ArtifactPayload {
 
 #[tauri::command]
 fn read_artifact(state: State<AppState>, task_id: String, filename: String) -> Result<ArtifactPayload, String> {
-    let path = state.vault_dir.join(format!("{task_id}.artifacts")).join(&filename);
+    // `filename` comes from the frontend, so the Vault root is a trust
+    // boundary here: resolve through the Core's containment check rather than
+    // a bare `join`, which would happily escape on an absolute path.
+    let path = vault::resolve_contained(&state.vault_dir, &format!("{task_id}.artifacts"), &filename)
+        .ok_or_else(|| {
+            format!("Refusing to read '{filename}': it does not resolve inside the Vault root.")
+        })?;
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let kind = artifact::classify_kind(&filename);
     let (kind_str, csp) = match kind {

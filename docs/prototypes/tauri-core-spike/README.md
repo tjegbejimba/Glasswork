@@ -27,7 +27,7 @@ Do not close #372 or append the #369 decision pointer until all of the
 following exist:
 
 - [x] macOS: full slice built and gate-checked
-- [x] macOS: automated tests passing (40 total — 27 Rust Core, 13 WebDriverIO)
+- [x] macOS: automated tests passing (46 total — 33 Rust Core, 13 WebDriverIO)
 - [x] macOS: HITL evidence artifacts prepared (screenshots + recording) for
       TJ to review
 - [ ] macOS: measured evidence is **incomplete** — 3 of 8 metrics fully meet
@@ -94,6 +94,26 @@ down:
   still showed placeholders, reporting ~1 ms against a "fully rendered and
   interactive" definition. Corrected to ~13 ms.
 
+A third and fourth round caught six more:
+
+- **"Open externally" opened the parent task, not the Artifact** — the
+  filename was destructured out of the payload and then discarded.
+- **`read_artifact` had a path-traversal hole.** It built the path with a
+  bare `join` on a frontend-supplied filename; an absolute path would have
+  silently discarded the Vault base entirely (`join("/etc/passwd")` escapes
+  with no `..` involved). Now routed through `vault::resolve_contained`, with
+  six tests covering traversal, absolute paths, and the legitimate cases.
+- **Untrusted HTML defaulted to Preview**, but ADR 0015 specifies "HTML →
+  **Source** view (default) plus an opt-in **Preview**", created lazily on
+  click. Auto-rendering agent-authored HTML the user never asked to see is
+  exactly what that ADR rules out. Source is now the default.
+- **"Trigger the HTML preview" was claimed as a covered catalog interaction**
+  while the test merely waited for an iframe that rendered by default —
+  nothing was triggered. Now that Preview is opt-in, the test genuinely
+  clicks it, so the claim is true.
+- **The Rust test count was understated** in the run instructions.
+- **The stale recording was only footnoted**, not listed as outstanding.
+
 ## What was built
 
 - **Bounded Rust Core** (`core/`) — a from-scratch Rust reimplementation of
@@ -104,7 +124,7 @@ down:
   with vault-escape rejection, and HTML/Markdown artifact-kind
   classification + sandboxed-HTML CSP policy. It is **not** a port of the
   whole product — no Planner, no backlinks, no UI state, no full task
-  catalog beyond the fixed fixture. 27 passing tests (`cargo test --release`,
+  catalog beyond the fixed fixture. 33 passing tests (`cargo test --release`,
   see `evidence/automated-ui-test-log.txt`).
 - **Tauri 2 shell** (`src-tauri/`) — thin IPC layer exposing the Core's
   operations to the frontend (`src-tauri/src/lib.rs`, 224 LOC), plus
@@ -140,7 +160,7 @@ build:
 | 2 | Genuine HTML sandbox | **PASS**, now on direct evidence for *both* probes — `evidence/html-sandbox-verification.json` records a local canary server seeing 1 control request (proving the detector works) and **0** requests from the sandboxed artifact, alongside an unmutated parent title and unset parent flag. Corroborated by `tests/artifact_sandbox.rs` and `sandbox-verify.spec.js`. |
 | 3 | Native file/Obsidian launching | **NOT YET VERIFIED on either OS.** The scorecard's acceptance script is "trigger it once per OS; both must open the correct file in the correct external application" — that is an observed native launch, which has not been done. What exists is unit coverage of the URI builder (`core/tests/obsidian_uri.rs`, including a real compound-extension bug found and fixed) and the removal of the ADR 0006-rejected default-handler fallback. An earlier revision of this README marked macOS PASS on that basis; that was an overstatement and is retracted. Needs a HITL launch check on both macOS and Windows. |
 | 4 | Accessibility reachability | **NOT YET CONFIRMED.** Keyboard-focus reachability for every zone (including the reserved Planner entry, which uses `aria-disabled` precisely so it stays focusable) is exercised by the automated specs, but the spoken-announcement half needs a human running VoiceOver. **Windows/Narrator: NOT YET RUN.** |
-| 5 | A real automated test passes | **PASS** — 40 tests total (27 Rust Core, 13 WebDriverIO), each WebDriverIO spec exercising a real fixture interaction rather than an app-launch smoke test. |
+| 5 | A real automated test passes | **PASS** — 46 tests total (33 Rust Core, 13 WebDriverIO), each WebDriverIO spec exercising a real fixture interaction rather than an app-launch smoke test. |
 | 6 | No crash or hang | **PASS** on macOS across all evidence-capture sessions; no crash or >10s unresponsive period observed. **Windows: NOT YET RUN.** |
 
 **Gates 3, 4 and 6 are not PASS.** Gate 3 needs an observed native Obsidian
@@ -169,7 +189,7 @@ the honest current position, not a placeholder to be quietly upgraded later.
 | 4 | Installed package size | app bundle 15 MB / DMG 4.3 MB | **Partial — one OS only.** The scorecard averages both OSes; Windows is pending. Also inflated by the test-only WebDriver bridge, which a production build would feature-gate out. |
 | 5 | File-watch response latency | *no value* | **Not measured.** The *behavior* is proven (`evidence/filewatch-live-update.json`, verdict `LIVE_UPDATE_CONFIRMED`, on the locked Tailscale ACL task) and a single WebDriver-polled observation of ~23 ms exists, but the metric requires a 3-run median timestamped from the acceptance recording. The single observation is deliberately **not** presented as the metric value. |
 | 6 | Accessibility completeness | *no value* | **Not measured.** Requires live VoiceOver + Narrator passes scoring correct name/role/state per zone, averaged across both OSes. HITL, and half of it needs a Windows device. |
-| 7 | Testability breadth | **6 / 6** catalog interactions | **Measured.** toggle a subtask, open Task Detail, drag-reorder (via the accessible keyboard alternative), trigger the HTML preview, trigger a live file-watch update, navigate via keyboard — each asserted by a spec performing that one action, with no inflation via trivial sub-assertions. |
+| 7 | Testability breadth | **6 / 6** catalog interactions | **Measured.** toggle a subtask, open Task Detail, drag-reorder (via the accessible keyboard alternative), trigger the HTML preview (a genuine click on the opt-in Preview control, asserted absent beforehand), trigger a live file-watch update, navigate via keyboard — each asserted by a spec performing that one action, with no inflation via trivial sub-assertions. |
 | 8 | Implementation complexity | 868 LOC framework UI (+635 Core, reported separately) | **Measured, with an interpretation note** — see below. |
 
 ### Implementation-complexity LOC breakdown (metric 8)
@@ -425,7 +445,7 @@ none is available; keep this ticket open and report the gap.
 ```bash
 cd docs/prototypes/tauri-core-spike
 npm install
-cargo test --release                       # bounded Rust Core: 27 tests
+cargo test --release                       # bounded Rust Core: 33 tests
 npx tauri build --no-bundle                 # release build (never raw cargo build --release)
 npx wdio run test/wdio.conf.js --spec test/specs/vertical-slice.spec.js
 npx wdio run test/wdio.conf.js --spec test/specs/untrusted-content.spec.js

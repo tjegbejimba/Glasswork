@@ -31,7 +31,9 @@ describe("screenshot drive", () => {
 
     if (targetState === "html-preview") {
       await $("[data-open-task='budget-q3-review']").click();
-      // Force the artifact fetch + render to complete.
+      // Preview is opt-in (ADR 0015), so open it explicitly before capturing.
+      await $("[data-toggle-preview]").waitForExist({ timeout: 5000 });
+      await $("[data-toggle-preview]").click();
       await browser.waitUntil(
         async () => (await $$(".html-preview-frame")).length > 0,
         { timeout: 5000 }
