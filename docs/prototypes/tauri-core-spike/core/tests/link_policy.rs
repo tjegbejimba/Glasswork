@@ -80,3 +80,42 @@ fn still_allows_ordinary_links_with_ports_paths_queries_and_fragments() {
     assert!(is_allowed_external_url("http://localhost:3000/health"));
     assert!(is_allowed_external_url("https://sub.domain.example.com/path"));
 }
+
+// --- Host, not just authority -------------------------------------------
+// "Authority is non-empty" is weaker than "there is a host": a port with no
+// host, or a percent-encoded `@` that only becomes a credentials separator
+// after decoding, both slip through a naive non-empty check.
+
+#[test]
+fn refuses_an_authority_that_has_a_port_but_no_host() {
+    assert!(!is_allowed_external_url("https://:443/"));
+    assert!(!is_allowed_external_url("http://:8080"));
+}
+
+#[test]
+fn refuses_percent_encoding_in_the_authority() {
+    // `%40` decodes to `@`, reinstating the credentials misdirection the
+    // literal-`@` check is meant to stop.
+    assert!(!is_allowed_external_url("https://%40evil.test/"));
+    assert!(!is_allowed_external_url("https://example.com%40evil.test/"));
+}
+
+#[test]
+fn refuses_an_empty_ipv6_literal_or_unclosed_bracket() {
+    assert!(!is_allowed_external_url("https://[]/"));
+    assert!(!is_allowed_external_url("https://[::1/"));
+}
+
+#[test]
+fn still_allows_ipv6_literals_and_trailing_dot_hosts() {
+    // Legitimate forms that must not become false negatives.
+    assert!(is_allowed_external_url("https://[::1]:8080/health"));
+    assert!(is_allowed_external_url("https://[2001:db8::1]/"));
+    assert!(is_allowed_external_url("https://example.com./path"));
+}
+
+#[test]
+fn still_allows_percent_encoding_outside_the_authority() {
+    // Encoding in the path/query is ordinary and must keep working.
+    assert!(is_allowed_external_url("https://example.com/a%20b?q=%40home"));
+}

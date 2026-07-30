@@ -27,7 +27,7 @@ Do not close #372 or append the #369 decision pointer until all of the
 following exist:
 
 - [x] macOS: full slice built and gate-checked
-- [x] macOS: automated tests passing (61 total — 48 Rust Core, 13 WebDriverIO)
+- [x] macOS: automated tests passing (66 total — 53 Rust Core, 13 WebDriverIO)
 - [x] macOS: HITL evidence artifacts prepared (screenshots + recording) for
       TJ to review
 - [ ] macOS: measured evidence is **incomplete** — 3 of 8 metrics fully meet
@@ -155,9 +155,21 @@ A seventh round found two more:
   `https://example.com@evil.test` (reads as example.com, resolves to
   evil.test) and backslash variants that move the effective authority
   boundary. Since the result is handed to the OS to launch, the authority is
-  now validated too: non-empty host required, embedded credentials refused,
+  now validated too: a real host is required, embedded credentials refused,
   backslashes refused. Ordinary links with ports, paths, queries and
   fragments still pass.
+
+An eighth round found the host check was still only "authority is non-empty":
+
+- **A port with no host (`https://:443/`) and percent-encoded credentials
+  (`https://%40evil.test/`, where `%40` decodes to `@`) both passed**, so the
+  README's "non-empty host required" was not yet true. The policy now
+  extracts the host properly — including bracketed IPv6 literals, whose
+  colons are part of the address rather than a port separator — and refuses
+  percent-encoding in the authority outright rather than decode-then-recheck.
+  Tests pin that legitimate forms are not caught as false negatives:
+  `https://[::1]:8080/health`, `https://[2001:db8::1]/`, a trailing-dot host,
+  and percent-encoding in the path/query.
 - **Gate 1 was claimed PASS although native drag-reorder is unverified.**
   WebDriver could not deliver real drag/pointer input to the webview, so the
   automated test covers the accessible keyboard alternative. Gate 1 is now
@@ -174,7 +186,7 @@ A seventh round found two more:
   with vault-escape rejection, and HTML/Markdown artifact-kind
   classification + sandboxed-HTML CSP policy. It is **not** a port of the
   whole product — no Planner, no backlinks, no UI state, no full task
-  catalog beyond the fixed fixture. 48 passing tests (`cargo test --release`,
+  catalog beyond the fixed fixture. 53 passing tests (`cargo test --release`,
   see `evidence/automated-ui-test-log.txt`).
 - **Tauri 2 shell** (`src-tauri/`) — thin IPC layer exposing the Core's
   operations to the frontend (`src-tauri/src/lib.rs`, 224 LOC), plus
@@ -210,7 +222,7 @@ build:
 | 2 | Genuine HTML sandbox | **PASS**, now on direct evidence for *both* probes — `evidence/html-sandbox-verification.json` records a local canary server seeing 1 control request (proving the detector works) and **0** requests from the sandboxed artifact, alongside an unmutated parent title and unset parent flag. Corroborated by `tests/artifact_sandbox.rs` and `sandbox-verify.spec.js`. |
 | 3 | Native file/Obsidian launching | **NOT YET VERIFIED on either OS.** The scorecard's acceptance script is "trigger it once per OS; both must open the correct file in the correct external application" — that is an observed native launch, which has not been done. What exists is unit coverage of the URI builder (`core/tests/obsidian_uri.rs`, including a real compound-extension bug found and fixed) and the removal of the ADR 0006-rejected default-handler fallback. An earlier revision of this README marked macOS PASS on that basis; that was an overstatement and is retracted. Needs a HITL launch check on both macOS and Windows. |
 | 4 | Accessibility reachability | **NOT YET CONFIRMED.** Keyboard-focus reachability for every zone (including the reserved Planner entry, which uses `aria-disabled` precisely so it stays focusable) is exercised by the automated specs, but the spoken-announcement half needs a human running VoiceOver. **Windows/Narrator: NOT YET RUN.** |
-| 5 | A real automated test passes | **PASS** — 61 tests total (48 Rust Core, 13 WebDriverIO), each WebDriverIO spec exercising a real fixture interaction rather than an app-launch smoke test. |
+| 5 | A real automated test passes | **PASS** — 66 tests total (53 Rust Core, 13 WebDriverIO), each WebDriverIO spec exercising a real fixture interaction rather than an app-launch smoke test. |
 | 6 | No crash or hang | **PASS** on macOS across all evidence-capture sessions; no crash or >10s unresponsive period observed. **Windows: NOT YET RUN.** |
 
 **Gates 1, 3, 4 and 6 are not PASS.** Gate 1 is partial: native drag-reorder
@@ -498,7 +510,7 @@ none is available; keep this ticket open and report the gap.
 ```bash
 cd docs/prototypes/tauri-core-spike
 npm install
-cargo test --release                       # bounded Rust Core: 48 tests
+cargo test --release                       # bounded Rust Core: 53 tests
 npx tauri build --no-bundle                 # release build (never raw cargo build --release)
 npx wdio run test/wdio.conf.js --spec test/specs/vertical-slice.spec.js
 npx wdio run test/wdio.conf.js --spec test/specs/untrusted-content.spec.js

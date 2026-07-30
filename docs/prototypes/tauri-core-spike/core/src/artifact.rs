@@ -58,10 +58,7 @@ pub fn is_allowed_external_url(url: &str) -> bool {
 
     // A scheme prefix alone is not enough: the result is handed to the OS to
     // launch, so the authority has to be checked too.
-    let authority = rest
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("");
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
 
     if authority.is_empty() {
         return false;
@@ -73,11 +70,50 @@ pub fn is_allowed_external_url(url: &str) -> bool {
         return false;
     }
 
-    // Some resolvers normalize `\` to `/`, so a backslash anywhere can move
+    // Percent-encoding in the authority is never needed for a real host, and
+    // it can hide the credentials separator (`%40` decodes to `@`). Refuse it
+    // outright rather than trying to decode-then-recheck. Encoding in the
+    // path/query is untouched by this.
+    if authority.contains('%') {
+        return false;
+    }
+
+    // Some resolvers normalize `\\` to `/`, so a backslash anywhere can move
     // the effective authority boundary.
     if url.contains('\\') {
         return false;
     }
 
-    true
+    // Finally require an actual host, not merely a non-empty authority:
+    // `https://:443/` is a port with nothing in front of it.
+    host_of(authority).is_some()
+}
+
+/// Extract the host portion of an authority, or `None` if there isn't a real
+/// one. Handles bracketed IPv6 literals (`[::1]:8080`) separately, since their
+/// colons are part of the address rather than a port separator.
+fn host_of(authority: &str) -> Option<&str> {
+    if let Some(after_bracket) = authority.strip_prefix('[') {
+        let (inside, rest) = after_bracket.split_once(']')?;
+        if inside.is_empty() {
+            return None;
+        }
+        // Anything after `]` may only be a port.
+        if !rest.is_empty() && !rest.starts_with(':') {
+            return None;
+        }
+        return Some(inside);
+    }
+
+    // An unclosed bracket is malformed, not a hostname.
+    if authority.contains(']') {
+        return None;
+    }
+
+    let host = authority.split(':').next().unwrap_or("");
+    if host.is_empty() {
+        None
+    } else {
+        Some(host)
+    }
 }
