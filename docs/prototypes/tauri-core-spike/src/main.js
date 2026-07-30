@@ -341,8 +341,10 @@ document.getElementById("main-content").addEventListener("click", async (e) => {
   }
   const openExternally = e.target.closest("[data-open-externally]");
   if (openExternally) {
+    // Open the Artifact itself, not its parent task: the payload is already
+    // `<taskId>/<filename>`, which maps to the Vault-relative Artifact path.
     const [taskId, filename] = openExternally.dataset.openExternally.split("/");
-    invoke("open_in_obsidian", { taskId }); // spike scope: file-level open, see #372 notes
+    invoke("open_in_obsidian", { vaultRelativePath: `${taskId}.artifacts/${filename}` });
     return;
   }
   const extLink = e.target.closest("a.ext-link");
@@ -350,7 +352,7 @@ document.getElementById("main-content").addEventListener("click", async (e) => {
     e.preventDefault();
     // ArtifactLinkPolicy-equivalent: allowed scheme, but still routed through
     // the native opener rather than an in-app navigation.
-    invoke("open_in_obsidian", { taskId: state.expandedTaskId });
+    invoke("open_in_obsidian", { vaultRelativePath: `${state.selectedTaskId}.md` });
   }
 });
 

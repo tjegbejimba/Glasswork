@@ -21,6 +21,12 @@ describe("screenshot drive", () => {
 
     if (targetState === "task-detail-blocked") {
       await $("[data-open-task='budget-q3-review']").click();
+      // Wait for artifact loads to settle so the capture shows the finished
+      // Task Detail rather than "loading…" placeholders.
+      await browser.waitUntil(
+        async () => await browser.execute(() => typeof window.__lastInteractionLatencyMs === "number"),
+        { timeout: 10000, timeoutMsg: "Task Detail never finished rendering its artifacts" }
+      );
     }
 
     if (targetState === "html-preview") {

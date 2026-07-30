@@ -123,28 +123,39 @@ fn read_artifact(state: State<AppState>, task_id: String, filename: String) -> R
 /// into Obsidian via `obsidian://open?vault=...&file=...`, mirroring
 /// production's `ObsidianUriBuilder.ForVaultRelativePath`.
 ///
+/// Takes a **Vault-relative path**, not a task id, so it can open an Artifact
+/// (`<task>.artifacts/<file>`) as well as a task file. An earlier version
+/// took only the task id, which meant the Artifact row's "Open externally"
+/// button silently opened the parent task instead of the Artifact.
+///
 /// There is deliberately **no** default-handler fallback. ADR 0006 rejects
 /// handing raw Vault files to whatever the OS has registered — that can open
 /// an arbitrary editor against the user's real notes, which is a data-loss
 /// risk, and it silently masks a broken deep link instead of surfacing it.
-/// If a well-formed `obsidian://` URI can't be built, this fails loudly and
-/// the UI says so.
+/// If a well-formed `obsidian://` URI can't be built — including when the
+/// path escapes the Vault root — this fails loudly and the UI says so.
 #[tauri::command]
-fn open_in_obsidian(state: State<AppState>, task_id: String, app: tauri::AppHandle) -> Result<(), String> {
+fn open_in_obsidian(
+    state: State<AppState>,
+    vault_relative_path: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     let vault_root = state
         .vault_dir
         .canonicalize()
         .unwrap_or_else(|_| state.vault_dir.clone());
-    let vault_relative = format!("{task_id}.md");
 
-    let uri = obsidian_uri::for_vault_relative_path(&vault_root.to_string_lossy(), &vault_relative)
-        .ok_or_else(|| {
-            format!(
-                "Could not build an obsidian:// deep link for '{vault_relative}' \
-                 (it does not resolve inside the Vault root). Refusing to fall back to \
-                 the OS default handler -- see ADR 0006."
-            )
-        })?;
+    let uri = obsidian_uri::for_vault_relative_path(
+        &vault_root.to_string_lossy(),
+        &vault_relative_path,
+    )
+    .ok_or_else(|| {
+        format!(
+            "Could not build an obsidian:// deep link for '{vault_relative_path}' \
+             (it does not resolve inside the Vault root). Refusing to fall back to \
+             the OS default handler -- see ADR 0006."
+        )
+    })?;
 
     app.opener().open_url(uri, None::<String>).map_err(|e| e.to_string())
 }
