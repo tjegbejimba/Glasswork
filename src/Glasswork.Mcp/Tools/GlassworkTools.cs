@@ -1094,31 +1094,16 @@ public sealed class GlassworkTools
 
             Directory.CreateDirectory(artifactFolder);
             
-            // Atomic write: temp → rename, no partial file visible on failure
-            // Use unique temp path to prevent concurrent writes from clobbering each other
-            var tempPath = resolvedPath + $".tmp.{Guid.NewGuid():N}";
-            _selfWrites.RegisterWrite(tempPath);
-            _selfWrites.RegisterWrite(resolvedPath);
             var writeSw = Stopwatch.StartNew();
-            try
-            {
-                File.WriteAllText(tempPath, content);
-                File.Move(tempPath, resolvedPath, overwrite: effectiveMode == "overwrite");
-            }
-            catch (IOException) when (effectiveMode == "create" && File.Exists(resolvedPath))
+            if (!_mutations.CommitTaskOwnedFile(
+                    resolvedPath,
+                    Encoding.UTF8.GetBytes(content),
+                    overwrite: effectiveMode == "overwrite"))
             {
                 // Another concurrent write won the race → structured conflict
                 scope?.SetResult("conflict");
                 return JsonSerializer.Serialize(new ErrorResult("conflict",
                     $"Artifact '{filename}' was created concurrently for task '{safeId}'."));
-            }
-            finally
-            {
-                // Clean up .tmp if it somehow remains (shouldn't happen on success)
-                if (File.Exists(tempPath))
-                {
-                    try { File.Delete(tempPath); } catch { /* best effort */ }
-                }
             }
             scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
 
@@ -4116,7 +4101,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("disposition_code")] string DispositionCode,
         [property: JsonPropertyName("created_review_items")] bool CreatedReviewItems);
 
-    private AutomationReviewQueueService CreateAutomationReviewQueueService() => new(_vaultRoot);
+    private AutomationReviewQueueService CreateAutomationReviewQueueService() =>
+        new(_vaultRoot, selfWrites: _selfWrites);
     private MeetingTranscriptSyncService CreateMeetingTranscriptSyncService() => new(_vaultRoot, _vault, CreateAutomationReviewQueueService());
 
     private static bool TryParseRunKind(string? value, out ReviewSourceRunKind runKind)

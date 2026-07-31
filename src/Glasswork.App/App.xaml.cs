@@ -29,6 +29,7 @@ public partial class App : Application
 
     // Simple service locator for v1
     public static VaultService Vault { get; private set; } = null!;
+    public static ResourceMutationService Mutations { get; private set; } = null!;
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
     public static IndexMarkdownWriter? IndexMarkdownWriter { get; private set; }
@@ -301,6 +302,7 @@ public partial class App : Application
 
         SelfWrites = new SelfWriteCoordinator(vaultPath);
         Vault = new VaultService(vaultPath, SelfWrites);
+        Mutations = new ResourceMutationService(vaultPath, Vault);
 
         // FileSystemArtifactStore wants the vault root (the folder containing wiki/todo/),
         // not the todo folder itself. This same path is the root the user has registered
@@ -308,7 +310,7 @@ public partial class App : Application
         var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
         Artifacts = new FileSystemArtifactStore(vaultRoot);
         ObsidianLauncher = new ObsidianLauncher(vaultRoot);
-        ReviewQueue = new AutomationReviewQueueService(vaultRoot);
+        ReviewQueue = new AutomationReviewQueueService(vaultRoot, selfWrites: SelfWrites);
 
         // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
         // that mention a Glasswork task via [[stem]] / [[stem|alias]].

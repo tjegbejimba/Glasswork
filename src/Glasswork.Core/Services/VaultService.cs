@@ -21,6 +21,9 @@ public class VaultService
     private readonly SelfWriteCoordinator? _selfWrites;
     private readonly ConcurrentDictionary<string, byte[]> _lastReadBytes = new(StringComparer.Ordinal);
     private Func<IReadOnlyList<string>>? _managedRecovery;
+    private Func<IReadOnlyList<string>>? _managedDeleteRecovery;
+    private ResourceMutationService? _mutations;
+    private readonly object _mutationGate = new();
 
     public VaultService(string vaultPath) : this(vaultPath, null) { }
 
@@ -64,16 +67,40 @@ public class VaultService
         _managedRecovery = recovery ?? throw new ArgumentNullException(nameof(recovery));
     }
 
+    internal void RegisterManagedDeleteRecovery(Func<IReadOnlyList<string>> recovery)
+    {
+        _managedDeleteRecovery = recovery ?? throw new ArgumentNullException(nameof(recovery));
+    }
+
     internal void RunManagedRecovery()
     {
         var recoveredTaskIds = _managedRecovery?.Invoke();
-        if (recoveredTaskIds is null) return;
+        if (recoveredTaskIds is not null)
+        {
+            foreach (var taskId in recoveredTaskIds.Distinct(StringComparer.Ordinal))
+                RaiseTaskWritten(taskId);
+        }
 
-        foreach (var taskId in recoveredTaskIds.Distinct(StringComparer.Ordinal))
-            RaiseTaskWritten(taskId);
+        var recoveredDeletes = _managedDeleteRecovery?.Invoke();
+        if (recoveredDeletes is null) return;
+        foreach (var taskId in recoveredDeletes.Distinct(StringComparer.Ordinal))
+            RaiseTaskDeleted(taskId);
     }
 
     internal void NotifyTaskWritten(string taskId) => RaiseTaskWritten(taskId);
+    internal void NotifyTaskDeleted(string taskId) => RaiseTaskDeleted(taskId);
+
+    internal void AttachMutationService(ResourceMutationService mutations)
+    {
+        _mutations = mutations ?? throw new ArgumentNullException(nameof(mutations));
+    }
+
+    private ResourceMutationService EnsureMutations()
+    {
+        if (_mutations is not null) return _mutations;
+        lock (_mutationGate)
+            return _mutations ??= new ResourceMutationService(_vaultPath, this);
+    }
 
     private void RaiseTaskDeleted(string taskId)
     {
@@ -103,6 +130,7 @@ public class VaultService
                 var bytes = File.ReadAllBytes(file);
                 var content = Encoding.UTF8.GetString(bytes);
                 var task = _parser.Parse(content);
+                task.ResourceRevision = ResourceMutationService.Revision(bytes);
                 _lastReadBytes[Path.GetFileNameWithoutExtension(file)] = bytes;
                 tasks.Add(task);
             }
@@ -127,6 +155,7 @@ public class VaultService
 
         var bytes = File.ReadAllBytes(filePath);
         var task = _parser.Parse(Encoding.UTF8.GetString(bytes));
+        task.ResourceRevision = ResourceMutationService.Revision(bytes);
         _lastReadBytes[taskId] = bytes;
         return task;
     }
@@ -152,10 +181,12 @@ public class VaultService
     /// </summary>
     public void UpdateSubtaskCheckbox(string taskId, string subtaskTitle, bool isCompleted)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
-        var content = File.ReadAllText(path);
+        var originalBytes = File.ReadAllBytes(path);
+        var content = Encoding.UTF8.GetString(originalBytes);
         var newCheck = isCompleted ? "x" : " ";
         var pattern = @"^### \[[ xX]\] " + System.Text.RegularExpressions.Regex.Escape(subtaskTitle) + @"\s*$";
         var regex = new System.Text.RegularExpressions.Regex(pattern, System.Text.RegularExpressions.RegexOptions.Multiline);
@@ -166,9 +197,7 @@ public class VaultService
         var updated = content[..match.Index] + $"### [{newCheck}] {subtaskTitle}" + content[(match.Index + match.Length)..];
         if (updated != content)
         {
-            _selfWrites?.RegisterWrite(path);
-            File.WriteAllText(path, updated);
-            RaiseTaskWritten(taskId);
+            CommitManagedBytes(taskId, updated, originalBytes);
         }
     }
 
@@ -181,10 +210,12 @@ public class VaultService
     /// </summary>
     public void SetSubtaskMyDay(string taskId, string subtaskTitle, bool isMyDay)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
-        var content = File.ReadAllText(path);
+        var originalBytes = File.ReadAllBytes(path);
+        var content = Encoding.UTF8.GetString(originalBytes);
         // Detect the line ending used by the file so we don't mix \n and \r\n.
         var newline = content.Contains("\r\n") ? "\r\n" : "\n";
         var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
@@ -231,9 +262,7 @@ public class VaultService
         var rebuilt = string.Join(newline, lines);
         if (hadTrailingNewline && !rebuilt.EndsWith(newline))
             rebuilt += newline;
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, rebuilt);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, rebuilt, originalBytes);
     }
 
     /// <summary>
@@ -246,10 +275,12 @@ public class VaultService
     /// </summary>
     public void SetSubtaskDue(string taskId, string subtaskTitle, DateTime? due)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
-        var content = File.ReadAllText(path);
+        var originalBytes = File.ReadAllBytes(path);
+        var content = Encoding.UTF8.GetString(originalBytes);
         var newline = content.Contains("\r\n") ? "\r\n" : "\n";
         var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
 
@@ -301,9 +332,7 @@ public class VaultService
         var rebuilt = string.Join(newline, lines);
         if (hadTrailingNewline && !rebuilt.EndsWith(newline))
             rebuilt += newline;
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, rebuilt);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, rebuilt, originalBytes);
     }
 
     /// <summary>
@@ -316,10 +345,12 @@ public class VaultService
     /// </summary>
     public void SetAdoLink(string taskId, int? adoId, string? adoTitle)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
-        var content = File.ReadAllText(path);
+        var originalBytes = File.ReadAllBytes(path);
+        var content = Encoding.UTF8.GetString(originalBytes);
         var newline = content.Contains("\r\n") ? "\r\n" : "\n";
 
         // Locate the frontmatter block: opening "---" line through the next "---" line.
@@ -371,9 +402,7 @@ public class VaultService
 
         if (output == content) return;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, output);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, output, originalBytes);
     }
 
     /// <summary>
@@ -383,10 +412,12 @@ public class VaultService
     /// </summary>
     public void SetParent(string taskId, string? parent)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
-        var content = File.ReadAllText(path);
+        var originalBytes = File.ReadAllBytes(path);
+        var content = Encoding.UTF8.GetString(originalBytes);
         var newline = content.Contains("\r\n") ? "\r\n" : "\n";
 
         var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
@@ -431,9 +462,7 @@ public class VaultService
 
         if (output == content) return;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, output);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, output, originalBytes);
     }
 
     /// <summary>
@@ -443,10 +472,12 @@ public class VaultService
     /// </summary>
     public void SetMyDay(string taskId, DateTime myDay)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
-        var content = File.ReadAllText(path);
+        var originalBytes = File.ReadAllBytes(path);
+        var content = Encoding.UTF8.GetString(originalBytes);
         var newline = content.Contains("\r\n") ? "\r\n" : "\n";
 
         var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
@@ -487,9 +518,7 @@ public class VaultService
 
         if (output == content) return;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, output);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, output, originalBytes);
     }
 
     /// <summary>
@@ -498,6 +527,7 @@ public class VaultService
     /// </summary>
     public void ToggleMyDay(string taskId, bool inMyDay)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
@@ -507,7 +537,8 @@ public class VaultService
             return;
         }
 
-        var content = File.ReadAllText(path);
+        var originalBytes = File.ReadAllBytes(path);
+        var content = Encoding.UTF8.GetString(originalBytes);
         var newline = content.Contains("\r\n") ? "\r\n" : "\n";
 
         var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
@@ -540,9 +571,7 @@ public class VaultService
 
         if (output == content) return;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, output);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, output, originalBytes);
     }
 
     /// <summary>
@@ -555,13 +584,15 @@ public class VaultService
     /// </summary>
     public void AddSubtask(string taskId, string title)
     {
+        RunManagedRecovery();
         if (string.IsNullOrWhiteSpace(title)) return;
 
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
         var trimmed = title.Trim();
-        var content = File.ReadAllText(path);
+        var originalBytes = File.ReadAllBytes(path);
+        var content = Encoding.UTF8.GetString(originalBytes);
         var newline = content.Contains("\r\n") ? "\r\n" : "\n";
         var lines = content.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
         var hadTrailingNewline = content.EndsWith('\n');
@@ -664,9 +695,7 @@ public class VaultService
         if (hadTrailingNewline && !rebuilt.EndsWith(newline))
             rebuilt += newline;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, rebuilt);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, rebuilt, originalBytes);
     }
 
     /// <summary>
@@ -677,15 +706,17 @@ public class VaultService
         if (string.IsNullOrWhiteSpace(task.Id))
             throw new ArgumentException("Task must have an ID before saving.");
 
-        RunManagedRecovery();
-        var content = _parser.Serialize(task);
-        var path = GetFilePath(task.Id);
-        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
-        {
-            _selfWrites?.RegisterWrite(path);
-            File.WriteAllText(path, content);
-        }
-        RaiseTaskWritten(task.Id);
+        EnsureMutations().CommitTask(task);
+    }
+
+    private void CommitManagedBytes(string taskId, string content, byte[]? expectedOriginal = null)
+    {
+        CommitManagedBytes(taskId, Encoding.UTF8.GetBytes(content), expectedOriginal);
+    }
+
+    private void CommitManagedBytes(string taskId, byte[] content, byte[]? expectedOriginal = null)
+    {
+        EnsureMutations().CommitBytes(taskId, content, expectedOriginal);
     }
 
     /// <summary>
@@ -735,6 +766,7 @@ public class VaultService
         var migrated = new MigrationService().MigrateToV2(original);
         if (migrated == original) return false;
 
+        // Legacy bootstrap migration predates the managed mutation contract.
         _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, migrated);
         RaiseTaskWritten(taskId);
@@ -765,6 +797,7 @@ public class VaultService
 
             if (migratedContent == original) continue;
 
+            // Legacy bootstrap migration predates the managed mutation contract.
             _selfWrites?.RegisterWrite(path);
             File.WriteAllText(path, migratedContent);
             RaiseTaskWritten(Path.GetFileNameWithoutExtension(path));
@@ -778,13 +811,7 @@ public class VaultService
     /// </summary>
     public bool Delete(string taskId)
     {
-        var filePath = GetFilePath(taskId);
-        if (!File.Exists(filePath)) return false;
-
-        _selfWrites?.RegisterWrite(filePath);
-        File.Delete(filePath);
-        RaiseTaskDeleted(taskId);
-        return true;
+        return EnsureMutations().CommitDelete(taskId);
     }
 
     /// <summary>
@@ -810,12 +837,51 @@ public class VaultService
         return File.Exists(path) ? File.ReadAllBytes(path) : null;
     }
 
+    internal byte[]? TryGetCachedReadBytes(string taskId) =>
+        _lastReadBytes.TryGetValue(taskId, out var bytes) ? bytes : null;
+
+    internal void RememberManagedBytes(string taskId, byte[] bytes) =>
+        _lastReadBytes[taskId] = bytes;
+
+    internal void ForgetManagedBytes(string taskId) =>
+        _lastReadBytes.TryRemove(taskId, out _);
+
+    internal bool ReplaceOwnedFileUnsafe(string path, byte[] bytes, bool overwrite)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var vaultPrefix = Path.GetFullPath(_vaultPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(vaultPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Owned file must be inside the Task vault.", nameof(path));
+        if (!overwrite && File.Exists(fullPath))
+            return false;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        _selfWrites?.RegisterWrite(fullPath);
+        var tempPath = fullPath + $".mutation.tmp.{Guid.NewGuid():N}";
+        File.WriteAllBytes(tempPath, bytes);
+        if (File.Exists(fullPath))
+            File.Replace(tempPath, fullPath, null);
+        else
+            File.Move(tempPath, fullPath);
+        return true;
+    }
+
+    internal byte[]? TryReadOwnedBytesUnsafe(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var vaultPrefix = Path.GetFullPath(_vaultPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(vaultPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Owned file must be inside the Task vault.", nameof(path));
+        return File.Exists(fullPath) ? File.ReadAllBytes(fullPath) : null;
+    }
+
     public void ReplaceBytes(string taskId, byte[] bytes)
     {
-        RunManagedRecovery();
-        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
-            ReplaceBytesUnsafe(taskId, bytes);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, bytes);
     }
 
     internal void ReplaceBytesUnsafe(string taskId, byte[] bytes)

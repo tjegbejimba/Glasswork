@@ -12,6 +12,7 @@ namespace Glasswork.Core.Models;
 public partial class GlassworkTask : ObservableObject
 {
     [ObservableProperty] public partial string Id { get; set; } = string.Empty;
+    public string? ResourceRevision { get; internal set; }
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(RemoveFromMyDayLabel))]
     public partial string Title { get; set; } = string.Empty;
@@ -392,6 +393,7 @@ public partial class GlassworkTask : ObservableObject
         var copy = new GlassworkTask
         {
             Id = Id,
+            ResourceRevision = ResourceRevision,
             Title = Title,
             Status = Status,
             Priority = Priority,

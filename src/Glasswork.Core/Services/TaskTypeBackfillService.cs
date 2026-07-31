@@ -357,6 +357,8 @@ public partial class TaskTypeBackfillService
                     continue;
                 }
 
+                // One-time legacy backfill; the final contract ticket will fold migration
+                // writers into the managed resource boundary.
                 _selfWrites?.RegisterWrite(fullPath);
                 File.WriteAllText(fullPath, updated);
             }
