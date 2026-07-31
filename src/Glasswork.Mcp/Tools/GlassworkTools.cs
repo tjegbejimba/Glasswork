@@ -57,31 +57,44 @@ public sealed class GlassworkTools
         try
         {
             if (operations.ValueKind != JsonValueKind.Array || operations.GetArrayLength() != 1)
-                return JsonSerializer.Serialize(new ErrorResult("validation_error", "operations must contain exactly one operation."));
+                return SerializeMutationValidation(mutation_id, "operations must contain exactly one operation.");
 
             var operation = operations[0];
             if (operation.ValueKind != JsonValueKind.Object
                 || !operation.TryGetProperty("op", out var opElement)
-                || !string.Equals(opElement.GetString(), "set_task_fields", StringComparison.Ordinal)
                 || !operation.TryGetProperty("task_id", out var taskIdElement)
                 || !operation.TryGetProperty("fields", out var fields))
-                return JsonSerializer.Serialize(new ErrorResult("precondition_required", "mutation_id, if_revision, and fields are required."));
+                return SerializeMutationValidation(mutation_id, "Each operation requires op, task_id, and fields.");
+
+            if (!string.Equals(opElement.GetString(), "set_task_fields", StringComparison.Ordinal))
+                return SerializeMutationValidation(mutation_id, "Only set_task_fields is supported.");
 
             var taskId = taskIdElement.GetString();
-            var revision = operation.TryGetProperty("if_revision", out var revisionElement)
-                ? revisionElement.GetString()
-                : if_revision;
+            string? operationRevision = null;
+            if (operation.TryGetProperty("if_revision", out var revisionElement))
+            {
+                if (revisionElement.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                    return SerializeMutationValidation(mutation_id, "if_revision must be a string or null.");
+                operationRevision = revisionElement.GetString();
+            }
+
+            if (operationRevision is not null
+                && if_revision is not null
+                && !string.Equals(operationRevision, if_revision, StringComparison.Ordinal))
+                return SerializeMutationValidation(mutation_id, "Transaction and operation revisions must match.", if_revision);
+
+            var revision = operationRevision ?? if_revision;
             var outcome = _mutations.TransactSingleTask(mutation_id, taskId, revision, fields);
             return SerializeMutationOutcome(outcome);
         }
         catch (FormatException ex)
         {
-            return JsonSerializer.Serialize(new ErrorResult("validation_error", ex.Message));
+            return SerializeMutationValidation(mutation_id, ex.Message, if_revision);
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"transact_tasks failed: {ex}");
-            return JsonSerializer.Serialize(new ErrorResult("operation_failed", ex.Message));
+            return SerializeMutationValidation(mutation_id, ex.Message, if_revision, "operation_failed");
         }
     }
 
@@ -2178,65 +2191,60 @@ public sealed class GlassworkTools
 
     private static string SerializeMutationOutcome(ResourceMutationOutcome outcome)
     {
-        if (outcome.Outcome is "precondition_required" or "conflict" or "mutation_id_reused"
-            or "validation_error" or "not_found" or "operation_failed")
-        {
-            return JsonSerializer.Serialize(new
-            {
-                error = outcome.Outcome,
-                message = outcome.Error,
-                mutation_id = outcome.MutationId,
-                replayed = outcome.Replayed,
-                expected_revision = outcome.ExpectedRevision,
-                current_revision = outcome.CurrentRevision,
-                task = outcome.Task is null ? null : new
-                {
-                    id = outcome.Task.Id,
-                    title = outcome.Task.Title,
-                    status = outcome.Task.Status,
-                    priority = outcome.Task.Priority,
-                    type = outcome.Task.Type,
-                    created = outcome.Task.Created.ToString("yyyy-MM-dd"),
-                    due = outcome.Task.Due?.ToString("yyyy-MM-dd"),
-                    start = outcome.Task.Start?.ToString("yyyy-MM-dd"),
-                    my_day = outcome.Task.MyDay?.ToString("yyyy-MM-dd"),
-                    defer_until = outcome.Task.DeferUntil?.ToString("yyyy-MM-dd"),
-                    parent_id = outcome.Task.Parent,
-                    description = outcome.Task.Description,
-                    notes = outcome.Task.Notes,
-                    tags = outcome.Task.Tags,
-                    resource_revision = outcome.Task.ResourceRevision
-                }
-            });
-        }
-
         return JsonSerializer.Serialize(new
         {
             mutation_id = outcome.MutationId,
-            outcome = outcome.Outcome,
+            outcome = outcome.Outcome is "applied" or "no_op" ? outcome.Outcome : null,
+            error = outcome.Outcome is "applied" or "no_op" ? null : outcome.Outcome,
+            message = outcome.Error,
             replayed = outcome.Replayed,
             expected_revision = outcome.ExpectedRevision,
             current_revision = outcome.CurrentRevision,
-            task = outcome.Task is null ? null : new
-            {
-                id = outcome.Task.Id,
-                title = outcome.Task.Title,
-                status = outcome.Task.Status,
-                priority = outcome.Task.Priority,
-                type = outcome.Task.Type,
-                created = outcome.Task.Created.ToString("yyyy-MM-dd"),
-                due = outcome.Task.Due?.ToString("yyyy-MM-dd"),
-                start = outcome.Task.Start?.ToString("yyyy-MM-dd"),
-                my_day = outcome.Task.MyDay?.ToString("yyyy-MM-dd"),
-                defer_until = outcome.Task.DeferUntil?.ToString("yyyy-MM-dd"),
-                parent_id = outcome.Task.Parent,
-                description = outcome.Task.Description,
-                notes = outcome.Task.Notes,
-                tags = outcome.Task.Tags,
-                resource_revision = outcome.Task.ResourceRevision
-            },
-            error = outcome.Error
+            task = SerializeTaskSnapshot(outcome.Task)
         });
+    }
+
+    private static string SerializeMutationValidation(
+        string? mutationId,
+        string message,
+        string? expectedRevision = null,
+        string error = "validation_error") =>
+        SerializeMutationOutcome(
+            new ResourceMutationOutcome(
+                mutationId ?? string.Empty,
+                error,
+                false,
+                expectedRevision,
+                null,
+                null,
+                message));
+
+    private static object? SerializeTaskSnapshot(ResourceMutationTaskSnapshot? task)
+    {
+        if (task is null) return null;
+
+        return new
+        {
+            id = task.Id,
+            title = task.Title,
+            status = task.Status,
+            priority = task.Priority,
+            type = task.Type,
+            created = task.Created.ToString("yyyy-MM-dd"),
+            completed_at = task.CompletedAt?.ToString("yyyy-MM-dd"),
+            due = task.Due?.ToString("yyyy-MM-dd"),
+            start = task.Start?.ToString("yyyy-MM-dd"),
+            my_day = task.MyDay?.ToString("yyyy-MM-dd"),
+            defer_until = task.DeferUntil?.ToString("yyyy-MM-dd"),
+            parent_id = task.Parent,
+            description = task.Description,
+            notes = task.Notes,
+            tags = task.Tags,
+            blocked_reason = task.BlockedReason,
+            blocked_at = task.BlockedAt?.ToString("O"),
+            blocked_from_status = task.BlockedFromStatus,
+            resource_revision = task.ResourceRevision
+        };
     }
 
     private static string MapToExternalStatus(string internalStatus) => internalStatus switch

@@ -25,10 +25,7 @@ public sealed class CapabilityTools
             [
                 "relation_aware_queries",
                 "read_assertions",
-                "typed_transactions",
                 "complete_set_relationships",
-                "transaction_idempotency",
-                "recoverable_all_or_none_commit",
             ]));
     }
 

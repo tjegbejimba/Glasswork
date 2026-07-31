@@ -107,6 +107,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 |---|---|---|
 | `get_capabilities` | v1.0 contract | Read-only handshake for MCP contract version and supported guarantees |
 | `add_task` | v0.2.0 | Create a new task file |
+| `transact_tasks` | v1.0 contract | Conditionally update one existing Task with durable idempotency and recovery |
 | `update_task` | v0.8.0 | Update an existing task (partial updates supported) |
 | `list_tasks` | v0.2.0 | List task summaries (structural enumeration — filter by status or parent) |
 | `get_task` | v0.3.0 | Return full task content (v0.4.0: +artifact bodies) |
@@ -135,21 +136,24 @@ Use this read-only operation before relying on optional workflow guarantees:
 {
   "contract_version": "1.0",
   "implemented_capabilities": [
-    "resource_revisions"
+    "resource_revisions",
+    "typed_transactions",
+    "transaction_idempotency",
+    "recoverable_all_or_none_commit"
   ],
   "future_capabilities": [
     "relation_aware_queries",
     "read_assertions",
-    "typed_transactions",
-    "complete_set_relationships",
-    "transaction_idempotency",
-    "recoverable_all_or_none_commit"
+    "complete_set_relationships"
   ]
 }
 ```
 
 `implemented_capabilities` are guarantees clients may rely on now. Names in
-`future_capabilities` are explicitly not available yet.
+`future_capabilities` are explicitly not available yet. `transact_tasks` is a
+single-task conditional mutation with an opaque `resource_revision`
+precondition, durable mutation-id replay, and journaled all-or-none recovery.
+Its no-op path compares parsed Task meaning and preserves hand formatting.
 
 Every response containing a Task or Task summary includes `resource_revision`.
 It is an opaque, versioned token derived from the exact bytes of that Task's
