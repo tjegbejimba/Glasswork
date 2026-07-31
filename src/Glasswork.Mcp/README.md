@@ -106,8 +106,9 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | Tool | Status | Description |
 |---|---|---|
 | `get_capabilities` | v1.0 contract | Read-only handshake for MCP contract version and supported guarantees |
+| `query_tasks` | v0.8.0 | Query Tasks by typed fields and dependency readiness with deterministic paging |
+| `transact_tasks` | v0.9.0 | Idempotently create explicit-ID Tasks or conditionally update existing Tasks |
 | `add_task` | v0.2.0 | Create a new task file |
-| `transact_tasks` | v1.0 contract | Conditionally update one existing Task with durable idempotency and recovery |
 | `update_task` | v0.8.0 | Update an existing task (partial updates supported) |
 | `list_tasks` | v0.2.0 | List task summaries (structural enumeration — filter by status or parent) |
 | `get_task` | v0.3.0 | Return full task content (v0.4.0: +artifact bodies) |
@@ -137,12 +138,12 @@ Use this read-only operation before relying on optional workflow guarantees:
   "contract_version": "1.0",
   "implemented_capabilities": [
     "resource_revisions",
+    "relation_aware_queries",
     "typed_transactions",
     "transaction_idempotency",
     "recoverable_all_or_none_commit"
   ],
   "future_capabilities": [
-    "relation_aware_queries",
     "read_assertions",
     "complete_set_relationships"
   ]
@@ -150,10 +151,7 @@ Use this read-only operation before relying on optional workflow guarantees:
 ```
 
 `implemented_capabilities` are guarantees clients may rely on now. Names in
-`future_capabilities` are explicitly not available yet. `transact_tasks` is a
-single-task conditional mutation with an opaque `resource_revision`
-precondition, durable mutation-id replay, and journaled all-or-none recovery.
-Its no-op path compares parsed Task meaning and preserves hand formatting.
+`future_capabilities` are explicitly not available yet.
 
 Every response containing a Task or Task summary includes `resource_revision`.
 It is an opaque, versioned token derived from the exact bytes of that Task's
@@ -161,6 +159,40 @@ markdown file (currently formatted with the `rr1-` version prefix). Identical
 bytes produce the same token regardless of filesystem timestamps, while any
 byte change produces a different token. Clients must compare tokens for
 equality and must not parse or otherwise depend on the digest format.
+
+### `transact_tasks`
+
+`transact_tasks` accepts one typed operation per call. `create_task` requires an
+explicit safe Task ID and `if_absent: true`; it never generates a title-based
+collision suffix. The operation returns the created Task and its Resource
+Revision, reports an existing ID as a conflict, and durably replays an exact
+request with the same `mutation_id`. `set_task_fields` requires the current
+Task Resource Revision, rejects contradictory transaction/operation revisions,
+preserves hand-formatted Markdown for semantic no-ops, and uses the same
+journaled all-or-none recovery boundary.
+
+```json
+{
+  "mutation_id": "create-123",
+  "operations": [
+    {
+      "op": "create_task",
+      "task_id": "workflow-child-1",
+      "if_absent": true,
+      "fields": {
+        "title": "Implement the child workflow",
+        "status": "todo",
+        "priority": "medium",
+        "type": "task",
+        "parent_task_id": "workflow-parent",
+        "tags": ["workflow"],
+        "description": "Stable framing",
+        "notes": "Initial context"
+      }
+    }
+  ]
+}
+```
 
 ### When to use which tool
 
@@ -177,6 +209,75 @@ equality and must not parse or otherwise depend on the digest format.
 | Read queue work the user can act on now | `get_review_queue_actionable` / `get_review_queue_needs_refresh` |
 | Inspect source health or acknowledge corruption recovery | `get_review_queue_source_health` / `acknowledge_review_queue_recovery` |
 | Inspect unmatched meeting recaps or manually attach one to a Task | `get_meeting_transcript_sync_unmatched` / `get_meeting_transcript_sync_attachable_tasks` / `attach_meeting_transcript_sync_unmatched` |
+
+### `query_tasks`
+
+`query_tasks` evaluates one page against one managed Vault snapshot. It supports
+typed predicates for `parent_task_id`, a status set, Task `type`, and required
+Tags. The general `blocked_by` relationship is stored as a top-level list of
+Task IDs. Duplicate IDs are canonicalized during parse and serialization.
+
+**Input**
+
+```json
+{
+  "parent_task_id": "string | null",
+  "status": ["todo", "doing", "blocked", "done"],
+  "type": "task | pbi | bug",
+  "tags": ["string", "..."],
+  "blocked_by_empty": "boolean",
+  "blocked_by_status": ["done"],
+  "order_by": "created_id | id",
+  "limit": "integer in [1, 100]",
+  "cursor": "opaque continuation token | null"
+}
+```
+
+`blocked_by_empty` selects Tasks with no dependencies. `blocked_by_status`
+requires every dependency target to have one of the requested statuses and does
+not match a Task with no dependencies. Missing targets and self-edges return a
+structured `validation_error` with diagnostic entries.
+
+**Output**
+
+```json
+{
+  "tasks": [
+    {
+      "id": "task-id",
+      "title": "Task title",
+      "status": "todo",
+      "type": "task",
+      "parent_id": null,
+      "tags": ["workflow"],
+      "blocked_by": ["dependency-id"],
+      "description": "Description",
+      "notes": "Notes",
+      "resource_revision": "rr1-opaque-versioned-token"
+    }
+  ],
+  "read_basis": [
+    {
+      "id": "dependency-id",
+      "title": "Dependency task",
+      "status": "done",
+      "type": "task",
+      "parent_id": null,
+      "tags": [],
+      "blocked_by": [],
+      "description": "",
+      "notes": "",
+      "resource_revision": "rr1-opaque-versioned-token"
+    }
+  ],
+  "next_cursor": "opaque continuation token | null"
+}
+```
+
+Results are ordered by `id` by default, or by `created_id`, and are bounded by
+`limit`. Each `read_basis` entry is a complete Task snapshot with its Resource
+Revision. The set is deduplicated and includes each returned Task plus related
+dependency Tasks whose state affected the relationship predicate.
 
 ### `search_tasks`
 

@@ -188,6 +188,17 @@ transport still delegates the transition rules to `Glasswork.Core`:
 - Full task/context reads surface blocked metadata so agents can see when a task
   is blocked versus when it merely **Needs blocker details**.
 
+### Amendment — relation-aware Task queries
+
+The MCP server now implements relation-aware Task queries. The `query_tasks`
+tool reads one managed Task snapshot, applies typed parent/status/Task
+type/Tag predicates, and supports the generic top-level `blocked_by`
+relationship through empty-set and all-target-status predicates. It requires
+bounded deterministic paging, returns an opaque continuation cursor, and
+includes a deduplicated `read_basis` of dependency Tasks with Resource
+Revisions. Invalid self-edges and missing targets in the queried scope return
+structured validation diagnostics.
+
 ## Consequences
 
 ### Positive

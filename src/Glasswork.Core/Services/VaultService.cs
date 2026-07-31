@@ -830,6 +830,14 @@ public class VaultService
             File.Move(temp, path);
     }
 
+    internal void DeleteUnsafe(string taskId)
+    {
+        var path = GetFilePath(taskId);
+        if (!File.Exists(path)) return;
+        _selfWrites?.RegisterWrite(path);
+        File.Delete(path);
+    }
+
     /// <summary>
     /// Generate a slug-style ID from a title.
     /// </summary>

@@ -61,6 +61,7 @@ public partial class GlassworkTask : ObservableObject
     public partial List<TaskLink> Links { get; set; } = [];
     
     [ObservableProperty] public partial string? Parent { get; set; }
+    [ObservableProperty] public partial List<string> BlockedBy { get; set; } = [];
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BlurbPreview))]
     [NotifyPropertyChangedFor(nameof(HasBlurb))]
@@ -71,6 +72,7 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial string Notes { get; set; } = string.Empty;
     [ObservableProperty] public partial List<string> ContextLinks { get; set; } = [];
     [ObservableProperty] public partial List<string> Tags { get; set; } = [];
+    public Dictionary<string, object?> FrontmatterExtensions { get; set; } = new(StringComparer.Ordinal);
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsActive))]
     [NotifyPropertyChangedFor(nameof(IsQuiet))]
@@ -405,6 +407,7 @@ public partial class GlassworkTask : ObservableObject
             MyDay = MyDay,
             DeferUntil = DeferUntil,
             Parent = Parent,
+            BlockedBy = [.. BlockedBy],
             Description = Description,
             Notes = Notes,
             IsV1Format = IsV1Format,
@@ -417,6 +420,7 @@ public partial class GlassworkTask : ObservableObject
 
         copy.Tags = [.. Tags];
         copy.ContextLinks = [.. ContextLinks];
+        copy.FrontmatterExtensions = new Dictionary<string, object?>(FrontmatterExtensions, StringComparer.Ordinal);
 
         copy.Subtasks = new List<SubTask>(Subtasks.Count);
         foreach (var sub in Subtasks)

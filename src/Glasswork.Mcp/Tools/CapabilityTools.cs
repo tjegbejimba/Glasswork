@@ -17,13 +17,13 @@ public sealed class CapabilityTools
             ImplementedCapabilities:
             [
                 "resource_revisions",
+                "relation_aware_queries",
                 "typed_transactions",
                 "transaction_idempotency",
                 "recoverable_all_or_none_commit",
             ],
             FutureCapabilities:
             [
-                "relation_aware_queries",
                 "read_assertions",
                 "complete_set_relationships",
             ]));
