@@ -53,22 +53,24 @@ public sealed class ListToolsFilteringIntegrationTests
             new Tool { Name = "get_review_queue_source_health" },
             new Tool { Name = "reject_review_item" },
             new Tool { Name = "acknowledge_review_queue_recovery" },
+            new Tool { Name = "get_capabilities" },
         ],
     };
 
     [TestMethod]
-    public void ListTools_returns_empty_when_vault_path_is_null()
+    public void ListTools_keeps_capability_discovery_when_vault_path_is_null()
     {
         var (registry, logger) = BuildPipeline(vaultPath: null);
         var result = AllGlassworkTools();
 
         PreconditionFilters.FilterUnavailableTools(result, registry, logger);
 
-        Assert.IsEmpty(result.Tools!);
+        Assert.HasCount(1, result.Tools!);
+        Assert.AreEqual("get_capabilities", result.Tools![0].Name);
     }
 
     [TestMethod]
-    public void ListTools_returns_empty_when_vault_directory_missing()
+    public void ListTools_keeps_capability_discovery_when_vault_directory_is_missing()
     {
         var missing = Path.Combine(Path.GetTempPath(), "glasswork-mcp-missing-" + Guid.NewGuid().ToString("N"));
         Assert.IsFalse(Directory.Exists(missing));
@@ -78,7 +80,8 @@ public sealed class ListToolsFilteringIntegrationTests
 
         PreconditionFilters.FilterUnavailableTools(result, registry, logger);
 
-        Assert.IsEmpty(result.Tools!);
+        Assert.HasCount(1, result.Tools!);
+        Assert.AreEqual("get_capabilities", result.Tools![0].Name);
     }
 
     [TestMethod]
@@ -93,7 +96,7 @@ public sealed class ListToolsFilteringIntegrationTests
 
             PreconditionFilters.FilterUnavailableTools(result, registry, logger);
 
-            Assert.HasCount(13, result.Tools!);
+            Assert.HasCount(14, result.Tools!);
         }
         finally
         {

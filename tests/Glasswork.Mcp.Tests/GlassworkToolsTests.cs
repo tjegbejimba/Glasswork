@@ -563,7 +563,7 @@ public class GlassworkToolsTests
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
         CollectionAssert.AreEqual(
-            new[] { "backlink_count", "id", "parent_id", "path", "ready", "status", "title", "urgency_score" },
+            new[] { "backlink_count", "id", "parent_id", "path", "ready", "resource_revision", "status", "title", "urgency_score" },
             keys,
             "Default list_tasks shape must include task identity plus computed actionability signals.");
     }
@@ -578,7 +578,7 @@ public class GlassworkToolsTests
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
         CollectionAssert.AreEqual(
-            new[] { "created", "id", "priority" },
+            new[] { "created", "id", "priority", "resource_revision" },
             keys,
             "fields=[created,priority] must return exactly id+created+priority.");
     }
@@ -593,7 +593,7 @@ public class GlassworkToolsTests
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
         CollectionAssert.AreEqual(
-            new[] { "id", "title" },
+            new[] { "id", "resource_revision", "title" },
             keys,
             "Unknown field names must be silently dropped; only id+title remain.");
     }
@@ -608,7 +608,7 @@ public class GlassworkToolsTests
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
         CollectionAssert.AreEqual(
-            new[] { "backlink_count", "id", "parent_id", "path", "ready", "status", "title", "urgency_score" },
+            new[] { "backlink_count", "id", "parent_id", "path", "ready", "resource_revision", "status", "title", "urgency_score" },
             keys,
             "Empty fields array must preserve default signal-enriched shape.");
     }
@@ -623,7 +623,7 @@ public class GlassworkToolsTests
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
         CollectionAssert.AreEqual(
-            new[] { "id" },
+            new[] { "id", "resource_revision" },
             keys,
             "When every requested field is unknown the projection contract still applies: id only.");
     }
@@ -650,7 +650,7 @@ public class GlassworkToolsTests
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(s => s).ToArray();
         CollectionAssert.AreEqual(
-            new[] { "created", "id", "priority" },
+            new[] { "created", "id", "priority", "resource_revision" },
             keys,
             "fields names must be case-folded and whitespace-trimmed.");
     }
@@ -734,7 +734,7 @@ public class GlassworkToolsTests
         var first = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
 
         var keys = first.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
-        CollectionAssert.AreEqual(new[] { "id", "type" }, keys, "Projection must contain exactly id + type.");
+        CollectionAssert.AreEqual(new[] { "id", "resource_revision", "type" }, keys, "Projection must contain id + type + resource_revision.");
         Assert.AreEqual("bug", first.GetProperty("type").GetString());
     }
 
