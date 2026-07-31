@@ -181,17 +181,16 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void AddTask_DuplicateTitle_GeneratesUniqueId()
+    public void AddTask_DuplicateTitle_ConflictsWithoutAnExplicitId()
     {
         var json1 = _tools.AddTask("Duplicate Task");
         var json2 = _tools.AddTask("Duplicate Task");
 
         var id1 = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
-        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
+        var second = JsonDocument.Parse(json2);
 
-        Assert.AreNotEqual(id1, id2, "Two tasks with the same title must get distinct IDs.");
+        Assert.AreEqual("conflict", second.RootElement.GetProperty("error").GetString());
         Assert.IsTrue(File.Exists(Path.Combine(TasksDir, $"{id1}.md")));
-        Assert.IsTrue(File.Exists(Path.Combine(TasksDir, $"{id2}.md")));
     }
 
     [TestMethod]
@@ -266,34 +265,6 @@ public class GlassworkToolsTests
         var content = File.ReadAllText(ResolveTodoPath(path));
         StringAssert.Contains(content, "## Notes");
         StringAssert.Contains(content, "These are my notes.");
-    }
-
-    [TestMethod]
-    public void AddTask_IfExistsCompatibilityMode_IsRejected()
-    {
-        var result = JsonDocument.Parse(_tools.AddTask(
-            "Unique Task For Idempotency",
-            if_exists: "return_existing"));
-        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
-    }
-
-    [TestMethod]
-    public void AddTask_IfExistsUpdateCompatibilityMode_IsRejected()
-    {
-        var result = JsonDocument.Parse(_tools.AddTask(
-            "Task To Update",
-            if_exists: "update"));
-        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
-    }
-
-    [TestMethod]
-    public void AddTask_IfExistsUpdateTypeCompatibilityMode_IsRejected()
-    {
-        var result = JsonDocument.Parse(_tools.AddTask(
-            "Task Type Update",
-            type: "Product Backlog Item",
-            if_exists: "update"));
-        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
     }
 
     [TestMethod]
@@ -1064,6 +1035,27 @@ public class GlassworkToolsTests
 
         Assert.AreEqual("precondition_required", result.RootElement.GetProperty("error").GetString());
         Assert.IsFalse(File.Exists(Path.Combine(_vaultDir, "wiki", "todo", $"{taskId}.artifacts", "required.md")));
+    }
+
+    [TestMethod]
+    public void AddArtifact_UsesRevisionAndMutationIdInsideTheManagedBoundary()
+    {
+        var taskJson = JsonDocument.Parse(_tools.AddTask("Artifact revision task"));
+        var taskId = taskJson.RootElement.GetProperty("task_id").GetString()!;
+
+        var created = JsonDocument.Parse(_tools.AddArtifact(
+            taskId, "revision.md", "v1", mutation_id: "artifact-create", if_absent: true, if_revision: null));
+        var revision = created.RootElement.GetProperty("resource_revision").GetString()!;
+
+        var stale = JsonDocument.Parse(_tools.AddArtifact(
+            taskId, "revision.md", "v2", mutation_id: "artifact-stale", if_absent: null,
+            if_revision: "rr1-stale", mode: "overwrite"));
+        Assert.AreEqual("conflict", stale.RootElement.GetProperty("error").GetString());
+
+        var replay = JsonDocument.Parse(_tools.AddArtifact(
+            taskId, "revision.md", "v1", mutation_id: "artifact-create", if_absent: true, if_revision: null));
+        Assert.IsTrue(replay.RootElement.GetProperty("replayed").GetBoolean());
+        Assert.AreEqual(revision, replay.RootElement.GetProperty("current_revision").GetString());
     }
 
     [TestMethod]

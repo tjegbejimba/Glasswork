@@ -23,10 +23,12 @@ public sealed class CapabilityTools
                 "complete_set_relationships",
                 "transaction_idempotency",
                 "recoverable_all_or_none_commit",
-            ]));
+            ],
+            FutureCapabilities: []));
     }
 
     private sealed record CapabilitiesResult(
         [property: JsonPropertyName("contract_version")] string ContractVersion,
-        [property: JsonPropertyName("implemented_capabilities")] string[] ImplementedCapabilities);
+        [property: JsonPropertyName("implemented_capabilities")] string[] ImplementedCapabilities,
+        [property: JsonPropertyName("future_capabilities")] string[] FutureCapabilities);
 }
