@@ -197,13 +197,13 @@ public class TaskService
         return tasks;
     }
 
-    internal static void EnsureCanMutate(GlassworkTask task)
+    public static void EnsureCanMutate(GlassworkTask task)
     {
         if (task.IsBlocked && task.NeedsBlockerDetails)
             throw new InvalidOperationException("Blocked task needs blocker details before it can be changed.");
     }
 
-    internal static void ApplySetStatus(GlassworkTask task, string newStatus, Func<DateTime> localNow)
+    public static void ApplySetStatus(GlassworkTask task, string newStatus, Func<DateTime> localNow)
     {
         if (newStatus == GlassworkTask.Statuses.Blocked)
             throw new InvalidOperationException("Use MarkBlocked to move a task to blocked.");
@@ -224,7 +224,7 @@ public class TaskService
         }
     }
 
-    internal static void ApplySetStatusOnly(GlassworkTask task, string newStatus)
+    public static void ApplySetStatusOnly(GlassworkTask task, string newStatus)
     {
         if (newStatus == GlassworkTask.Statuses.Blocked)
             throw new InvalidOperationException("Use MarkBlocked to move a task to blocked.");
@@ -234,7 +234,7 @@ public class TaskService
             ClearBlockedState(task);
     }
 
-    internal static void ApplyMarkBlocked(GlassworkTask task, string reason, Func<DateTimeOffset> utcNow)
+    public static void ApplyMarkBlocked(GlassworkTask task, string reason, Func<DateTimeOffset> utcNow)
     {
         var trimmedReason = ValidateBlockedReason(reason);
         ValidateBlockedSourceStatus(task.Status);
@@ -247,7 +247,7 @@ public class TaskService
         task.CompletedAt = null;
     }
 
-    internal static void ApplyEditBlockedReason(GlassworkTask task, string reason)
+    public static void ApplyEditBlockedReason(GlassworkTask task, string reason)
     {
         EnsureCanMutate(task);
         if (!task.IsBlocked)
@@ -260,7 +260,7 @@ public class TaskService
                 : BlockedMetadataState.NeedsDetails;
     }
 
-    internal static void ApplyResumeBlocked(GlassworkTask task, string? overrideStatus = null)
+    public static void ApplyResumeBlocked(GlassworkTask task, string? overrideStatus = null)
     {
         EnsureCanMutate(task);
         if (!task.IsBlocked)
@@ -272,6 +272,21 @@ public class TaskService
         task.Status = NormalizeResumeStatus(resumeStatus);
         task.CompletedAt = null;
         ClearBlockedState(task);
+    }
+
+    public static void ApplyRepairBlocked(
+        GlassworkTask task,
+        string reason,
+        string blockedFromStatus,
+        Func<DateTimeOffset> utcNow)
+    {
+        if (!task.IsBlocked)
+            throw new InvalidOperationException("Only blocked tasks can be repaired.");
+
+        task.BlockedReason = ValidateBlockedReason(reason);
+        task.BlockedFromStatus = NormalizeResumeStatus(blockedFromStatus);
+        task.BlockedAt ??= utcNow().ToUniversalTime();
+        task.BlockedMetadataState = BlockedMetadataState.Valid;
     }
 
     private static string ValidateBlockedReason(string reason)
