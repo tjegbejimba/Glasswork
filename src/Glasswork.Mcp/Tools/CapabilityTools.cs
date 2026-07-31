@@ -17,10 +17,10 @@ public sealed class CapabilityTools
             ImplementedCapabilities:
             [
                 "resource_revisions",
+                "relation_aware_queries",
             ],
             FutureCapabilities:
             [
-                "relation_aware_queries",
                 "read_assertions",
                 "typed_transactions",
                 "complete_set_relationships",

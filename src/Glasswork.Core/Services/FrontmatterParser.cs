@@ -26,6 +26,14 @@ public partial class FrontmatterParser
         .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitEmptyCollections)
         .Build();
 
+    private static readonly HashSet<string> KnownFrontmatterKeys = new(StringComparer.Ordinal)
+    {
+        "id", "title", "status", "priority", "type", "created", "completed_at",
+        "blocked_reason", "blocked_at", "blocked_from_status", "due", "start",
+        "my_day", "defer_until", "ado_link", "ado_title", "parent", "blocked_by",
+        "context_links", "tags", "links",
+    };
+
     [GeneratedRegex(@"^---\s*\n(.*?)\n---\s*\n?(.*)", RegexOptions.Singleline)]
     private static partial Regex FrontmatterRegex();
 
@@ -67,6 +75,8 @@ public partial class FrontmatterParser
 
         var frontmatter = YamlDeserializer.Deserialize<TaskFrontmatter>(yamlContent)
             ?? throw new FormatException("Failed to deserialize YAML frontmatter.");
+        var rawFrontmatter = YamlDeserializer.Deserialize<Dictionary<string, object?>>(yamlContent)
+            ?? new Dictionary<string, object?>(StringComparer.Ordinal);
 
         var task = new GlassworkTask
         {
@@ -84,9 +94,13 @@ public partial class FrontmatterParser
             AdoLink = frontmatter.AdoLink,
             AdoTitle = frontmatter.AdoTitle,
             Parent = frontmatter.Parent,
+            BlockedBy = CanonicalizeDependencyIds(frontmatter.BlockedBy),
             ContextLinks = frontmatter.ContextLinks ?? [],
             Tags = frontmatter.Tags ?? [],
         };
+        task.FrontmatterExtensions = rawFrontmatter
+            .Where(pair => !KnownFrontmatterKeys.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
         if (task.Status == GlassworkTask.Statuses.Blocked)
         {
@@ -149,6 +163,7 @@ public partial class FrontmatterParser
             MyDay = task.MyDay?.ToString("yyyy-MM-dd"),
             DeferUntil = task.DeferUntil?.ToString("yyyy-MM-dd"),
             Parent = task.Parent,
+            BlockedBy = task.BlockedBy.Count > 0 ? CanonicalizeDependencyIds(task.BlockedBy) : null,
             ContextLinks = task.ContextLinks.Count > 0 ? task.ContextLinks : null,
             Tags = task.Tags.Count > 0 ? task.Tags : null,
             Links = task.Links.Count > 0 ? task.Links.Select(l => new TaskLinkDto
@@ -160,7 +175,16 @@ public partial class FrontmatterParser
             // Legacy keys are omitted: AdoLink and AdoTitle are derived properties now
         };
 
-        var yaml = YamlSerializer.Serialize(frontmatter).TrimEnd();
+        var yamlValues = YamlDeserializer.Deserialize<Dictionary<string, object?>>(
+                YamlSerializer.Serialize(frontmatter))
+            ?? new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var extension in task.FrontmatterExtensions)
+        {
+            if (!KnownFrontmatterKeys.Contains(extension.Key))
+                yamlValues[extension.Key] = extension.Value;
+        }
+
+        var yaml = YamlSerializer.Serialize(yamlValues).TrimEnd();
         var sb = new StringBuilder();
         sb.AppendLine("---");
         sb.AppendLine(yaml);
@@ -285,6 +309,20 @@ public partial class FrontmatterParser
         var match = NotesSectionRegex().Match(body);
         if (!match.Success) return string.Empty;
         return match.Groups[1].Value.Replace("\r\n", "\n").Trim();
+    }
+
+    private static List<string> CanonicalizeDependencyIds(IEnumerable<string>? dependencyIds)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var canonical = new List<string>();
+        foreach (var dependencyId in dependencyIds ?? [])
+        {
+            var normalized = dependencyId?.Trim();
+            if (!string.IsNullOrEmpty(normalized) && seen.Add(normalized))
+                canonical.Add(normalized);
+        }
+
+        return canonical;
     }
 
     private static (List<SubTask> subtasks, string cleanBody) ParseSubtasks(string body)
@@ -417,6 +455,8 @@ public partial class FrontmatterParser
         [YamlMember(Alias = "ado_title")]
         public string? AdoTitle { get; set; }
         public string? Parent { get; set; }
+        [YamlMember(Alias = "blocked_by")]
+        public List<string>? BlockedBy { get; set; }
         [YamlMember(Alias = "context_links")]
         public List<string>? ContextLinks { get; set; }
         public List<string>? Tags { get; set; }

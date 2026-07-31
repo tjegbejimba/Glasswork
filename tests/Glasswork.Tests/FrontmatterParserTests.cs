@@ -125,6 +125,73 @@ public class FrontmatterParserTests
     }
 
     [TestMethod]
+    public void Parse_BlockedBy_RoundTripsCanonicalUniqueDependencyIds()
+    {
+        var markdown = """
+            ---
+            id: dependent-task
+            title: Dependent task
+            blocked_by:
+              - dependency-b
+              - dependency-a
+              - dependency-b
+            ---
+
+            Description prose.
+            """;
+
+        var task = _parser.Parse(markdown);
+        var roundTripped = _parser.Parse(_parser.Serialize(task));
+
+        CollectionAssert.AreEqual(
+            new[] { "dependency-b", "dependency-a" },
+            task.BlockedBy);
+        CollectionAssert.AreEqual(task.BlockedBy, roundTripped.BlockedBy);
+        StringAssert.Contains(_parser.Serialize(task), "blocked_by:");
+    }
+
+    [TestMethod]
+    public void Serialize_TaskWithoutBlockedBy_OmitsRelationshipWithoutChurn()
+    {
+        var task = _parser.Parse("""
+            ---
+            id: legacy-task
+            title: Legacy task
+            status: todo
+            ---
+
+            Existing prose.
+            """);
+
+        var serialized = _parser.Serialize(task);
+
+        Assert.IsFalse(serialized.Contains("blocked_by:", StringComparison.Ordinal));
+        Assert.AreEqual("Existing prose.", _parser.Parse(serialized).Description);
+    }
+
+    [TestMethod]
+    public void Serialize_PreservesUnknownFrontmatterKeys()
+    {
+        var task = _parser.Parse("""
+            ---
+            id: custom-frontmatter
+            title: Custom frontmatter
+            owner: platform-team
+            custom:
+              priority_hint: high
+            ---
+
+            Prose that must survive.
+            """);
+
+        var roundTripped = _parser.Serialize(task);
+
+        StringAssert.Contains(roundTripped, "owner: platform-team");
+        StringAssert.Contains(roundTripped, "priority_hint: high");
+        StringAssert.Contains(roundTripped, "Prose that must survive.");
+    }
+
+    [TestMethod]
     public void Serialize_ThenParse_BlockedTask_RoundTripsBlockingMetadata()
     {
         var blockedAt = DateTimeOffset.Parse("2026-07-24T20:15:30Z", CultureInfo.InvariantCulture);

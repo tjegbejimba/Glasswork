@@ -9,6 +9,13 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Dependency-aware `query_tasks`** (issue #406): Tasks now round-trip the
+  generic `blocked_by` relationship, and the new bounded query supports typed
+  parent, status, Task type, Tag, and dependency-readiness predicates. Results
+  use deterministic ordering and opaque continuation cursors, evaluate one page
+  against one managed snapshot, and include a deduplicated `read_basis` with
+  Resource Revisions. Invalid self-edges and missing dependency targets return
+  structured validation diagnostics. This is the breaking `0.8.0` contract bump.
 - **Resource Revisions and capability discovery** (issue #405): every Task-bearing
   read now includes an opaque `resource_revision` derived from the exact bytes
   used for that read, and the vault-independent `get_capabilities` tool reports
