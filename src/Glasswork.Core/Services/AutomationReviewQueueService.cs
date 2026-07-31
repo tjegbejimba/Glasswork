@@ -46,12 +46,14 @@ public sealed class AutomationReviewQueueService
     private readonly TimeProvider _clock;
     private readonly Action? _beforeApprovalQueueCommit;
     private readonly SelfWriteCoordinator? _selfWrites;
+    private readonly VaultService _taskVault;
 
     public AutomationReviewQueueService(
         string vaultRoot,
         TimeProvider? clock = null,
         Action? beforeApprovalQueueCommit = null,
-        SelfWriteCoordinator? selfWrites = null)
+        SelfWriteCoordinator? selfWrites = null,
+        VaultService? taskVault = null)
     {
         if (string.IsNullOrWhiteSpace(vaultRoot))
             throw new ArgumentException("Vault root is required.", nameof(vaultRoot));
@@ -66,6 +68,8 @@ public sealed class AutomationReviewQueueService
         _clock = clock ?? TimeProvider.System;
         _beforeApprovalQueueCommit = beforeApprovalQueueCommit;
         _selfWrites = selfWrites;
+        _taskVault = taskVault ?? new VaultService(_todoPath, selfWrites);
+        _ = new ResourceMutationService(_todoPath, _taskVault);
     }
 
     public static IReadOnlyDictionary<string, IReadOnlyList<ReviewProposalType>> GetRegisteredSources()
@@ -252,7 +256,7 @@ public sealed class AutomationReviewQueueService
             return FailSelection(document, selectedItems, "invalid_task_id", $"Task id '{request.TaskId}' is invalid.");
 
         var analysis = AnalyzeApprovalSelectionCore(document, request.TaskId, request.ItemIds);
-        var vault = new VaultService(_todoPath, _selfWrites);
+        var vault = _taskVault;
         GlassworkTask? task;
         try
         {
@@ -1018,7 +1022,7 @@ public sealed class AutomationReviewQueueService
         if (!IsStatefulProposal(payload))
             return null;
 
-        var vault = new VaultService(_todoPath, _selfWrites);
+        var vault = _taskVault;
         var task = vault.Load(taskId);
         if (task is null)
             return "__missing__";

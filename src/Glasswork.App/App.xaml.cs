@@ -310,7 +310,10 @@ public partial class App : Application
         var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
         Artifacts = new FileSystemArtifactStore(vaultRoot);
         ObsidianLauncher = new ObsidianLauncher(vaultRoot);
-        ReviewQueue = new AutomationReviewQueueService(vaultRoot, selfWrites: SelfWrites);
+        ReviewQueue = new AutomationReviewQueueService(
+            vaultRoot,
+            selfWrites: SelfWrites,
+            taskVault: Vault);
 
         // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
         // that mention a Glasswork task via [[stem]] / [[stem|alias]].
