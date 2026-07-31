@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Glasswork.Core.Models;
 
 namespace Glasswork.Core.Services;
@@ -11,7 +12,8 @@ public enum ResourceMutationFailurePoint
     BeforeFinalValidation,
     DuringReplacement,
     AfterReplacementBeforeCommit,
-    AfterCommit
+    AfterCommit,
+    DuringRecovery
 }
 
 public interface IResourceMutationFaultInjector
@@ -46,12 +48,20 @@ public sealed record ResourceMutationOutcome(
     string? ExpectedRevision,
     string? CurrentRevision,
     ResourceMutationTaskSnapshot? Task,
-    string? Error = null);
+    string? Error = null,
+    IReadOnlyList<ResourceMutationTaskSnapshot>? Tasks = null,
+    IReadOnlyList<ResourceMutationDiagnostic>? Diagnostics = null);
+
+public sealed record ResourceMutationDiagnostic(
+    string Code,
+    int OperationIndex,
+    IReadOnlyList<string> TaskIds,
+    string Message);
 
 /// <summary>
 /// Durable, conditional single-resource mutation boundary.
 /// </summary>
-public sealed class ResourceMutationService
+public sealed partial class ResourceMutationService
 {
     private const int RetentionDays = 30;
     private readonly string _vaultPath;
@@ -269,6 +279,554 @@ public sealed class ResourceMutationService
         DeleteJournal();
         return recordedOutcome;
     }
+
+    public ResourceMutationOutcome TransactTasks(
+        string? mutationId,
+        JsonElement operations,
+        string? transactionRevision = null,
+        JsonElement? assertions = null)
+    {
+        var notifications = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+            {
+                notifications.UnionWith(RecoverUnsafe());
+                var result = TransactTasksUnsafe(mutationId, operations, transactionRevision, assertions, notifications);
+                return result;
+            }
+        }
+        catch
+        {
+            try
+            {
+                using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+                    notifications.UnionWith(RecoverUnsafe());
+            }
+            catch
+            {
+                // Preserve the original failure; the next managed access retries recovery.
+            }
+
+            throw;
+        }
+        finally
+        {
+            foreach (var taskIdToNotify in notifications)
+                _vault.NotifyTaskWritten(taskIdToNotify);
+        }
+    }
+
+    private ResourceMutationOutcome TransactTasksUnsafe(
+        string? mutationId,
+        JsonElement operations,
+        string? transactionRevision,
+        JsonElement? assertions,
+        ISet<string> notifications)
+    {
+        var state = ReadState();
+        Prune(state);
+        var requestHash = HashTransactionRequest(mutationId, transactionRevision, operations, assertions);
+
+        if (string.IsNullOrWhiteSpace(mutationId))
+            return new ResourceMutationOutcome(
+                string.Empty, "precondition_required", false, transactionRevision, null, null,
+                "mutation_id is required.");
+
+        if (state.Outcomes.TryGetValue(mutationId, out var recorded))
+        {
+            if (recorded.RequestHash != requestHash)
+                return new ResourceMutationOutcome(
+                    mutationId, "mutation_id_reused", false, transactionRevision, null, null,
+                    "mutation_id was already used for a different request.");
+            return recorded.Outcome with { Replayed = true };
+        }
+
+        if (operations.ValueKind != JsonValueKind.Array || operations.GetArrayLength() == 0)
+            return Record(state, mutationId, requestHash, TransactionError(
+                mutationId, "validation_error", "operations must be a non-empty JSON array.",
+                new ResourceMutationDiagnostic("invalid_operations", -1, [], "operations must be a non-empty JSON array.")));
+
+        var staged = new Dictionary<string, StagedTask>(StringComparer.Ordinal);
+        foreach (var path in Directory.EnumerateFiles(_vaultPath, "*.md", SearchOption.TopDirectoryOnly))
+        {
+            var id = Path.GetFileNameWithoutExtension(path);
+            var bytes = File.ReadAllBytes(path);
+            staged[id] = new StagedTask(_parser.Parse(Encoding.UTF8.GetString(bytes)), bytes, false);
+        }
+
+        var diagnostics = new List<ResourceMutationDiagnostic>();
+        var touchedOperationIndexes = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (assertions is { } assertionArray)
+        {
+            if (assertionArray.ValueKind != JsonValueKind.Array)
+            {
+                diagnostics.Add(new("invalid_assertions", -1, [], "assertions must be a JSON array."));
+            }
+            else
+            {
+                for (var index = 0; index < assertionArray.GetArrayLength(); index++)
+                {
+                    var assertion = assertionArray[index];
+                    var taskId = ReadOptionalTaskId(assertion);
+                    ApplyRevisionAssertion(staged, assertion, taskId, index, diagnostics);
+                }
+            }
+        }
+        for (var index = 0; index < operations.GetArrayLength(); index++)
+        {
+            var operation = operations[index];
+            if (operation.ValueKind != JsonValueKind.Object
+                || !operation.TryGetProperty("op", out var opElement)
+                || opElement.ValueKind != JsonValueKind.String)
+            {
+                diagnostics.Add(new("invalid_operation", index, [], "Operation must contain a string op."));
+                continue;
+            }
+
+            var op = opElement.GetString()!;
+            var taskId = ReadOptionalTaskId(operation);
+            if (taskId is not null)
+                touchedOperationIndexes.TryAdd(taskId, index);
+            if (op is not "assert_task_revision" and not "assert_revision"
+                && string.IsNullOrWhiteSpace(taskId))
+            {
+                diagnostics.Add(new("task_id_required", index, [], "Operation requires task_id."));
+                continue;
+            }
+
+            switch (op)
+            {
+                case "assert_task_revision":
+                case "assert_revision":
+                    ApplyRevisionAssertion(staged, operation, taskId, index, diagnostics);
+                    break;
+                case "set_task_fields":
+                    ApplyStagedFields(staged, operation, taskId!, transactionRevision, index, diagnostics);
+                    break;
+                case "create_task":
+                    CreateStagedTask(staged, operation, taskId!, index, diagnostics);
+                    break;
+                case "replace_task_relationships":
+                    ReplaceStagedRelationships(staged, operation, taskId!, index, diagnostics);
+                    break;
+                default:
+                    diagnostics.Add(new("unsupported_operation", index, taskId is null ? [] : [taskId],
+                        $"Unsupported transaction operation '{op}'."));
+                    break;
+            }
+        }
+
+        diagnostics.AddRange(ValidateStagedGraph(staged, touchedOperationIndexes));
+        if (diagnostics.Count > 0)
+        {
+            var outcome = diagnostics.Any(diagnostic => diagnostic.Code == "conflict")
+                ? "conflict"
+                : diagnostics.Any(diagnostic => diagnostic.Code == "precondition_required")
+                    ? "precondition_required"
+                    : "validation_error";
+            var implicatedTask = diagnostics
+                .SelectMany(diagnostic => diagnostic.TaskIds)
+                .Select(id => staged.TryGetValue(id, out var value)
+                    ? Snapshot(value.Task, Revision(value.OriginalBytes))
+                    : null)
+                .FirstOrDefault(snapshot => snapshot is not null);
+            return Record(state, mutationId, requestHash, new ResourceMutationOutcome(
+                mutationId,
+                outcome,
+                false,
+                transactionRevision,
+                implicatedTask?.ResourceRevision,
+                implicatedTask,
+                "Transaction validation failed.",
+                Diagnostics: diagnostics));
+        }
+
+        var changed = staged.Values
+            .Where(value => value.Created || !SemanticallyEqual(
+                _parser.Parse(Encoding.UTF8.GetString(value.OriginalBytes)), value.Task))
+            .ToDictionary(value => value.Task.Id, value => value, StringComparer.Ordinal);
+        if (changed.Count == 0)
+        {
+            var snapshots = staged.Values
+                .OrderBy(value => value.Task.Id, StringComparer.Ordinal)
+                .Select(value => Snapshot(value.Task, Revision(value.OriginalBytes)))
+                .ToArray();
+            return Record(state, mutationId, requestHash, new ResourceMutationOutcome(
+                mutationId, "no_op", false, transactionRevision, null, snapshots.FirstOrDefault(),
+                Tasks: snapshots));
+        }
+
+        _faults?.ThrowIfInjected(ResourceMutationFailurePoint.BeforeFinalValidation);
+        foreach (var value in changed.Values)
+        {
+            var currentBytes = _vault.TryReadBytesUnsafe(value.Task.Id);
+            if ((currentBytes is null && !value.Created)
+                || (currentBytes is not null && !value.Created
+                    && !currentBytes.AsSpan().SequenceEqual(value.OriginalBytes)))
+            {
+                var currentTask = currentBytes is null
+                    ? null
+                    : _parser.Parse(Encoding.UTF8.GetString(currentBytes));
+                var diagnostic = new ResourceMutationDiagnostic(
+                    "conflict",
+                    touchedOperationIndexes.GetValueOrDefault(value.Task.Id, 0),
+                    [value.Task.Id],
+                    "Task changed before commit.");
+                var currentRevision = currentBytes is null ? null : Revision(currentBytes);
+                return Record(state, mutationId, requestHash, new ResourceMutationOutcome(
+                    mutationId,
+                    "conflict",
+                    false,
+                    transactionRevision,
+                    currentRevision,
+                    currentTask is null ? null : Snapshot(currentTask, currentRevision!),
+                    "Task changed before commit.",
+                    Diagnostics: [diagnostic]));
+            }
+        }
+        var journalEntries = changed.Values.Select(value => new GraphJournalTaskEntry(
+            value.Task.Id,
+            value.Created ? null : Convert.ToBase64String(value.OriginalBytes),
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(_parser.Serialize(value.Task))),
+            value.Created)).ToArray();
+        var journal = new GraphJournalEntry(
+            mutationId,
+            requestHash,
+            transactionRevision,
+            false,
+            journalEntries);
+        _faults?.ThrowIfInjected(ResourceMutationFailurePoint.BeforeJournal);
+        WriteGraphJournal(journal);
+
+        try
+        {
+            foreach (var entry in journalEntries)
+            {
+                _faults?.ThrowIfInjected(ResourceMutationFailurePoint.DuringReplacement);
+                _vault.ReplaceBytesUnsafe(entry.TaskId, Convert.FromBase64String(entry.Updated));
+                notifications.Add(entry.TaskId);
+            }
+
+            _faults?.ThrowIfInjected(ResourceMutationFailurePoint.AfterReplacementBeforeCommit);
+            WriteGraphJournal(journal with { Committed = true });
+            var snapshots = changed.Values
+                .OrderBy(value => value.Task.Id, StringComparer.Ordinal)
+                .Select(value =>
+                {
+                    var bytes = Encoding.UTF8.GetBytes(_parser.Serialize(value.Task));
+                    return Snapshot(value.Task, Revision(bytes));
+                })
+                .ToArray();
+            var applied = new ResourceMutationOutcome(
+                mutationId, "applied", false, transactionRevision, null, snapshots.FirstOrDefault(),
+                Tasks: snapshots);
+            var recordedOutcome = Record(state, mutationId, requestHash, applied);
+            _faults?.ThrowIfInjected(ResourceMutationFailurePoint.AfterCommit);
+            DeleteJournal();
+            return recordedOutcome;
+        }
+        catch
+        {
+            RecoverUnsafe();
+            throw;
+        }
+    }
+
+    private static string? ReadOptionalTaskId(JsonElement operation)
+    {
+        return operation.TryGetProperty("task_id", out var value)
+            && value.ValueKind == JsonValueKind.String
+            ? value.GetString()?.Trim()
+            : null;
+    }
+
+    private void ApplyRevisionAssertion(
+        IReadOnlyDictionary<string, StagedTask> staged,
+        JsonElement operation,
+        string? taskId,
+        int operationIndex,
+        ICollection<ResourceMutationDiagnostic> diagnostics)
+    {
+        var revision = ReadRevision(operation, operationIndex, taskId, diagnostics);
+        if (taskId is null || revision is null) return;
+        if (!staged.TryGetValue(taskId, out var current))
+        {
+            diagnostics.Add(new("task_not_found", operationIndex, [taskId], "Task was not found."));
+            return;
+        }
+
+        var currentRevision = Revision(current.OriginalBytes);
+        if (!string.Equals(currentRevision, revision, StringComparison.Ordinal))
+            diagnostics.Add(new("conflict", operationIndex, [taskId],
+                "Read-only Task Revision assertion does not match the current Resource Revision."));
+    }
+
+    private void ApplyStagedFields(
+        IDictionary<string, StagedTask> staged,
+        JsonElement operation,
+        string taskId,
+        string? transactionRevision,
+        int operationIndex,
+        ICollection<ResourceMutationDiagnostic> diagnostics)
+    {
+        if (!staged.TryGetValue(taskId, out var current))
+        {
+            diagnostics.Add(new("task_not_found", operationIndex, [taskId], "Task was not found."));
+            return;
+        }
+
+        var revision = ReadRevision(operation, operationIndex, taskId, diagnostics);
+        if (revision is not null
+            && transactionRevision is not null
+            && !string.Equals(revision, transactionRevision, StringComparison.Ordinal))
+        {
+            diagnostics.Add(new("contradictory_precondition", operationIndex, [taskId],
+                "Transaction and operation revisions must match."));
+            return;
+        }
+        if (revision is null) revision = transactionRevision;
+        if (revision is not null
+            && !string.Equals(revision, Revision(current.OriginalBytes), StringComparison.Ordinal))
+        {
+            diagnostics.Add(new("conflict", operationIndex, [taskId],
+                "if_revision does not match the original Resource Revision."));
+            return;
+        }
+
+        if (!operation.TryGetProperty("fields", out var fields) || fields.ValueKind != JsonValueKind.Object)
+        {
+            diagnostics.Add(new("fields_required", operationIndex, [taskId], "fields must be a JSON object."));
+            return;
+        }
+
+        try
+        {
+            var error = ApplyFields(current.Task, fields);
+            if (error is not null)
+                diagnostics.Add(new("invalid_fields", operationIndex, [taskId], error));
+        }
+        catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException)
+        {
+            diagnostics.Add(new("invalid_fields", operationIndex, [taskId], ex.Message));
+        }
+    }
+
+    private void CreateStagedTask(
+        IDictionary<string, StagedTask> staged,
+        JsonElement operation,
+        string taskId,
+        int operationIndex,
+        ICollection<ResourceMutationDiagnostic> diagnostics)
+    {
+        if (!IsSafeTaskId(taskId))
+        {
+            diagnostics.Add(new("invalid_task_id", operationIndex, [taskId], "Task ID must contain only lowercase letters, digits, and hyphens."));
+            return;
+        }
+        if (!operation.TryGetProperty("if_absent", out var ifAbsent) || ifAbsent.ValueKind != JsonValueKind.True)
+        {
+            diagnostics.Add(new("precondition_required", operationIndex, [taskId], "if_absent: true is required."));
+            return;
+        }
+        if (staged.ContainsKey(taskId))
+        {
+            diagnostics.Add(new("conflict", operationIndex, [taskId], "Task ID already exists in the staged graph."));
+            return;
+        }
+        if (!operation.TryGetProperty("fields", out var fields) || fields.ValueKind != JsonValueKind.Object)
+        {
+            diagnostics.Add(new("fields_required", operationIndex, [taskId], "fields must be a JSON object."));
+            return;
+        }
+
+        var task = new GlassworkTask { Id = taskId };
+        try
+        {
+            var error = ApplyFields(task, fields);
+            if (error is not null) diagnostics.Add(new("invalid_fields", operationIndex, [taskId], error));
+        }
+        catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException)
+        {
+            diagnostics.Add(new("invalid_fields", operationIndex, [taskId], ex.Message));
+        }
+
+        if (string.IsNullOrWhiteSpace(task.Title))
+            diagnostics.Add(new("title_required", operationIndex, [taskId], "title is required."));
+        staged[taskId] = new StagedTask(task, [], true);
+    }
+
+    private void ReplaceStagedRelationships(
+        IDictionary<string, StagedTask> staged,
+        JsonElement operation,
+        string taskId,
+        int operationIndex,
+        ICollection<ResourceMutationDiagnostic> diagnostics)
+    {
+        if (!staged.TryGetValue(taskId, out var current))
+        {
+            diagnostics.Add(new("task_not_found", operationIndex, [taskId], "Task was not found."));
+            return;
+        }
+
+        var name = operation.TryGetProperty("relationship", out var relationship)
+            ? relationship.GetString()
+            : operation.TryGetProperty("name", out var named) ? named.GetString() : null;
+        var values = operation.TryGetProperty("targets", out var targets)
+            ? targets
+            : operation.TryGetProperty("values", out var valuesElement) ? valuesElement : default;
+        if (string.IsNullOrWhiteSpace(name) || values.ValueKind != JsonValueKind.Array)
+        {
+            diagnostics.Add(new("invalid_relationship_set", operationIndex, [taskId],
+                "relationship and targets must name an array-valued relationship set."));
+            return;
+        }
+
+        try
+        {
+            var ids = ReadStringArray(values, "targets");
+            switch (name.Trim().ToLowerInvariant())
+            {
+                case "blocked_by":
+                case "dependencies":
+                    current.Task.BlockedBy = ids;
+                    break;
+                case "parent":
+                    if (ids.Count > 1)
+                        diagnostics.Add(new("invalid_relationship_set", operationIndex, [taskId], "parent accepts at most one target."));
+                    else current.Task.Parent = ids.SingleOrDefault();
+                    break;
+                default:
+                    diagnostics.Add(new("unsupported_relationship", operationIndex, [taskId],
+                        $"Unsupported relationship set '{name}'."));
+                    break;
+            }
+        }
+        catch (FormatException ex)
+        {
+            diagnostics.Add(new("invalid_relationship_set", operationIndex, [taskId], ex.Message));
+        }
+    }
+
+    private List<ResourceMutationDiagnostic> ValidateStagedGraph(
+        IReadOnlyDictionary<string, StagedTask> staged,
+        IReadOnlyDictionary<string, int> touchedOperationIndexes)
+    {
+        var diagnostics = new List<ResourceMutationDiagnostic>();
+        var byId = new Dictionary<string, StagedTask>(StringComparer.Ordinal);
+        foreach (var pair in staged)
+        {
+            var canonicalId = pair.Key.Trim().ToLowerInvariant();
+            if (!byId.TryAdd(canonicalId, pair.Value))
+                diagnostics.Add(new("duplicate_task_id", touchedOperationIndexes.GetValueOrDefault(pair.Key, 0),
+                    [pair.Key, canonicalId], "Task IDs collide after canonicalization."));
+        }
+
+        foreach (var pair in staged)
+        {
+            var task = pair.Value.Task;
+            var dependencyIds = new HashSet<string>(StringComparer.Ordinal);
+            for (var dependencyIndex = 0; dependencyIndex < task.BlockedBy.Count; dependencyIndex++)
+            {
+                var dependencyId = task.BlockedBy[dependencyIndex].Trim().ToLowerInvariant();
+                task.BlockedBy[dependencyIndex] = dependencyId;
+                if (!dependencyIds.Add(dependencyId))
+                    diagnostics.Add(new("duplicate_relationship_id",
+                        touchedOperationIndexes.GetValueOrDefault(task.Id, 0),
+                        [task.Id, dependencyId], "Relationship targets must be unique after canonicalization."));
+                else if (string.Equals(task.Id, dependencyId, StringComparison.Ordinal))
+                    diagnostics.Add(new("self_dependency", touchedOperationIndexes.GetValueOrDefault(task.Id, 0),
+                        [task.Id, dependencyId], "A Task cannot depend on itself."));
+                else if (!byId.ContainsKey(dependencyId))
+                    diagnostics.Add(new("missing_dependency", touchedOperationIndexes.GetValueOrDefault(task.Id, 0),
+                        [task.Id, dependencyId], "Dependency target does not exist."));
+            }
+        }
+
+        var visiting = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var id in byId.Keys)
+            DetectCycle(id, byId, visiting, visited, diagnostics, [], touchedOperationIndexes);
+        return diagnostics;
+    }
+
+    private static void DetectCycle(
+        string id,
+        IReadOnlyDictionary<string, StagedTask> byId,
+        ISet<string> visiting,
+        ISet<string> visited,
+        ICollection<ResourceMutationDiagnostic> diagnostics,
+        IReadOnlyList<string> path,
+        IReadOnlyDictionary<string, int> touchedOperationIndexes)
+    {
+        if (visited.Contains(id)) return;
+        if (!visiting.Add(id))
+        {
+            diagnostics.Add(new("dependency_cycle", touchedOperationIndexes.GetValueOrDefault(id, 0),
+                path.Append(id).ToArray(), "Task dependency graph contains a cycle."));
+            return;
+        }
+
+        var nextPath = path.Append(id).ToArray();
+        foreach (var dependency in byId[id].Task.BlockedBy)
+        {
+            if (byId.ContainsKey(dependency))
+                DetectCycle(dependency, byId, visiting, visited, diagnostics, nextPath, touchedOperationIndexes);
+        }
+
+        visiting.Remove(id);
+        visited.Add(id);
+    }
+
+    private static string? ReadRevision(
+        JsonElement operation,
+        int operationIndex,
+        string? taskId,
+        ICollection<ResourceMutationDiagnostic> diagnostics)
+    {
+        if (!operation.TryGetProperty("if_revision", out var revision)
+            && !operation.TryGetProperty("resource_revision", out revision)
+            && !operation.TryGetProperty("revision", out revision))
+            return null;
+        if (revision.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+        {
+            diagnostics.Add(new("invalid_revision", operationIndex, taskId is null ? [] : [taskId],
+                "if_revision must be a string or null."));
+            return null;
+        }
+        return revision.GetString();
+    }
+
+    private static bool IsSafeTaskId(string taskId) =>
+        RegexSafeTaskId().IsMatch(taskId);
+
+    [GeneratedRegex("^[a-z0-9][a-z0-9-]*$")]
+    private static partial Regex RegexSafeTaskId();
+
+    private static string HashTransactionRequest(
+        string? mutationId,
+        string? revision,
+        JsonElement operations,
+        JsonElement? assertions) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{mutationId ?? string.Empty}\n{revision ?? string.Empty}\n{CanonicalJson(operations)}\n"
+            + (assertions is { } value ? CanonicalJson(value) : string.Empty)))).ToLowerInvariant();
+
+    private static ResourceMutationOutcome TransactionError(
+        string mutationId,
+        string outcome,
+        string message,
+        ResourceMutationDiagnostic diagnostic) =>
+        new(mutationId, outcome, false, null, null, null, message, Diagnostics: [diagnostic]);
+
+    private static ResourceMutationOutcome TransactionError(
+        string mutationId,
+        string outcome,
+        string message,
+        IReadOnlyList<ResourceMutationDiagnostic> diagnostics) =>
+        new(mutationId, outcome, false, null, null, null, message, Diagnostics: diagnostics);
+
+    private sealed record StagedTask(GlassworkTask Task, byte[] OriginalBytes, bool Created);
 
     public ResourceMutationOutcome CreateTask(
         string? mutationId,
@@ -661,13 +1219,19 @@ public sealed class ResourceMutationService
 
         try
         {
-            var entry = JsonSerializer.Deserialize<JournalEntry>(File.ReadAllText(JournalPath))
+            using var document = JsonDocument.Parse(File.ReadAllText(JournalPath));
+            if (document.RootElement.TryGetProperty("Entries", out _)
+                || document.RootElement.TryGetProperty("entries", out _))
+                return RecoverGraphUnsafe(document.RootElement);
+
+            var entry = JsonSerializer.Deserialize<JournalEntry>(document.RootElement.GetRawText())
                 ?? throw new InvalidDataException("Mutation journal is invalid.");
             if (!entry.Existed && !entry.Committed)
             {
                 if (File.Exists(Path.Combine(_vaultPath, $"{entry.TaskId}.md")))
                     _vault.DeleteUnsafe(entry.TaskId);
             }
+
             else
             {
                 var bytes = Convert.FromBase64String(entry.Committed ? entry.Updated : entry.Original!);
@@ -717,6 +1281,57 @@ public sealed class ResourceMutationService
         }
     }
 
+    private IReadOnlyList<string> RecoverGraphUnsafe(JsonElement root)
+    {
+        var entry = JsonSerializer.Deserialize<GraphJournalEntry>(root.GetRawText())
+            ?? throw new InvalidDataException("Graph mutation journal is invalid.");
+        var recovered = new List<string>();
+        foreach (var task in entry.Entries)
+        {
+            _faults?.ThrowIfInjected(ResourceMutationFailurePoint.DuringRecovery);
+            if (entry.Committed)
+                _vault.ReplaceBytesUnsafe(task.TaskId, Convert.FromBase64String(task.Updated));
+            else if (task.Created)
+                _vault.DeleteUnsafe(task.TaskId);
+            else if (task.Original is not null)
+                _vault.ReplaceBytesUnsafe(task.TaskId, Convert.FromBase64String(task.Original));
+            recovered.Add(task.TaskId);
+        }
+
+        if (entry.Committed && !string.IsNullOrWhiteSpace(entry.MutationId))
+        {
+            var state = ReadState();
+            Prune(state);
+            if (!state.Outcomes.ContainsKey(entry.MutationId))
+            {
+                var snapshots = entry.Entries
+                    .OrderBy(item => item.TaskId, StringComparer.Ordinal)
+                    .Select(item =>
+                    {
+                        var bytes = Convert.FromBase64String(item.Updated);
+                        var task = _parser.Parse(Encoding.UTF8.GetString(bytes));
+                        return Snapshot(task, Revision(bytes));
+                    })
+                    .ToArray();
+                state.Outcomes[entry.MutationId] = new RecordedOutcome(
+                    entry.RequestHash,
+                    _clock(),
+                    new ResourceMutationOutcome(
+                        entry.MutationId,
+                        "applied",
+                        false,
+                        entry.ExpectedRevision,
+                        null,
+                        snapshots.FirstOrDefault(),
+                        Tasks: snapshots));
+                WriteState(state);
+            }
+        }
+
+        DeleteJournal();
+        return recovered;
+    }
+
     private void ArchiveInvalidJournal()
     {
         if (!File.Exists(JournalPath)) return;
@@ -730,5 +1345,28 @@ public sealed class ResourceMutationService
             try { File.Delete(JournalPath); }
             catch { /* Best effort: the next managed access will retry. */ }
         }
+
     }
+
+    private void WriteGraphJournal(GraphJournalEntry entry)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(JournalPath)!);
+        var temp = JournalPath + ".tmp";
+        File.WriteAllText(temp, JsonSerializer.Serialize(entry));
+        if (File.Exists(JournalPath)) File.Replace(temp, JournalPath, null);
+        else File.Move(temp, JournalPath);
+    }
+
+    private sealed record GraphJournalEntry(
+        string MutationId,
+        string RequestHash,
+        string? ExpectedRevision,
+        bool Committed,
+        IReadOnlyList<GraphJournalTaskEntry> Entries);
+
+    private sealed record GraphJournalTaskEntry(
+        string TaskId,
+        string? Original,
+        string Updated,
+        bool Created);
 }

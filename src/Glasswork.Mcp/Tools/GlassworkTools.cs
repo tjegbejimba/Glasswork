@@ -52,55 +52,51 @@ public sealed class GlassworkTools
     [Description("Create or conditionally update Tasks using typed, idempotent operations.")]
     public string TransactTasks(
         [Description("Client-generated idempotency key.")] string? mutation_id,
-        [Description("Ordered transaction operations. The first operation must contain task_id and fields.")] JsonElement operations,
-        [Description("Optional transaction-level Revision precondition for the single touched Task.")] string? if_revision = null)
+        [Description("Ordered transaction operations. Supports assertions, field updates, creation, and complete relationship replacement.")] JsonElement operations,
+        [Description("Optional transaction-level Revision precondition.")] string? if_revision = null,
+        [Description("Optional read-only Task Revision assertions.")] JsonElement? assertions = null)
     {
         try
         {
-            if (operations.ValueKind != JsonValueKind.Array || operations.GetArrayLength() != 1)
-                return SerializeMutationValidation(mutation_id, "operations must contain exactly one operation.");
-
-            var operation = operations[0];
-            if (operation.ValueKind != JsonValueKind.Object
-                || !operation.TryGetProperty("op", out var opElement)
-                || !operation.TryGetProperty("task_id", out var taskIdElement)
-                || !operation.TryGetProperty("fields", out var fields))
-                return SerializeMutationValidation(mutation_id, "operation must contain op, task_id, and fields.");
-
-            var taskId = taskIdElement.GetString();
-            ResourceMutationOutcome outcome;
-            if (string.Equals(opElement.GetString(), "create_task", StringComparison.Ordinal))
+            if (operations.ValueKind == JsonValueKind.Array
+                && operations.GetArrayLength() == 1
+                && operations[0].ValueKind == JsonValueKind.Object
+                && operations[0].TryGetProperty("op", out var legacyOp)
+                && legacyOp.ValueKind == JsonValueKind.String
+                && operations[0].TryGetProperty("task_id", out var legacyTaskId)
+                && operations[0].TryGetProperty("fields", out var legacyFields))
             {
-                var ifAbsent = operation.TryGetProperty("if_absent", out var ifAbsentElement)
-                    ? ifAbsentElement.GetBoolean()
-                    : (bool?)null;
-                outcome = _mutations.CreateTask(mutation_id, taskId, ifAbsent, fields);
-            }
-            else if (string.Equals(opElement.GetString(), "set_task_fields", StringComparison.Ordinal))
-            {
-                string? operationRevision = null;
-                if (operation.TryGetProperty("if_revision", out var revisionElement))
+                var taskId = legacyTaskId.GetString();
+                if (legacyOp.GetString() == "create_task")
                 {
-                    if (revisionElement.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
-                        return SerializeMutationValidation(mutation_id, "if_revision must be a string or null.");
-                    operationRevision = revisionElement.GetString();
+                    var ifAbsent = operations[0].TryGetProperty("if_absent", out var ifAbsentElement)
+                        ? ifAbsentElement.GetBoolean()
+                        : (bool?)null;
+                    return SerializeMutationOutcome(
+                        _mutations.CreateTask(mutation_id, taskId, ifAbsent, legacyFields));
                 }
 
-                if (operationRevision is not null
-                    && if_revision is not null
-                    && !string.Equals(operationRevision, if_revision, StringComparison.Ordinal))
-                    return SerializeMutationValidation(
-                        mutation_id,
-                        "Transaction and operation revisions must match.",
-                        if_revision);
+                if (legacyOp.GetString() == "set_task_fields")
+                {
+                    string? operationRevision = null;
+                    if (operations[0].TryGetProperty("if_revision", out var revisionElement))
+                    {
+                        if (revisionElement.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                            return SerializeMutationValidation(mutation_id, "if_revision must be a string or null.");
+                        operationRevision = revisionElement.GetString();
+                    }
+                    if (operationRevision is not null
+                        && if_revision is not null
+                        && !string.Equals(operationRevision, if_revision, StringComparison.Ordinal))
+                        return SerializeMutationValidation(
+                            mutation_id, "Transaction and operation revisions must match.", if_revision);
+                    return SerializeMutationOutcome(
+                        _mutations.TransactSingleTask(
+                            mutation_id, taskId, operationRevision ?? if_revision, legacyFields));
+                }
+            }
 
-                var revision = operationRevision ?? if_revision;
-                outcome = _mutations.TransactSingleTask(mutation_id, taskId, revision, fields);
-            }
-            else
-            {
-                return SerializeMutationValidation(mutation_id, "Unsupported transaction operation.");
-            }
+            var outcome = _mutations.TransactTasks(mutation_id, operations, if_revision, assertions);
             return SerializeMutationOutcome(outcome);
         }
         catch (FormatException ex)
@@ -2509,7 +2505,15 @@ public sealed class GlassworkTools
             replayed = outcome.Replayed,
             expected_revision = outcome.ExpectedRevision,
             current_revision = outcome.CurrentRevision,
-            task = SerializeTaskSnapshot(outcome.Task)
+            task = SerializeTaskSnapshot(outcome.Task),
+            tasks = outcome.Tasks?.Select(SerializeTaskSnapshot).ToArray(),
+            diagnostics = outcome.Diagnostics?.Select(diagnostic => new
+            {
+                code = diagnostic.Code,
+                operation_index = diagnostic.OperationIndex,
+                task_ids = diagnostic.TaskIds,
+                message = diagnostic.Message
+            }).ToArray()
         });
     }
 

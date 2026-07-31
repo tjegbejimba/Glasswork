@@ -642,6 +642,105 @@ public sealed class TransactTasksTests
         Assert.IsTrue(replay.GetProperty("replayed").GetBoolean());
     }
 
+    [TestMethod]
+    public void TransactTasks_CreatesAndWiresSeveralTasksAtomically()
+    {
+        using var operations = JsonDocument.Parse("""
+        [
+          { "op": "create_task", "task_id": "parent", "if_absent": true,
+            "fields": { "title": "Parent", "description": "Framing" } },
+          { "op": "create_task", "task_id": "child", "if_absent": true,
+            "fields": { "title": "Child", "notes": "Scratch" } },
+          { "op": "replace_task_relationships", "task_id": "parent",
+            "relationship": "blocked_by", "targets": ["child"] }
+        ]
+        """);
+
+        var result = JsonDocument.Parse(_tools.TransactTasks("graph-1", operations.RootElement)).RootElement;
+
+        Assert.AreEqual("applied", result.GetProperty("outcome").GetString());
+        Assert.AreEqual(2, result.GetProperty("tasks").GetArrayLength());
+        var parent = new VaultService(Path.Combine(_vaultDir, "wiki", "todo")).Load("parent")!;
+        var child = new VaultService(Path.Combine(_vaultDir, "wiki", "todo")).Load("child")!;
+        CollectionAssert.AreEqual(new[] { "child" }, parent.BlockedBy);
+        Assert.AreEqual("Framing", parent.Description);
+        Assert.AreEqual("Scratch", child.Notes);
+    }
+
+    [TestMethod]
+    public void TransactTasks_AppliesMultipleOperationsToOneStagedTask()
+    {
+        var created = JsonDocument.Parse(_tools.AddTask("Original"));
+        var taskId = created.RootElement.GetProperty("task_id").GetString()!;
+        var revision = JsonDocument.Parse(_tools.GetTask(taskId)).RootElement.GetProperty("resource_revision").GetString()!;
+        using var operations = JsonDocument.Parse($$"""
+        [
+          { "op": "set_task_fields", "task_id": "{{taskId}}", "if_revision": "{{revision}}",
+            "fields": { "notes": "first", "status": "doing" } },
+          { "op": "set_task_fields", "task_id": "{{taskId}}",
+            "fields": { "description": "final" } }
+        ]
+        """);
+
+        var result = JsonDocument.Parse(_tools.TransactTasks("graph-2", operations.RootElement)).RootElement;
+
+        Assert.AreEqual("applied", result.GetProperty("outcome").GetString());
+        var task = new VaultService(Path.Combine(_vaultDir, "wiki", "todo")).Load(taskId)!;
+        Assert.AreEqual("in-progress", task.Status);
+        Assert.AreEqual("first", task.Notes);
+        Assert.AreEqual("final", task.Description);
+    }
+
+    [TestMethod]
+    public void TransactTasks_ReadOnlyAssertionConflictsWithoutWriting()
+    {
+        var created = JsonDocument.Parse(_tools.AddTask("Original"));
+        var taskId = created.RootElement.GetProperty("task_id").GetString()!;
+        var revision = JsonDocument.Parse(_tools.GetTask(taskId)).RootElement.GetProperty("resource_revision").GetString()!;
+        using var operations = JsonDocument.Parse($$"""
+        [
+          { "op": "assert_task_revision", "task_id": "{{taskId}}", "if_revision": "rr1-stale" },
+          { "op": "set_task_fields", "task_id": "{{taskId}}", "if_revision": "{{revision}}",
+            "fields": { "title": "Must not write" } }
+        ]
+        """);
+
+        var result = JsonDocument.Parse(_tools.TransactTasks("graph-3", operations.RootElement)).RootElement;
+
+        Assert.AreEqual("conflict", result.GetProperty("error").GetString());
+        Assert.AreEqual("Original", JsonDocument.Parse(_tools.GetTask(taskId)).RootElement.GetProperty("title").GetString());
+        Assert.AreEqual("conflict", result.GetProperty("diagnostics")[0].GetProperty("code").GetString());
+        Assert.AreEqual(0, result.GetProperty("diagnostics")[0].GetProperty("operation_index").GetInt32());
+    }
+
+    [TestMethod]
+    public void TransactTasks_RejectsDependencyCyclesAndMissingTargets()
+    {
+        using var operations = JsonDocument.Parse("""
+        [
+          { "op": "create_task", "task_id": "a", "if_absent": true, "fields": { "title": "A" } },
+          { "op": "create_task", "task_id": "b", "if_absent": true, "fields": { "title": "B" } },
+          { "op": "replace_task_relationships", "task_id": "a",
+            "relationship": "blocked_by", "targets": ["b"] },
+          { "op": "replace_task_relationships", "task_id": "b",
+            "relationship": "blocked_by", "targets": ["a", "missing"] }
+        ]
+        """);
+
+        var result = JsonDocument.Parse(_tools.TransactTasks("graph-4", operations.RootElement)).RootElement;
+
+        Assert.AreEqual("validation_error", result.GetProperty("error").GetString());
+        Assert.AreEqual(
+            0,
+            Directory.GetFiles(Path.Combine(_vaultDir, "wiki", "todo"), "*.md").Length);
+        CollectionAssert.Contains(
+            result.GetProperty("diagnostics").EnumerateArray().Select(item => item.GetProperty("code").GetString()).ToArray(),
+            "dependency_cycle");
+        CollectionAssert.Contains(
+            result.GetProperty("diagnostics").EnumerateArray().Select(item => item.GetProperty("code").GetString()).ToArray(),
+            "missing_dependency");
+    }
+
     private static JsonDocument BuildOperations(string taskId, string revision, string title) =>
         JsonDocument.Parse(JsonSerializer.Serialize(new[]
         {
