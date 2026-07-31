@@ -99,6 +99,9 @@ public partial class WorkLogParser
 
     private static DateTime ParseDateTimeUtc(string dateTimeStr)
     {
+        if (!Regex.IsMatch(dateTimeStr.Trim(), @"(?:Z|[+-]\d{2}:\d{2})$", RegexOptions.IgnoreCase))
+            throw new FormatException($"Timestamp must include an explicit UTC offset: {dateTimeStr}");
+
         if (DateTimeOffset.TryParse(dateTimeStr, System.Globalization.CultureInfo.InvariantCulture,
                                      System.Globalization.DateTimeStyles.None,
                                      out var offset))

@@ -722,9 +722,9 @@ public sealed partial class MeetingTranscriptSyncService
     private void CleanupState(MeetingTranscriptSyncStateDocument state)
     {
         var now = _clock.GetUtcNow();
-        var cutoff = now - UnmatchedRetentionWindow;
+        var cutoffDate = DateOnly.FromDateTime((now - UnmatchedRetentionWindow).UtcDateTime);
         var expired = state.UnmatchedMeetings
-            .Where(meeting => meeting.RecordedAt < cutoff)
+            .Where(meeting => DateOnly.FromDateTime(meeting.RecordedAt.UtcDateTime) < cutoffDate)
             .ToArray();
 
         foreach (var meeting in expired)
