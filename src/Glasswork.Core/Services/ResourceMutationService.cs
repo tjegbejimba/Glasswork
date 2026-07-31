@@ -71,6 +71,7 @@ public sealed partial class ResourceMutationService
     private readonly IResourceMutationFaultInjector? _faults;
     private readonly FrontmatterParser _parser = new();
     private readonly HashSet<string> _recoveredDeletes = new(StringComparer.Ordinal);
+    private readonly object _recoveredDeletesGate = new();
 
     public ResourceMutationService(
         string vaultPath,
@@ -89,13 +90,11 @@ public sealed partial class ResourceMutationService
         _vault.AttachMutationService(this);
     }
 
-    internal void CommitTask(GlassworkTask task)
+    internal void CommitTask(GlassworkTask task, bool ifAbsent = false)
     {
         ArgumentNullException.ThrowIfNull(task);
         if (string.IsNullOrWhiteSpace(task.Id))
             throw new ArgumentException("Task must have an ID before saving.", nameof(task));
-        if (task.ResourceRevision is null && _vault.TryReadBytesUnsafe(task.Id) is not null)
-            throw new InvalidOperationException("if_absent is required for a new Task.");
 
         var notifications = new HashSet<string>(StringComparer.Ordinal);
         try
@@ -109,7 +108,8 @@ public sealed partial class ResourceMutationService
                     updated,
                     notifications,
                     expectedOriginal: null,
-                    expectedRevision: task.ResourceRevision);
+                    expectedRevision: task.ResourceRevision,
+                    ifAbsent: ifAbsent);
                 task.ResourceRevision = Revision(updated);
             }
         }
@@ -121,6 +121,7 @@ public sealed partial class ResourceMutationService
         }
         finally
         {
+            NotifyRecoveredDeletes();
             foreach (var taskId in notifications)
                 _vault.NotifyTaskWritten(taskId);
         }
@@ -151,6 +152,7 @@ public sealed partial class ResourceMutationService
         }
         finally
         {
+            NotifyRecoveredDeletes();
             foreach (var id in recoveredWrites)
                 _vault.NotifyTaskWritten(id);
             foreach (var id in notifications)
@@ -207,6 +209,7 @@ public sealed partial class ResourceMutationService
 
         finally
         {
+            NotifyRecoveredDeletes();
             foreach (var id in recoveredWrites)
                 _vault.NotifyTaskWritten(id);
             foreach (var id in notifications)
@@ -247,9 +250,12 @@ public sealed partial class ResourceMutationService
         byte[] updated,
         ISet<string> notifications,
         byte[]? expectedOriginal,
-        string? expectedRevision = null)
+        string? expectedRevision = null,
+        bool ifAbsent = false)
     {
         var original = _vault.TryReadBytesUnsafe(taskId);
+        if (ifAbsent && original is not null)
+            throw new InvalidOperationException("if_absent is required for a new Task.");
         var expected = expectedOriginal ?? original;
         if (expectedRevision is not null
             && (original is null || !string.Equals(Revision(original), expectedRevision, StringComparison.Ordinal)))
@@ -1430,40 +1436,23 @@ public sealed partial class ResourceMutationService
     private IReadOnlyList<string> RecoverWithExclusiveLease()
     {
         using var lease = VaultScopedCoordinator.EnterExclusive(_vaultPath);
-        var deletedTaskId = ReadPendingCommittedDeleteId();
-        var recovered = RecoverUnsafe();
-        if (deletedTaskId is not null)
-            _recoveredDeletes.Add(deletedTaskId);
-        return recovered;
+        return RecoverUnsafe();
     }
 
     private IReadOnlyList<string> DrainRecoveredDeletes()
     {
-        var deleted = _recoveredDeletes.ToArray();
-        _recoveredDeletes.Clear();
-        return deleted;
+        lock (_recoveredDeletesGate)
+        {
+            var deleted = _recoveredDeletes.ToArray();
+            _recoveredDeletes.Clear();
+            return deleted;
+        }
     }
 
-    private string? ReadPendingCommittedDeleteId()
+    private void NotifyRecoveredDeletes()
     {
-        if (!File.Exists(JournalPath)) return null;
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(JournalPath));
-            var root = document.RootElement;
-            return root.TryGetProperty("Deleted", out var deleted)
-                && deleted.ValueKind == JsonValueKind.True
-                && root.TryGetProperty("Committed", out var committed)
-                && committed.ValueKind == JsonValueKind.True
-                && root.TryGetProperty("TaskId", out var taskId)
-                && taskId.ValueKind == JsonValueKind.String
-                ? taskId.GetString()
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        foreach (var taskId in DrainRecoveredDeletes())
+            _vault.NotifyTaskDeleted(taskId);
     }
 
     private IReadOnlyList<string> RecoverUnsafe()
@@ -1486,8 +1475,7 @@ public sealed partial class ResourceMutationService
                     : entry.Original is null ? null : Convert.FromBase64String(entry.Original);
                 if (bytes is null)
                 {
-                    if (File.Exists(entry.OwnedPath))
-                        File.Delete(entry.OwnedPath);
+                    _vault.DeleteOwnedFileUnsafe(entry.OwnedPath);
                 }
                 else
                 {
@@ -1495,6 +1483,11 @@ public sealed partial class ResourceMutationService
                 }
                 DeleteJournal();
                 return Array.Empty<string>();
+            }
+            if (entry.Deleted && entry.Committed)
+            {
+                lock (_recoveredDeletesGate)
+                    _recoveredDeletes.Add(entry.TaskId);
             }
             if (!entry.Existed && !entry.Committed)
             {

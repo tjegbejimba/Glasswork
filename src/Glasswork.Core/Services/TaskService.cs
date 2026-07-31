@@ -45,7 +45,7 @@ public class TaskService
             AdoTitle = adoTitle,
         };
 
-        _vault.Save(task);
+        _vault.Save(task, ifAbsent: true);
         return task;
     }
 

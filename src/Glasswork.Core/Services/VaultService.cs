@@ -701,12 +701,12 @@ public class VaultService
     /// <summary>
     /// Save a task to disk. Creates or overwrites the file.
     /// </summary>
-    public void Save(GlassworkTask task)
+    public void Save(GlassworkTask task, bool ifAbsent = false)
     {
         if (string.IsNullOrWhiteSpace(task.Id))
             throw new ArgumentException("Task must have an ID before saving.");
 
-        EnsureMutations().CommitTask(task);
+        EnsureMutations().CommitTask(task, ifAbsent);
     }
 
     private void CommitManagedBytes(string taskId, string content, byte[]? expectedOriginal = null)
@@ -877,6 +877,18 @@ public class VaultService
         if (!fullPath.StartsWith(vaultPrefix, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Owned file must be inside the Task vault.", nameof(path));
         return File.Exists(fullPath) ? File.ReadAllBytes(fullPath) : null;
+    }
+
+    internal void DeleteOwnedFileUnsafe(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var vaultPrefix = Path.GetFullPath(_vaultPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(vaultPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Owned file must be inside the Task vault.", nameof(path));
+        if (File.Exists(fullPath))
+            File.Delete(fullPath);
     }
 
     public void ReplaceBytes(string taskId, byte[] bytes)
