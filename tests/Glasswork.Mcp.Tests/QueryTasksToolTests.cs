@@ -41,10 +41,17 @@ public sealed class QueryTasksToolTests
         });
         _vault.Save(new GlassworkTask
         {
+            Id = "parent",
+            Title = "Parent",
+            Type = GlassworkTask.Types.Pbi,
+        });
+        _vault.Save(new GlassworkTask
+        {
             Id = "ready",
             Title = "Ready task",
             Status = GlassworkTask.Statuses.Todo,
             Type = GlassworkTask.Types.Task,
+            Parent = "parent",
             Tags = ["workflow", "ready"],
             BlockedBy = ["dependency"],
         });
@@ -61,6 +68,7 @@ public sealed class QueryTasksToolTests
             type: "task",
             tags: ["ready"],
             blocked_by_status: ["done"],
+            parent_task_id: "parent",
             limit: 10));
         var root = document.RootElement;
 
@@ -71,7 +79,7 @@ public sealed class QueryTasksToolTests
 
         var readBasis = root.GetProperty("read_basis");
         CollectionAssert.AreEquivalent(
-            new[] { "ready", "dependency" },
+            new[] { "dependency" },
             readBasis.EnumerateArray().Select(item => item.GetProperty("id").GetString()).ToArray());
         Assert.IsTrue(readBasis.EnumerateArray().All(item =>
             !string.IsNullOrWhiteSpace(item.GetProperty("resource_revision").GetString())));

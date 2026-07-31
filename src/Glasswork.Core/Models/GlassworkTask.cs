@@ -72,6 +72,7 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty] public partial string Notes { get; set; } = string.Empty;
     [ObservableProperty] public partial List<string> ContextLinks { get; set; } = [];
     [ObservableProperty] public partial List<string> Tags { get; set; } = [];
+    public Dictionary<string, object?> FrontmatterExtensions { get; set; } = new(StringComparer.Ordinal);
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsActive))]
     [NotifyPropertyChangedFor(nameof(IsQuiet))]
@@ -419,6 +420,7 @@ public partial class GlassworkTask : ObservableObject
 
         copy.Tags = [.. Tags];
         copy.ContextLinks = [.. ContextLinks];
+        copy.FrontmatterExtensions = new Dictionary<string, object?>(FrontmatterExtensions, StringComparer.Ordinal);
 
         copy.Subtasks = new List<SubTask>(Subtasks.Count);
         foreach (var sub in Subtasks)

@@ -106,7 +106,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | Tool | Status | Description |
 |---|---|---|
 | `get_capabilities` | v1.0 contract | Read-only handshake for MCP contract version and supported guarantees |
-| `query_tasks` | v1.1.0 | Query Tasks by typed fields and dependency readiness with deterministic paging |
+| `query_tasks` | v0.8.0 | Query Tasks by typed fields and dependency readiness with deterministic paging |
 | `add_task` | v0.2.0 | Create a new task file |
 | `update_task` | v0.8.0 | Update an existing task (partial updates supported) |
 | `list_tasks` | v0.2.0 | List task summaries (structural enumeration — filter by status or parent) |
@@ -224,6 +224,14 @@ structured `validation_error` with diagnostic entries.
   "read_basis": [
     {
       "id": "dependency-id",
+      "title": "Dependency task",
+      "status": "done",
+      "type": "task",
+      "parent_id": null,
+      "tags": [],
+      "blocked_by": [],
+      "description": "",
+      "notes": "",
       "resource_revision": "rr1-opaque-versioned-token"
     }
   ],
@@ -231,9 +239,10 @@ structured `validation_error` with diagnostic entries.
 }
 ```
 
-Results are ordered by `created_id` by default, or by `id`, and are bounded by
-`limit`. `read_basis` is deduplicated and includes each returned Task plus
-related dependency Tasks whose state affected the relationship predicate.
+Results are ordered by `id` by default, or by `created_id`, and are bounded by
+`limit`. Each `read_basis` entry is a complete Task snapshot with its Resource
+Revision. The set is deduplicated and includes each returned Task plus related
+dependency Tasks whose state affected the relationship predicate.
 
 ### `search_tasks`
 

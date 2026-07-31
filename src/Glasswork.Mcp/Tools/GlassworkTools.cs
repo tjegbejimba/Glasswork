@@ -300,7 +300,7 @@ public sealed class GlassworkTools
         [Description("Require every listed Tag to be present.")] string[]? tags = null,
         [Description("When true, select Tasks with an empty blocked_by relationship set.")] bool blocked_by_empty = false,
         [Description("Require every blocked_by target to have one of these statuses. An empty dependency set does not match this predicate.")] string[]? blocked_by_status = null,
-        [Description("Explicit ordering: created_id or id. Defaults to created_id.")] string order_by = "created_id",
+        [Description("Explicit ordering: created_id or id. Defaults to id.")] string order_by = "id",
         [Description("Maximum number of Tasks to return, from 1 to 100.")] int limit = 20,
         [Description("Opaque continuation cursor returned by a prior query.")] string? cursor = null)
     {
@@ -308,16 +308,25 @@ public sealed class GlassworkTools
         try
         {
             if (limit is < 1 or > 100)
+            {
+                scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_limit", "limit must be between 1 and 100."));
+            }
 
             if (order_by is not ("created_id" or "id"))
+            {
+                scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_order", "order_by must be 'created_id' or 'id'."));
+            }
 
             var statuses = new HashSet<string>(StringComparer.Ordinal);
             foreach (var rawStatus in status ?? [])
             {
                 if (!TryMapToInternalStatus(rawStatus, out var internalStatus, out var error))
+                {
+                    scope?.SetResult("error");
                     return JsonSerializer.Serialize(new ErrorResult("invalid_status", error!));
+                }
                 statuses.Add(internalStatus);
             }
 
@@ -325,27 +334,26 @@ public sealed class GlassworkTools
             foreach (var rawStatus in blocked_by_status ?? [])
             {
                 if (!TryMapToInternalStatus(rawStatus, out var internalStatus, out var error))
+                {
+                    scope?.SetResult("error");
                     return JsonSerializer.Serialize(new ErrorResult("invalid_status", error!));
+                }
                 dependencyStatuses.Add(internalStatus);
             }
 
             if (blocked_by_empty && dependencyStatuses.Count > 0)
+            {
+                scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult(
                     "invalid_relationship_predicate",
                     "blocked_by_empty cannot be combined with blocked_by_status."));
+            }
 
             var all = _vault.LoadAll();
-            var byId = all.ToDictionary(task => task.Id, StringComparer.Ordinal);
-            var diagnostics = ValidateDependencies(all, byId);
-            if (diagnostics.Count > 0)
-            {
-                return JsonSerializer.Serialize(new
-                {
-                    error = "validation_error",
-                    message = "One or more Task relationships are invalid.",
-                    diagnostics,
-                });
-            }
+            var byId = all
+                .Where(task => !string.IsNullOrEmpty(task.Id))
+                .GroupBy(task => task.Id, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
 
             var normalizedParent = string.IsNullOrWhiteSpace(parent_task_id) ? null : parent_task_id.Trim();
             string? normalizedType = null;
@@ -353,9 +361,12 @@ public sealed class GlassworkTools
             {
                 normalizedType = GlassworkTask.Types.Normalize(type);
                 if (type.Trim().ToLowerInvariant() is not ("task" or "pbi" or "bug"))
+                {
+                    scope?.SetResult("error");
                     return JsonSerializer.Serialize(new ErrorResult(
                         "invalid_type",
                         "type must be 'task', 'pbi', or 'bug'."));
+                }
             }
             var requestedTags = (tags ?? [])
                 .Where(tag => !string.IsNullOrWhiteSpace(tag))
@@ -370,6 +381,18 @@ public sealed class GlassworkTools
                     task.Tags.Any(existing => string.Equals(existing, tag, StringComparison.OrdinalIgnoreCase))))
                 .ToList();
 
+            var diagnostics = ValidateDependencies(scoped, byId);
+            if (diagnostics.Count > 0)
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new
+                {
+                    error = "validation_error",
+                    message = "One or more Task relationships are invalid.",
+                    diagnostics,
+                });
+            }
+
             var candidates = scoped
                 .Where(task => !blocked_by_empty || task.BlockedBy.Count == 0)
                 .Where(task => dependencyStatuses.Count == 0 || (
@@ -381,22 +404,29 @@ public sealed class GlassworkTools
                 ? candidates.OrderBy(task => task.Id, StringComparer.Ordinal).ToList()
                 : candidates.OrderBy(task => task.Created).ThenBy(task => task.Id, StringComparer.Ordinal).ToList();
 
-            var offset = DecodeQueryCursor(cursor, order_by);
-            if (offset > ordered.Count)
-                return JsonSerializer.Serialize(new ErrorResult("invalid_cursor", "The continuation cursor is invalid."));
-
-            var page = ordered.Skip(offset).Take(limit).ToList();
-            var nextOffset = offset + page.Count;
-            var readBasisIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var task in page)
+            var fingerprint = QueryFingerprint(normalizedParent, statuses, normalizedType, requestedTags, blocked_by_empty, dependencyStatuses, order_by);
+            if (!TryDecodeQueryCursor(cursor, order_by, fingerprint, out var queryCursor))
             {
-                readBasisIds.Add(task.Id);
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult("invalid_cursor", "The continuation cursor is invalid."));
             }
+
+            if (queryCursor is not null)
+            {
+                ordered = order_by == "id"
+                    ? ordered.Where(task => string.CompareOrdinal(task.Id, queryCursor.LastId) > 0).ToList()
+                    : ordered.Where(task =>
+                        task.Created > queryCursor.LastCreated
+                        || (task.Created == queryCursor.LastCreated
+                            && string.CompareOrdinal(task.Id, queryCursor.LastId) > 0)).ToList();
+            }
+
+            var page = ordered.Take(limit).ToList();
+            var readBasisIds = new HashSet<string>(StringComparer.Ordinal);
             if (blocked_by_empty || dependencyStatuses.Count > 0)
             {
-                foreach (var task in scoped)
+                foreach (var task in page)
                 {
-                    readBasisIds.Add(task.Id);
                     foreach (var dependencyId in task.BlockedBy)
                         readBasisIds.Add(dependencyId);
                 }
@@ -413,7 +443,9 @@ public sealed class GlassworkTools
             {
                 tasks = page.Select(QueryTaskSnapshot).ToList(),
                 read_basis = readBasis,
-                next_cursor = nextOffset < ordered.Count ? EncodeQueryCursor(nextOffset, order_by) : null,
+                next_cursor = page.Count == limit && page.Count < ordered.Count
+                    ? EncodeQueryCursor(page[^1], order_by, fingerprint)
+                    : null,
             });
         }
         catch
@@ -2316,32 +2348,77 @@ public sealed class GlassworkTools
         return diagnostics;
     }
 
-    private static string EncodeQueryCursor(int offset, string orderBy)
+    private static string QueryFingerprint(
+        string? parentId,
+        IEnumerable<string> statuses,
+        string? type,
+        IEnumerable<string> tags,
+        bool blockedByEmpty,
+        IEnumerable<string> dependencyStatuses,
+        string orderBy)
     {
-        var payload = JsonSerializer.Serialize(new { offset, order_by = orderBy });
+        var payload = JsonSerializer.Serialize(new
+        {
+            parentId,
+            statuses = statuses.OrderBy(value => value, StringComparer.Ordinal),
+            type,
+            tags = tags.OrderBy(value => value, StringComparer.OrdinalIgnoreCase),
+            blockedByEmpty,
+            dependencyStatuses = dependencyStatuses.OrderBy(value => value, StringComparer.Ordinal),
+            orderBy,
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+    }
+
+    private static string EncodeQueryCursor(GlassworkTask task, string orderBy, string fingerprint)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            order_by = orderBy,
+            last_id = task.Id,
+            last_created = task.Created.Ticks,
+            fingerprint,
+        });
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
     }
 
-    private static int DecodeQueryCursor(string? cursor, string orderBy)
+    private static bool TryDecodeQueryCursor(
+        string? cursor,
+        string orderBy,
+        string fingerprint,
+        out QueryCursor? queryCursor)
     {
         if (string.IsNullOrWhiteSpace(cursor))
-            return 0;
+        {
+            queryCursor = null;
+            return true;
+        }
 
         try
         {
             var payload = Encoding.UTF8.GetString(Convert.FromBase64String(cursor));
             using var document = JsonDocument.Parse(payload);
             var root = document.RootElement;
-            if (root.GetProperty("order_by").GetString() != orderBy)
-                return int.MaxValue;
-            var offset = root.GetProperty("offset").GetInt32();
-            return offset < 0 ? int.MaxValue : offset;
+            if (root.GetProperty("order_by").GetString() != orderBy
+                || root.GetProperty("fingerprint").GetString() != fingerprint)
+            {
+                queryCursor = null;
+                return false;
+            }
+
+            queryCursor = new QueryCursor(
+                root.GetProperty("last_id").GetString() ?? string.Empty,
+                new DateTime(root.GetProperty("last_created").GetInt64()));
+            return true;
         }
         catch (Exception ex) when (ex is FormatException or JsonException or KeyNotFoundException or InvalidOperationException)
         {
-            return int.MaxValue;
+            queryCursor = null;
+            return false;
         }
     }
+
+    private sealed record QueryCursor(string LastId, DateTime LastCreated);
 
     private static string MapToExternalStatus(string internalStatus) => internalStatus switch
     {

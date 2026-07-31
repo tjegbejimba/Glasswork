@@ -170,6 +170,28 @@ public class FrontmatterParserTests
     }
 
     [TestMethod]
+    public void Serialize_PreservesUnknownFrontmatterKeys()
+    {
+        var task = _parser.Parse("""
+            ---
+            id: custom-frontmatter
+            title: Custom frontmatter
+            owner: platform-team
+            custom:
+              priority_hint: high
+            ---
+
+            Prose that must survive.
+            """);
+
+        var roundTripped = _parser.Serialize(task);
+
+        StringAssert.Contains(roundTripped, "owner: platform-team");
+        StringAssert.Contains(roundTripped, "priority_hint: high");
+        StringAssert.Contains(roundTripped, "Prose that must survive.");
+    }
+
+    [TestMethod]
     public void Serialize_ThenParse_BlockedTask_RoundTripsBlockingMetadata()
     {
         var blockedAt = DateTimeOffset.Parse("2026-07-24T20:15:30Z", CultureInfo.InvariantCulture);

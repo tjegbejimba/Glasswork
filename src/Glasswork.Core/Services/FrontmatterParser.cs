@@ -26,6 +26,14 @@ public partial class FrontmatterParser
         .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitEmptyCollections)
         .Build();
 
+    private static readonly HashSet<string> KnownFrontmatterKeys = new(StringComparer.Ordinal)
+    {
+        "id", "title", "status", "priority", "type", "created", "completed_at",
+        "blocked_reason", "blocked_at", "blocked_from_status", "due", "start",
+        "my_day", "defer_until", "ado_link", "ado_title", "parent", "blocked_by",
+        "context_links", "tags", "links",
+    };
+
     [GeneratedRegex(@"^---\s*\n(.*?)\n---\s*\n?(.*)", RegexOptions.Singleline)]
     private static partial Regex FrontmatterRegex();
 
@@ -67,6 +75,8 @@ public partial class FrontmatterParser
 
         var frontmatter = YamlDeserializer.Deserialize<TaskFrontmatter>(yamlContent)
             ?? throw new FormatException("Failed to deserialize YAML frontmatter.");
+        var rawFrontmatter = YamlDeserializer.Deserialize<Dictionary<string, object?>>(yamlContent)
+            ?? new Dictionary<string, object?>(StringComparer.Ordinal);
 
         var task = new GlassworkTask
         {
@@ -88,6 +98,9 @@ public partial class FrontmatterParser
             ContextLinks = frontmatter.ContextLinks ?? [],
             Tags = frontmatter.Tags ?? [],
         };
+        task.FrontmatterExtensions = rawFrontmatter
+            .Where(pair => !KnownFrontmatterKeys.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
         if (task.Status == GlassworkTask.Statuses.Blocked)
         {
@@ -162,7 +175,16 @@ public partial class FrontmatterParser
             // Legacy keys are omitted: AdoLink and AdoTitle are derived properties now
         };
 
-        var yaml = YamlSerializer.Serialize(frontmatter).TrimEnd();
+        var yamlValues = YamlDeserializer.Deserialize<Dictionary<string, object?>>(
+                YamlSerializer.Serialize(frontmatter))
+            ?? new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var extension in task.FrontmatterExtensions)
+        {
+            if (!KnownFrontmatterKeys.Contains(extension.Key))
+                yamlValues[extension.Key] = extension.Value;
+        }
+
+        var yaml = YamlSerializer.Serialize(yamlValues).TrimEnd();
         var sb = new StringBuilder();
         sb.AppendLine("---");
         sb.AppendLine(yaml);
