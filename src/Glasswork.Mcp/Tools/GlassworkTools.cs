@@ -49,7 +49,7 @@ public sealed class GlassworkTools
 
     [McpServerTool(Name = "transact_tasks")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
-    [Description("Conditionally update one existing Task using an ordered set_task_fields operation.")]
+    [Description("Create or conditionally update Tasks using typed, idempotent operations.")]
     public string TransactTasks(
         [Description("Client-generated idempotency key.")] string? mutation_id,
         [Description("Ordered transaction operations. The first operation must contain task_id and fields.")] JsonElement operations,
@@ -63,19 +63,37 @@ public sealed class GlassworkTools
             var operation = operations[0];
             if (operation.ValueKind != JsonValueKind.Object
                 || !operation.TryGetProperty("op", out var opElement)
-                || !string.Equals(opElement.GetString(), "set_task_fields", StringComparison.Ordinal)
                 || !operation.TryGetProperty("task_id", out var taskIdElement)
                 || !operation.TryGetProperty("fields", out var fields))
-                return JsonSerializer.Serialize(new ErrorResult("precondition_required", "mutation_id, if_revision, and fields are required."));
+                return JsonSerializer.Serialize(new ErrorResult("validation_error", "operation must contain op, task_id, and fields."));
 
             var taskId = taskIdElement.GetString();
-            var revision = operation.TryGetProperty("if_revision", out var revisionElement)
-                ? revisionElement.GetString()
-                : if_revision;
-            var outcome = _mutations.TransactSingleTask(mutation_id, taskId, revision, fields);
+            ResourceMutationOutcome outcome;
+            if (string.Equals(opElement.GetString(), "create_task", StringComparison.Ordinal))
+            {
+                var ifAbsent = operation.TryGetProperty("if_absent", out var ifAbsentElement)
+                    ? ifAbsentElement.GetBoolean()
+                    : (bool?)null;
+                outcome = _mutations.CreateTask(mutation_id, taskId, ifAbsent, fields);
+            }
+            else if (string.Equals(opElement.GetString(), "set_task_fields", StringComparison.Ordinal))
+            {
+                var revision = operation.TryGetProperty("if_revision", out var revisionElement)
+                    ? revisionElement.GetString()
+                    : if_revision;
+                outcome = _mutations.TransactSingleTask(mutation_id, taskId, revision, fields);
+            }
+            else
+            {
+                return JsonSerializer.Serialize(new ErrorResult("validation_error", "Unsupported transaction operation."));
+            }
             return SerializeMutationOutcome(outcome);
         }
         catch (FormatException ex)
+        {
+            return JsonSerializer.Serialize(new ErrorResult("validation_error", ex.Message));
+        }
+        catch (ArgumentException ex)
         {
             return JsonSerializer.Serialize(new ErrorResult("validation_error", ex.Message));
         }
@@ -2494,6 +2512,9 @@ public sealed class GlassworkTools
                     description = outcome.Task.Description,
                     notes = outcome.Task.Notes,
                     tags = outcome.Task.Tags,
+                    blocked_by = outcome.Task.BlockedBy,
+                    completed_at = outcome.Task.CompletedAt?.ToString("yyyy-MM-dd"),
+                    blocked_reason = outcome.Task.BlockedReason,
                     resource_revision = outcome.Task.ResourceRevision
                 }
             });
@@ -2522,6 +2543,9 @@ public sealed class GlassworkTools
                 description = outcome.Task.Description,
                 notes = outcome.Task.Notes,
                 tags = outcome.Task.Tags,
+                blocked_by = outcome.Task.BlockedBy,
+                completed_at = outcome.Task.CompletedAt?.ToString("yyyy-MM-dd"),
+                blocked_reason = outcome.Task.BlockedReason,
                 resource_revision = outcome.Task.ResourceRevision
             },
             error = outcome.Error

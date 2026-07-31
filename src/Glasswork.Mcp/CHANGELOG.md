@@ -9,6 +9,11 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Explicit-ID `transact_tasks` creation** (issue #408): agents can create a
+  complete Task under a validated intended ID with `if_absent: true`. Creation
+  returns the Task and Resource Revision, conflicts on an existing ID, replays
+  exact mutation requests, rejects mutation-ID reuse, and recovers safely from
+  replacement failures or lost responses.
 - **Dependency-aware `query_tasks`** (issue #406): Tasks now round-trip the
   generic `blocked_by` relationship, and the new bounded query supports typed
   parent, status, Task type, Tag, and dependency-readiness predicates. Results

@@ -107,6 +107,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 |---|---|---|
 | `get_capabilities` | v1.0 contract | Read-only handshake for MCP contract version and supported guarantees |
 | `query_tasks` | v0.8.0 | Query Tasks by typed fields and dependency readiness with deterministic paging |
+| `transact_tasks` | v0.9.0 | Idempotently create explicit-ID Tasks or conditionally update existing Tasks |
 | `add_task` | v0.2.0 | Create a new task file |
 | `update_task` | v0.8.0 | Update an existing task (partial updates supported) |
 | `list_tasks` | v0.2.0 | List task summaries (structural enumeration — filter by status or parent) |
@@ -137,14 +138,14 @@ Use this read-only operation before relying on optional workflow guarantees:
   "contract_version": "1.0",
   "implemented_capabilities": [
     "resource_revisions",
-    "relation_aware_queries"
+    "relation_aware_queries",
+    "typed_transactions",
+    "transaction_idempotency",
+    "recoverable_all_or_none_commit"
   ],
   "future_capabilities": [
     "read_assertions",
-    "typed_transactions",
-    "complete_set_relationships",
-    "transaction_idempotency",
-    "recoverable_all_or_none_commit"
+    "complete_set_relationships"
   ]
 }
 ```
@@ -158,6 +159,37 @@ markdown file (currently formatted with the `rr1-` version prefix). Identical
 bytes produce the same token regardless of filesystem timestamps, while any
 byte change produces a different token. Clients must compare tokens for
 equality and must not parse or otherwise depend on the digest format.
+
+### `transact_tasks`
+
+`transact_tasks` accepts one typed operation per call. `create_task` requires an
+explicit safe Task ID and `if_absent: true`; it never generates a title-based
+collision suffix. The operation returns the created Task and its Resource
+Revision, reports an existing ID as a conflict, and durably replays an exact
+request with the same `mutation_id`.
+
+```json
+{
+  "mutation_id": "create-123",
+  "operations": [
+    {
+      "op": "create_task",
+      "task_id": "workflow-child-1",
+      "if_absent": true,
+      "fields": {
+        "title": "Implement the child workflow",
+        "status": "todo",
+        "priority": "medium",
+        "type": "task",
+        "parent_task_id": "workflow-parent",
+        "tags": ["workflow"],
+        "description": "Stable framing",
+        "notes": "Initial context"
+      }
+    }
+  ]
+}
+```
 
 ### When to use which tool
 

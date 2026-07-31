@@ -33,6 +33,9 @@ public sealed record ResourceMutationTaskSnapshot(
     string Description,
     string Notes,
     IReadOnlyList<string> Tags,
+    IReadOnlyList<string> BlockedBy,
+    DateTime? CompletedAt,
+    string? BlockedReason,
     string ResourceRevision);
 
 public sealed record ResourceMutationOutcome(
@@ -88,7 +91,7 @@ public sealed class ResourceMutationService
         Recover();
         var state = ReadState();
         Prune(state);
-        var requestHash = HashRequest(mutationId, taskId, ifRevision, fields);
+        var requestHash = HashRequest(mutationId, "set_task_fields", $"{taskId}\n{ifRevision}", fields);
         if (state.Outcomes.TryGetValue(mutationId, out var recorded))
         {
             if (recorded.RequestHash != requestHash)
@@ -159,6 +162,89 @@ public sealed class ResourceMutationService
         }
     }
 
+    public ResourceMutationOutcome CreateTask(
+        string? mutationId,
+        string? taskId,
+        bool? ifAbsent,
+        JsonElement fields)
+    {
+        if (string.IsNullOrWhiteSpace(mutationId) || ifAbsent != true)
+            return new ResourceMutationOutcome(mutationId ?? string.Empty, "precondition_required", false, null, null, null, "mutation_id and if_absent: true are required.");
+
+        if (string.IsNullOrWhiteSpace(taskId))
+            return new ResourceMutationOutcome(mutationId, "validation_error", false, null, null, null, "task_id is required.");
+        taskId = taskId.Trim();
+
+        using var lease = VaultScopedCoordinator.EnterExclusive(_vaultPath);
+        Recover();
+        var state = ReadState();
+        Prune(state);
+        var requestHash = HashRequest(mutationId, "create_task", $"{taskId}\n{ifAbsent}", fields);
+        if (state.Outcomes.TryGetValue(mutationId, out var recorded))
+        {
+            if (recorded.RequestHash != requestHash)
+                return new ResourceMutationOutcome(mutationId, "mutation_id_reused", false, null, null, null, "mutation_id was already used for a different request.");
+            return recorded.Outcome with { Replayed = true };
+        }
+
+        var existingBytes = _vault.TryReadBytesUnsafe(taskId);
+        if (existingBytes is not null)
+        {
+            var currentRevision = Revision(existingBytes);
+            var currentTask = _parser.Parse(Encoding.UTF8.GetString(existingBytes));
+            return Record(state, mutationId, requestHash,
+                new ResourceMutationOutcome(
+                    mutationId, "conflict", false, null, currentRevision,
+                    Snapshot(currentTask, currentRevision), "Task ID already exists."));
+        }
+
+        if (fields.ValueKind != JsonValueKind.Object)
+            return Record(state, mutationId, requestHash,
+                new ResourceMutationOutcome(mutationId, "validation_error", false, null, null, null, "fields must be a JSON object."));
+
+        var task = new GlassworkTask { Id = taskId };
+        var error = ApplyFields(task, fields);
+        if (error is not null)
+            return Record(state, mutationId, requestHash,
+                new ResourceMutationOutcome(mutationId, "validation_error", false, null, null, null, error));
+        if (string.IsNullOrWhiteSpace(task.Title))
+            return Record(state, mutationId, requestHash,
+                new ResourceMutationOutcome(mutationId, "validation_error", false, null, null, null, "title is required."));
+        if (!IsValidPriority(task.Priority))
+            return Record(state, mutationId, requestHash,
+                new ResourceMutationOutcome(mutationId, "validation_error", false, null, null, null, "priority is invalid."));
+
+        var createdBytes = Encoding.UTF8.GetBytes(_parser.Serialize(task));
+        var journal = new JournalEntry(
+            taskId,
+            Original: null,
+            Convert.ToBase64String(createdBytes),
+            Committed: false,
+            Existed: false);
+        _faults?.ThrowIfInjected(ResourceMutationFailurePoint.BeforeJournal);
+        WriteJournal(journal);
+        try
+        {
+            _faults?.ThrowIfInjected(ResourceMutationFailurePoint.DuringReplacement);
+            _vault.ReplaceBytesUnsafe(taskId, createdBytes);
+            _faults?.ThrowIfInjected(ResourceMutationFailurePoint.AfterReplacementBeforeCommit);
+            WriteJournal(journal with { Committed = true });
+            var revision = Revision(createdBytes);
+            var applied = new ResourceMutationOutcome(
+                mutationId, "applied", false, null, revision,
+                Snapshot(task, revision));
+            var recordedOutcome = Record(state, mutationId, requestHash, applied);
+            _faults?.ThrowIfInjected(ResourceMutationFailurePoint.AfterCommit);
+            DeleteJournal();
+            return recordedOutcome;
+        }
+        catch
+        {
+            Recover();
+            throw;
+        }
+    }
+
     private ResourceMutationOutcome Record(State state, string id, string hash, ResourceMutationOutcome outcome)
     {
         state.Outcomes[id] = new RecordedOutcome(hash, _clock(), outcome);
@@ -193,6 +279,9 @@ public sealed class ResourceMutationService
                 case "priority": task.Priority = ReadString(property.Value, property.Name) ?? string.Empty; break;
                 case "type": task.Type = GlassworkTask.Types.Normalize(ReadString(property.Value, property.Name)); break;
                 case "parent_task_id": task.Parent = ReadString(property.Value, property.Name); break;
+                case "tags": task.Tags = ReadStringArray(property.Value, property.Name); break;
+                case "blocked_by": task.BlockedBy = ReadStringArray(property.Value, property.Name); break;
+                case "context_links": task.ContextLinks = ReadStringArray(property.Value, property.Name); break;
                 case "description": task.Description = ReadString(property.Value, property.Name) ?? string.Empty; break;
                 case "notes":
                     if (property.Value.ValueKind == JsonValueKind.Object && property.Value.TryGetProperty("append", out var append))
@@ -204,6 +293,10 @@ public sealed class ResourceMutationService
                     break;
                 case "due_date": task.Due = ReadDate(property.Value, property.Name); break;
                 case "scheduled": task.MyDay = ReadDate(property.Value, property.Name); break;
+                case "created": task.Created = ReadDate(property.Value, property.Name) ?? task.Created; break;
+                case "start": task.Start = ReadDate(property.Value, property.Name); break;
+                case "defer_until": task.DeferUntil = ReadDate(property.Value, property.Name); break;
+                case "completed_at": task.CompletedAt = ReadDate(property.Value, property.Name); break;
                 default: return $"Unsupported task field '{property.Name}'.";
             }
         }
@@ -237,10 +330,34 @@ public sealed class ResourceMutationService
         throw new FormatException($"{name} must use yyyy-MM-dd.");
     }
 
+    private static List<string> ReadStringArray(JsonElement value, string name)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+            throw new FormatException($"{name} must be an array of strings.");
+
+        var result = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+                throw new FormatException($"{name} must be an array of strings.");
+            var text = item.GetString();
+            if (!string.IsNullOrWhiteSpace(text))
+                result.Add(text.Trim());
+        }
+        return result.Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    private static bool IsValidPriority(string priority) =>
+        priority is GlassworkTask.Priorities.Low
+            or GlassworkTask.Priorities.Medium
+            or GlassworkTask.Priorities.High
+            or GlassworkTask.Priorities.Urgent;
+
     private ResourceMutationTaskSnapshot Snapshot(GlassworkTask task, string revision) =>
         new(task.Id, task.Title, task.Status == GlassworkTask.Statuses.InProgress ? "doing" : task.Status,
             task.Priority, task.Type, task.Created, task.Due, task.Start, task.MyDay, task.DeferUntil,
-            task.Parent, task.Description, task.Notes, task.Tags, revision);
+            task.Parent, task.Description, task.Notes, task.Tags, task.BlockedBy, task.CompletedAt,
+            task.BlockedReason, revision);
 
     private static string Revision(byte[] bytes) =>
         $"rr1-{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
@@ -254,7 +371,7 @@ public sealed class ResourceMutationService
     }
 
     private sealed record RecordedOutcome(string RequestHash, DateTimeOffset CreatedAt, ResourceMutationOutcome Outcome);
-    private sealed record JournalEntry(string TaskId, string Original, string Updated, bool Committed);
+    private sealed record JournalEntry(string TaskId, string? Original, string Updated, bool Committed, bool Existed = true);
 
     private State ReadState()
     {
@@ -299,8 +416,15 @@ public sealed class ResourceMutationService
         if (!File.Exists(JournalPath)) return;
         var entry = JsonSerializer.Deserialize<JournalEntry>(File.ReadAllText(JournalPath))
             ?? throw new InvalidDataException("Mutation journal is invalid.");
-        var bytes = Convert.FromBase64String(entry.Committed ? entry.Updated : entry.Original);
-        _vault.ReplaceBytesUnsafe(entry.TaskId, bytes);
+        if (!entry.Existed && !entry.Committed)
+        {
+            _vault.Delete(entry.TaskId);
+        }
+        else
+        {
+            var bytes = Convert.FromBase64String(entry.Committed ? entry.Updated : entry.Original!);
+            _vault.ReplaceBytesUnsafe(entry.TaskId, bytes);
+        }
         DeleteJournal();
     }
 }
