@@ -135,20 +135,21 @@ Use this read-only operation before relying on optional workflow guarantees:
 {
   "contract_version": "1.0",
   "implemented_capabilities": [
-    "resource_revisions",
-    "capability_discovery",
-    "vault_preconditions",
-    "stateless_reads"
+    "resource_revisions"
   ],
   "future_capabilities": [
-    "transactional_mutations"
+    "relation_aware_queries",
+    "read_assertions",
+    "typed_transactions",
+    "complete_set_relationships",
+    "transaction_idempotency",
+    "recoverable_all_or_none_commit"
   ]
 }
 ```
 
 `implemented_capabilities` are guarantees clients may rely on now. Names in
-`future_capabilities` are explicitly not available yet; in particular, this
-server does not provide transactional mutations.
+`future_capabilities` are explicitly not available yet.
 
 Every response containing a Task or Task summary includes `resource_revision`.
 It is an opaque, versioned token derived from the exact bytes of that Task's
@@ -352,7 +353,8 @@ The `updated_fields` array lists field names that actually changed. Fields provi
       "path": "string — todo-relative path to the task file, e.g. fix-the-bug.md",
       "ready": true,
       "urgency_score": 12.5,
-      "backlink_count": 2
+      "backlink_count": 2,
+      "resource_revision": "rr1-opaque-versioned-token"
     }
   ]
 }
@@ -363,7 +365,7 @@ The `updated_fields` array lists field names that actually changed. Fields provi
 ```json
 {
   "tasks": [
-    { "id": "string", "created": "yyyy-MM-dd", "priority": "medium" }
+    { "id": "string", "resource_revision": "rr1-opaque-versioned-token", "created": "yyyy-MM-dd", "priority": "medium" }
   ]
 }
 ```
@@ -375,6 +377,7 @@ The `updated_fields` array lists field names that actually changed. Fields provi
   "tasks": [
     {
       "id": "string",
+      "resource_revision": "rr1-opaque-versioned-token",
       "due": "yyyy-MM-dd | null",
       "my_day": "yyyy-MM-dd | null",
       "in_my_day_today": true
@@ -412,6 +415,7 @@ Results are sorted by created date ascending, then by ID for stability.
   "title": "string",
   "status": "\"todo\" | \"doing\" | \"done\"",
   "parent_id": "string | null",
+  "resource_revision": "rr1-opaque-versioned-token",
   "description": "string — full Description body (ADR 0002)",
   "notes": "string — full Notes body (ADR 0002)",
   "artifacts": [
@@ -431,6 +435,7 @@ Results are sorted by created date ascending, then by ID for stability.
   "title": "string",
   "status": "\"todo\" | \"doing\" | \"done\"",
   "parent_id": "string | null",
+  "resource_revision": "rr1-opaque-versioned-token",
   "description": "string",
   "notes": "string",
   "artifacts": [
@@ -587,6 +592,7 @@ Returns a task's complete context bundle — task content, every artifact's body
     "title": "string",
     "status": "\"todo\" | \"doing\" | \"done\"",
     "parent_id": "string | null",
+    "resource_revision": "rr1-opaque-versioned-token",
     "description": "string",
     "notes": "string"
   },
@@ -641,6 +647,7 @@ For task `issue-137-mcp-load-context` with one artifact `plan.md`, one direct ch
     "title": "MCP: load_context tool",
     "status": "doing",
     "parent_id": null,
+    "resource_revision": "rr1-opaque-versioned-token",
     "description": "Single-call full-context fetch for agent handoff.",
     "notes": ""
   },
@@ -658,6 +665,7 @@ For task `issue-137-mcp-load-context` with one artifact `plan.md`, one direct ch
         "title": "Child A",
         "status": "todo",
         "parent_id": "issue-137-mcp-load-context",
+        "resource_revision": "rr1-opaque-versioned-token",
         "description": "",
         "notes": ""
       },
@@ -1091,7 +1099,8 @@ List the Tasks eligible for unmatched-meeting manual attachment. The tool exclud
     {
       "task_id": "task-1",
       "title": "Release gate checklist",
-      "status": "todo | in-progress | blocked"
+      "status": "todo | in-progress | blocked",
+      "resource_revision": "rr1-opaque-versioned-token"
     }
   ]
 }

@@ -48,7 +48,7 @@ public sealed class ResourceRevisionTests
     [TestMethod]
     public void GetCapabilities_ReportsImplementedAndFutureGuarantees()
     {
-        var result = JsonDocument.Parse(_tools.GetCapabilities());
+        var result = JsonDocument.Parse(new CapabilityTools().GetCapabilities());
         var root = result.RootElement;
 
         Assert.AreEqual("1.0", root.GetProperty("contract_version").GetString());
@@ -57,7 +57,7 @@ public sealed class ResourceRevisionTests
             "resource_revisions");
         CollectionAssert.Contains(
             root.GetProperty("future_capabilities").EnumerateArray().Select(x => x.GetString()).ToArray(),
-            "transactional_mutations");
+            "recoverable_all_or_none_commit");
     }
 
     [TestMethod]

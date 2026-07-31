@@ -40,25 +40,6 @@ public sealed class GlassworkTools
         _logger = logger;
     }
 
-    [McpServerTool(Name = "get_capabilities")]
-    [Description("Return the versioned MCP contract and the guarantees currently implemented by this server.")]
-    public string GetCapabilities()
-    {
-        return JsonSerializer.Serialize(new CapabilitiesResult(
-            ContractVersion: "1.0",
-            ImplementedCapabilities:
-            [
-                "resource_revisions",
-                "capability_discovery",
-                "vault_preconditions",
-                "stateless_reads",
-            ],
-            FutureCapabilities:
-            [
-                "transactional_mutations",
-            ]));
-    }
-
     [McpServerTool(Name = "add_task")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Create a new task file in the Glasswork vault.")]
@@ -575,10 +556,10 @@ public sealed class GlassworkTools
             var hits = searchHits
                 .Select(h =>
                 {
-                    if (!tasksById.TryGetValue(h.Id, out var task))
-                        throw new InvalidDataException($"Task '{h.Id}' disappeared while building the search response.");
-
-                    var signals = SignalsFor(task, backlinkCounts);
+                    tasksById.TryGetValue(h.Id, out var task);
+                    var signals = task is null
+                        ? new TaskActionabilitySignals(true, 0, 0)
+                        : SignalsFor(task, backlinkCounts);
                     return new TaskSearchSummary(
                         Id: h.Id,
                         Title: h.Title,
@@ -589,7 +570,7 @@ public sealed class GlassworkTools
                         Ready: signals.Ready,
                         UrgencyScore: signals.UrgencyScore,
                         BacklinkCount: signals.BacklinkCount,
-                        ResourceRevision: ResourceRevision(task.Id));
+                        ResourceRevision: ResourceRevision(h.Id));
                 })
                 .ToList();
             scope?.SetCount("task_count", hits.Count);
@@ -2145,8 +2126,8 @@ public sealed class GlassworkTools
 
     private string ResourceRevision(string taskId)
     {
-        var taskPath = Path.Combine(_vaultPath, $"{taskId}.md");
-        var digest = SHA256.HashData(File.ReadAllBytes(taskPath));
+        var bytes = _vault.TryGetLastReadBytes(taskId);
+        var digest = SHA256.HashData(bytes);
         return $"rr1-{Convert.ToHexString(digest).ToLowerInvariant()}";
     }
 
@@ -2170,11 +2151,6 @@ public sealed class GlassworkTools
     private sealed record AddTaskResult(
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("path")] string Path);
-
-    private sealed record CapabilitiesResult(
-        [property: JsonPropertyName("contract_version")] string ContractVersion,
-        [property: JsonPropertyName("implemented_capabilities")] string[] ImplementedCapabilities,
-        [property: JsonPropertyName("future_capabilities")] string[] FutureCapabilities);
 
     private sealed record TaskSummary(
         [property: JsonPropertyName("id")] string Id,
