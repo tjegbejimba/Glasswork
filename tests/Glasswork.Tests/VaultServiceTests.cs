@@ -192,6 +192,21 @@ public class VaultServiceTests
     }
 
     [TestMethod]
+    public void Delete_RollsBackBeforeCommitWithoutRaisingCommittedDelete()
+    {
+        _vault.Save(new GlassworkTask { Id = "delete-rollback", Title = "Keep me" });
+        var faults = new ThrowingMutationFaults(ResourceMutationFailurePoint.AfterReplacementBeforeCommit);
+        _ = new ResourceMutationService(_tempDir, _vault, faults: faults);
+        var deleted = 0;
+        _vault.TaskDeleted += (_, _) => deleted++;
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => _vault.Delete("delete-rollback"));
+
+        Assert.IsTrue(_vault.Exists("delete-rollback"));
+        Assert.AreEqual(0, deleted);
+    }
+
+    [TestMethod]
     public void UpdateSubtaskCheckbox_RegistersWriteWithCoordinator()
     {
         var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));

@@ -82,9 +82,9 @@ public sealed partial class ResourceMutationService
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _faults = faults;
         _statePath = Path.Combine(vaultPath, ".glasswork", "resource-mutations.json");
-        _vault.AttachMutationService(this);
         _vault.RegisterManagedRecovery(RecoverWithExclusiveLease);
         _vault.RunManagedRecovery();
+        _vault.AttachMutationService(this);
     }
 
     internal void CommitTask(GlassworkTask task)
@@ -98,12 +98,15 @@ public sealed partial class ResourceMutationService
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
-                notifications.UnionWith(RecoverUnsafe());
+                RecoverUnsafe();
+                var updated = Encoding.UTF8.GetBytes(_parser.Serialize(task));
                 CommitBytesUnsafe(
                     task.Id,
-                    Encoding.UTF8.GetBytes(_parser.Serialize(task)),
+                    updated,
                     notifications,
-                    _vault.TryGetCachedReadBytes(task.Id));
+                    expectedOriginal: null,
+                    expectedRevision: task.ResourceRevision);
+                task.ResourceRevision = Revision(updated);
             }
         }
         catch
@@ -119,7 +122,7 @@ public sealed partial class ResourceMutationService
         }
     }
 
-    internal void CommitBytes(string taskId, byte[] updated)
+    internal void CommitBytes(string taskId, byte[] updated, byte[]? expectedOriginal = null)
     {
         if (string.IsNullOrWhiteSpace(taskId))
             throw new ArgumentException("Task ID is required.", nameof(taskId));
@@ -130,8 +133,8 @@ public sealed partial class ResourceMutationService
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
-                notifications.UnionWith(RecoverUnsafe());
-                CommitBytesUnsafe(taskId, updated, notifications, expectedOriginal: null);
+                RecoverUnsafe();
+                CommitBytesUnsafe(taskId, updated, notifications, expectedOriginal);
             }
 
         }
@@ -158,7 +161,7 @@ public sealed partial class ResourceMutationService
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
-                notifications.UnionWith(RecoverUnsafe());
+                RecoverUnsafe();
                 var original = _vault.TryReadBytesUnsafe(taskId);
                 if (original is null)
                     return false;
@@ -185,17 +188,30 @@ public sealed partial class ResourceMutationService
                 DeleteJournal();
                 return true;
             }
+
         }
         catch
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
-                notifications.UnionWith(RecoverUnsafe());
+                RecoverUnsafe();
             throw;
         }
+
         finally
         {
             foreach (var id in notifications)
                 _vault.NotifyTaskDeleted(id);
+        }
+
+    }
+
+    public bool CommitTaskOwnedFile(string path, byte[] content, bool overwrite)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+        {
+            RecoverUnsafe();
+            return _vault.ReplaceOwnedFileUnsafe(path, content, overwrite);
         }
     }
 
@@ -203,10 +219,14 @@ public sealed partial class ResourceMutationService
         string taskId,
         byte[] updated,
         ISet<string> notifications,
-        byte[]? expectedOriginal)
+        byte[]? expectedOriginal,
+        string? expectedRevision = null)
     {
         var original = _vault.TryReadBytesUnsafe(taskId);
         var expected = expectedOriginal ?? original;
+        if (expectedRevision is not null
+            && (original is null || !string.Equals(Revision(original), expectedRevision, StringComparison.Ordinal)))
+            throw new InvalidOperationException("Task changed before commit.");
         if ((expected is null) != (original is null)
             || (expected is not null && original is not null && !expected.AsSpan().SequenceEqual(original)))
             throw new InvalidOperationException("Task changed before commit.");
@@ -215,7 +235,7 @@ public sealed partial class ResourceMutationService
             return;
 
         var mutationId = $"app-{Guid.NewGuid():N}";
-        var expectedRevision = original is null ? null : Revision(original);
+        var journalExpectedRevision = original is null ? null : Revision(original);
         var requestHash = Convert.ToHexString(SHA256.HashData(updated)).ToLowerInvariant();
         var journal = new JournalEntry(
             taskId,
@@ -223,7 +243,7 @@ public sealed partial class ResourceMutationService
             Convert.ToBase64String(updated),
             mutationId,
             requestHash,
-            expectedRevision,
+            journalExpectedRevision,
             Committed: false,
             Existed: original is not null);
 
@@ -1282,7 +1302,7 @@ public sealed partial class ResourceMutationService
             task.Parent, task.Description, task.Notes, task.Tags, task.BlockedBy, task.CompletedAt,
             task.BlockedReason, revision);
 
-    private static string Revision(byte[] bytes) =>
+    internal static string Revision(byte[] bytes) =>
         $"rr1-{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
 
     private bool SemanticallyEqual(GlassworkTask left, GlassworkTask right) =>
@@ -1408,6 +1428,7 @@ public sealed partial class ResourceMutationService
             {
                 if (File.Exists(Path.Combine(_vaultPath, $"{entry.TaskId}.md")))
                     _vault.DeleteUnsafe(entry.TaskId);
+                _vault.ForgetManagedBytes(entry.TaskId);
             }
             else
             {
@@ -1439,7 +1460,7 @@ public sealed partial class ResourceMutationService
             }
 
             DeleteJournal();
-            return [entry.TaskId];
+            return entry.Deleted ? Array.Empty<string>() : [entry.TaskId];
         }
         catch (JsonException)
         {
