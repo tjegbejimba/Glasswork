@@ -209,7 +209,7 @@ public sealed partial class ResourceMutationService
 
         finally
         {
-            NotifyRecoveredDeletes();
+            NotifyRecoveredDeletes(notifications);
             foreach (var id in recoveredWrites)
                 _vault.NotifyTaskWritten(id);
             foreach (var id in notifications)
@@ -1449,10 +1449,13 @@ public sealed partial class ResourceMutationService
         }
     }
 
-    private void NotifyRecoveredDeletes()
+    private void NotifyRecoveredDeletes(ISet<string>? alreadyNotified = null)
     {
         foreach (var taskId in DrainRecoveredDeletes())
-            _vault.NotifyTaskDeleted(taskId);
+        {
+            if (alreadyNotified?.Contains(taskId) != true)
+                _vault.NotifyTaskDeleted(taskId);
+        }
     }
 
     private IReadOnlyList<string> RecoverUnsafe()

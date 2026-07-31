@@ -241,7 +241,7 @@ public sealed class GlassworkTools
             };
 
             var writeSw = Stopwatch.StartNew();
-            _vault.Save(task);
+            _vault.Save(task, ifAbsent: true);
             if (internalStatus == GlassworkTask.Statuses.Blocked)
             {
                 var index = new IndexService(_vault);
