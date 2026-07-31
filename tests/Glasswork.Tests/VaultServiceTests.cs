@@ -165,6 +165,33 @@ public class VaultServiceTests
     }
 
     [TestMethod]
+    public void Save_UsesResourceMutationBoundary()
+    {
+        var faults = new ThrowingMutationFaults(ResourceMutationFailurePoint.BeforeJournal);
+        var mutations = new ResourceMutationService(_tempDir, _vault, faults: faults);
+
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            _vault.Save(new GlassworkTask { Id = "managed-save", Title = "Managed" }));
+
+        Assert.IsFalse(_vault.Exists("managed-save"));
+    }
+
+    [TestMethod]
+    public void Save_RejectsStaleReadInsteadOfOverwritingExternalChange()
+    {
+        _vault.Save(new GlassworkTask { Id = "stale-save", Title = "Original" });
+        var observed = _vault.Load("stale-save")!;
+
+        File.WriteAllText(
+            Path.Combine(_tempDir, "stale-save.md"),
+            "---\nid: stale-save\ntitle: External\n---\n");
+        observed.Title = "App update";
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => _vault.Save(observed));
+        Assert.AreEqual("External", _vault.Load("stale-save")!.Title);
+    }
+
+    [TestMethod]
     public void UpdateSubtaskCheckbox_RegistersWriteWithCoordinator()
     {
         var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));
@@ -221,6 +248,16 @@ public class VaultServiceTests
         var actual = File.ReadAllText(path);
         StringAssert.Contains(actual, "parent: 22222");
         Assert.IsFalse(actual.Contains("parent: 11111"), "old parent value must be gone");
+    }
+
+    private sealed class ThrowingMutationFaults(ResourceMutationFailurePoint point)
+        : IResourceMutationFaultInjector
+    {
+        public void ThrowIfInjected(ResourceMutationFailurePoint actual)
+        {
+            if (actual == point)
+                throw new InvalidOperationException("injected mutation failure");
+        }
     }
 
     [TestMethod]

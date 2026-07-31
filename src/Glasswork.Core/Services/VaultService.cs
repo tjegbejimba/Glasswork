@@ -21,6 +21,7 @@ public class VaultService
     private readonly SelfWriteCoordinator? _selfWrites;
     private readonly ConcurrentDictionary<string, byte[]> _lastReadBytes = new(StringComparer.Ordinal);
     private Func<IReadOnlyList<string>>? _managedRecovery;
+    private ResourceMutationService? _mutations;
 
     public VaultService(string vaultPath) : this(vaultPath, null) { }
 
@@ -74,6 +75,12 @@ public class VaultService
     }
 
     internal void NotifyTaskWritten(string taskId) => RaiseTaskWritten(taskId);
+    internal void NotifyTaskDeleted(string taskId) => RaiseTaskDeleted(taskId);
+
+    internal void AttachMutationService(ResourceMutationService mutations)
+    {
+        _mutations = mutations ?? throw new ArgumentNullException(nameof(mutations));
+    }
 
     private void RaiseTaskDeleted(string taskId)
     {
@@ -166,9 +173,7 @@ public class VaultService
         var updated = content[..match.Index] + $"### [{newCheck}] {subtaskTitle}" + content[(match.Index + match.Length)..];
         if (updated != content)
         {
-            _selfWrites?.RegisterWrite(path);
-            File.WriteAllText(path, updated);
-            RaiseTaskWritten(taskId);
+            CommitManagedBytes(taskId, updated);
         }
     }
 
@@ -231,9 +236,7 @@ public class VaultService
         var rebuilt = string.Join(newline, lines);
         if (hadTrailingNewline && !rebuilt.EndsWith(newline))
             rebuilt += newline;
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, rebuilt);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, rebuilt);
     }
 
     /// <summary>
@@ -301,9 +304,7 @@ public class VaultService
         var rebuilt = string.Join(newline, lines);
         if (hadTrailingNewline && !rebuilt.EndsWith(newline))
             rebuilt += newline;
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, rebuilt);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, rebuilt);
     }
 
     /// <summary>
@@ -371,9 +372,7 @@ public class VaultService
 
         if (output == content) return;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, output);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, output);
     }
 
     /// <summary>
@@ -431,9 +430,7 @@ public class VaultService
 
         if (output == content) return;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, output);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, output);
     }
 
     /// <summary>
@@ -487,9 +484,7 @@ public class VaultService
 
         if (output == content) return;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, output);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, output);
     }
 
     /// <summary>
@@ -540,9 +535,7 @@ public class VaultService
 
         if (output == content) return;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, output);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, output);
     }
 
     /// <summary>
@@ -664,9 +657,7 @@ public class VaultService
         if (hadTrailingNewline && !rebuilt.EndsWith(newline))
             rebuilt += newline;
 
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, rebuilt);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, rebuilt);
     }
 
     /// <summary>
@@ -677,15 +668,19 @@ public class VaultService
         if (string.IsNullOrWhiteSpace(task.Id))
             throw new ArgumentException("Task must have an ID before saving.");
 
-        RunManagedRecovery();
-        var content = _parser.Serialize(task);
-        var path = GetFilePath(task.Id);
-        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
-        {
-            _selfWrites?.RegisterWrite(path);
-            File.WriteAllText(path, content);
-        }
-        RaiseTaskWritten(task.Id);
+        _mutations ??= new ResourceMutationService(_vaultPath, this);
+        _mutations.CommitTask(task);
+    }
+
+    private void CommitManagedBytes(string taskId, string content)
+    {
+        CommitManagedBytes(taskId, Encoding.UTF8.GetBytes(content));
+    }
+
+    private void CommitManagedBytes(string taskId, byte[] content)
+    {
+        _mutations ??= new ResourceMutationService(_vaultPath, this);
+        _mutations.CommitBytes(taskId, content);
     }
 
     /// <summary>
@@ -735,6 +730,7 @@ public class VaultService
         var migrated = new MigrationService().MigrateToV2(original);
         if (migrated == original) return false;
 
+        // Legacy bootstrap migration predates the managed mutation contract.
         _selfWrites?.RegisterWrite(path);
         File.WriteAllText(path, migrated);
         RaiseTaskWritten(taskId);
@@ -765,6 +761,7 @@ public class VaultService
 
             if (migratedContent == original) continue;
 
+            // Legacy bootstrap migration predates the managed mutation contract.
             _selfWrites?.RegisterWrite(path);
             File.WriteAllText(path, migratedContent);
             RaiseTaskWritten(Path.GetFileNameWithoutExtension(path));
@@ -778,13 +775,8 @@ public class VaultService
     /// </summary>
     public bool Delete(string taskId)
     {
-        var filePath = GetFilePath(taskId);
-        if (!File.Exists(filePath)) return false;
-
-        _selfWrites?.RegisterWrite(filePath);
-        File.Delete(filePath);
-        RaiseTaskDeleted(taskId);
-        return true;
+        _mutations ??= new ResourceMutationService(_vaultPath, this);
+        return _mutations.CommitDelete(taskId);
     }
 
     /// <summary>
@@ -810,12 +802,18 @@ public class VaultService
         return File.Exists(path) ? File.ReadAllBytes(path) : null;
     }
 
+    internal byte[]? TryGetCachedReadBytes(string taskId) =>
+        _lastReadBytes.TryGetValue(taskId, out var bytes) ? bytes : null;
+
+    internal void RememberManagedBytes(string taskId, byte[] bytes) =>
+        _lastReadBytes[taskId] = bytes;
+
+    internal void ForgetManagedBytes(string taskId) =>
+        _lastReadBytes.TryRemove(taskId, out _);
+
     public void ReplaceBytes(string taskId, byte[] bytes)
     {
-        RunManagedRecovery();
-        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
-            ReplaceBytesUnsafe(taskId, bytes);
-        RaiseTaskWritten(taskId);
+        CommitManagedBytes(taskId, bytes);
     }
 
     internal void ReplaceBytesUnsafe(string taskId, byte[] bytes)
