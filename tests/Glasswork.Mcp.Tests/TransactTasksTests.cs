@@ -49,6 +49,69 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void UpdateTask_RequiresMutationIdAndRevision()
+    {
+        using var create = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "compat-update",
+          "if_absent": true,
+          "fields": { "title": "Compatibility task" }
+        }]
+        """);
+        _tools.TransactTasks("compat-create", create.RootElement);
+        using var fields = JsonDocument.Parse("""{ "title": "Changed" }""");
+
+        var result = JsonDocument.Parse(_tools.UpdateTask("compat-update", fields.RootElement, null, null));
+
+        Assert.AreEqual("precondition_required", result.RootElement.GetProperty("error").GetString());
+    }
+
+    [TestMethod]
+    public void UpdateTask_UsesResourceMutationAndReturnsPostCommitRevision()
+    {
+        using var create = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "compat-update-success",
+          "if_absent": true,
+          "fields": { "title": "Compatibility task" }
+        }]
+        """);
+        var created = JsonDocument.Parse(_tools.TransactTasks("compat-create-success", create.RootElement));
+        var revision = created.RootElement.GetProperty("task").GetProperty("resource_revision").GetString();
+        using var fields = JsonDocument.Parse("""{ "title": "Changed" }""");
+
+        var result = JsonDocument.Parse(_tools.UpdateTask(
+            "compat-update-success",
+            fields.RootElement,
+            "compat-update-success",
+            revision));
+
+        Assert.AreEqual("compat-update-success", result.RootElement.GetProperty("task_id").GetString());
+        Assert.AreEqual("Changed", new VaultService(Path.Combine(_vaultDir, "wiki", "todo"))
+            .Load("compat-update-success")!.Title);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(result.RootElement.GetProperty("resource_revision").GetString()));
+    }
+
+    [TestMethod]
+    public void AddTask_RequiresCreationPreconditionsAndReturnsRevision()
+    {
+        var missing = JsonDocument.Parse(_tools.AddTask("Missing contract", mutation_id: null, if_absent: null));
+        Assert.AreEqual("precondition_required", missing.RootElement.GetProperty("error").GetString());
+
+        var created = JsonDocument.Parse(_tools.AddTask(
+            "Migrated task",
+            mutation_id: "compat-add",
+            if_absent: true));
+        Assert.IsTrue(created.RootElement.TryGetProperty("task_id", out _), created.RootElement.ToString());
+
+        Assert.AreEqual("Migrated task", new VaultService(Path.Combine(_vaultDir, "wiki", "todo"))
+            .Load(created.RootElement.GetProperty("task_id").GetString()!)!.Title);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(created.RootElement.GetProperty("resource_revision").GetString()));
+    }
+
+    [TestMethod]
     public void TransactTasks_CreatesTaskWithExplicitIdAndFields()
     {
         using var operations = JsonDocument.Parse("""

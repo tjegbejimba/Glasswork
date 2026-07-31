@@ -964,7 +964,12 @@ public sealed partial class ResourceMutationService
 
     private string? ApplyFields(GlassworkTask task, JsonElement fields)
     {
-        TaskService.EnsureCanMutate(task);
+        var repairingMalformedBlocker = task.IsBlocked
+            && task.NeedsBlockerDetails
+            && fields.TryGetProperty("blocked_reason", out _)
+            && fields.TryGetProperty("blocked_from_status", out _);
+        if (!repairingMalformedBlocker)
+            TaskService.EnsureCanMutate(task);
         string? requestedStatus = null;
         var hasBlockedReason = false;
         var hasBlockedFromStatus = false;
@@ -992,6 +997,10 @@ public sealed partial class ResourceMutationService
                 case "tags": task.Tags = ReadStringArray(property.Value, property.Name); break;
                 case "blocked_by": task.BlockedBy = ReadStringArray(property.Value, property.Name); break;
                 case "context_links": task.ContextLinks = ReadStringArray(property.Value, property.Name); break;
+                case "ado_link": task.AdoLink = ReadNullableInt(property.Value, property.Name); break;
+                case "ado_title": task.AdoTitle = ReadString(property.Value, property.Name); break;
+                case "links": task.Links = ReadLinks(property.Value, property.Name); break;
+                case "subtasks": task.Subtasks = ReadSubtasks(property.Value, property.Name); break;
                 case "description": task.Description = ReadString(property.Value, property.Name) ?? string.Empty; break;
                 case "notes":
                     if (property.Value.ValueKind == JsonValueKind.Object && property.Value.TryGetProperty("append", out var append))
@@ -1023,7 +1032,11 @@ public sealed partial class ResourceMutationService
                 }
                 else if (hasBlockedReason)
                 {
-                    TaskService.ApplyEditBlockedReason(task, task.BlockedReason ?? string.Empty);
+                    if (task.NeedsBlockerDetails && hasBlockedFromStatus)
+                        TaskService.ApplyRepairBlocked(task, task.BlockedReason ?? string.Empty,
+                            task.BlockedFromStatus!, _clock);
+                    else
+                        TaskService.ApplyEditBlockedReason(task, task.BlockedReason ?? string.Empty);
                 }
             }
             else
@@ -1074,6 +1087,17 @@ public sealed partial class ResourceMutationService
             ? null
             : value.ValueKind == JsonValueKind.String ? value.GetString() : throw new FormatException($"{name} must be a string or null.");
 
+    private static int? ReadNullableInt(JsonElement value, string name)
+    {
+        if (value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+            return number;
+        if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out number))
+            return number;
+        throw new FormatException($"{name} must be an integer or null.");
+    }
+
     private static DateTime? ReadDate(JsonElement value, string name)
     {
         var raw = ReadString(value, name);
@@ -1097,6 +1121,65 @@ public sealed partial class ResourceMutationService
                 result.Add(text.Trim());
         }
         return result.Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    private static List<TaskLink> ReadLinks(JsonElement value, string name)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+            throw new FormatException($"{name} must be an array.");
+
+        var result = new List<TaskLink>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object
+                || !item.TryGetProperty("type", out var type)
+                || !item.TryGetProperty("value", out var linkValue)
+                || type.ValueKind != JsonValueKind.String
+                || linkValue.ValueKind != JsonValueKind.String)
+                throw new FormatException($"{name} must contain link objects with type and value.");
+
+            result.Add(new TaskLink
+            {
+                Type = type.GetString()!,
+                Value = linkValue.GetString()!,
+                Label = item.TryGetProperty("label", out var label) ? ReadString(label, $"{name}.label") : null
+            });
+        }
+        return result;
+    }
+
+    private static List<SubTask> ReadSubtasks(JsonElement value, string name)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+            throw new FormatException($"{name} must be an array.");
+
+        var result = new List<SubTask>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object
+                || !item.TryGetProperty("text", out var text)
+                || text.ValueKind != JsonValueKind.String)
+                throw new FormatException($"{name} must contain objects with text.");
+
+            var subtask = new SubTask
+            {
+                Text = text.GetString()!,
+                IsCompleted = item.TryGetProperty("is_completed", out var completed)
+                    && completed.ValueKind == JsonValueKind.True,
+                Status = item.TryGetProperty("status", out var status) ? ReadString(status, $"{name}.status") : null,
+                Notes = item.TryGetProperty("notes", out var notes) ? ReadString(notes, $"{name}.notes") ?? string.Empty : string.Empty
+            };
+
+            if (item.TryGetProperty("metadata", out var metadata))
+            {
+                if (metadata.ValueKind != JsonValueKind.Object)
+                    throw new FormatException($"{name}.metadata must be an object.");
+                foreach (var entry in metadata.EnumerateObject())
+                    subtask.Metadata[entry.Name] = ReadString(entry.Value, $"{name}.metadata.{entry.Name}") ?? string.Empty;
+            }
+            result.Add(subtask);
+        }
+        return result;
     }
 
     private static bool IsValidPriority(string priority) =>
