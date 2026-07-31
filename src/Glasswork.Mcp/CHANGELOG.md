@@ -7,6 +7,14 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- **Fail-closed mutation contract** (issue #413): all public Task and
+  task-owned-file mutations require a client `mutation_id` plus `if_absent`
+  for creation or a Resource Revision for updates. Missing preconditions return
+  `precondition_required` without side effects; the legacy `if_exists`
+  compatibility modes are rejected. The MCP package version is now `0.9.0`.
+
 ### Added
 
 - **Explicit-ID `transact_tasks` creation** (issue #408): agents can create a

@@ -1418,7 +1418,7 @@ public sealed partial class ResourceMutationService
             task.Parent, task.Description, task.Notes, task.Tags, task.BlockedBy, task.CompletedAt,
             task.BlockedReason, revision);
 
-    internal static string Revision(byte[] bytes) =>
+    public static string Revision(byte[] bytes) =>
         $"rr1-{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
 
     private bool SemanticallyEqual(GlassworkTask left, GlassworkTask right) =>

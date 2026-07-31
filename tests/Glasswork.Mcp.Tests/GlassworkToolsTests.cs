@@ -269,47 +269,31 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void AddTask_IfExistsReturnExisting_ReturnsSameTaskId()
+    public void AddTask_IfExistsCompatibilityMode_IsRejected()
     {
-        var json1 = _tools.AddTask("Unique Task For Idempotency");
-        var id1 = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
-
-        var json2 = _tools.AddTask("Unique Task For Idempotency", if_exists: "return_existing");
-        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
-
-        Assert.AreEqual(id1, id2, "if_exists: return_existing should return the existing task ID.");
+        var result = JsonDocument.Parse(_tools.AddTask(
+            "Unique Task For Idempotency",
+            if_exists: "return_existing"));
+        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
     }
 
     [TestMethod]
-    public void AddTask_IfExistsUpdate_UpdatesExistingTask()
+    public void AddTask_IfExistsUpdateCompatibilityMode_IsRejected()
     {
-        var json1 = _tools.AddTask("Task To Update", description: "Original description");
-        var id1 = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
-
-        var json2 = _tools.AddTask("Task To Update", description: "Updated description", if_exists: "update");
-        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
-
-        Assert.AreEqual(id1, id2);
-        var content = File.ReadAllText(ResolveTodoPath($"{id2}.md"));
-        StringAssert.Contains(content, "Updated description");
+        var result = JsonDocument.Parse(_tools.AddTask(
+            "Task To Update",
+            if_exists: "update"));
+        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
     }
 
     [TestMethod]
-    public void AddTask_IfExistsUpdate_UpdatesType()
+    public void AddTask_IfExistsUpdateTypeCompatibilityMode_IsRejected()
     {
-        // Create task with default type
-        var json1 = _tools.AddTask("Task Type Update", description: "Original");
-        var id = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
-        var task1 = _vault.Load(id);
-        Assert.AreEqual(GlassworkTask.Types.Task, task1!.Type);
-        
-        // Update to PBI via add_task if_exists=update
-        var json2 = _tools.AddTask("Task Type Update", type: "Product Backlog Item", if_exists: "update");
-        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
-        Assert.AreEqual(id, id2); // Same task
-        
-        var task2 = _vault.Load(id);
-        Assert.AreEqual(GlassworkTask.Types.Pbi, task2!.Type);
+        var result = JsonDocument.Parse(_tools.AddTask(
+            "Task Type Update",
+            type: "Product Backlog Item",
+            if_exists: "update"));
+        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
     }
 
     [TestMethod]
@@ -1061,6 +1045,25 @@ public class GlassworkToolsTests
         var expectedFile = Path.Combine(artifactFolder, "plan.md");
         Assert.IsTrue(File.Exists(expectedFile), "Artifact file must exist on disk after add_artifact.");
         Assert.AreEqual("# Plan\n\nContent here.", File.ReadAllText(expectedFile));
+    }
+
+    [TestMethod]
+    public void AddArtifact_MissingMutationPreconditionsReturnsWithoutWriting()
+    {
+        var taskJson = JsonDocument.Parse(_tools.AddTask("Artifact precondition task"));
+        var taskId = taskJson.RootElement.GetProperty("task_id").GetString()!;
+
+        var result = JsonDocument.Parse(_tools.AddArtifact(
+            taskId,
+            "required.md",
+            "must not write",
+            mode: "create",
+            mutation_id: null,
+            if_absent: null,
+            if_revision: null));
+
+        Assert.AreEqual("precondition_required", result.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(File.Exists(Path.Combine(_vaultDir, "wiki", "todo", $"{taskId}.artifacts", "required.md")));
     }
 
     [TestMethod]
