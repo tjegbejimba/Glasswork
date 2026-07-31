@@ -71,6 +71,13 @@ public sealed class WayfinderWorkflowProofTests
         var mapResult = JsonDocument.Parse(tools.TransactTasks("map-1", map.RootElement)).RootElement;
         Assert.AreEqual("applied", mapResult.GetProperty("outcome").GetString());
         Assert.AreEqual(4, mapResult.GetProperty("tasks").GetArrayLength());
+        Assert.AreEqual(GlassworkTask.Types.Pbi, Load("parent-pbi").Type);
+        CollectionAssert.AreEquivalent(
+            new[] { "wayfinder-map", "reserved:pbi" },
+            Load("parent-pbi").Tags);
+        StringAssert.Contains(Load("parent-pbi").Description, "## Goal");
+        Assert.AreEqual("Map index: children are resolved atomically.", Load("parent-pbi").Notes);
+        CollectionAssert.AreEqual(new[] { "dependency-done" }, Load("child-a").BlockedBy);
 
         using var frontier = JsonDocument.Parse(tools.QueryTasks(
             parent_task_id: "parent-pbi",
@@ -92,11 +99,13 @@ public sealed class WayfinderWorkflowProofTests
 
         var dependencyRevision = frontierRoot.GetProperty("read_basis")[0]
             .GetProperty("resource_revision").GetString()!;
-        var childARevision = frontierRoot.GetProperty("tasks")[0]
-            .GetProperty("resource_revision").GetString()!;
         var childBRevision = frontierRoot.GetProperty("tasks")[1]
             .GetProperty("resource_revision").GetString()!;
-        var claimOperations = BuildClaim("child-b", childBRevision, "in-progress");
+        var claimOperations = BuildClaim(
+            "child-b",
+            childBRevision,
+            "in-progress",
+            dependencyRevision);
         var contenderOne = NewTools();
         var contenderTwo = NewTools();
 
@@ -109,22 +118,18 @@ public sealed class WayfinderWorkflowProofTests
         Assert.AreEqual(1, claimResults.Count(result =>
             result.RootElement.GetProperty("error").GetString() == "conflict"));
         Assert.AreEqual("in-progress", Load("child-b").Status);
+        Assert.AreEqual("todo", Load("child-a").Status);
 
-        using var addDependency = JsonDocument.Parse($$"""
+        var childARevisionBeforeDependencyChange = Revision("child-a");
+        using var changeDependency = JsonDocument.Parse($$"""
         [
-          { "op": "create_task", "task_id": "dependency-open", "if_absent": true,
-            "fields": { "title": "Unresolved dependency", "status": "todo" } },
-          { "op": "replace_task_relationships", "task_id": "child-a",
-            "relationship": "blocked_by",
-            "targets": ["dependency-done", "dependency-open"] }
+          { "op": "set_task_fields", "task_id": "dependency-done",
+            "if_revision": "{{dependencyRevision}}",
+            "fields": { "status": "todo" } }
         ]
         """);
-        using var dependencyAssertion =
-            JsonDocument.Parse($$"""[{"task_id":"child-a","if_revision":"{{childARevision}}"}]""");
         using var dependencyChange = JsonDocument.Parse(tools.TransactTasks(
-            "dependency-change",
-            addDependency.RootElement,
-            assertions: dependencyAssertion.RootElement));
+            "dependency-change", changeDependency.RootElement));
         Assert.AreEqual("applied", dependencyChange.RootElement.GetProperty("outcome").GetString());
 
         using var staleClaim = JsonDocument.Parse($$"""
@@ -132,12 +137,17 @@ public sealed class WayfinderWorkflowProofTests
           { "op": "assert_task_revision", "task_id": "dependency-done",
             "if_revision": "{{dependencyRevision}}" },
           { "op": "set_task_fields", "task_id": "child-a",
-            "if_revision": "{{childARevision}}",
+            "if_revision": "{{childARevisionBeforeDependencyChange}}",
             "fields": { "status": "in-progress" } }
         ]
         """);
         var staleResult = JsonDocument.Parse(tools.TransactTasks("stale-claim", staleClaim.RootElement)).RootElement;
         Assert.AreEqual("conflict", staleResult.GetProperty("error").GetString());
+        CollectionAssert.Contains(
+            staleResult.GetProperty("diagnostics").EnumerateArray()
+                .SelectMany(diagnostic => diagnostic.GetProperty("task_ids").EnumerateArray())
+                .Select(taskId => taskId.GetString()).ToArray(),
+            "dependency-done");
 
         using var refreshed = JsonDocument.Parse(tools.QueryTasks(
             parent_task_id: "parent-pbi",
@@ -161,18 +171,18 @@ public sealed class WayfinderWorkflowProofTests
             } },
           { "op": "set_task_fields", "task_id": "parent-pbi",
             "if_revision": "{{parentRevision}}",
-            "fields": { "notes": { "append": "- child-b: completed" } } }
+            "fields": { "notes": { "append": "[[child-b]]: completed" } } }
         ]
         """);
         var failingResolution = new GlassworkTools(
             new VaultContext(_vaultDir),
-            faults: new ThrowOnceFault(ResourceMutationFailurePoint.AfterReplacementBeforeCommit));
+            faults: new ThrowOnOccurrenceFault(ResourceMutationFailurePoint.DuringReplacement, 2));
         var failedResolution = JsonDocument.Parse(
             failingResolution.TransactTasks("resolve-child-b-failure", resolution.RootElement)).RootElement;
         Assert.AreEqual("operation_failed", failedResolution.GetProperty("error").GetString());
         Assert.AreEqual("in-progress", Load("child-b").Status);
         Assert.AreEqual("Not started.", Load("child-b").Notes.Split('\n').Last());
-        Assert.IsFalse(Load("parent-pbi").Notes.Contains("- child-b: completed", StringComparison.Ordinal));
+        Assert.IsFalse(Load("parent-pbi").Notes.Contains("[[child-b]]: completed", StringComparison.Ordinal));
 
         var responseLoss = new GlassworkTools(
             new VaultContext(_vaultDir),
@@ -187,12 +197,21 @@ public sealed class WayfinderWorkflowProofTests
         Assert.IsTrue(replay.GetProperty("replayed").GetBoolean());
         Assert.AreEqual("done", Load("child-b").Status);
         Assert.AreEqual("Resolution: completed by the generic workflow.", Load("child-b").Notes);
-        Assert.AreEqual(1, Load("parent-pbi").Notes.Split("- child-b: completed").Length - 1);
-        Assert.AreEqual(5, Directory.GetFiles(Path.Combine(_vaultDir, "wiki", "todo"), "*.md").Length);
+        Assert.AreEqual(1, Load("parent-pbi").Notes.Split("[[child-b]]: completed").Length - 1);
+        CollectionAssert.AreEquivalent(
+            new[] { "parent-pbi", "dependency-done", "child-a", "child-b" },
+            Directory.GetFiles(Path.Combine(_vaultDir, "wiki", "todo"), "*.md")
+                .Select(Path.GetFileNameWithoutExtension).ToArray());
 
         var finalTools = NewTools();
-        using var finalRead = JsonDocument.Parse(finalTools.GetTask("child-b"));
-        Assert.AreEqual("done", finalRead.RootElement.GetProperty("status").GetString());
+        using var finalRead = JsonDocument.Parse(finalTools.QueryTasks(
+            status: [GlassworkTask.Statuses.Done],
+            order_by: "id",
+            limit: 10));
+        CollectionAssert.Contains(
+            finalRead.RootElement.GetProperty("tasks").EnumerateArray()
+                .Select(task => task.GetProperty("id").GetString()).ToArray(),
+            "child-b");
     }
 
     private GlassworkTools NewTools() => new(new VaultContext(_vaultDir));
@@ -200,13 +219,23 @@ public sealed class WayfinderWorkflowProofTests
     private GlassworkTask Load(string taskId) =>
         new VaultService(Path.Combine(_vaultDir, "wiki", "todo")).Load(taskId)!;
 
-    private string Revision(string taskId) =>
-        JsonDocument.Parse(NewTools().GetTask(taskId))
-            .RootElement.GetProperty("resource_revision").GetString()!;
+    private string Revision(string taskId)
+    {
+        using var result = JsonDocument.Parse(NewTools().QueryTasks(order_by: "id", limit: 100));
+        return result.RootElement.GetProperty("tasks").EnumerateArray()
+            .Single(task => task.GetProperty("id").GetString() == taskId)
+            .GetProperty("resource_revision").GetString()!;
+    }
 
-    private static JsonDocument BuildClaim(string taskId, string revision, string status) =>
+    private JsonDocument BuildClaim(
+        string taskId,
+        string revision,
+        string status,
+        string dependencyRevision) =>
         JsonDocument.Parse($$"""
         [
+          { "op": "assert_task_revision", "task_id": "dependency-done",
+            "if_revision": "{{dependencyRevision}}" },
           { "op": "set_task_fields", "task_id": "{{taskId}}",
             "if_revision": "{{revision}}", "fields": { "status": "{{status}}" } }
         ]
@@ -223,6 +252,19 @@ public sealed class WayfinderWorkflowProofTests
                 _thrown = true;
                 throw new IOException("Injected proof failure.");
             }
+        }
+    }
+
+    private sealed class ThrowOnOccurrenceFault(
+        ResourceMutationFailurePoint point,
+        int occurrence) : IResourceMutationFaultInjector
+    {
+        private int _count;
+
+        public void ThrowIfInjected(ResourceMutationFailurePoint candidate)
+        {
+            if (candidate == point && ++_count == occurrence)
+                throw new IOException("Injected proof failure.");
         }
     }
 }
