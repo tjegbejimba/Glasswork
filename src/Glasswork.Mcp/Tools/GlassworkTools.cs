@@ -3850,7 +3850,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("created_review_items")] bool CreatedReviewItems);
 
     private AutomationReviewQueueService CreateAutomationReviewQueueService() =>
-        new(_vaultRoot, selfWrites: _selfWrites);
+        new(_vaultRoot, selfWrites: _selfWrites, taskVault: _vault);
     private MeetingTranscriptSyncService CreateMeetingTranscriptSyncService() => new(_vaultRoot, _vault, CreateAutomationReviewQueueService());
 
     private static bool TryParseRunKind(string? value, out ReviewSourceRunKind runKind)
