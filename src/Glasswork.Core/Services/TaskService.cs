@@ -28,9 +28,14 @@ public class TaskService
     public GlassworkTask CreateTask(string title, string priority = "medium", string? parent = null,
         int? adoLink = null, string? adoTitle = null)
     {
+        var id = VaultService.GenerateId(title);
+        var suffix = 1;
+        while (_vault.Exists(id))
+            id = $"{VaultService.GenerateId(title)}-{suffix++}";
+
         var task = new GlassworkTask
         {
-            Id = VaultService.GenerateId(title),
+            Id = id,
             Title = title,
             Status = GlassworkTask.Statuses.Todo,
             Priority = priority,

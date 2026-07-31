@@ -1018,7 +1018,7 @@ public sealed class AutomationReviewQueueService
         if (!IsStatefulProposal(payload))
             return null;
 
-        var vault = new VaultService(_todoPath);
+        var vault = new VaultService(_todoPath, _selfWrites);
         var task = vault.Load(taskId);
         if (task is null)
             return "__missing__";

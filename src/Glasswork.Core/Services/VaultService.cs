@@ -21,6 +21,7 @@ public class VaultService
     private readonly SelfWriteCoordinator? _selfWrites;
     private readonly ConcurrentDictionary<string, byte[]> _lastReadBytes = new(StringComparer.Ordinal);
     private Func<IReadOnlyList<string>>? _managedRecovery;
+    private Func<IReadOnlyList<string>>? _managedDeleteRecovery;
     private ResourceMutationService? _mutations;
     private readonly object _mutationGate = new();
 
@@ -66,13 +67,24 @@ public class VaultService
         _managedRecovery = recovery ?? throw new ArgumentNullException(nameof(recovery));
     }
 
+    internal void RegisterManagedDeleteRecovery(Func<IReadOnlyList<string>> recovery)
+    {
+        _managedDeleteRecovery = recovery ?? throw new ArgumentNullException(nameof(recovery));
+    }
+
     internal void RunManagedRecovery()
     {
         var recoveredTaskIds = _managedRecovery?.Invoke();
-        if (recoveredTaskIds is null) return;
+        if (recoveredTaskIds is not null)
+        {
+            foreach (var taskId in recoveredTaskIds.Distinct(StringComparer.Ordinal))
+                RaiseTaskWritten(taskId);
+        }
 
-        foreach (var taskId in recoveredTaskIds.Distinct(StringComparer.Ordinal))
-            RaiseTaskWritten(taskId);
+        var recoveredDeletes = _managedDeleteRecovery?.Invoke();
+        if (recoveredDeletes is null) return;
+        foreach (var taskId in recoveredDeletes.Distinct(StringComparer.Ordinal))
+            RaiseTaskDeleted(taskId);
     }
 
     internal void NotifyTaskWritten(string taskId) => RaiseTaskWritten(taskId);
@@ -169,6 +181,7 @@ public class VaultService
     /// </summary>
     public void UpdateSubtaskCheckbox(string taskId, string subtaskTitle, bool isCompleted)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
@@ -197,6 +210,7 @@ public class VaultService
     /// </summary>
     public void SetSubtaskMyDay(string taskId, string subtaskTitle, bool isMyDay)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
@@ -261,6 +275,7 @@ public class VaultService
     /// </summary>
     public void SetSubtaskDue(string taskId, string subtaskTitle, DateTime? due)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
@@ -330,6 +345,7 @@ public class VaultService
     /// </summary>
     public void SetAdoLink(string taskId, int? adoId, string? adoTitle)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
@@ -396,6 +412,7 @@ public class VaultService
     /// </summary>
     public void SetParent(string taskId, string? parent)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
@@ -455,6 +472,7 @@ public class VaultService
     /// </summary>
     public void SetMyDay(string taskId, DateTime myDay)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
@@ -509,6 +527,7 @@ public class VaultService
     /// </summary>
     public void ToggleMyDay(string taskId, bool inMyDay)
     {
+        RunManagedRecovery();
         var path = GetFilePath(taskId);
         if (!File.Exists(path)) return;
 
@@ -565,6 +584,7 @@ public class VaultService
     /// </summary>
     public void AddSubtask(string taskId, string title)
     {
+        RunManagedRecovery();
         if (string.IsNullOrWhiteSpace(title)) return;
 
         var path = GetFilePath(taskId);
@@ -846,6 +866,17 @@ public class VaultService
         else
             File.Move(tempPath, fullPath);
         return true;
+    }
+
+    internal byte[]? TryReadOwnedBytesUnsafe(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var vaultPrefix = Path.GetFullPath(_vaultPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(vaultPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Owned file must be inside the Task vault.", nameof(path));
+        return File.Exists(fullPath) ? File.ReadAllBytes(fullPath) : null;
     }
 
     public void ReplaceBytes(string taskId, byte[] bytes)

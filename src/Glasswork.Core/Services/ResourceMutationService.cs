@@ -70,6 +70,7 @@ public sealed partial class ResourceMutationService
     private readonly Func<DateTimeOffset> _clock;
     private readonly IResourceMutationFaultInjector? _faults;
     private readonly FrontmatterParser _parser = new();
+    private readonly HashSet<string> _recoveredDeletes = new(StringComparer.Ordinal);
 
     public ResourceMutationService(
         string vaultPath,
@@ -83,6 +84,7 @@ public sealed partial class ResourceMutationService
         _faults = faults;
         _statePath = Path.Combine(vaultPath, ".glasswork", "resource-mutations.json");
         _vault.RegisterManagedRecovery(RecoverWithExclusiveLease);
+        _vault.RegisterManagedDeleteRecovery(DrainRecoveredDeletes);
         _vault.RunManagedRecovery();
         _vault.AttachMutationService(this);
     }
@@ -92,13 +94,15 @@ public sealed partial class ResourceMutationService
         ArgumentNullException.ThrowIfNull(task);
         if (string.IsNullOrWhiteSpace(task.Id))
             throw new ArgumentException("Task must have an ID before saving.", nameof(task));
+        if (task.ResourceRevision is null && _vault.TryReadBytesUnsafe(task.Id) is not null)
+            throw new InvalidOperationException("if_absent is required for a new Task.");
 
         var notifications = new HashSet<string>(StringComparer.Ordinal);
         try
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
-                RecoverUnsafe();
+                notifications.UnionWith(RecoverUnsafe());
                 var updated = Encoding.UTF8.GetBytes(_parser.Serialize(task));
                 CommitBytesUnsafe(
                     task.Id,
@@ -112,7 +116,7 @@ public sealed partial class ResourceMutationService
         catch
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
-                RecoverUnsafe();
+                notifications.UnionWith(RecoverUnsafe());
             throw;
         }
         finally
@@ -129,11 +133,12 @@ public sealed partial class ResourceMutationService
         ArgumentNullException.ThrowIfNull(updated);
 
         var notifications = new HashSet<string>(StringComparer.Ordinal);
+        var recoveredWrites = new HashSet<string>(StringComparer.Ordinal);
         try
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
-                RecoverUnsafe();
+                recoveredWrites.UnionWith(RecoverUnsafe());
                 CommitBytesUnsafe(taskId, updated, notifications, expectedOriginal);
             }
 
@@ -141,11 +146,13 @@ public sealed partial class ResourceMutationService
         catch
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
-                RecoverUnsafe();
+                recoveredWrites.UnionWith(RecoverUnsafe());
             throw;
         }
         finally
         {
+            foreach (var id in recoveredWrites)
+                _vault.NotifyTaskWritten(id);
             foreach (var id in notifications)
                 _vault.NotifyTaskWritten(id);
         }
@@ -157,11 +164,12 @@ public sealed partial class ResourceMutationService
             throw new ArgumentException("Task ID is required.", nameof(taskId));
 
         var notifications = new HashSet<string>(StringComparer.Ordinal);
+        var recoveredWrites = new HashSet<string>(StringComparer.Ordinal);
         try
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
-                RecoverUnsafe();
+                recoveredWrites.UnionWith(RecoverUnsafe());
                 var original = _vault.TryReadBytesUnsafe(taskId);
                 if (original is null)
                     return false;
@@ -193,12 +201,14 @@ public sealed partial class ResourceMutationService
         catch
         {
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
-                RecoverUnsafe();
+                recoveredWrites.UnionWith(RecoverUnsafe());
             throw;
         }
 
         finally
         {
+            foreach (var id in recoveredWrites)
+                _vault.NotifyTaskWritten(id);
             foreach (var id in notifications)
                 _vault.NotifyTaskDeleted(id);
         }
@@ -211,7 +221,24 @@ public sealed partial class ResourceMutationService
         using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
         {
             RecoverUnsafe();
-            return _vault.ReplaceOwnedFileUnsafe(path, content, overwrite);
+            var original = _vault.TryReadOwnedBytesUnsafe(path);
+            if (!overwrite && original is not null)
+                return false;
+            var journal = new JournalEntry(
+                string.Empty,
+                original is null ? null : Convert.ToBase64String(original),
+                Convert.ToBase64String(content),
+                $"app-file-{Guid.NewGuid():N}",
+                Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant(),
+                null,
+                Committed: false,
+                Existed: original is not null,
+                OwnedPath: path);
+            WriteJournal(journal);
+            _vault.ReplaceOwnedFileUnsafe(path, content, overwrite: true);
+            WriteJournal(journal with { Committed = true });
+            DeleteJournal();
+            return true;
         }
     }
 
@@ -1359,7 +1386,8 @@ public sealed partial class ResourceMutationService
         string? ExpectedRevision,
         bool Committed,
         bool Existed = true,
-        bool Deleted = false);
+        bool Deleted = false,
+        string? OwnedPath = null);
 
     private State ReadState()
     {
@@ -1402,7 +1430,40 @@ public sealed partial class ResourceMutationService
     private IReadOnlyList<string> RecoverWithExclusiveLease()
     {
         using var lease = VaultScopedCoordinator.EnterExclusive(_vaultPath);
-        return RecoverUnsafe();
+        var deletedTaskId = ReadPendingCommittedDeleteId();
+        var recovered = RecoverUnsafe();
+        if (deletedTaskId is not null)
+            _recoveredDeletes.Add(deletedTaskId);
+        return recovered;
+    }
+
+    private IReadOnlyList<string> DrainRecoveredDeletes()
+    {
+        var deleted = _recoveredDeletes.ToArray();
+        _recoveredDeletes.Clear();
+        return deleted;
+    }
+
+    private string? ReadPendingCommittedDeleteId()
+    {
+        if (!File.Exists(JournalPath)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(JournalPath));
+            var root = document.RootElement;
+            return root.TryGetProperty("Deleted", out var deleted)
+                && deleted.ValueKind == JsonValueKind.True
+                && root.TryGetProperty("Committed", out var committed)
+                && committed.ValueKind == JsonValueKind.True
+                && root.TryGetProperty("TaskId", out var taskId)
+                && taskId.ValueKind == JsonValueKind.String
+                ? taskId.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private IReadOnlyList<string> RecoverUnsafe()
@@ -1418,6 +1479,23 @@ public sealed partial class ResourceMutationService
 
             var entry = JsonSerializer.Deserialize<JournalEntry>(document.RootElement.GetRawText())
                 ?? throw new InvalidDataException("Mutation journal is invalid.");
+            if (entry.OwnedPath is not null)
+            {
+                var bytes = entry.Committed
+                    ? Convert.FromBase64String(entry.Updated)
+                    : entry.Original is null ? null : Convert.FromBase64String(entry.Original);
+                if (bytes is null)
+                {
+                    if (File.Exists(entry.OwnedPath))
+                        File.Delete(entry.OwnedPath);
+                }
+                else
+                {
+                    _vault.ReplaceOwnedFileUnsafe(entry.OwnedPath, bytes, overwrite: true);
+                }
+                DeleteJournal();
+                return Array.Empty<string>();
+            }
             if (!entry.Existed && !entry.Committed)
             {
                 if (File.Exists(Path.Combine(_vaultPath, $"{entry.TaskId}.md")))
@@ -1460,7 +1538,7 @@ public sealed partial class ResourceMutationService
             }
 
             DeleteJournal();
-            return entry.Deleted ? Array.Empty<string>() : [entry.TaskId];
+            return entry.Committed && !entry.Deleted ? [entry.TaskId] : Array.Empty<string>();
         }
         catch (JsonException)
         {
@@ -1493,7 +1571,8 @@ public sealed partial class ResourceMutationService
                 _vault.DeleteUnsafe(task.TaskId);
             else if (task.Original is not null)
                 _vault.ReplaceBytesUnsafe(task.TaskId, Convert.FromBase64String(task.Original));
-            recovered.Add(task.TaskId);
+            if (entry.Committed)
+                recovered.Add(task.TaskId);
         }
 
         if (entry.Committed && !string.IsNullOrWhiteSpace(entry.MutationId))
