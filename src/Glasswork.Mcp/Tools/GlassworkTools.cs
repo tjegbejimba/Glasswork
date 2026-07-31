@@ -125,10 +125,11 @@ public sealed class GlassworkTools
         string? scheduled = null,
         bool? my_day = null,
         string? notes = null,
-        string? type = null,
-        string? if_exists = null)
-        => AddTask(title, Guid.NewGuid().ToString("N"), true, description, parent_task_id, status,
-            blocked_reason, priority, due_date, scheduled, my_day, notes, type, if_exists);
+        string? type = null)
+    {
+        return AddTask(title, Guid.NewGuid().ToString("N"), true, description, parent_task_id, status,
+            blocked_reason, priority, due_date, scheduled, my_day, notes, type);
+    }
 
     [McpServerTool(Name = "add_task")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
@@ -146,8 +147,7 @@ public sealed class GlassworkTools
         [Description("Optional scheduled date (yyyy-MM-dd format). Sets my_day to this future date.")] string? scheduled = null,
         [Description("If true, sets my_day to today.")] bool? my_day = null,
         [Description("Optional notes content. Becomes the Notes section (ADR 0002).")] string? notes = null,
-        [Description("Task type: task, pbi, or bug. Accepts broader aliases (Product Backlog Item/User Story/Epic/Feature → pbi). Defaults to task (ADR 0016).")] string? type = null,
-        [Description("Idempotency mode: 'error' (default - fail on duplicate title), 'return_existing' (return existing task), or 'update' (update existing task).")] string? if_exists = null)
+        [Description("Task type: task, pbi, or bug. Accepts broader aliases (Product Backlog Item/User Story/Epic/Feature → pbi). Defaults to task (ADR 0016).")] string? type = null)
     {
         using var scope = _logger?.BeginCall("add_task");
         try
@@ -177,64 +177,10 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("invalid_blocked_reason", "blocked_reason is required when status is blocked."));
             }
 
-            var ifExistsMode = if_exists ?? "error";
-
-            // Check if task with this title already exists (for if_exists modes)
-            GlassworkTask? existing = null;
-            if (ifExistsMode != "error")
-            {
-                var allTaskIds = Directory.EnumerateFiles(_vaultPath, "*.md")
-                    .Select(f => Path.GetFileNameWithoutExtension(f))
-                    .ToList();
-                
-                foreach (var taskId in allTaskIds)
-                {
-                    var existingTask = _vault.Load(taskId);
-                    if (existingTask != null && existingTask.Title.Equals(title, StringComparison.OrdinalIgnoreCase))
-                    {
-                        existing = existingTask;
-                        break;
-                    }
-                }
-
-                if (existing != null)
-                {
-                    if (ifExistsMode == "return_existing")
-                    {
-                        return JsonSerializer.Serialize(new AddTaskResult(TaskId: existing.Id, Path: TodoRelativeTaskPath(existing.Id)));
-                    }
-                    else if (ifExistsMode == "update")
-                    {
-                        // Build fields object for UpdateTask
-                        var updateFields = new Dictionary<string, object?>();
-                        if (description != null) updateFields["description"] = description;
-                        if (status != null) updateFields["status"] = status;
-                        if (blocked_reason != null) updateFields["blocked_reason"] = blocked_reason;
-                        if (priority != null) updateFields["priority"] = priority;
-                        if (due_date != null) updateFields["due_date"] = due_date;
-                        if (scheduled != null) updateFields["scheduled"] = scheduled;
-                        if (my_day.HasValue) updateFields["my_day"] = my_day.Value;
-                        if (notes != null) updateFields["notes"] = notes;
-                        if (type != null) updateFields["type"] = type;
-
-                        var fieldsJson = JsonSerializer.Serialize(updateFields);
-                        var fieldsElement = JsonDocument.Parse(fieldsJson).RootElement;
-                        return UpdateTask(
-                            existing.Id,
-                            fieldsElement,
-                            mutation_id,
-                            ResourceRevision(existing.Id));
-                    }
-                }
-            }
-
             var safeParent = SanitizeId(parent_task_id);
 
             var baseId = VaultService.GenerateId(title);
             var id = baseId;
-            int counter = 1;
-            while (_vault.Exists(id))
-                id = $"{baseId}-{counter++}";
 
             var taskPriority = priority ?? GlassworkTask.Priorities.Medium;
             var taskType = GlassworkTask.Types.Normalize(type);
@@ -285,6 +231,8 @@ public sealed class GlassworkTools
                 JsonSerializer.SerializeToElement(createFields));
             scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
             if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
+                return SerializeMutationOutcome(mutation);
+            if (mutation.Replayed)
                 return SerializeMutationOutcome(mutation);
 
             return JsonSerializer.Serialize(new AddTaskResult(
@@ -925,6 +873,7 @@ public sealed class GlassworkTools
 
                     var kind = ArtifactKindResolver.Resolve(file);
                     var fileInfo = new FileInfo(file);
+                    var artifactBytes = File.ReadAllBytes(file);
                     var size = fileInfo.Length;
                     var mtime = fileInfo.LastWriteTimeUtc.ToString("O");
                     
@@ -979,7 +928,8 @@ public sealed class GlassworkTools
                         Size: sizeNullable,
                         Mtime: mtimeNullable,
                         Inline: inline,
-                        Reason: reason));
+                        Reason: reason,
+                        ResourceRevision: ResourceMutationService.Revision(artifactBytes)));
                 }
                 artifacts.Sort((a, b) => string.Compare(a.Filename, b.Filename, StringComparison.OrdinalIgnoreCase));
             }
@@ -1010,6 +960,28 @@ public sealed class GlassworkTools
         }
     }
 
+    public string AddArtifact(string task_id, string filename, string? content)
+        => AddArtifact(task_id, filename, content,
+            Guid.NewGuid().ToString("N"), true, null, null);
+
+    public string AddArtifact(string task_id, string filename, string? content, string? mode)
+    {
+        var safeId = SanitizeId(task_id);
+        var artifactPath = safeId is null
+            ? null
+            : Path.Combine(_vaultPath, safeId + ".artifacts", filename);
+        var existingRevision = artifactPath is not null && File.Exists(artifactPath)
+            ? ResourceMutationService.Revision(File.ReadAllBytes(artifactPath))
+            : null;
+        return AddArtifact(task_id, filename, content,
+            Guid.NewGuid().ToString("N"),
+            !string.Equals(mode, "overwrite", StringComparison.OrdinalIgnoreCase) || existingRevision is null
+                ? true
+                : null,
+            existingRevision,
+            mode);
+    }
+
     [McpServerTool(Name = "add_artifact")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Create a text artifact file in the task's artifact folder. Artifacts are agent-produced work products (plans, designs, logs). Supports .md, .txt, .html, .htm extensions. Rejects binary kinds (image/other). Fails with 'conflict' if the file already exists and mode=create.")]
@@ -1017,11 +989,27 @@ public sealed class GlassworkTools
         [Description("Task ID that owns the artifact.")] string task_id,
         [Description("Filename for the artifact, must be a text extension: .md, .txt, .html, or .htm (e.g. 'plan.md', 'notes.txt'). Simple filenames only — no path separators.")] string filename,
         [Description("Text content to write into the artifact file.")] string? content,
+        [Description("Client-generated idempotency key.")] string? mutation_id,
+        [Description("Must be true when creating a new artifact.")] bool? if_absent,
+        [Description("Resource Revision observed before overwriting an artifact.")] string? if_revision,
         [Description("Write mode: \"create\" (default, fails if file exists) or \"overwrite\" (create-or-replace).")] string? mode = null)
     {
         using var scope = _logger?.BeginCall("add_artifact");
         try
         {
+            var effectiveMode = mode?.Trim().ToLowerInvariant() ?? "create";
+            if (string.IsNullOrWhiteSpace(mutation_id)
+                || (effectiveMode == "create" && if_absent != true)
+                || (effectiveMode == "overwrite"
+                    && string.IsNullOrWhiteSpace(if_revision)
+                    && if_absent != true))
+            {
+                scope?.SetResult("precondition_required");
+                return JsonSerializer.Serialize(new ErrorResult(
+                    "precondition_required",
+                    "mutation_id and if_absent: true for create or if_revision for overwrite are required."));
+            }
+
             var safeId = SanitizeId(task_id);
             if (safeId is null || !_vault.Exists(safeId))
             {
@@ -1077,7 +1065,6 @@ public sealed class GlassworkTools
                     $"Filename '{filename}' is not allowed. Use a simple filename without path separators or '..'."));
             }
 
-            var effectiveMode = mode?.Trim().ToLowerInvariant() ?? "create";
             if (effectiveMode != "create" && effectiveMode != "overwrite")
             {
                 scope?.SetResult("error");
@@ -1085,26 +1072,22 @@ public sealed class GlassworkTools
                     $"Invalid mode '{mode}'. Valid values: create, overwrite."));
             }
 
-            if (effectiveMode == "create" && File.Exists(resolvedPath))
-            {
-                scope?.SetResult("conflict");
-                return JsonSerializer.Serialize(new ErrorResult("conflict",
-                    $"Artifact '{filename}' already exists for task '{safeId}'."));
-            }
-
             Directory.CreateDirectory(artifactFolder);
             
             var writeSw = Stopwatch.StartNew();
-            if (!_mutations.CommitTaskOwnedFile(
-                    resolvedPath,
-                    Encoding.UTF8.GetBytes(content),
-                    overwrite: effectiveMode == "overwrite"))
+            var mutation = _mutations.CommitTaskOwnedFileConditional(
+                resolvedPath,
+                Encoding.UTF8.GetBytes(content),
+                overwrite: effectiveMode == "overwrite",
+                mutation_id,
+                if_revision,
+                if_absent);
+            if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
             {
-                // Another concurrent write won the race → structured conflict
-                scope?.SetResult("conflict");
-                return JsonSerializer.Serialize(new ErrorResult("conflict",
-                    $"Artifact '{filename}' was created concurrently for task '{safeId}'."));
+                return SerializeMutationOutcome(mutation);
             }
+            if (mutation.Replayed)
+                return SerializeMutationOutcome(mutation);
             scope?.RecordPhase("write", writeSw.ElapsedMilliseconds);
 
             // Populate result with new additive fields
@@ -1131,7 +1114,8 @@ public sealed class GlassworkTools
                 Kind: kind.ToString(),
                 Size: size,
                 Inline: inline,
-                Reason: reason));
+                Reason: reason,
+                ResourceRevision: mutation.CurrentRevision));
         }
         catch
         {
@@ -1185,11 +1169,15 @@ public sealed class GlassworkTools
             }
 
             var readSw = Stopwatch.StartNew();
-            var content = File.ReadAllText(resolvedPath);
+            var artifactBytes = File.ReadAllBytes(resolvedPath);
+            var content = Encoding.UTF8.GetString(artifactBytes);
             scope?.RecordPhase("read_artifact", readSw.ElapsedMilliseconds);
 
             var resultPath = TodoRelativeArtifactPath(safeId, Path.GetFileName(resolvedPath));
-            return JsonSerializer.Serialize(new GetArtifactResult(Content: content, Path: resultPath));
+            return JsonSerializer.Serialize(new GetArtifactResult(
+                Content: content,
+                Path: resultPath,
+                ResourceRevision: ResourceMutationService.Revision(artifactBytes)));
         }
         catch
         {
@@ -2253,6 +2241,7 @@ public sealed class GlassworkTools
             
             var kind = ArtifactKindResolver.Resolve(filePath);
             var fileInfo = new FileInfo(filePath);
+            var artifactBytes = File.ReadAllBytes(filePath);
             var size = fileInfo.Length;
             
             string? content = null;
@@ -2264,7 +2253,7 @@ public sealed class GlassworkTools
             {
                 try
                 {
-                    content = File.ReadAllText(filePath);
+                    content = Encoding.UTF8.GetString(artifactBytes);
                     inline = true;
                 }
                 catch
@@ -2296,7 +2285,8 @@ public sealed class GlassworkTools
                 Size: size,
                 Mtime: fileInfo.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                 Inline: inline,
-                Reason: reason));
+                Reason: reason,
+                ResourceRevision: ResourceMutationService.Revision(artifactBytes)));
         }
         artifacts.Sort((a, b) => string.Compare(a.Filename, b.Filename, StringComparison.OrdinalIgnoreCase));
         return artifacts;
@@ -2781,7 +2771,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Size = null,
         [property: JsonPropertyName("mtime"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Mtime = null,
         [property: JsonPropertyName("inline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Inline = null,
-        [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null);
+        [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null,
+        [property: JsonPropertyName("resource_revision"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResourceRevision = null);
 
     private sealed record GetTaskResult(
         [property: JsonPropertyName("id")] string Id,
@@ -2804,11 +2795,13 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("kind"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Kind = null,
         [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Size = null,
         [property: JsonPropertyName("inline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Inline = null,
-        [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null);
+        [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null,
+        [property: JsonPropertyName("resource_revision"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResourceRevision = null);
 
     private sealed record GetArtifactResult(
         [property: JsonPropertyName("content")] string Content,
-        [property: JsonPropertyName("path")] string Path);
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
     private sealed record SetMyDayResult(
         [property: JsonPropertyName("task_id")] string TaskId,
@@ -2860,7 +2853,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Size = null,
         [property: JsonPropertyName("mtime"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Mtime = null,
         [property: JsonPropertyName("inline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Inline = null,
-        [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null);
+        [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null,
+        [property: JsonPropertyName("resource_revision"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResourceRevision = null);
 
     private sealed record LoadContextSubtree(
         [property: JsonPropertyName("task")] TaskCore Task,

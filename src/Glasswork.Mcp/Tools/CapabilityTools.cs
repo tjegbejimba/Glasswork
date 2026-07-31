@@ -16,17 +16,15 @@ public sealed class CapabilityTools
             ContractVersion: "1.0",
             ImplementedCapabilities:
             [
-                "resource_revisions",
                 "relation_aware_queries",
+                "resource_revisions",
+                "read_assertions",
                 "typed_transactions",
+                "complete_set_relationships",
                 "transaction_idempotency",
                 "recoverable_all_or_none_commit",
             ],
-            FutureCapabilities:
-            [
-                "read_assertions",
-                "complete_set_relationships",
-            ]));
+            FutureCapabilities: []));
     }
 
     private sealed record CapabilitiesResult(

@@ -181,17 +181,16 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void AddTask_DuplicateTitle_GeneratesUniqueId()
+    public void AddTask_DuplicateTitle_ConflictsWithoutAnExplicitId()
     {
         var json1 = _tools.AddTask("Duplicate Task");
         var json2 = _tools.AddTask("Duplicate Task");
 
         var id1 = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
-        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
+        var second = JsonDocument.Parse(json2);
 
-        Assert.AreNotEqual(id1, id2, "Two tasks with the same title must get distinct IDs.");
+        Assert.AreEqual("conflict", second.RootElement.GetProperty("error").GetString());
         Assert.IsTrue(File.Exists(Path.Combine(TasksDir, $"{id1}.md")));
-        Assert.IsTrue(File.Exists(Path.Combine(TasksDir, $"{id2}.md")));
     }
 
     [TestMethod]
@@ -266,50 +265,6 @@ public class GlassworkToolsTests
         var content = File.ReadAllText(ResolveTodoPath(path));
         StringAssert.Contains(content, "## Notes");
         StringAssert.Contains(content, "These are my notes.");
-    }
-
-    [TestMethod]
-    public void AddTask_IfExistsReturnExisting_ReturnsSameTaskId()
-    {
-        var json1 = _tools.AddTask("Unique Task For Idempotency");
-        var id1 = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
-
-        var json2 = _tools.AddTask("Unique Task For Idempotency", if_exists: "return_existing");
-        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
-
-        Assert.AreEqual(id1, id2, "if_exists: return_existing should return the existing task ID.");
-    }
-
-    [TestMethod]
-    public void AddTask_IfExistsUpdate_UpdatesExistingTask()
-    {
-        var json1 = _tools.AddTask("Task To Update", description: "Original description");
-        var id1 = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
-
-        var json2 = _tools.AddTask("Task To Update", description: "Updated description", if_exists: "update");
-        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
-
-        Assert.AreEqual(id1, id2);
-        var content = File.ReadAllText(ResolveTodoPath($"{id2}.md"));
-        StringAssert.Contains(content, "Updated description");
-    }
-
-    [TestMethod]
-    public void AddTask_IfExistsUpdate_UpdatesType()
-    {
-        // Create task with default type
-        var json1 = _tools.AddTask("Task Type Update", description: "Original");
-        var id = JsonDocument.Parse(json1).RootElement.GetProperty("task_id").GetString()!;
-        var task1 = _vault.Load(id);
-        Assert.AreEqual(GlassworkTask.Types.Task, task1!.Type);
-        
-        // Update to PBI via add_task if_exists=update
-        var json2 = _tools.AddTask("Task Type Update", type: "Product Backlog Item", if_exists: "update");
-        var id2 = JsonDocument.Parse(json2).RootElement.GetProperty("task_id").GetString()!;
-        Assert.AreEqual(id, id2); // Same task
-        
-        var task2 = _vault.Load(id);
-        Assert.AreEqual(GlassworkTask.Types.Pbi, task2!.Type);
     }
 
     [TestMethod]
@@ -1061,6 +1016,46 @@ public class GlassworkToolsTests
         var expectedFile = Path.Combine(artifactFolder, "plan.md");
         Assert.IsTrue(File.Exists(expectedFile), "Artifact file must exist on disk after add_artifact.");
         Assert.AreEqual("# Plan\n\nContent here.", File.ReadAllText(expectedFile));
+    }
+
+    [TestMethod]
+    public void AddArtifact_MissingMutationPreconditionsReturnsWithoutWriting()
+    {
+        var taskJson = JsonDocument.Parse(_tools.AddTask("Artifact precondition task"));
+        var taskId = taskJson.RootElement.GetProperty("task_id").GetString()!;
+
+        var result = JsonDocument.Parse(_tools.AddArtifact(
+            taskId,
+            "required.md",
+            "must not write",
+            mode: "create",
+            mutation_id: null,
+            if_absent: null,
+            if_revision: null));
+
+        Assert.AreEqual("precondition_required", result.RootElement.GetProperty("error").GetString());
+        Assert.IsFalse(File.Exists(Path.Combine(_vaultDir, "wiki", "todo", $"{taskId}.artifacts", "required.md")));
+    }
+
+    [TestMethod]
+    public void AddArtifact_UsesRevisionAndMutationIdInsideTheManagedBoundary()
+    {
+        var taskJson = JsonDocument.Parse(_tools.AddTask("Artifact revision task"));
+        var taskId = taskJson.RootElement.GetProperty("task_id").GetString()!;
+
+        var created = JsonDocument.Parse(_tools.AddArtifact(
+            taskId, "revision.md", "v1", mutation_id: "artifact-create", if_absent: true, if_revision: null));
+        var revision = created.RootElement.GetProperty("resource_revision").GetString()!;
+
+        var stale = JsonDocument.Parse(_tools.AddArtifact(
+            taskId, "revision.md", "v2", mutation_id: "artifact-stale", if_absent: null,
+            if_revision: "rr1-stale", mode: "overwrite"));
+        Assert.AreEqual("conflict", stale.RootElement.GetProperty("error").GetString());
+
+        var replay = JsonDocument.Parse(_tools.AddArtifact(
+            taskId, "revision.md", "v1", mutation_id: "artifact-create", if_absent: true, if_revision: null));
+        Assert.IsTrue(replay.RootElement.GetProperty("replayed").GetBoolean());
+        Assert.AreEqual(revision, replay.RootElement.GetProperty("current_revision").GetString());
     }
 
     [TestMethod]

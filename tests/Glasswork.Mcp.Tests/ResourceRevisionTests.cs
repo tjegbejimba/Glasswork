@@ -46,7 +46,7 @@ public sealed class ResourceRevisionTests
     }
 
     [TestMethod]
-    public void GetCapabilities_SeparatesImplementedAndFutureGuarantees()
+    public void GetCapabilities_AdvertisesTheCompleteEnforcedContract()
     {
         var result = JsonDocument.Parse(new CapabilityTools().GetCapabilities());
         var root = result.RootElement;
@@ -59,17 +59,17 @@ public sealed class ResourceRevisionTests
             .EnumerateArray()
             .Select(x => x.GetString())
             .ToArray();
-        var future = root.GetProperty("future_capabilities")
-            .EnumerateArray()
-            .Select(x => x.GetString())
-            .ToArray();
+        var future = root.TryGetProperty("future_capabilities", out var futureProperty)
+            ? futureProperty.EnumerateArray().Select(x => x.GetString()).ToArray()
+            : [];
 
+        CollectionAssert.Contains(implemented, "relation_aware_queries");
+        CollectionAssert.Contains(implemented, "read_assertions");
         CollectionAssert.Contains(implemented, "typed_transactions");
+        CollectionAssert.Contains(implemented, "complete_set_relationships");
         CollectionAssert.Contains(implemented, "transaction_idempotency");
         CollectionAssert.Contains(implemented, "recoverable_all_or_none_commit");
-        CollectionAssert.DoesNotContain(future, "typed_transactions");
-        CollectionAssert.DoesNotContain(future, "transaction_idempotency");
-        CollectionAssert.DoesNotContain(future, "recoverable_all_or_none_commit");
+        Assert.AreEqual(0, future.Length);
     }
 
     [TestMethod]

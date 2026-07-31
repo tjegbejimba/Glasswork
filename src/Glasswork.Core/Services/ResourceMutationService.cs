@@ -245,6 +245,84 @@ public sealed partial class ResourceMutationService
         }
     }
 
+    public ResourceMutationOutcome CommitTaskOwnedFileConditional(
+            string path,
+            byte[] content,
+            bool overwrite,
+            string? mutationId,
+            string? expectedRevision,
+            bool? ifAbsent)
+        {
+            ArgumentNullException.ThrowIfNull(content);
+            using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+            {
+                RecoverUnsafe();
+                var current = _vault.TryReadOwnedBytesUnsafe(path);
+                var hash = Convert.ToHexString(SHA256.HashData(
+                    Encoding.UTF8.GetBytes($"{path}\n{overwrite}\n{expectedRevision}\n{ifAbsent}\n{Convert.ToBase64String(content)}")))
+                    .ToLowerInvariant();
+                var state = ReadState();
+                Prune(state);
+
+                if (string.IsNullOrWhiteSpace(mutationId)
+                    || (overwrite && current is not null && string.IsNullOrWhiteSpace(expectedRevision))
+                    || (!overwrite && ifAbsent != true))
+                    return new ResourceMutationOutcome(
+                        mutationId ?? string.Empty, "precondition_required", false, expectedRevision,
+                        current is null ? null : Revision(current), null,
+                        "mutation_id and the applicable artifact precondition are required.");
+
+                if (state.Outcomes.TryGetValue(mutationId, out var recorded))
+                {
+                    if (!string.Equals(recorded.RequestHash, hash, StringComparison.Ordinal))
+                        return new ResourceMutationOutcome(
+                            mutationId, "mutation_id_reused", false, expectedRevision, null, null,
+                            "mutation_id was already used for a different request.");
+                    return recorded.Outcome with { Replayed = true };
+                }
+
+                var currentRevision = current is null ? null : Revision(current);
+                if (!overwrite && current is not null)
+                    return Record(state, mutationId, hash, new ResourceMutationOutcome(
+                        mutationId, "conflict", false, null, currentRevision, null,
+                        "Artifact already exists."));
+                if (overwrite && expectedRevision is not null
+                    && !string.Equals(expectedRevision, currentRevision, StringComparison.Ordinal))
+                    return Record(state, mutationId, hash, new ResourceMutationOutcome(
+                        mutationId, "conflict", false, expectedRevision, currentRevision, null,
+                        "Artifact changed before commit."));
+                if (current is not null && current.AsSpan().SequenceEqual(content))
+                    return Record(state, mutationId, hash, new ResourceMutationOutcome(
+                        mutationId, "no_op", false, expectedRevision, currentRevision, null));
+
+                var journal = new JournalEntry(
+                    string.Empty,
+                    current is null ? null : Convert.ToBase64String(current),
+                    Convert.ToBase64String(content),
+                    mutationId,
+                    hash,
+                    expectedRevision,
+                    Committed: false,
+                    Existed: current is not null,
+                    OwnedPath: path);
+                WriteJournal(journal);
+                try
+                {
+                    _vault.ReplaceOwnedFileUnsafe(path, content, overwrite: true);
+                    WriteJournal(journal with { Committed = true });
+                    var outcome = Record(state, mutationId, hash, new ResourceMutationOutcome(
+                        mutationId, "applied", false, expectedRevision, Revision(content), null));
+                    DeleteJournal();
+                    return outcome;
+                }
+                catch
+                {
+                    RecoverUnsafe();
+                    throw;
+                }
+            }
+        }
+
     private void CommitBytesUnsafe(
         string taskId,
         byte[] updated,
@@ -1418,7 +1496,7 @@ public sealed partial class ResourceMutationService
             task.Parent, task.Description, task.Notes, task.Tags, task.BlockedBy, task.CompletedAt,
             task.BlockedReason, revision);
 
-    internal static string Revision(byte[] bytes) =>
+    public static string Revision(byte[] bytes) =>
         $"rr1-{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
 
     private bool SemanticallyEqual(GlassworkTask left, GlassworkTask right) =>

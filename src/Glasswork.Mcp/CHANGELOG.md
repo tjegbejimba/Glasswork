@@ -5,7 +5,15 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.9.0] — 2026-07-31
+
+### Breaking
+
+- **Fail-closed mutation contract** (issue #413): all public Task and
+  task-owned-file mutations require a client `mutation_id` plus `if_absent`
+  for creation or a Resource Revision for updates. Missing preconditions return
+  `precondition_required` without side effects; the legacy `if_exists`
+  compatibility modes are rejected. The MCP package version is now `0.9.0`.
 
 ### Added
 

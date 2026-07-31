@@ -43,7 +43,7 @@ builder.Services
         options.ServerInfo = new Implementation
         {
             Name = "glasswork-mcp",
-            Version = "0.7.0",
+            Version = "0.9.0",
         };
     })
     .WithStdioServerTransport()

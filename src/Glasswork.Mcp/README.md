@@ -2,7 +2,10 @@
 
 `glasswork-mcp` is a standalone [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI agents typed read/write access to a [Glasswork](https://github.com/tjegbejimba/Glasswork) task vault. It communicates over stdio and requires no running Glasswork app instance.
 
-> **v0.4.0**: adds `get_artifact` tool for single-artifact reads and `include_artifact_bodies` parameter on `get_task` — enables agent-to-agent handoff by allowing resuming agents to read prior artifacts directly through MCP. Both features honor path-traversal guards and emit `read_artifact` trace phase. See [Tool reference](#tool-reference) for schemas and [CHANGELOG](./CHANGELOG.md) for migration notes.
+> **v0.9.0**: enforces fail-closed mutations. Clients must provide a
+> `mutation_id` and an applicable `if_absent` or Resource Revision precondition
+> on every Task and task-owned-file mutation. See [CHANGELOG](./CHANGELOG.md)
+> for migration notes.
 
 ---
 
@@ -137,21 +140,20 @@ Use this read-only operation before relying on optional workflow guarantees:
 {
   "contract_version": "1.0",
   "implemented_capabilities": [
-    "resource_revisions",
     "relation_aware_queries",
+    "resource_revisions",
+    "read_assertions",
     "typed_transactions",
+    "complete_set_relationships",
     "transaction_idempotency",
     "recoverable_all_or_none_commit"
-  ],
-  "future_capabilities": [
-    "read_assertions",
-    "complete_set_relationships"
   ]
 }
 ```
 
-`implemented_capabilities` are guarantees clients may rely on now. Names in
-`future_capabilities` are explicitly not available yet.
+`implemented_capabilities` are guarantees clients may rely on now. There is no
+runtime downgrade or compatibility negotiation: a server that does not
+advertise the complete set must not be used for this contract.
 
 Every response containing a Task or Task summary includes `resource_revision`.
 It is an opaque, versioned token derived from the exact bytes of that Task's
@@ -162,7 +164,8 @@ equality and must not parse or otherwise depend on the digest format.
 
 ### `transact_tasks`
 
-`transact_tasks` accepts one typed operation per call. `create_task` requires an
+`transact_tasks` accepts typed operations. Every mutation requires a
+client-generated `mutation_id` and an applicable precondition. `create_task` requires an
 explicit safe Task ID and `if_absent: true`; it never generates a title-based
 collision suffix. The operation returns the created Task and its Resource
 Revision, reports an existing ID as a conflict, and durably replays an exact
@@ -170,6 +173,24 @@ request with the same `mutation_id`. `set_task_fields` requires the current
 Task Resource Revision, rejects contradictory transaction/operation revisions,
 preserves hand-formatted Markdown for semantic no-ops, and uses the same
 journaled all-or-none recovery boundary.
+
+All Task-bearing reads, including compatibility reads, include
+`resource_revision`. Stable error envelopes use `conflict`,
+`validation_error`, `precondition_required`, `mutation_id_reused`, and
+`operation_failed`; clients must branch on `error` rather than message text.
+Exact replay of the same request and `mutation_id` returns the recorded outcome.
+Reusing a mutation ID for a changed request is rejected.
+
+`query_tasks` returns a coherent page plus a complete `read_basis`, and
+`transact_tasks` accepts read-only Revision assertions, typed field operations,
+and complete relationship replacement. Recovery runs before managed access and
+commits changes all-or-none.
+
+`add_artifact` uses the same fail-closed rule: creation requires
+`mutation_id` and `if_absent: true`; overwrite requires `mutation_id` and the
+artifact Resource Revision in `if_revision`. Clients upgrading from older
+versions must stop sending unconditional calls and migrate `if_exists` task
+creation to explicit `transact_tasks` operations.
 
 ```json
 {

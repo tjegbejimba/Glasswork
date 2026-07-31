@@ -1,7 +1,10 @@
 # ADR 0007: `glasswork-mcp` — standalone MCP server for typed agent vault access
 
 **Status**: Accepted
-**Amended**: 2026-07-06 — the shipped tool surface has grown well beyond the v1 four; see the [2026-07-06 Amendment](#amendment--2026-07-06-shipped-tool-surface).
+**Amended**: 2026-07-31 — the Resource Mutation Module is now the enforced
+mutation boundary; the mtime and runtime-negotiation text below is superseded.
+The shipped tool surface has grown well beyond the v1 four; see the
+[2026-07-06 Amendment](#amendment--2026-07-06-shipped-tool-surface).
 **Context slice**: resolves issue #67 (MCP server); depends on a new prerequisite issue (file-based `SelfWriteCoordinator`); loosely related to #84 (vault settings) and #69 (quick-capture).
 
 ## Context
@@ -63,18 +66,27 @@ This works zero-config in the common case (user picked a vault in the app), and 
 
 ### 5. Concurrent edit semantics: Resource Revisions
 
-**Amended by #404/#405:** the original mtime-based write precondition below is
-superseded by the Resource Mutation Module contract. Task-bearing reads expose
-an opaque, versioned digest of the exact bytes used for the managed read.
-Mutation slices must use that Resource Revision rather than filesystem metadata.
-The existing mutation tools remain compatibility adapters until those later
-slices migrate their inputs.
+**Amended by #404/#405/#413:** the original mtime-based write precondition below
+is superseded by the Resource Mutation Module contract. Task-bearing reads
+expose an opaque, versioned digest of the exact bytes used for the managed read.
+Every public mutation requires a client-generated `mutation_id` and exactly one
+applicable precondition: `if_absent: true` for creation or `if_revision` for an
+existing resource. Missing inputs fail closed with `precondition_required`;
+there is no unconditional compatibility fallback.
+
+The only approved unmanaged bootstrap exceptions are the existing V1-to-V2
+frontmatter migrations in `VaultService.MigrateToV2` and
+`VaultService.MigrateAllToV2`. They run before managed access, register
+Self-write markers, are idempotent, and are not part of the MCP mutation
+surface. All normal Task and task-owned-file writes use the Resource Mutation
+Module.
 
 For any tool that modifies an existing file (initially none in v1; future `update_task` etc.):
 
-- The tool reads the file and captures its `LastWriteTimeUtc`.
-- The write only succeeds if the file's mtime hasn't changed since the read.
-- On conflict, the tool returns a structured error: `{ "error": "conflict", "message": "...", "current_mtime": "..." }`. The agent decides whether to retry or surface to the user.
+- The tool reads the exact managed bytes and captures their Resource Revision.
+- The write only succeeds if the supplied Revision still matches.
+- On conflict, the tool returns a structured error containing the expected and
+  current Revisions plus the current snapshot where applicable.
 
 For `add_task` and `add_artifact` (creating new files), the equivalent check is "file does not exist." All writes go through the temp-file-then-rename pattern.
 
@@ -101,9 +113,12 @@ If profiling later shows `list_tasks` is hot, a short TTL cache can be added wit
 
 `glasswork-mcp` follows semver. The project remains in `0.x` indefinitely; breaking tool-shape changes require a minor bump and a `CHANGELOG.md` entry. Tool input/output JSON shapes are documented in `src/Glasswork.Mcp/README.md`.
 
-**Amended by #404/#405:** `get_capabilities` is now the read-only runtime
-handshake. It reports contract version `1.0` and stable named capabilities,
-including which Resource Mutation Module guarantees are still future work.
+**Amended by #404/#405/#413:** `get_capabilities` is the read-only contract
+handshake. It reports contract version `1.0` and the complete stable capability
+set: relation-aware queries, Resource Revisions, read assertions, typed
+transactions, complete-set relationships, idempotency, and recoverable
+all-or-none commit. There is no runtime downgrade or negotiation; clients must
+fail before querying or mutating when the complete set is absent.
 
 **Amended by #407:** `transact_tasks` is now the first shipped Resource
 Mutation Module adapter. It accepts one ordered `set_task_fields` operation,
@@ -171,8 +186,8 @@ landed. Current surface, grouped by verb:
 - **Task deletion** — no delete-a-task tool exists. The soft-vs-hard decision is
   ADR 0018 (resolving #207); `delete_subtask` (in-file, low-risk) ships independently.
 
-The boundaries in §9 (stdio-only, vault-only writes, path-traversal guard, optimistic
-concurrency via mtime, self-write marker) continue to govern **every** tool added
+The boundaries in §9 (stdio-only, vault-only writes, path-traversal guard, Resource
+Revision preconditions, self-write marker) continue to govern **every** tool added
 above and every tool still to come.
 
 ### Amendment — blocked task contract
@@ -211,7 +226,7 @@ structured validation diagnostics.
 ### Negative
 
 - Disk I/O per write for the marker file. Single-user, single-machine — negligible in practice.
-- The mtime-based conflict check has a TOCTOU window between read and write. Single-machine, single-user, low-frequency writes — theoretical risk only.
+- Resource Revisions remove filesystem mtime from the concurrency contract.
 - Vault discovery has two sources. Mitigated by env-var-first ordering and a clear error message on miss.
 
 ### Neutral
@@ -234,6 +249,8 @@ Filed as sub-issues of #67:
 - Multi-vault support. Single active vault remains the model.
 - Sync. Vault is a folder on disk; sync is the user's problem (OneDrive, Dropbox, git, etc.).
 - Network transport (HTTP, named pipe, TCP). Stdio only.
-- Lock-based concurrency. Optimistic via mtime is the ceiling for v1.
+- Linearizable compare-and-swap against arbitrary unmanaged writers remains out
+  of scope; cooperating writers use Resource Revisions and the Vault-scoped
+  mutation boundary.
 - Auth, ACLs, sandboxing beyond the path-traversal guard.
 - Tool surface beyond the four listed in §3 — explicitly deferred until friction is observed.
