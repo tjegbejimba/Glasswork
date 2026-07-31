@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Glasswork.Core.Models;
@@ -17,6 +19,7 @@ public class VaultService
     private readonly string _vaultPath;
     private readonly FrontmatterParser _parser = new();
     private readonly SelfWriteCoordinator? _selfWrites;
+    private readonly ConcurrentDictionary<string, byte[]> _lastReadBytes = new(StringComparer.Ordinal);
 
     public VaultService(string vaultPath) : this(vaultPath, null) { }
 
@@ -78,8 +81,10 @@ public class VaultService
         {
             try
             {
-                var content = File.ReadAllText(file);
+                var bytes = File.ReadAllBytes(file);
+                var content = Encoding.UTF8.GetString(bytes);
                 var task = _parser.Parse(content);
+                _lastReadBytes[Path.GetFileNameWithoutExtension(file)] = bytes;
                 tasks.Add(task);
             }
             catch (Exception ex)
@@ -99,8 +104,22 @@ public class VaultService
         var filePath = GetFilePath(taskId);
         if (!File.Exists(filePath)) return null;
 
-        var content = File.ReadAllText(filePath);
-        return _parser.Parse(content);
+        var bytes = File.ReadAllBytes(filePath);
+        var task = _parser.Parse(Encoding.UTF8.GetString(bytes));
+        _lastReadBytes[taskId] = bytes;
+        return task;
+    }
+
+    /// <summary>
+    /// Returns the exact bytes used by the most recent successful read of a task.
+    /// </summary>
+    public byte[] TryGetLastReadBytes(string taskId)
+    {
+        if (_lastReadBytes.TryGetValue(taskId, out var bytes))
+            return bytes;
+
+        var filePath = GetFilePath(taskId);
+        return File.ReadAllBytes(filePath);
     }
 
     /// <summary>

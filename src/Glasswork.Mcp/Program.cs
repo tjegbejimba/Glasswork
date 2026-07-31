@@ -35,6 +35,7 @@ builder.Services.AddSingleton(vaultContext);
 builder.Services.AddSingleton(mcpLogger);
 builder.Services.AddSingleton(preconditionRegistry);
 builder.Services.AddTransient<Glasswork.Mcp.Tools.GlassworkTools>();
+builder.Services.AddTransient<Glasswork.Mcp.Tools.CapabilityTools>();
 
 builder.Services
     .AddMcpServer(options =>
@@ -42,11 +43,12 @@ builder.Services
         options.ServerInfo = new Implementation
         {
             Name = "glasswork-mcp",
-            Version = "0.4.0",
+            Version = "0.7.0",
         };
     })
     .WithStdioServerTransport()
     .WithTools<Glasswork.Mcp.Tools.GlassworkTools>()
+    .WithTools<Glasswork.Mcp.Tools.CapabilityTools>()
     .WithRequestFilters(filters =>
     {
         filters.AddListToolsFilter(

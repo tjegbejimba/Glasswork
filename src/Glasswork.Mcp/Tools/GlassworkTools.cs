@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -268,7 +269,8 @@ public sealed class GlassworkTools
                             Path: TodoRelativeTaskPath(t.Id),
                             Ready: signals.Ready,
                             UrgencyScore: signals.UrgencyScore,
-                            BacklinkCount: signals.BacklinkCount);
+                            BacklinkCount: signals.BacklinkCount,
+                            ResourceRevision: ResourceRevision(t.Id));
                     })
                     .ToList();
                 return JsonSerializer.Serialize(new ListTasksResult(summaries));
@@ -312,6 +314,7 @@ public sealed class GlassworkTools
                     DueDate: t.Due?.ToString("yyyy-MM-dd"),
                     Scheduled: t.MyDay?.ToString("yyyy-MM-dd"),
                     ParentId: t.Parent,
+                    ResourceRevision: ResourceRevision(t.Id),
                     Links: t.Links.Select(link => new MyDayLink(
                         Type: link.Type,
                         Url: link.Value,
@@ -405,7 +408,8 @@ public sealed class GlassworkTools
                     Status: MapToExternalStatus(t.Status),
                     Priority: t.Priority,
                     Depth: CalculateDepth(t.Id, all),
-                    SubtaskCount: all.Count(child => child.Parent == t.Id)))
+                    SubtaskCount: all.Count(child => child.Parent == t.Id),
+                    ResourceRevision: ResourceRevision(t.Id)))
                 .ToList();
 
             var total = subtaskInfos.Count;
@@ -413,7 +417,11 @@ public sealed class GlassworkTools
             var completionRate = total > 0 ? (double)doneCount / total : 0.0;
 
             var result = new ListSubtasksResult(
-                Parent: new ParentInfo(sanitizedId, parentTask.Title, MapToExternalStatus(parentTask.Status)),
+                Parent: new ParentInfo(
+                    sanitizedId,
+                    parentTask.Title,
+                    MapToExternalStatus(parentTask.Status),
+                    ResourceRevision(parentTask.Id)),
                 Subtasks: subtaskInfos,
                 Total: total,
                 CompletionRate: completionRate);
@@ -561,7 +569,8 @@ public sealed class GlassworkTools
                         Snippet: h.Snippet,
                         Ready: signals.Ready,
                         UrgencyScore: signals.UrgencyScore,
-                        BacklinkCount: signals.BacklinkCount);
+                        BacklinkCount: signals.BacklinkCount,
+                        ResourceRevision: ResourceRevision(h.Id));
                 })
                 .ToList();
             scope?.SetCount("task_count", hits.Count);
@@ -696,6 +705,7 @@ public sealed class GlassworkTools
                 Description: task.Description,
                 Notes: task.Notes,
                 Artifacts: artifacts,
+                ResourceRevision: ResourceRevision(task.Id),
                 BlockedReason: task.BlockedReason,
                 BlockedAt: task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
                 BlockedFromStatus: task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus),
@@ -1898,6 +1908,7 @@ public sealed class GlassworkTools
         ParentId: task.Parent,
         Description: task.Description,
         Notes: task.Notes,
+        ResourceRevision: ResourceRevision(task.Id),
         BlockedReason: task.BlockedReason,
         BlockedAt: task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
         BlockedFromStatus: task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus),
@@ -2047,7 +2058,11 @@ public sealed class GlassworkTools
         HashSet<string> fields,
         IReadOnlyDictionary<string, int> backlinkCounts)
     {
-        var dict = new Dictionary<string, object?> { ["id"] = task.Id };
+        var dict = new Dictionary<string, object?>
+        {
+            ["id"] = task.Id,
+            ["resource_revision"] = ResourceRevision(task.Id),
+        };
         var signals = SignalsFor(task, backlinkCounts);
         if (fields.Contains("title")) dict["title"] = task.Title;
         if (fields.Contains("status")) dict["status"] = MapToExternalStatus(task.Status);
@@ -2109,6 +2124,13 @@ public sealed class GlassworkTools
 
     private static string NormalizeOutputPath(string path) => path.Replace('\\', '/');
 
+    private string ResourceRevision(string taskId)
+    {
+        var bytes = _vault.TryGetLastReadBytes(taskId);
+        var digest = SHA256.HashData(bytes);
+        return $"rr1-{Convert.ToHexString(digest).ToLowerInvariant()}";
+    }
+
     private static string MapToExternalStatus(string internalStatus) => internalStatus switch
     {
         GlassworkTask.Statuses.InProgress => "doing",
@@ -2138,7 +2160,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("path")] string Path,
         [property: JsonPropertyName("ready")] bool Ready,
         [property: JsonPropertyName("urgency_score")] double UrgencyScore,
-        [property: JsonPropertyName("backlink_count")] int BacklinkCount);
+        [property: JsonPropertyName("backlink_count")] int BacklinkCount,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
     private sealed record ListTasksResult(
         [property: JsonPropertyName("tasks")] List<TaskSummary> Tasks);
@@ -2155,7 +2178,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("snippet")] string Snippet,
         [property: JsonPropertyName("ready")] bool Ready,
         [property: JsonPropertyName("urgency_score")] double UrgencyScore,
-        [property: JsonPropertyName("backlink_count")] int BacklinkCount);
+        [property: JsonPropertyName("backlink_count")] int BacklinkCount,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
     private sealed record SearchTasksResult(
         [property: JsonPropertyName("tasks")] List<TaskSearchSummary> Tasks);
@@ -2178,6 +2202,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("description")] string Description,
         [property: JsonPropertyName("notes")] string Notes,
         [property: JsonPropertyName("artifacts")] List<ArtifactInfo> Artifacts,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision,
         [property: JsonPropertyName("blocked_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedReason = null,
         [property: JsonPropertyName("blocked_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedAt = null,
         [property: JsonPropertyName("blocked_from_status"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedFromStatus = null,
@@ -2228,6 +2253,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("parent_id")] string? ParentId,
         [property: JsonPropertyName("description")] string Description,
         [property: JsonPropertyName("notes")] string Notes,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision,
         [property: JsonPropertyName("blocked_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedReason = null,
         [property: JsonPropertyName("blocked_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedAt = null,
         [property: JsonPropertyName("blocked_from_status"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedFromStatus = null,
@@ -2286,7 +2312,8 @@ public sealed class GlassworkTools
     private sealed record ParentInfo(
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("title")] string Title,
-        [property: JsonPropertyName("status")] string Status);
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
     private sealed record SubtaskInfo(
         [property: JsonPropertyName("id")] string Id,
@@ -2294,7 +2321,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("status")] string Status,
         [property: JsonPropertyName("priority")] string Priority,
         [property: JsonPropertyName("depth")] int Depth,
-        [property: JsonPropertyName("subtask_count")] int SubtaskCount);
+        [property: JsonPropertyName("subtask_count")] int SubtaskCount,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
     private sealed record ListSubtasksResult(
         [property: JsonPropertyName("parent")] ParentInfo Parent,
@@ -2502,7 +2530,8 @@ public sealed class GlassworkTools
                     DueDate: t.Due!.Value.ToString("yyyy-MM-dd"),
                     DaysOverdue: (today - t.Due!.Value.Date).Days,
                     Priority: t.Priority,
-                    InMyDay: t.IsMyDay))
+                    InMyDay: t.IsMyDay,
+                    ResourceRevision: ResourceRevision(t.Id)))
                 .ToList();
 
             var result = new ListOverdueResult(
@@ -2552,7 +2581,8 @@ public sealed class GlassworkTools
                         CompletedAt: t.CompletedAt!.Value.ToString("O"),
                         Priority: t.Priority,
                         Links: t.Links.ToArray(),
-                        AdoLink: adoLink?.Value); // Just the ID, not a constructed URL
+                        AdoLink: adoLink?.Value,
+                        ResourceRevision: ResourceRevision(t.Id)); // Just the ID, not a constructed URL
                 })
                 .ToArray();
 
@@ -2636,7 +2666,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("completed_at")] string CompletedAt,
         [property: JsonPropertyName("priority")] string Priority,
         [property: JsonPropertyName("links")] TaskLink[] Links,
-        [property: JsonPropertyName("ado_link")] string? AdoLink);
+        [property: JsonPropertyName("ado_link")] string? AdoLink,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
     private sealed record InProgressTaskInfo(
         [property: JsonPropertyName("id")] string Id,
@@ -2662,6 +2693,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("due_date")] string? DueDate,
         [property: JsonPropertyName("scheduled")] string? Scheduled,
         [property: JsonPropertyName("parent_id")] string? ParentId,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision,
         [property: JsonPropertyName("links")] List<MyDayLink> Links);
 
     private sealed record MyDayLink(
@@ -2682,7 +2714,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("due_date")] string DueDate,
         [property: JsonPropertyName("days_overdue")] int DaysOverdue,
         [property: JsonPropertyName("priority")] string Priority,
-        [property: JsonPropertyName("in_my_day")] bool InMyDay);
+        [property: JsonPropertyName("in_my_day")] bool InMyDay,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
     private sealed record ListOverdueResult(
         [property: JsonPropertyName("tasks")] List<OverdueTask> Tasks,
@@ -2725,6 +2758,7 @@ public sealed class GlassworkTools
                 TaskId: bundle.TaskId,
                 Title: bundle.Title,
                 Status: MapToExternalStatus(bundle.Status),
+                ResourceRevision: ResourceRevision(bundle.TaskId),
                 Description: bundle.Description,
                 Notes: bundle.Notes,
                 ActiveSubtasks: bundle.ActiveSubtasks.Select(s => new ContextSubtaskInfo(
@@ -2765,6 +2799,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("title")] string Title,
         [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision,
         [property: JsonPropertyName("description")] string? Description,
         [property: JsonPropertyName("notes")] string? Notes,
         [property: JsonPropertyName("active_subtasks")] ContextSubtaskInfo[] ActiveSubtasks,
@@ -3161,7 +3196,8 @@ public sealed class GlassworkTools
                 Tasks: tasks.Select(task => new MeetingTranscriptSyncAttachableTaskSummary(
                     TaskId: task.TaskId,
                     Title: task.Title,
-                    Status: task.Status)).ToList()));
+                    Status: task.Status,
+                    ResourceRevision: ResourceRevision(task.TaskId))).ToList()));
         }
         catch
         {
@@ -3392,7 +3428,8 @@ public sealed class GlassworkTools
     private sealed record MeetingTranscriptSyncAttachableTaskSummary(
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("title")] string Title,
-        [property: JsonPropertyName("status")] string Status);
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
     private sealed record MeetingTranscriptSyncManualAttachToolResult(
         [property: JsonPropertyName("stable_meeting_id")] string StableMeetingId,

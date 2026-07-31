@@ -61,7 +61,14 @@ Both `GLASSWORK_VAULT` and `vault.path` refer to the **vault root** — the top-
 
 This works zero-config in the common case (user picked a vault in the app), and supports cross-machine / cross-OS / no-app scenarios via the env var. When #84 (configurable vault setting) ships, the "app state file" leg gets updated to read the new location — single-line change.
 
-### 5. Concurrent edit semantics: optimistic concurrency via mtime
+### 5. Concurrent edit semantics: Resource Revisions
+
+**Amended by #404/#405:** the original mtime-based write precondition below is
+superseded by the Resource Mutation Module contract. Task-bearing reads expose
+an opaque, versioned digest of the exact bytes used for the managed read.
+Mutation slices must use that Resource Revision rather than filesystem metadata.
+The existing mutation tools remain compatibility adapters until those later
+slices migrate their inputs.
 
 For any tool that modifies an existing file (initially none in v1; future `update_task` etc.):
 
@@ -92,7 +99,11 @@ If profiling later shows `list_tasks` is hot, a short TTL cache can be added wit
 
 ### 8. Schema versioning: semver on binary, stay in 0.x
 
-`glasswork-mcp` follows semver. The project remains in `0.x` indefinitely; breaking tool-shape changes require a minor bump and a `CHANGELOG.md` entry. No per-tool version field in responses, no runtime negotiation. Tool input/output JSON shapes are documented in `src/Glasswork.Mcp/README.md`.
+`glasswork-mcp` follows semver. The project remains in `0.x` indefinitely; breaking tool-shape changes require a minor bump and a `CHANGELOG.md` entry. Tool input/output JSON shapes are documented in `src/Glasswork.Mcp/README.md`.
+
+**Amended by #404/#405:** `get_capabilities` is now the read-only runtime
+handshake. It reports contract version `1.0` and stable named capabilities,
+including which Resource Mutation Module guarantees are still future work.
 
 ### 9. Auth & scope
 
