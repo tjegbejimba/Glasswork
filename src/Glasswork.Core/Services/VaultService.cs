@@ -73,6 +73,7 @@ public class VaultService
     /// </summary>
     public List<GlassworkTask> LoadAll()
     {
+        using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         var tasks = new List<GlassworkTask>();
         var files = Directory.GetFiles(_vaultPath, "*.md")
             .Where(f => !Path.GetFileName(f).StartsWith('_'));
@@ -101,6 +102,7 @@ public class VaultService
     /// </summary>
     public GlassworkTask? Load(string taskId)
     {
+        using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         var filePath = GetFilePath(taskId);
         if (!File.Exists(filePath)) return null;
 
@@ -115,6 +117,7 @@ public class VaultService
     /// </summary>
     public byte[] TryGetLastReadBytes(string taskId)
     {
+        using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         if (_lastReadBytes.TryGetValue(taskId, out var bytes))
             return bytes;
 
@@ -656,8 +659,11 @@ public class VaultService
 
         var content = _parser.Serialize(task);
         var path = GetFilePath(task.Id);
-        _selfWrites?.RegisterWrite(path);
-        File.WriteAllText(path, content);
+        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+        {
+            _selfWrites?.RegisterWrite(path);
+            File.WriteAllText(path, content);
+        }
         RaiseTaskWritten(task.Id);
     }
 
@@ -763,7 +769,42 @@ public class VaultService
     /// <summary>
     /// Check if a task file exists.
     /// </summary>
-    public bool Exists(string taskId) => File.Exists(GetFilePath(taskId));
+    public bool Exists(string taskId)
+    {
+        using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
+        return File.Exists(GetFilePath(taskId));
+    }
+
+    public byte[]? TryReadBytes(string taskId)
+    {
+        using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
+        return TryReadBytesUnsafe(taskId);
+    }
+
+    internal byte[]? TryReadBytesUnsafe(string taskId)
+    {
+        var path = GetFilePath(taskId);
+        return File.Exists(path) ? File.ReadAllBytes(path) : null;
+    }
+
+    public void ReplaceBytes(string taskId, byte[] bytes)
+    {
+        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+            ReplaceBytesUnsafe(taskId, bytes);
+        RaiseTaskWritten(taskId);
+    }
+
+    internal void ReplaceBytesUnsafe(string taskId, byte[] bytes)
+    {
+        var path = GetFilePath(taskId);
+        _selfWrites?.RegisterWrite(path);
+        var temp = path + ".mutation.tmp";
+        File.WriteAllBytes(temp, bytes);
+        if (File.Exists(path))
+            File.Replace(temp, path, null);
+        else
+            File.Move(temp, path);
+    }
 
     /// <summary>
     /// Generate a slug-style ID from a title.

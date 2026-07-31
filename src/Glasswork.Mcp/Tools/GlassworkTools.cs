@@ -26,8 +26,13 @@ public sealed class GlassworkTools
     private readonly string _vaultPath;
     private readonly string _vaultRoot;
     private readonly McpLogger? _logger;
+    private readonly ResourceMutationService _mutations;
 
-    public GlassworkTools(VaultContext vaultContext, McpLogger? logger = null)
+    public GlassworkTools(
+        VaultContext vaultContext,
+        McpLogger? logger = null,
+        Func<DateTimeOffset>? clock = null,
+        IResourceMutationFaultInjector? faults = null)
     {
         var vaultPath = vaultContext.VaultPath
             ?? throw new InvalidOperationException(
@@ -38,7 +43,47 @@ public sealed class GlassworkTools
         _selfWrites = new SelfWriteCoordinator(_vaultPath);
         _vault = new VaultService(_vaultPath, _selfWrites);
         _search = new TaskSearchService(_vault);
+        _mutations = new ResourceMutationService(_vaultPath, _vault, clock, faults);
         _logger = logger;
+    }
+
+    [McpServerTool(Name = "transact_tasks")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Conditionally update one existing Task using an ordered set_task_fields operation.")]
+    public string TransactTasks(
+        [Description("Client-generated idempotency key.")] string? mutation_id,
+        [Description("Ordered transaction operations. The first operation must contain task_id and fields.")] JsonElement operations,
+        [Description("Optional transaction-level Revision precondition for the single touched Task.")] string? if_revision = null)
+    {
+        try
+        {
+            if (operations.ValueKind != JsonValueKind.Array || operations.GetArrayLength() != 1)
+                return JsonSerializer.Serialize(new ErrorResult("validation_error", "operations must contain exactly one operation."));
+
+            var operation = operations[0];
+            if (operation.ValueKind != JsonValueKind.Object
+                || !operation.TryGetProperty("op", out var opElement)
+                || !string.Equals(opElement.GetString(), "set_task_fields", StringComparison.Ordinal)
+                || !operation.TryGetProperty("task_id", out var taskIdElement)
+                || !operation.TryGetProperty("fields", out var fields))
+                return JsonSerializer.Serialize(new ErrorResult("precondition_required", "mutation_id, if_revision, and fields are required."));
+
+            var taskId = taskIdElement.GetString();
+            var revision = operation.TryGetProperty("if_revision", out var revisionElement)
+                ? revisionElement.GetString()
+                : if_revision;
+            var outcome = _mutations.TransactSingleTask(mutation_id, taskId, revision, fields);
+            return SerializeMutationOutcome(outcome);
+        }
+        catch (FormatException ex)
+        {
+            return JsonSerializer.Serialize(new ErrorResult("validation_error", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"transact_tasks failed: {ex}");
+            return JsonSerializer.Serialize(new ErrorResult("operation_failed", ex.Message));
+        }
     }
 
     [McpServerTool(Name = "add_task")]
@@ -2420,6 +2465,68 @@ public sealed class GlassworkTools
 
     private sealed record QueryCursor(string LastId, DateTime LastCreated);
 
+    private static string SerializeMutationOutcome(ResourceMutationOutcome outcome)
+    {
+        if (outcome.Outcome is "precondition_required" or "conflict" or "mutation_id_reused"
+            or "validation_error" or "not_found" or "operation_failed")
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = outcome.Outcome,
+                message = outcome.Error,
+                mutation_id = outcome.MutationId,
+                replayed = outcome.Replayed,
+                expected_revision = outcome.ExpectedRevision,
+                current_revision = outcome.CurrentRevision,
+                task = outcome.Task is null ? null : new
+                {
+                    id = outcome.Task.Id,
+                    title = outcome.Task.Title,
+                    status = outcome.Task.Status,
+                    priority = outcome.Task.Priority,
+                    type = outcome.Task.Type,
+                    created = outcome.Task.Created.ToString("yyyy-MM-dd"),
+                    due = outcome.Task.Due?.ToString("yyyy-MM-dd"),
+                    start = outcome.Task.Start?.ToString("yyyy-MM-dd"),
+                    my_day = outcome.Task.MyDay?.ToString("yyyy-MM-dd"),
+                    defer_until = outcome.Task.DeferUntil?.ToString("yyyy-MM-dd"),
+                    parent_id = outcome.Task.Parent,
+                    description = outcome.Task.Description,
+                    notes = outcome.Task.Notes,
+                    tags = outcome.Task.Tags,
+                    resource_revision = outcome.Task.ResourceRevision
+                }
+            });
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            mutation_id = outcome.MutationId,
+            outcome = outcome.Outcome,
+            replayed = outcome.Replayed,
+            expected_revision = outcome.ExpectedRevision,
+            current_revision = outcome.CurrentRevision,
+            task = outcome.Task is null ? null : new
+            {
+                id = outcome.Task.Id,
+                title = outcome.Task.Title,
+                status = outcome.Task.Status,
+                priority = outcome.Task.Priority,
+                type = outcome.Task.Type,
+                created = outcome.Task.Created.ToString("yyyy-MM-dd"),
+                due = outcome.Task.Due?.ToString("yyyy-MM-dd"),
+                start = outcome.Task.Start?.ToString("yyyy-MM-dd"),
+                my_day = outcome.Task.MyDay?.ToString("yyyy-MM-dd"),
+                defer_until = outcome.Task.DeferUntil?.ToString("yyyy-MM-dd"),
+                parent_id = outcome.Task.Parent,
+                description = outcome.Task.Description,
+                notes = outcome.Task.Notes,
+                tags = outcome.Task.Tags,
+                resource_revision = outcome.Task.ResourceRevision
+            },
+            error = outcome.Error
+        });
+    }
     private static string MapToExternalStatus(string internalStatus) => internalStatus switch
     {
         GlassworkTask.Statuses.InProgress => "doing",
