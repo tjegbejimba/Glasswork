@@ -1,0 +1,150 @@
+using System.Text.Json;
+using Glasswork.Core.Models;
+using Glasswork.Core.Services;
+using Glasswork.Mcp;
+using Glasswork.Mcp.Tools;
+
+namespace Glasswork.Mcp.Tests;
+
+[TestClass]
+public sealed class QueryTasksToolTests
+{
+    private string _vaultDir = null!;
+    private GlassworkTools _tools = null!;
+    private VaultService _vault = null!;
+
+    [TestInitialize]
+    public void Setup()
+    {
+        _vaultDir = Path.Combine(Path.GetTempPath(), "glasswork-mcp-query-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_vaultDir);
+        _tools = new GlassworkTools(new VaultContext(_vaultDir));
+        _vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+    }
+
+    [TestCleanup]
+    public void Cleanup()
+    {
+        if (Directory.Exists(_vaultDir))
+            Directory.Delete(_vaultDir, recursive: true);
+    }
+
+    [TestMethod]
+    public void QueryTasks_FiltersTypedPredicatesAndReturnsDependencyReadBasis()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "dependency",
+            Title = "Dependency",
+            Status = GlassworkTask.Statuses.Done,
+            Tags = ["foundation"],
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "ready",
+            Title = "Ready task",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Task,
+            Tags = ["workflow", "ready"],
+            BlockedBy = ["dependency"],
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "unrelated",
+            Title = "Unrelated",
+            Status = GlassworkTask.Statuses.Todo,
+            Tags = ["workflow"],
+        });
+
+        using var document = JsonDocument.Parse(_tools.QueryTasks(
+            status: ["todo"],
+            type: "task",
+            tags: ["ready"],
+            blocked_by_status: ["done"],
+            limit: 10));
+        var root = document.RootElement;
+
+        var tasks = root.GetProperty("tasks");
+        Assert.AreEqual(1, tasks.GetArrayLength());
+        Assert.AreEqual("ready", tasks[0].GetProperty("id").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(tasks[0].GetProperty("resource_revision").GetString()));
+
+        var readBasis = root.GetProperty("read_basis");
+        CollectionAssert.AreEquivalent(
+            new[] { "ready", "dependency" },
+            readBasis.EnumerateArray().Select(item => item.GetProperty("id").GetString()).ToArray());
+        Assert.IsTrue(readBasis.EnumerateArray().All(item =>
+            !string.IsNullOrWhiteSpace(item.GetProperty("resource_revision").GetString())));
+    }
+
+    [TestMethod]
+    public void QueryTasks_BlockedByEmptySelectsOnlyTasksWithoutDependencies()
+    {
+        _vault.Save(new GlassworkTask { Id = "free", Title = "Free", Created = new DateTime(2026, 1, 2) });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "dependent",
+            Title = "Dependent",
+            Created = new DateTime(2026, 1, 1),
+            BlockedBy = ["free"],
+        });
+
+        using var document = JsonDocument.Parse(_tools.QueryTasks(blocked_by_empty: true));
+
+        CollectionAssert.AreEqual(
+            new[] { "free" },
+            document.RootElement.GetProperty("tasks").EnumerateArray()
+                .Select(item => item.GetProperty("id").GetString()).ToArray());
+    }
+
+    [TestMethod]
+    public void QueryTasks_InvalidRelationshipsReturnStructuredDiagnostics()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "self",
+            Title = "Self",
+            BlockedBy = ["self", "missing"],
+        });
+
+        using var document = JsonDocument.Parse(_tools.QueryTasks());
+        var root = document.RootElement;
+
+        Assert.AreEqual("validation_error", root.GetProperty("error").GetString());
+        CollectionAssert.AreEquivalent(
+            new[] { "self_dependency", "missing_dependency" },
+            root.GetProperty("diagnostics").EnumerateArray()
+                .Select(item => item.GetProperty("code").GetString()).ToArray());
+    }
+
+    [TestMethod]
+    public void QueryTasks_UsesDeterministicBoundedContinuation()
+    {
+        foreach (var id in new[] { "c", "a", "b" })
+        {
+            _vault.Save(new GlassworkTask
+            {
+                Id = id,
+                Title = id,
+                Created = new DateTime(2026, 1, 1),
+            });
+        }
+
+        using var first = JsonDocument.Parse(_tools.QueryTasks(order_by: "id", limit: 2));
+        var firstRoot = first.RootElement;
+        CollectionAssert.AreEqual(
+            new[] { "a", "b" },
+            firstRoot.GetProperty("tasks").EnumerateArray()
+                .Select(item => item.GetProperty("id").GetString()).ToArray());
+
+        var cursor = firstRoot.GetProperty("next_cursor").GetString();
+        Assert.IsFalse(string.IsNullOrWhiteSpace(cursor));
+
+        using var second = JsonDocument.Parse(_tools.QueryTasks(order_by: "id", limit: 2, cursor: cursor));
+        CollectionAssert.AreEqual(
+            new[] { "c" },
+            second.RootElement.GetProperty("tasks").EnumerateArray()
+                .Select(item => item.GetProperty("id").GetString()).ToArray());
+        Assert.AreEqual(JsonValueKind.Null, second.RootElement.GetProperty("next_cursor").ValueKind);
+    }
+}

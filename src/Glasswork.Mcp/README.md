@@ -106,6 +106,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | Tool | Status | Description |
 |---|---|---|
 | `get_capabilities` | v1.0 contract | Read-only handshake for MCP contract version and supported guarantees |
+| `query_tasks` | v1.1.0 | Query Tasks by typed fields and dependency readiness with deterministic paging |
 | `add_task` | v0.2.0 | Create a new task file |
 | `update_task` | v0.8.0 | Update an existing task (partial updates supported) |
 | `list_tasks` | v0.2.0 | List task summaries (structural enumeration — filter by status or parent) |
@@ -135,10 +136,10 @@ Use this read-only operation before relying on optional workflow guarantees:
 {
   "contract_version": "1.0",
   "implemented_capabilities": [
-    "resource_revisions"
+    "resource_revisions",
+    "relation_aware_queries"
   ],
   "future_capabilities": [
-    "relation_aware_queries",
     "read_assertions",
     "typed_transactions",
     "complete_set_relationships",
@@ -173,6 +174,66 @@ equality and must not parse or otherwise depend on the digest format.
 | Read queue work the user can act on now | `get_review_queue_actionable` / `get_review_queue_needs_refresh` |
 | Inspect source health or acknowledge corruption recovery | `get_review_queue_source_health` / `acknowledge_review_queue_recovery` |
 | Inspect unmatched meeting recaps or manually attach one to a Task | `get_meeting_transcript_sync_unmatched` / `get_meeting_transcript_sync_attachable_tasks` / `attach_meeting_transcript_sync_unmatched` |
+
+### `query_tasks`
+
+`query_tasks` evaluates one page against one managed Vault snapshot. It supports
+typed predicates for `parent_task_id`, a status set, Task `type`, and required
+Tags. The general `blocked_by` relationship is stored as a top-level list of
+Task IDs. Duplicate IDs are canonicalized during parse and serialization.
+
+**Input**
+
+```json
+{
+  "parent_task_id": "string | null",
+  "status": ["todo", "doing", "blocked", "done"],
+  "type": "task | pbi | bug",
+  "tags": ["string", "..."],
+  "blocked_by_empty": "boolean",
+  "blocked_by_status": ["done"],
+  "order_by": "created_id | id",
+  "limit": "integer in [1, 100]",
+  "cursor": "opaque continuation token | null"
+}
+```
+
+`blocked_by_empty` selects Tasks with no dependencies. `blocked_by_status`
+requires every dependency target to have one of the requested statuses and does
+not match a Task with no dependencies. Missing targets and self-edges return a
+structured `validation_error` with diagnostic entries.
+
+**Output**
+
+```json
+{
+  "tasks": [
+    {
+      "id": "task-id",
+      "title": "Task title",
+      "status": "todo",
+      "type": "task",
+      "parent_id": null,
+      "tags": ["workflow"],
+      "blocked_by": ["dependency-id"],
+      "description": "Description",
+      "notes": "Notes",
+      "resource_revision": "rr1-opaque-versioned-token"
+    }
+  ],
+  "read_basis": [
+    {
+      "id": "dependency-id",
+      "resource_revision": "rr1-opaque-versioned-token"
+    }
+  ],
+  "next_cursor": "opaque continuation token | null"
+}
+```
+
+Results are ordered by `created_id` by default, or by `id`, and are bounded by
+`limit`. `read_basis` is deduplicated and includes each returned Task plus
+related dependency Tasks whose state affected the relationship predicate.
 
 ### `search_tasks`
 

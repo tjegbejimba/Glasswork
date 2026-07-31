@@ -61,6 +61,7 @@ public partial class GlassworkTask : ObservableObject
     public partial List<TaskLink> Links { get; set; } = [];
     
     [ObservableProperty] public partial string? Parent { get; set; }
+    [ObservableProperty] public partial List<string> BlockedBy { get; set; } = [];
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BlurbPreview))]
     [NotifyPropertyChangedFor(nameof(HasBlurb))]
@@ -405,6 +406,7 @@ public partial class GlassworkTask : ObservableObject
             MyDay = MyDay,
             DeferUntil = DeferUntil,
             Parent = Parent,
+            BlockedBy = [.. BlockedBy],
             Description = Description,
             Notes = Notes,
             IsV1Format = IsV1Format,
