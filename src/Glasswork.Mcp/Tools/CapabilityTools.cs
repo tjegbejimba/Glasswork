@@ -17,6 +17,9 @@ public sealed class CapabilityTools
             ImplementedCapabilities:
             [
                 "resource_revisions",
+                "typed_transactions",
+                "transaction_idempotency",
+                "recoverable_all_or_none_commit",
             ],
             FutureCapabilities:
             [
