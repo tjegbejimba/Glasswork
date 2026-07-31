@@ -26,8 +26,13 @@ public sealed class GlassworkTools
     private readonly string _vaultPath;
     private readonly string _vaultRoot;
     private readonly McpLogger? _logger;
+    private readonly ResourceMutationService _mutations;
 
-    public GlassworkTools(VaultContext vaultContext, McpLogger? logger = null)
+    public GlassworkTools(
+        VaultContext vaultContext,
+        McpLogger? logger = null,
+        Func<DateTimeOffset>? clock = null,
+        IResourceMutationFaultInjector? faults = null)
     {
         var vaultPath = vaultContext.VaultPath
             ?? throw new InvalidOperationException(
@@ -38,7 +43,65 @@ public sealed class GlassworkTools
         _selfWrites = new SelfWriteCoordinator(_vaultPath);
         _vault = new VaultService(_vaultPath, _selfWrites);
         _search = new TaskSearchService(_vault);
+        _mutations = new ResourceMutationService(_vaultPath, _vault, clock, faults);
         _logger = logger;
+    }
+
+    [McpServerTool(Name = "transact_tasks")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Create or conditionally update Tasks using typed, idempotent operations.")]
+    public string TransactTasks(
+        [Description("Client-generated idempotency key.")] string? mutation_id,
+        [Description("Ordered transaction operations. The first operation must contain task_id and fields.")] JsonElement operations,
+        [Description("Optional transaction-level Revision precondition for the single touched Task.")] string? if_revision = null)
+    {
+        try
+        {
+            if (operations.ValueKind != JsonValueKind.Array || operations.GetArrayLength() != 1)
+                return JsonSerializer.Serialize(new ErrorResult("validation_error", "operations must contain exactly one operation."));
+
+            var operation = operations[0];
+            if (operation.ValueKind != JsonValueKind.Object
+                || !operation.TryGetProperty("op", out var opElement)
+                || !operation.TryGetProperty("task_id", out var taskIdElement)
+                || !operation.TryGetProperty("fields", out var fields))
+                return JsonSerializer.Serialize(new ErrorResult("validation_error", "operation must contain op, task_id, and fields."));
+
+            var taskId = taskIdElement.GetString();
+            ResourceMutationOutcome outcome;
+            if (string.Equals(opElement.GetString(), "create_task", StringComparison.Ordinal))
+            {
+                var ifAbsent = operation.TryGetProperty("if_absent", out var ifAbsentElement)
+                    ? ifAbsentElement.GetBoolean()
+                    : (bool?)null;
+                outcome = _mutations.CreateTask(mutation_id, taskId, ifAbsent, fields);
+            }
+            else if (string.Equals(opElement.GetString(), "set_task_fields", StringComparison.Ordinal))
+            {
+                var revision = operation.TryGetProperty("if_revision", out var revisionElement)
+                    ? revisionElement.GetString()
+                    : if_revision;
+                outcome = _mutations.TransactSingleTask(mutation_id, taskId, revision, fields);
+            }
+            else
+            {
+                return JsonSerializer.Serialize(new ErrorResult("validation_error", "Unsupported transaction operation."));
+            }
+            return SerializeMutationOutcome(outcome);
+        }
+        catch (FormatException ex)
+        {
+            return JsonSerializer.Serialize(new ErrorResult("validation_error", ex.Message));
+        }
+        catch (ArgumentException ex)
+        {
+            return JsonSerializer.Serialize(new ErrorResult("validation_error", ex.Message));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"transact_tasks failed: {ex}");
+            return JsonSerializer.Serialize(new ErrorResult("operation_failed", ex.Message));
+        }
     }
 
     [McpServerTool(Name = "add_task")]
@@ -2420,6 +2483,74 @@ public sealed class GlassworkTools
 
     private sealed record QueryCursor(string LastId, DateTime LastCreated);
 
+    private static string SerializeMutationOutcome(ResourceMutationOutcome outcome)
+    {
+        if (outcome.Outcome is "precondition_required" or "conflict" or "mutation_id_reused"
+            or "validation_error" or "not_found" or "operation_failed")
+        {
+            return JsonSerializer.Serialize(new
+            {
+                error = outcome.Outcome,
+                message = outcome.Error,
+                mutation_id = outcome.MutationId,
+                replayed = outcome.Replayed,
+                expected_revision = outcome.ExpectedRevision,
+                current_revision = outcome.CurrentRevision,
+                task = outcome.Task is null ? null : new
+                {
+                    id = outcome.Task.Id,
+                    title = outcome.Task.Title,
+                    status = outcome.Task.Status,
+                    priority = outcome.Task.Priority,
+                    type = outcome.Task.Type,
+                    created = outcome.Task.Created.ToString("yyyy-MM-dd"),
+                    due = outcome.Task.Due?.ToString("yyyy-MM-dd"),
+                    start = outcome.Task.Start?.ToString("yyyy-MM-dd"),
+                    my_day = outcome.Task.MyDay?.ToString("yyyy-MM-dd"),
+                    defer_until = outcome.Task.DeferUntil?.ToString("yyyy-MM-dd"),
+                    parent_id = outcome.Task.Parent,
+                    description = outcome.Task.Description,
+                    notes = outcome.Task.Notes,
+                    tags = outcome.Task.Tags,
+                    blocked_by = outcome.Task.BlockedBy,
+                    completed_at = outcome.Task.CompletedAt?.ToString("yyyy-MM-dd"),
+                    blocked_reason = outcome.Task.BlockedReason,
+                    resource_revision = outcome.Task.ResourceRevision
+                }
+            });
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            mutation_id = outcome.MutationId,
+            outcome = outcome.Outcome,
+            replayed = outcome.Replayed,
+            expected_revision = outcome.ExpectedRevision,
+            current_revision = outcome.CurrentRevision,
+            task = outcome.Task is null ? null : new
+            {
+                id = outcome.Task.Id,
+                title = outcome.Task.Title,
+                status = outcome.Task.Status,
+                priority = outcome.Task.Priority,
+                type = outcome.Task.Type,
+                created = outcome.Task.Created.ToString("yyyy-MM-dd"),
+                due = outcome.Task.Due?.ToString("yyyy-MM-dd"),
+                start = outcome.Task.Start?.ToString("yyyy-MM-dd"),
+                my_day = outcome.Task.MyDay?.ToString("yyyy-MM-dd"),
+                defer_until = outcome.Task.DeferUntil?.ToString("yyyy-MM-dd"),
+                parent_id = outcome.Task.Parent,
+                description = outcome.Task.Description,
+                notes = outcome.Task.Notes,
+                tags = outcome.Task.Tags,
+                blocked_by = outcome.Task.BlockedBy,
+                completed_at = outcome.Task.CompletedAt?.ToString("yyyy-MM-dd"),
+                blocked_reason = outcome.Task.BlockedReason,
+                resource_revision = outcome.Task.ResourceRevision
+            },
+            error = outcome.Error
+        });
+    }
     private static string MapToExternalStatus(string internalStatus) => internalStatus switch
     {
         GlassworkTask.Statuses.InProgress => "doing",
