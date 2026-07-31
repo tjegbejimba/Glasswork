@@ -166,7 +166,10 @@ equality and must not parse or otherwise depend on the digest format.
 explicit safe Task ID and `if_absent: true`; it never generates a title-based
 collision suffix. The operation returns the created Task and its Resource
 Revision, reports an existing ID as a conflict, and durably replays an exact
-request with the same `mutation_id`.
+request with the same `mutation_id`. `set_task_fields` requires the current
+Task Resource Revision, rejects contradictory transaction/operation revisions,
+preserves hand-formatted Markdown for semantic no-ops, and uses the same
+journaled all-or-none recovery boundary.
 
 ```json
 {

@@ -197,7 +197,7 @@ public class TaskService
         return tasks;
     }
 
-    private static void EnsureBlockedTaskCanMutate(GlassworkTask task)
+    internal static void EnsureCanMutate(GlassworkTask task)
     {
         if (task.IsBlocked && task.NeedsBlockerDetails)
             throw new InvalidOperationException("Blocked task needs blocker details before it can be changed.");
@@ -207,14 +207,16 @@ public class TaskService
     {
         if (newStatus == GlassworkTask.Statuses.Blocked)
             throw new InvalidOperationException("Use MarkBlocked to move a task to blocked.");
-        EnsureBlockedTaskCanMutate(task);
+        EnsureCanMutate(task);
+        var wasDone = task.Status == GlassworkTask.Statuses.Done;
         task.Status = newStatus;
         if (newStatus != GlassworkTask.Statuses.Blocked)
             ClearBlockedState(task);
 
         if (newStatus == GlassworkTask.Statuses.Done)
         {
-            task.CompletedAt = localNow();
+            if (!wasDone)
+                task.CompletedAt = localNow();
         }
         else
         {
@@ -226,7 +228,7 @@ public class TaskService
     {
         if (newStatus == GlassworkTask.Statuses.Blocked)
             throw new InvalidOperationException("Use MarkBlocked to move a task to blocked.");
-        EnsureBlockedTaskCanMutate(task);
+        EnsureCanMutate(task);
         task.Status = newStatus;
         if (newStatus != GlassworkTask.Statuses.Blocked)
             ClearBlockedState(task);
@@ -247,7 +249,7 @@ public class TaskService
 
     internal static void ApplyEditBlockedReason(GlassworkTask task, string reason)
     {
-        EnsureBlockedTaskCanMutate(task);
+        EnsureCanMutate(task);
         if (!task.IsBlocked)
             throw new InvalidOperationException("Only blocked tasks can edit blocker details.");
 
@@ -260,7 +262,7 @@ public class TaskService
 
     internal static void ApplyResumeBlocked(GlassworkTask task, string? overrideStatus = null)
     {
-        EnsureBlockedTaskCanMutate(task);
+        EnsureCanMutate(task);
         if (!task.IsBlocked)
             throw new InvalidOperationException("Only blocked tasks can be resumed.");
 

@@ -105,6 +105,23 @@ If profiling later shows `list_tasks` is hot, a short TTL cache can be added wit
 handshake. It reports contract version `1.0` and stable named capabilities,
 including which Resource Mutation Module guarantees are still future work.
 
+**Amended by #407:** `transact_tasks` is now the first shipped Resource
+Mutation Module adapter. It accepts one ordered `set_task_fields` operation,
+requires a client `mutation_id` and opaque `resource_revision`, and returns a
+structured envelope containing the applied/no-op/error outcome and the
+post-read Task snapshot. Request hashes are canonicalized for replay, stale
+revisions are checked before no-op detection and immediately before commit, and
+contradictory transaction/operation revisions are rejected.
+
+The mutation boundary persists an atomic journal under
+`<vault root>/wiki/todo/.glasswork/mutation-journal.json` before replacement.
+An uncommitted journal restores the original bytes; a committed journal
+reconstructs the idempotency outcome before it is removed. Replay state is
+retained for 30 days. Managed reads recover pending journals before reading,
+and the vault coordinator combines an in-process reader/writer gate with a
+vault-scoped named mutex so the desktop app and standalone MCP process do not
+race one another. Semantic no-ops do not rewrite hand-formatted Markdown.
+
 ### 9. Auth & scope
 
 - **No network listener.** Stdio transport only.

@@ -20,6 +20,7 @@ public class VaultService
     private readonly FrontmatterParser _parser = new();
     private readonly SelfWriteCoordinator? _selfWrites;
     private readonly ConcurrentDictionary<string, byte[]> _lastReadBytes = new(StringComparer.Ordinal);
+    private Func<IReadOnlyList<string>>? _managedRecovery;
 
     public VaultService(string vaultPath) : this(vaultPath, null) { }
 
@@ -58,6 +59,22 @@ public class VaultService
         }
     }
 
+    internal void RegisterManagedRecovery(Func<IReadOnlyList<string>> recovery)
+    {
+        _managedRecovery = recovery ?? throw new ArgumentNullException(nameof(recovery));
+    }
+
+    internal void RunManagedRecovery()
+    {
+        var recoveredTaskIds = _managedRecovery?.Invoke();
+        if (recoveredTaskIds is null) return;
+
+        foreach (var taskId in recoveredTaskIds.Distinct(StringComparer.Ordinal))
+            RaiseTaskWritten(taskId);
+    }
+
+    internal void NotifyTaskWritten(string taskId) => RaiseTaskWritten(taskId);
+
     private void RaiseTaskDeleted(string taskId)
     {
         try { TaskDeleted?.Invoke(this, taskId); }
@@ -73,6 +90,7 @@ public class VaultService
     /// </summary>
     public List<GlassworkTask> LoadAll()
     {
+        RunManagedRecovery();
         using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         var tasks = new List<GlassworkTask>();
         var files = Directory.GetFiles(_vaultPath, "*.md")
@@ -102,6 +120,7 @@ public class VaultService
     /// </summary>
     public GlassworkTask? Load(string taskId)
     {
+        RunManagedRecovery();
         using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         var filePath = GetFilePath(taskId);
         if (!File.Exists(filePath)) return null;
@@ -117,6 +136,7 @@ public class VaultService
     /// </summary>
     public byte[] TryGetLastReadBytes(string taskId)
     {
+        RunManagedRecovery();
         using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         if (_lastReadBytes.TryGetValue(taskId, out var bytes))
             return bytes;
@@ -657,6 +677,7 @@ public class VaultService
         if (string.IsNullOrWhiteSpace(task.Id))
             throw new ArgumentException("Task must have an ID before saving.");
 
+        RunManagedRecovery();
         var content = _parser.Serialize(task);
         var path = GetFilePath(task.Id);
         using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
@@ -771,12 +792,14 @@ public class VaultService
     /// </summary>
     public bool Exists(string taskId)
     {
+        RunManagedRecovery();
         using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         return File.Exists(GetFilePath(taskId));
     }
 
     public byte[]? TryReadBytes(string taskId)
     {
+        RunManagedRecovery();
         using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         return TryReadBytesUnsafe(taskId);
     }
@@ -789,6 +812,7 @@ public class VaultService
 
     public void ReplaceBytes(string taskId, byte[] bytes)
     {
+        RunManagedRecovery();
         using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             ReplaceBytesUnsafe(taskId, bytes);
         RaiseTaskWritten(taskId);
@@ -804,6 +828,14 @@ public class VaultService
             File.Replace(temp, path, null);
         else
             File.Move(temp, path);
+    }
+
+    internal void DeleteUnsafe(string taskId)
+    {
+        var path = GetFilePath(taskId);
+        if (!File.Exists(path)) return;
+        _selfWrites?.RegisterWrite(path);
+        File.Delete(path);
     }
 
     /// <summary>
