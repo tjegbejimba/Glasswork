@@ -150,30 +150,31 @@ no domain logic — composes the other contexts into screens.
 Keeps the installed app current with its GitHub releases. Owns nothing in the
 vault and nothing in the task model — it is a self-contained capability that
 spans Core (pure version logic) and App (network, process orchestration, UI).
-See ADR 0011.
+See ADR 0020 (supersedes ADR 0011's apply mechanism).
 
 - **Owns**:
   - **Detection** — an unauthenticated HTTPS client that reads the latest
     release `tag_name` from the public GitHub API, plus the pure SemVer
     comparison in `Glasswork.Core` that yields whether an **Update Check**
     found a newer **Available Version** than the **Installed Version**.
-  - **Apply** — the **Self-Update** orchestration: resolve the stamped
-    **Repo Path**, spawn the detached **Updater** (`scripts\self-update.ps1`),
-    self-close, and let the updater run `git pull` → `publish.ps1` → relaunch
-    behind an "Updating Glasswork…" progress window.
+  - **Apply** — the **Self-Update** orchestration: spawn the bundled detached
+    **Updater** (`Updater\release-update.ps1`), self-close, and let the updater
+    download the matching Windows **Release package**, verify its SHA-256
+    sidecar, swap the install with rollback, and relaunch behind an "Updating
+    Glasswork…" progress window.
   - The Settings "Updates" section (the action surface) and the My Day
     update-available **InfoBar** + Settings nav dot (the announce surface).
-- **Speaks to**: UI State (reads the **Repo Path** stamped by `publish.ps1`),
-  Presentation (renders the badge + Settings section), and **Release
-  publication** (consumes the GitHub Release tag it creates).
+- **Speaks to**: Presentation (renders the badge + Settings section) and
+  **Release publication** (consumes the GitHub Release tag and assets it
+  creates).
 - **Does not own**: the vault, the task model, or any task data. The updater
   writes only outside the vault (UI State + install dir), so it does **not**
   interact with `FileWatcherService` / `SelfWriteCoordinator`. It also does
   not decide when a merged PR becomes an app-visible update; that is owned by
   **Release publication**.
 - **Boundary rule**: detection must never block launch or fail loudly; apply
-  must never leave the user without a working app — every failure degrades to
-  opening the GitHub release page. See the failure matrix in ADR 0011.
+  must never leave the user without a working app — failed verification or
+  installation preserves and relaunches the Installed version. See ADR 0020.
 
 ### 7. Release publication
 
@@ -186,13 +187,14 @@ App Update consumes as the **Available version**.
   **Release workflow** whose only input is `version` in `X.Y.Z` form. The
   workflow derives tag `vX.Y.Z`, validates the requested tag matches the
   committed version, reads `docs\releases\vX.Y.Z.md`, and creates the GitHub
-  Release for the current `main` HEAD with those notes.
-  The workflow also runs Core tests and a Windows Release x64 app build before
+  Release for the current `main` HEAD with those notes, a stable-named
+  `Glasswork-win-x64.zip` asset, and its SHA-256 sidecar.
+  The workflow also runs Core tests and a Windows Release x64 app publish before
   tagging, so `/releases/latest` never advertises a version that cannot build.
-- **Speaks to**: App Update by publishing the release tag read during an
-  **Update check**.
-- **Does not own**: rebuilding or installing the app on the user's machine;
-  that remains **Self-update** / `publish.ps1`.
+- **Speaks to**: App Update by publishing the release tag and Release package
+  consumed by an **Update check** and **Self-update**.
+- **Does not own**: installing the app on the user's machine; that remains
+  **Self-update**.
 - **Boundary rule**: merging a normal PR to `main` is not an app-visible update.
   Only an explicit **Release publication** creates a new **Available version**.
   Existing release tags are immutable: the **Release workflow** fails if the

@@ -1,6 +1,6 @@
 # ADR 0011: The installed app self-updates by building from the local source repo
 
-**Status**: Accepted
+**Status**: Superseded by ADR 0020
 **Context slice**: Restart-to-update feature; introduces the App Update context
 
 ## Context
