@@ -10,8 +10,8 @@ namespace Glasswork.Tests;
 
 /// <summary>
 /// Pins the cross-file PBI container behavior on the My Day view-model (issue #337 /
-/// ADR 0017): a promoted child Task whose <c>parent</c> resolves to an in-app
-/// <c>type: pbi</c> task is nested under that PBI as a container card in
+/// ADR 0017): a promoted child Task whose <c>parent</c> resolves by Glasswork id or
+/// ADO identity to an in-app <c>type: pbi</c> task is nested under that PBI as a container card in
 /// <see cref="MyDayViewModel.TodayTasks"/>, and the PBI is pulled in to host it even
 /// though it does not independently promote.
 /// </summary>
@@ -79,6 +79,27 @@ public class MyDayViewModelCrossFileContainerTests
         Assert.AreEqual(child.Id, container.TodaysChildren![0].Id);
         Assert.IsFalse(vm.TodayTasks.Any(t => t.Id == child.Id),
             "The nested child must not also appear as a standalone top-level row.");
+    }
+
+    [TestMethod]
+    public void Refresh_ImportedChildWithAdoParentId_NestsChildUnderPbiContainer()
+    {
+        var today = DateTime.Today;
+        var pbi = CreatePbi("4th Zone Sev1 Cleanup");
+        pbi.AdoLink = 38080621;
+        pbi.MyDay = today;
+        _vault.Save(pbi);
+        var child = CreateChild("Clean up bucket B subscriptions", "38080621", due: today);
+
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
+        vm.Refresh();
+
+        Assert.AreEqual(1, vm.TodayTasks.Count,
+            "The imported PBI and child should render as one top-level container.");
+        var container = vm.TodayTasks.Single();
+        Assert.AreEqual(pbi.Id, container.Id);
+        Assert.IsNotNull(container.TodaysChildren);
+        Assert.AreEqual(child.Id, container.TodaysChildren!.Single().Id);
     }
 
     [TestMethod]

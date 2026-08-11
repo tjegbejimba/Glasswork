@@ -68,4 +68,19 @@ public class MyDayViewModelPbiContainerTests
         Assert.AreEqual(1, row.TodaysSubtasks!.Count,
             "The actionable child subtask should appear inline beneath the PBI.");
     }
+
+    [TestMethod]
+    public void Refresh_PinnedPbiWithoutTodaysChildren_IsHidden()
+    {
+        var pbi = _taskService.CreateTask("Empty sprint epic");
+        pbi.Type = GlassworkTask.Types.Pbi;
+        pbi.MyDay = DateTime.Today;
+        _vault.Save(pbi);
+
+        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        vm.Refresh();
+
+        Assert.IsFalse(vm.TodayTasks.Any(t => t.Id == pbi.Id),
+            "A PBI should appear in My Day only when it hosts an actionable child.");
+    }
 }

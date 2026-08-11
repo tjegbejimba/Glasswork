@@ -83,9 +83,9 @@ public partial class MyDayViewModel : ObservableObject
                  && task.Due.HasValue
                  && System.DateOnly.FromDateTime(task.Due.Value.Date) <= today
                  && task.Status != GlassworkTask.Statuses.Done);
-            task.TodaysSubtasks = directlyPromoted
-                ? null
-                : MyDayPromotionPolicy.TodaysSubtasks(task, today);
+            task.TodaysSubtasks = task.Type == GlassworkTask.Types.Pbi || !directlyPromoted
+                ? MyDayPromotionPolicy.TodaysSubtasks(task, today)
+                : null;
             targetTodayTasks.Add(task);
         }
 

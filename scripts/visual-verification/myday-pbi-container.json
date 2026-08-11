@@ -17,6 +17,13 @@
       "due": "yesterday"
     },
     {
+      "id": "vv-empty-pinned-pbi",
+      "title": "Pinned PBI without children",
+      "description": "This directly-pinned PBI has no actionable children and must not render in My Day.",
+      "type": "pbi",
+      "myDay": "today"
+    },
+    {
       "id": "vv-child-a",
       "title": "Wire up the API",
       "status": "in_progress",

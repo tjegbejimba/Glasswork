@@ -28,9 +28,11 @@ Add a **presentation-only** grouping step to the My Day view that nests a promot
 Task under its parent PBI as a container card.
 
 1. **Parent identity = the `parent:` field**, resolved through the in-memory index by
-   parent id. A child nests only when its `parent` resolves to an in-app task with
-   `type == pbi`. Wikilinks and backlinks are *not* used — backlinks (ADR 0005) are
-   incoming wiki references, a different relationship.
+   Glasswork Task ID or, for imported work, by matching a numeric/full-URL ADO parent
+   identity to the unique in-app PBI carrying that ADO Link. A child nests only when
+   the resolved in-app task has `type == pbi`. Ambiguous ADO identities do not group.
+   Wikilinks and backlinks are *not* used — backlinks (ADR 0005) are incoming wiki
+   references, a different relationship.
 2. **Container-only host.** A PBI with ≥1 in-My-Day child is shown in My Day to host
    those children **even if it would not independently promote**. This is a view-model
    construct: `MyDayPromotionPolicy`, `MyDayQueries.Today`, and `TaskService.GetMyDay`
@@ -54,7 +56,9 @@ Task under its parent PBI as a container card.
 7. **Rendering**: the My Day card template gains a `TodaysChildren` section beside the
    existing `TodaysSubtasks` section. A PBI container card suppresses the leaf
    "complete" affordance (you complete its children — ADR 0016) and reuses
-   `IsManuallyCollapsed` to collapse/expand its children.
+   `IsManuallyCollapsed` to collapse/expand its children. A PBI with neither
+   actionable `TodaysSubtasks` nor `TodaysChildren` is omitted from the view even
+   when directly pinned; PBIs never render as empty standalone rows.
 8. **Removal removes the group.** "Remove from My Day" (the row X) on a PBI container
    acts on the **whole group**: the existing `MyDayRemovalPolicy.PlanRemoval` is applied
    to each nested child (dismiss-for-today, plus clear `my_day` if set) **and** to the
