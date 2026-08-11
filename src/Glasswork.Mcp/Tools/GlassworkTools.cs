@@ -27,6 +27,7 @@ public sealed class GlassworkTools
     private readonly string _vaultRoot;
     private readonly McpLogger? _logger;
     private readonly ResourceMutationService _mutations;
+    private readonly TimeProvider _timeProvider;
 
     public GlassworkTools(
         VaultContext vaultContext,
@@ -43,7 +44,9 @@ public sealed class GlassworkTools
         _selfWrites = new SelfWriteCoordinator(_vaultPath);
         _vault = new VaultService(_vaultPath, _selfWrites);
         _search = new TaskSearchService(_vault);
+        clock ??= TimeProvider.System.GetUtcNow;
         _mutations = new ResourceMutationService(_vaultPath, _vault, clock, faults);
+        _timeProvider = new DelegateTimeProvider(clock);
         _logger = logger;
     }
 
@@ -4096,8 +4099,14 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("created_review_items")] bool CreatedReviewItems);
 
     private AutomationReviewQueueService CreateAutomationReviewQueueService() =>
-        new(_vaultRoot, selfWrites: _selfWrites, taskVault: _vault);
-    private MeetingTranscriptSyncService CreateMeetingTranscriptSyncService() => new(_vaultRoot, _vault, CreateAutomationReviewQueueService());
+        new(_vaultRoot, clock: _timeProvider, selfWrites: _selfWrites, taskVault: _vault);
+    private MeetingTranscriptSyncService CreateMeetingTranscriptSyncService() =>
+        new(_vaultRoot, _vault, CreateAutomationReviewQueueService(), clock: _timeProvider);
+
+    private sealed class DelegateTimeProvider(Func<DateTimeOffset> getUtcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => getUtcNow();
+    }
 
     private static bool TryParseRunKind(string? value, out ReviewSourceRunKind runKind)
     {
