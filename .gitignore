@@ -13,3 +13,6 @@ launchSettings.json
 .mcp-watchdog.log
 .mcp-watchdog.lock
 
+# Local agent and release-workflow scratch files
+.ralph-pr-body-*.md
+.commit-message-*.txt

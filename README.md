@@ -45,7 +45,7 @@ The app is intentionally single-user and agentic by design: the Vault remains th
 | **My Day** | Default landing page for tasks in focus today, including virtually promoted parent tasks and today's subtasks. |
 | **Backlog** | Active work not currently in My Day, including a dedicated blocked column / list section for blocked Tasks. |
 | **Task Detail** | Full task context: Description, Subtasks, Notes, Links, Backlinks, and agent-produced Artifacts. |
-| **Work Log** | Completed work history for weekly review and connects-season reporting. |
+| **Work Log** | Completed work history for weekly review and cross-season reporting. |
 | **Settings** | Vault selection, update checks, feedback, and app configuration. |
 
 ## Agent-friendly by design
@@ -125,8 +125,8 @@ dotnet test tests\Glasswork.Tests\Glasswork.Tests.csproj
 
 Glasswork ships two independently versioned components:
 
-- **Glasswork.App** — WinUI 3 desktop app. Latest documented release: [`v1.4.1`](docs/releases/v1.4.1.md).
-- **Glasswork.Mcp** — MCP server packaged as the `glasswork-mcp` .NET tool. Current package version: `0.6.0`.
+- **Glasswork.App** — WinUI 3 desktop app. Latest documented release: [`v1.4.2`](docs/releases/v1.4.2.md).
+- **Glasswork.Mcp** — MCP server packaged as the `glasswork-mcp` .NET tool. Current package version: `0.9.0`.
 
 Release notes live in [`docs/releases/`](docs/releases/) and the project changelog lives in [`CHANGELOG.md`](CHANGELOG.md).
 
