@@ -82,8 +82,22 @@ jobs:
       - name: Run Core tests
         run: dotnet test tests\Glasswork.Tests\Glasswork.Tests.csproj --configuration Release --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1
 
-      - name: Build Windows app
-        run: dotnet build src\Glasswork.App\Glasswork.csproj --configuration Release -p:Platform=x64 --nologo --verbosity minimal
+      - name: Publish Windows update package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          dotnet publish src\Glasswork.App\Glasswork.csproj `
+            --configuration Release `
+            -p:Platform=x64 `
+            --self-contained `
+            --runtime win-x64 `
+            --output artifacts\publish `
+            --nologo `
+            --verbosity minimal
+          . .\scripts\New-ReleasePackage.ps1
+          New-ReleasePackage `
+            -PublishDirectory artifacts\publish `
+            -OutputDirectory artifacts\release
 
       - name: Create GitHub Release
         shell: pwsh
@@ -101,4 +115,6 @@ jobs:
             --repo $env:GITHUB_REPOSITORY `
             --target $target `
             --title "Glasswork $tag" `
-            --notes-file $notesPath
+            --notes-file $notesPath `
+            artifacts\release\Glasswork-win-x64.zip `
+            artifacts\release\Glasswork-win-x64.zip.sha256

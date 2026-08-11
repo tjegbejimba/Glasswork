@@ -11,4 +11,6 @@ public enum SelfUpdateFallbackReason
     NoRepoPath,
     RepoPathMissing,
     PwshNotFound,
+    UpdaterMissing,
+    AvailableVersionMissing,
 }

@@ -1,0 +1,25 @@
+{
+  "name": "Settings updates",
+  "actions": [
+    {
+      "type": "select",
+      "name": "Settings",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "SettingsHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "RestartToUpdateButton",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "settings-updates"
+    }
+  ]
+}
