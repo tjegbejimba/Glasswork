@@ -50,7 +50,8 @@ if (-not (Test-Path $exe)) { throw "Build succeeded but exe not found at $exe" }
 # 2. Launch.
 Write-Host "Launching $exe"
 $verifyRoot = Join-Path $env:TEMP ("Glasswork-verify-work-" + [guid]::NewGuid().ToString("N"))
-$verifyVault = Join-Path $verifyRoot 'Vault\wiki\todo'
+$verifyVaultRoot = Join-Path $verifyRoot 'Vault'
+$verifyVault = Join-Path $verifyVaultRoot 'wiki\todo'
 $verifyUiState = Join-Path $verifyRoot 'ui-state.json'
 New-Item -ItemType Directory -Path $verifyVault -Force | Out-Null
 
@@ -60,7 +61,7 @@ $oldInstanceKey = $env:GLASSWORK_VERIFY_INSTANCE_KEY
 $oldSkipProtocol = $env:GLASSWORK_SKIP_PROTOCOL_REGISTRATION
 $oldSkipUpdate = $env:GLASSWORK_SKIP_UPDATE_CHECK
 try {
-    $env:GLASSWORK_VERIFY_VAULT_PATH = $verifyVault
+    $env:GLASSWORK_VERIFY_VAULT_PATH = $verifyVaultRoot
     $env:GLASSWORK_VERIFY_UI_STATE_PATH = $verifyUiState
     $env:GLASSWORK_VERIFY_INSTANCE_KEY = "verify-" + [guid]::NewGuid().ToString("N")
     $env:GLASSWORK_SKIP_PROTOCOL_REGISTRATION = "1"

@@ -60,7 +60,7 @@ public sealed partial class SettingsPage : Page
 
     private void RefreshVaultInfo()
     {
-        var path = App.Vault?.VaultPath ?? string.Empty;
+        var path = App.VaultRoot;
         VaultPathBox.Text = path;
 
         if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
@@ -262,4 +262,3 @@ public sealed partial class SettingsPage : Page
         }
     }
 }
-

@@ -29,6 +29,7 @@ public partial class App : Application
 
     // Simple service locator for v1
     public static VaultService Vault { get; private set; } = null!;
+    public static string VaultRoot { get; private set; } = string.Empty;
     public static ResourceMutationService Mutations { get; private set; } = null!;
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
@@ -258,18 +259,28 @@ public partial class App : Application
             });
         }
 
-        // Resolve vault path: persisted setting wins; fall back to the hard-coded default
-        // so first-run behaviour is unchanged until the user picks a different vault.
+        // Resolve Vault root: persisted setting wins; fall back to the conventional
+        // Obsidian Vault location.
         var persistedVaultPath = _uiStateImpl.Get<string>(VaultPathKey);
-        var vaultPath = !string.IsNullOrWhiteSpace(launchOptions.VaultPath)
+        var configuredVaultPath = !string.IsNullOrWhiteSpace(launchOptions.VaultPath)
             ? launchOptions.VaultPath
             : !string.IsNullOrWhiteSpace(persistedVaultPath) && Directory.Exists(persistedVaultPath)
             ? persistedVaultPath
             : Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Wiki", "wiki", "todo");
+                "Wiki");
 
-        InitVaultServices(vaultPath, _uiStateImpl);
+        InitVaultServices(configuredVaultPath, _uiStateImpl);
+        if (string.IsNullOrWhiteSpace(launchOptions.VaultPath)
+            && !string.IsNullOrWhiteSpace(persistedVaultPath)
+            && !string.Equals(
+                Path.GetFullPath(persistedVaultPath),
+                VaultRoot,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            _uiStateImpl.Set(VaultPathKey, VaultRoot);
+            _uiStateImpl.Save();
+        }
 
         // Register glasswork:// URL scheme for this executable so links work even
         // without MSIX packaging. Idempotent: re-running on every launch is cheap
@@ -291,34 +302,36 @@ public partial class App : Application
     /// Initialises (or reinitialises) all vault-dependent services for the given path.
     /// Tears down existing watchers before rebuilding so that switching vaults is safe.
     /// </summary>
-    /// <param name="vaultPath">Absolute path to the Glasswork todo directory.</param>
+    /// <param name="configuredVaultPath">
+    /// Absolute path to the Obsidian Vault root, or a legacy Glasswork Task directory.
+    /// </param>
     /// <param name="uiStateImpl">The already-initialised UI state service, used for GC.</param>
-    private static void InitVaultServices(string vaultPath, JsonFileUiStateService uiStateImpl)
+    private static void InitVaultServices(string configuredVaultPath, JsonFileUiStateService uiStateImpl)
     {
         // Tear down existing watchers (no-op on first launch).
         Watcher?.Stop();
         ArtifactsWatcher?.Stop();
         BacklinksWatcher?.Stop();
 
+        var resolvedPaths = VaultPathResolver.Resolve(configuredVaultPath);
+        var vaultPath = resolvedPaths.TaskDirectory;
+        VaultRoot = resolvedPaths.VaultRoot;
+
         SelfWrites = new SelfWriteCoordinator(vaultPath);
         Vault = new VaultService(vaultPath, SelfWrites);
         Mutations = new ResourceMutationService(vaultPath, Vault);
 
-        // FileSystemArtifactStore wants the vault root (the folder containing wiki/todo/),
-        // not the todo folder itself. This same path is the root the user has registered
-        // with Obsidian, so the launcher uses it too.
-        var vaultRoot = Path.GetDirectoryName(Path.GetDirectoryName(vaultPath))!;
-        Artifacts = new FileSystemArtifactStore(vaultRoot);
-        ObsidianLauncher = new ObsidianLauncher(vaultRoot);
+        Artifacts = new FileSystemArtifactStore(VaultRoot);
+        ObsidianLauncher = new ObsidianLauncher(VaultRoot);
         ReviewQueue = new AutomationReviewQueueService(
-            vaultRoot,
+            VaultRoot,
             selfWrites: SelfWrites,
             taskVault: Vault);
 
         // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
         // that mention a Glasswork task via [[stem]] / [[stem|alias]].
         var backlinkIndex = new BacklinkIndex();
-        try { backlinkIndex.Build(vaultRoot); }
+        try { backlinkIndex.Build(VaultRoot); }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Backlink index build failed: {ex.Message}"); }
         BacklinkIndex = backlinkIndex;
 
@@ -439,7 +452,7 @@ public partial class App : Application
         ArtifactsWatcher.ArtifactChanged += (s, e) => ArtifactChangedExternally?.Invoke(s, e);
         ArtifactsWatcher.Start();
 
-        BacklinksWatcher = new BacklinksWatcher(vaultRoot, BacklinkIndex);
+        BacklinksWatcher = new BacklinksWatcher(VaultRoot, BacklinkIndex);
         BacklinksWatcher.BacklinksChanged += (s, e) => BacklinksChangedExternally?.Invoke(s, e);
         BacklinksWatcher.Start();
     }
@@ -450,20 +463,21 @@ public partial class App : Application
     /// Resets per-task UI state (collapse overrides, etc.) because task IDs are path-relative
     /// and would be stale after a vault switch.
     /// </summary>
-    /// <param name="newVaultPath">Absolute path to the new Glasswork todo directory.</param>
+    /// <param name="newVaultPath">Absolute path to the Obsidian Vault root.</param>
     public static void SwitchVault(string newVaultPath)
     {
         if (string.IsNullOrWhiteSpace(newVaultPath))
             throw new ArgumentException("Vault path must not be empty.", nameof(newVaultPath));
 
-        UiState.Set(VaultPathKey, newVaultPath);
+        var resolvedPaths = VaultPathResolver.Resolve(newVaultPath);
+        UiState.Set(VaultPathKey, resolvedPaths.VaultRoot);
         // Remove all collapsed-task overrides — they're keyed by task ID which is vault-relative,
         // so every entry from the old vault would be stale in the new one.
         UiState.RemoveKeysNotIn(CollapsedTaskKeyPrefix, System.Array.Empty<string>());
         UiState.Save();
 
         // Use the inner concrete service for vault switching (decorator references it).
-        InitVaultServices(newVaultPath, _uiStateImpl);
+        InitVaultServices(resolvedPaths.VaultRoot, _uiStateImpl);
     }
 
     private static void OnAppInstanceActivated(object? sender, AppActivationArguments args)
