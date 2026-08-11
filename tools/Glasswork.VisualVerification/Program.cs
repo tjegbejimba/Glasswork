@@ -82,7 +82,7 @@ internal static partial class VisualVerificationRunner
         MaterializeVault(scenario, vaultRoot, todoPath);
 
         var instanceKey = "visual-" + Guid.NewGuid().ToString("N");
-        using var process = LaunchApp(appExe, scenario.StartUri, todoPath, uiStatePath, instanceKey);
+        using var process = LaunchApp(appExe, scenario.StartUri, vaultRoot, uiStatePath, instanceKey);
 
         try
         {
@@ -117,7 +117,7 @@ internal static partial class VisualVerificationRunner
             return new VerificationResult(
                 scenario.Name,
                 options.OutDir,
-                todoPath,
+                vaultRoot,
                 uiStatePath,
                 instanceKey,
                 captures,

@@ -100,7 +100,7 @@ public sealed partial class MainWindow : Window
     /// </summary>
     internal void RefreshStatusBar()
     {
-        StatusVaultText.Text = App.Vault?.VaultPath ?? "(no vault)";
+        StatusVaultText.Text = string.IsNullOrWhiteSpace(App.VaultRoot) ? "(no vault)" : App.VaultRoot;
         var ver = System.Reflection.Assembly.GetExecutingAssembly()
             .GetName().Version;
         StatusVersionText.Text = ver is null ? "v?" : $"v{ver.Major}.{ver.Minor}.{ver.Build}";
