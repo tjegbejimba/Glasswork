@@ -312,12 +312,12 @@ public sealed class AutomationReviewQueueToolsTests
             clock);
         service.RunScheduled();
 
-        using var unmatched = JsonDocument.Parse(FreshTools().GetMeetingTranscriptSyncUnmatched());
+        using var unmatched = JsonDocument.Parse(FreshTools(clock.GetUtcNow).GetMeetingTranscriptSyncUnmatched());
         var meetings = unmatched.RootElement.GetProperty("meetings").EnumerateArray().ToArray();
         Assert.AreEqual(1, meetings.Length);
         Assert.AreEqual("meeting-unmatched", meetings[0].GetProperty("stable_meeting_id").GetString());
 
-        using var attachable = JsonDocument.Parse(FreshTools().GetMeetingTranscriptSyncAttachableTasks());
+        using var attachable = JsonDocument.Parse(FreshTools(clock.GetUtcNow).GetMeetingTranscriptSyncAttachableTasks());
         CollectionAssert.AreEqual(
             new[] { "task-todo" },
             attachable.RootElement.GetProperty("tasks").EnumerateArray().Select(task => task.GetProperty("task_id").GetString()).ToArray());
@@ -350,7 +350,7 @@ public sealed class AutomationReviewQueueToolsTests
             clock);
         service.RunScheduled();
 
-        using var attached = JsonDocument.Parse(FreshTools().AttachMeetingTranscriptSyncUnmatched(
+        using var attached = JsonDocument.Parse(FreshTools(clock.GetUtcNow).AttachMeetingTranscriptSyncUnmatched(
             stable_meeting_id: "meeting-manual-due",
             task_id: "task-manual"));
         Assert.AreEqual("submitted", attached.RootElement.GetProperty("disposition_code").GetString());
@@ -362,7 +362,8 @@ public sealed class AutomationReviewQueueToolsTests
             snapshot.ActiveItems.Select(item => item.ProposalType).ToArray());
     }
 
-    private GlassworkTools FreshTools() => new(new VaultContext(_vaultRoot));
+    private GlassworkTools FreshTools(Func<DateTimeOffset>? clock = null) =>
+        new(new VaultContext(_vaultRoot), clock: clock);
 
     private static object MeetingNoteItem(string sourceItemId, string taskId, string fingerprint, string summary) => new
     {
