@@ -5,9 +5,10 @@
 
 ## Context
 
-ADR 0011 defines how the installed app detects and applies updates: an Update
-check reads the latest GitHub Release `tag_name`, compares it to the Installed
-version, and Self-update rebuilds from the local source repo. That leaves a
+ADR 0011 originally defined how the installed app detects and applies updates;
+ADR 0020 supersedes its source-build apply mechanism with a packaged release.
+An Update check still reads the latest GitHub Release `tag_name` and compares it
+to the Installed version. That leaves a
 separate repo-maintenance question: when does a merged change become the
 GitHub Release signal that the app can see?
 
@@ -31,8 +32,8 @@ available only through explicit **Release publication**:
    **Release workflow** with one input: `version` in `X.Y.Z` form.
 5. The workflow checks out current `main`, derives tag `vX.Y.Z`, validates the
    committed app version and `docs\releases\vX.Y.Z.md`, runs Core tests and a
-   Windows Release x64 app build, then creates the GitHub Release with those
-   notes and no binary assets.
+   Windows Release x64 app publish, then creates the GitHub Release with those
+   notes, `Glasswork-win-x64.zip`, and its SHA-256 sidecar.
 
 Release tags are immutable. If tag `vX.Y.Z` or release `vX.Y.Z` already exists,
 the workflow fails instead of moving the tag or rewriting the release. Corrected
@@ -92,7 +93,7 @@ One short summary paragraph.
   Available version signal.
 - Agents can run the release flow end-to-end without mandatory human prose
   input, while still leaving an auditable Release PR and committed Release notes.
-- Release publication remains source-build-only: no binaries are attached to
-  GitHub Releases, preserving ADR 0011's model.
+- Release publication produces the deterministic Windows package consumed by
+  Self-update, as defined by ADR 0020.
 - A release is intentionally not created when there are no substantive changes,
   avoiding no-op updates that would rebuild to equivalent bits.

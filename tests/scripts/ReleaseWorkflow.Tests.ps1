@@ -19,7 +19,7 @@ Describe "Release workflow" {
         $workflow | Should -Not -Match "(?m)^\s+prerelease:"
     }
 
-    It "validates inputs, runs gates, and creates the GitHub Release from notes" {
+    It "validates inputs, runs gates, packages the app, and creates the GitHub Release" {
         $workflow = Get-Content $script:WorkflowPath -Raw
 
         $workflow | Should -Match "Validate-ReleasePublication\.ps1"
@@ -31,9 +31,12 @@ Describe "Release workflow" {
         $workflow | Should -Not -Match "SkipPublisherCheck"
         $workflow | Should -Match "dotnet test tests\\Glasswork\.Tests\\Glasswork\.Tests\.csproj"
         $workflow | Should -Match "MSTest\.Parallelize\.Workers=1"
-        $workflow | Should -Match "dotnet build src\\Glasswork\.App\\Glasswork\.csproj"
+        $workflow | Should -Match "dotnet publish src\\Glasswork\.App\\Glasswork\.csproj"
+        $workflow | Should -Match "New-ReleasePackage"
         $workflow | Should -Match "gh release create"
         $workflow | Should -Match '--notes-file \$notesPath'
+        $workflow | Should -Match "Glasswork-win-x64\.zip"
+        $workflow | Should -Match "Glasswork-win-x64\.zip\.sha256"
     }
 
     It "does not interpolate the version input inside PowerShell scripts" {

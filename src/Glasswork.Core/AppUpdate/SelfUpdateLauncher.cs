@@ -9,6 +9,58 @@ namespace Glasswork.Core.AppUpdate;
 /// </summary>
 public sealed class SelfUpdateLauncher
 {
+    public SelfUpdatePlan CreatePackagedPlan(
+        bool isUpdateAvailable,
+        string? availableVersion,
+        string updaterScriptPath,
+        string updaterCleanupDirectory,
+        string installExePath,
+        int processId,
+        IExecutableResolver executableResolver,
+        Func<string, bool> fileExists,
+        string workingDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(executableResolver);
+        ArgumentNullException.ThrowIfNull(fileExists);
+
+        if (!isUpdateAvailable)
+            return SelfUpdatePlan.OpenReleasePage(SelfUpdateFallbackReason.NoUpdateAvailable);
+
+        if (string.IsNullOrWhiteSpace(availableVersion))
+            return SelfUpdatePlan.OpenReleasePage(SelfUpdateFallbackReason.AvailableVersionMissing);
+
+        if (!fileExists(updaterScriptPath))
+            return SelfUpdatePlan.OpenReleasePage(SelfUpdateFallbackReason.UpdaterMissing);
+
+        var pwshPath = executableResolver.Resolve("pwsh");
+        if (string.IsNullOrWhiteSpace(pwshPath))
+            return SelfUpdatePlan.OpenReleasePage(SelfUpdateFallbackReason.PwshNotFound);
+
+        var args = new[]
+        {
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            updaterScriptPath,
+            "-AppProcessId",
+            processId.ToString(),
+            "-InstallExePath",
+            installExePath,
+            "-Version",
+            availableVersion,
+            "-CleanupDirectory",
+            updaterCleanupDirectory,
+        };
+
+        return SelfUpdatePlan.SpawnUpdater(new SelfUpdateProcessSpec(
+            FileName: pwshPath,
+            ArgumentList: args,
+            CreateNoWindow: true,
+            UseShellExecute: false,
+            WorkingDirectory: workingDirectory));
+    }
+
     /// <summary>
     /// Creates a self-update plan based on current conditions.
     /// </summary>

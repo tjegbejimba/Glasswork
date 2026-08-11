@@ -12,6 +12,7 @@
         <StackPanel Spacing="24" MaxWidth="720" HorizontalAlignment="Left">
             <TextBlock
                 Text="Settings"
+                AutomationProperties.AutomationId="SettingsHeader"
                 Style="{ThemeResource TitleTextBlockStyle}" />
 
             <!-- Vault Configuration -->
@@ -95,12 +96,15 @@
             </StackPanel>
 
             <!-- Updates -->
-            <StackPanel x:Name="UpdatesSection" Spacing="8">
+            <StackPanel
+                x:Name="UpdatesSection"
+                AutomationProperties.AutomationId="SettingsUpdatesSection"
+                Spacing="8">
                 <TextBlock
                     Text="Updates"
                     Style="{ThemeResource SubtitleTextBlockStyle}" />
                 <TextBlock
-                    Text="Glasswork checks GitHub for new releases. Applying an update rebuilds the app from source and is delivered in a later update."
+                    Text="Glasswork checks GitHub for new releases. Restart to update downloads the verified Windows release, installs it, and reopens Glasswork."
                     TextWrapping="Wrap"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
@@ -120,13 +124,13 @@
                         Click="CheckForUpdatesButton_Click" />
                     <Button
                         x:Name="RestartToUpdateButton"
+                        AutomationProperties.AutomationId="RestartToUpdateButton"
                         Content="Restart to update"
                         IsEnabled="False"
                         Click="RestartToUpdateButton_Click"
-                        ToolTipService.ToolTip="Rebuild from source and restart" />
+                        ToolTipService.ToolTip="Install the latest release and restart" />
                 </StackPanel>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </Page>
-

@@ -179,9 +179,7 @@ public sealed partial class SettingsPage : Page
     {
         InstalledVersionText.Text = $"Installed version: {App.Updater.InstalledVersion}";
         UpdateStatusText.Text = UpdateStatusPresenter.Describe(App.Updater.LastResult);
-        RestartToUpdateButton.IsEnabled =
-            App.Updater.LastResult?.IsUpdateAvailable == true &&
-            !string.IsNullOrWhiteSpace(App.Updater.RepoPath);
+        RestartToUpdateButton.IsEnabled = App.Updater.LastResult?.IsUpdateAvailable == true;
     }
 
     private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
@@ -209,22 +207,44 @@ public sealed partial class SettingsPage : Page
 
     private void RestartToUpdateButton_Click(object sender, RoutedEventArgs e)
     {
-        var plan = new SelfUpdateLauncher().CreatePlan(
-            isUpdateAvailable: App.Updater.LastResult?.IsUpdateAvailable == true,
-            repoPath: App.Updater.RepoPath,
-            installExePath: Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty,
-            processId: Environment.ProcessId,
-            executableResolver: new PwshExecutableResolver(),
-            directoryExists: Directory.Exists);
-
-        if (plan.IsOpenReleasePage || plan.ProcessSpec is null)
-        {
-            OpenReleasePage();
-            return;
-        }
+        string? updaterDirectory = null;
 
         try
         {
+            var bundledUpdaterDirectory = Path.Combine(AppContext.BaseDirectory, "Updater");
+            updaterDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "Glasswork",
+                $"updater-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(updaterDirectory);
+
+            foreach (var fileName in new[] { "release-update.ps1", "Invoke-ReleaseUpdate.ps1" })
+            {
+                File.Copy(
+                    Path.Combine(bundledUpdaterDirectory, fileName),
+                    Path.Combine(updaterDirectory, fileName));
+            }
+
+            var updaterScriptPath = Path.Combine(updaterDirectory, "release-update.ps1");
+            var plan = new SelfUpdateLauncher().CreatePackagedPlan(
+                isUpdateAvailable: App.Updater.LastResult?.IsUpdateAvailable == true,
+                availableVersion: App.Updater.LastResult?.AvailableVersion?.ToString(),
+                updaterScriptPath: updaterScriptPath,
+                updaterCleanupDirectory: updaterDirectory,
+                installExePath: Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty,
+                processId: Environment.ProcessId,
+                executableResolver: new PwshExecutableResolver(),
+                fileExists: File.Exists,
+                workingDirectory: Path.GetTempPath());
+
+            if (plan.IsOpenReleasePage || plan.ProcessSpec is null)
+            {
+                DeleteUpdaterDirectory(updaterDirectory);
+                updaterDirectory = null;
+                OpenReleasePage();
+                return;
+            }
+
             var spec = plan.ProcessSpec;
             var psi = new ProcessStartInfo
             {
@@ -236,16 +256,32 @@ public sealed partial class SettingsPage : Page
             foreach (var arg in spec.ArgumentList)
                 psi.ArgumentList.Add(arg);
 
-            Process.Start(psi);
+            if (Process.Start(psi) is null)
+                throw new InvalidOperationException("The updater process did not start.");
 
-            // Exit only after the detached updater has started: it waits on this PID
-            // before pulling+rebuilding, so the app must stay alive until the spawn succeeds.
+            // Exit only after the detached updater has started so it can replace the install.
+            updaterDirectory = null;
             Application.Current.Exit();
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Self-update spawn failed: {ex.Message}");
+            if (updaterDirectory is not null)
+                DeleteUpdaterDirectory(updaterDirectory);
             OpenReleasePage();
+        }
+    }
+
+    private static void DeleteUpdaterDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to clean up updater files: {ex.Message}");
         }
     }
 
@@ -262,4 +298,3 @@ public sealed partial class SettingsPage : Page
         }
     }
 }
-

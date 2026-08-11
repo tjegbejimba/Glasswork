@@ -7,6 +7,100 @@ namespace Glasswork.Tests.AppUpdate;
 public class SelfUpdateLauncherTests
 {
     [TestMethod]
+    public void AvailableUpdateWithoutRepo_ReturnsPackagedUpdaterPlan()
+    {
+        var launcher = new SelfUpdateLauncher();
+        var resolver = new FakeExecutableResolver();
+
+        var plan = launcher.CreatePackagedPlan(
+            isUpdateAvailable: true,
+            availableVersion: "1.5.0",
+            updaterScriptPath: @"C:\install\Updater\release-update.ps1",
+            updaterCleanupDirectory: @"C:\temp\updater",
+            installExePath: @"C:\install\Glasswork.exe",
+            processId: 1234,
+            executableResolver: resolver,
+            fileExists: _ => true,
+            workingDirectory: @"C:\temp");
+
+        Assert.IsFalse(plan.IsOpenReleasePage);
+        Assert.AreEqual(@"C:\pwsh\pwsh.exe", plan.ProcessSpec!.FileName);
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                @"C:\install\Updater\release-update.ps1",
+                "-AppProcessId",
+                "1234",
+                "-InstallExePath",
+                @"C:\install\Glasswork.exe",
+                "-Version",
+                "1.5.0",
+                "-CleanupDirectory",
+                @"C:\temp\updater",
+            },
+            plan.ProcessSpec.ArgumentList.ToArray());
+        Assert.AreEqual(@"C:\temp", plan.ProcessSpec.WorkingDirectory);
+    }
+
+    [TestMethod]
+    public void MissingAvailableVersion_ReturnsOpenReleasePage()
+    {
+        var plan = new SelfUpdateLauncher().CreatePackagedPlan(
+            isUpdateAvailable: true,
+            availableVersion: null,
+            updaterScriptPath: @"C:\install\Updater\release-update.ps1",
+            updaterCleanupDirectory: @"C:\temp\updater",
+            installExePath: @"C:\install\Glasswork.exe",
+            processId: 1234,
+            executableResolver: new FakeExecutableResolver(),
+            fileExists: _ => true,
+            workingDirectory: @"C:\temp");
+
+        Assert.IsTrue(plan.IsOpenReleasePage);
+        Assert.AreEqual(SelfUpdateFallbackReason.AvailableVersionMissing, plan.Reason);
+    }
+
+    [TestMethod]
+    public void MissingUpdaterScript_ReturnsOpenReleasePage()
+    {
+        var plan = new SelfUpdateLauncher().CreatePackagedPlan(
+            isUpdateAvailable: true,
+            availableVersion: "1.5.0",
+            updaterScriptPath: @"C:\install\Updater\release-update.ps1",
+            updaterCleanupDirectory: @"C:\temp\updater",
+            installExePath: @"C:\install\Glasswork.exe",
+            processId: 1234,
+            executableResolver: new FakeExecutableResolver(),
+            fileExists: _ => false,
+            workingDirectory: @"C:\temp");
+
+        Assert.IsTrue(plan.IsOpenReleasePage);
+        Assert.AreEqual(SelfUpdateFallbackReason.UpdaterMissing, plan.Reason);
+    }
+
+    [TestMethod]
+    public void MissingPowerShell_ReturnsOpenReleasePage()
+    {
+        var plan = new SelfUpdateLauncher().CreatePackagedPlan(
+            isUpdateAvailable: true,
+            availableVersion: "1.5.0",
+            updaterScriptPath: @"C:\install\Updater\release-update.ps1",
+            updaterCleanupDirectory: @"C:\temp\updater",
+            installExePath: @"C:\install\Glasswork.exe",
+            processId: 1234,
+            executableResolver: new FakeExecutableResolver(resolvePwsh: false),
+            fileExists: _ => true,
+            workingDirectory: @"C:\temp");
+
+        Assert.IsTrue(plan.IsOpenReleasePage);
+        Assert.AreEqual(SelfUpdateFallbackReason.PwshNotFound, plan.Reason);
+    }
+
+    [TestMethod]
     public void NoUpdateAvailable_ReturnsOpenReleasePage()
     {
         // Arrange
