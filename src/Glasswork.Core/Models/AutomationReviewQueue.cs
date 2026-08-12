@@ -98,16 +98,11 @@ public sealed record ReviewItemSubmission(
     ReviewProposalPayload? Payload = null,
     string? AttendanceLabel = null);
 
-public sealed record ReviewSourceRunDiagnosticSubmission(
-    string Status,
-    string Message);
-
 public sealed record ReviewSourceRunSubmission(
     string SourceId,
     ReviewSourceRunKind RunKind,
     string Cursor,
-    IReadOnlyList<ReviewItemSubmission> Items,
-    IReadOnlyList<ReviewSourceRunDiagnosticSubmission>? Diagnostics = null);
+    IReadOnlyList<ReviewItemSubmission> Items);
 
 public sealed record ReviewItemRejection(
     string SourceItemId,

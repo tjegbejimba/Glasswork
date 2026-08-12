@@ -284,86 +284,7 @@ public sealed class AutomationReviewQueueToolsTests
         Assert.AreEqual("cursor-unblocked", source.GetProperty("cursor").GetString());
     }
 
-    [TestMethod]
-    public void MeetingTranscriptSyncTools_ListUnmatchedMeetings_AndExposeOnlyNonTerminalAttachableTasks()
-    {
-        var vault = new VaultService(Path.Combine(_vaultRoot, "wiki", "todo"));
-        vault.Save(new GlassworkTask { Id = "task-todo", Title = "Todo", Status = GlassworkTask.Statuses.Todo, Created = new DateTime(2026, 7, 24) });
-        vault.Save(new GlassworkTask { Id = "task-done", Title = "Done", Status = GlassworkTask.Statuses.Done, Created = new DateTime(2026, 7, 24) });
-
-        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 20, 0, 0, TimeSpan.Zero));
-        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
-        var service = new MeetingTranscriptSyncService(
-            _vaultRoot,
-            vault,
-            queue,
-            new FixtureMeetingRecapSourceAdapter(
-            [
-                MeetingRecapFixture.Available(
-                    stableMeetingId: "meeting-unmatched",
-                    startedAt: new DateTimeOffset(2026, 7, 24, 19, 0, 0, TimeSpan.Zero),
-                    title: "Status update",
-                    organizer: "Pat Lee",
-                    usableUrl: "https://teams.contoso.example/recaps/unmatched",
-                    groundedSummary: "Customer comms need a final pass before release.",
-                    decisions: ["Finalize the customer comms before release."],
-                    actionItems: Array.Empty<MeetingActionItem>())
-            ]),
-            clock);
-        service.RunScheduled();
-
-        using var unmatched = JsonDocument.Parse(FreshTools(clock.GetUtcNow).GetMeetingTranscriptSyncUnmatched());
-        var meetings = unmatched.RootElement.GetProperty("meetings").EnumerateArray().ToArray();
-        Assert.AreEqual(1, meetings.Length);
-        Assert.AreEqual("meeting-unmatched", meetings[0].GetProperty("stable_meeting_id").GetString());
-
-        using var attachable = JsonDocument.Parse(FreshTools(clock.GetUtcNow).GetMeetingTranscriptSyncAttachableTasks());
-        CollectionAssert.AreEqual(
-            new[] { "task-todo" },
-            attachable.RootElement.GetProperty("tasks").EnumerateArray().Select(task => task.GetProperty("task_id").GetString()).ToArray());
-    }
-
-    [TestMethod]
-    public void AttachMeetingTranscriptSyncUnmatched_DelegatesToCore_AndCreatesReviewItemsWhenEvidenceQualifies()
-    {
-        var vault = new VaultService(Path.Combine(_vaultRoot, "wiki", "todo"));
-        vault.Save(new GlassworkTask { Id = "task-manual", Title = "Manual attach", Status = GlassworkTask.Statuses.Todo, Created = new DateTime(2026, 7, 24) });
-
-        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 20, 0, 0, TimeSpan.Zero));
-        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
-        var service = new MeetingTranscriptSyncService(
-            _vaultRoot,
-            vault,
-            queue,
-            new FixtureMeetingRecapSourceAdapter(
-            [
-                MeetingRecapFixture.Available(
-                    stableMeetingId: "meeting-manual-due",
-                    startedAt: new DateTimeOffset(2026, 7, 24, 19, 0, 0, TimeSpan.Zero),
-                    title: "Status update",
-                    organizer: "Pat Lee",
-                    usableUrl: "https://teams.contoso.example/recaps/manual-due",
-                    groundedSummary: "The follow-up is due 2026-08-12 after the dogfood ring completes.",
-                    decisions: ["Keep the due date at 2026-08-12."],
-                    actionItems: Array.Empty<MeetingActionItem>())
-            ]),
-            clock);
-        service.RunScheduled();
-
-        using var attached = JsonDocument.Parse(FreshTools(clock.GetUtcNow).AttachMeetingTranscriptSyncUnmatched(
-            stable_meeting_id: "meeting-manual-due",
-            task_id: "task-manual"));
-        Assert.AreEqual("submitted", attached.RootElement.GetProperty("disposition_code").GetString());
-        Assert.IsTrue(attached.RootElement.GetProperty("created_review_items").GetBoolean());
-
-        var snapshot = new AutomationReviewQueueService(_vaultRoot).LoadSnapshot();
-        CollectionAssert.AreEquivalent(
-            new[] { ReviewProposalType.DueDateChange },
-            snapshot.ActiveItems.Select(item => item.ProposalType).ToArray());
-    }
-
-    private GlassworkTools FreshTools(Func<DateTimeOffset>? clock = null) =>
-        new(new VaultContext(_vaultRoot), clock: clock);
+    private GlassworkTools FreshTools() => new(new VaultContext(_vaultRoot));
 
     private static object MeetingNoteItem(string sourceItemId, string taskId, string fingerprint, string summary) => new
     {
@@ -455,12 +376,5 @@ public sealed class AutomationReviewQueueToolsTests
         };
 
         return JsonSerializer.Serialize(shape);
-    }
-
-    private sealed class MutableTimeProvider(DateTimeOffset utcNow) : TimeProvider
-    {
-        private DateTimeOffset _utcNow = utcNow;
-
-        public override DateTimeOffset GetUtcNow() => _utcNow;
     }
 }

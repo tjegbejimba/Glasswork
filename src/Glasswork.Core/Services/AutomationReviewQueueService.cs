@@ -115,16 +115,6 @@ public sealed class AutomationReviewQueueService
         if (sourceRegistered)
         {
             var sourceState = GetOrCreateSourceState(document, submission.SourceId);
-            foreach (var diagnostic in submission.Diagnostics ?? [])
-            {
-                sourceState.Diagnostics.Add(new ReviewSourceDiagnosticDocument
-                {
-                    RecordedAt = now,
-                    Status = string.IsNullOrWhiteSpace(diagnostic.Status) ? "info" : diagnostic.Status.Trim(),
-                    Message = diagnostic.Message.Trim(),
-                });
-            }
-
             if (rejections.Count > 0)
             {
                 if (submission.RunKind == ReviewSourceRunKind.Scheduled)
@@ -158,7 +148,7 @@ public sealed class AutomationReviewQueueService
                     sourceState.IsDegraded = false;
                 }
 
-                if (!document.Recovery.RequiresAcknowledgement && submission.RunKind == ReviewSourceRunKind.Scheduled)
+                if (!document.Recovery.RequiresAcknowledgement)
                 {
                     sourceState.Cursor = submission.Cursor;
                     cursorAdvanced = true;
@@ -1288,7 +1278,8 @@ public sealed class AutomationReviewQueueService
     private static bool LinksEquivalent(TaskLink left, TaskLink right)
     {
         return string.Equals(TaskLink.Types.Normalize(left.Type), TaskLink.Types.Normalize(right.Type), StringComparison.OrdinalIgnoreCase)
-               && string.Equals(NormalizeLinkValue(left.Value), NormalizeLinkValue(right.Value), StringComparison.Ordinal);
+               && string.Equals(NormalizeLinkValue(left.Value), NormalizeLinkValue(right.Value), StringComparison.Ordinal)
+               && string.Equals(left.Label?.Trim() ?? string.Empty, right.Label?.Trim() ?? string.Empty, StringComparison.Ordinal);
     }
 
     private static string NormalizeLinkValue(string value)

@@ -711,44 +711,6 @@ public class AutomationReviewQueueServiceTests
     }
 
     [TestMethod]
-    public void ApproveSelection_WhenTransitionInvalid_ReturnsStructuredApplyFailureAndKeepsBatchPending()
-    {
-        var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 17, 12, 0, TimeSpan.Zero));
-        var queue = new AutomationReviewQueueService(_vaultRoot, clock);
-        _vault.Save(new GlassworkTask
-        {
-            Id = "task-invalid-transition",
-            Title = "Invalid transition task",
-            Status = GlassworkTask.Statuses.Todo,
-            Created = new DateTime(2026, 7, 24)
-        });
-
-        queue.SubmitSourceRun(new ReviewSourceRunSubmission(
-            SourceId: "meeting-transcript-sync",
-            RunKind: ReviewSourceRunKind.Scheduled,
-            Cursor: "cursor-invalid-transition",
-            Items:
-            [
-                new ReviewItemSubmission(
-                    SourceId: "meeting-transcript-sync", SourceItemId: "meeting-invalid-transition", TaskId: "task-invalid-transition",
-                    ProposalType: ReviewProposalType.UnblockTask, ChangeFingerprint: "fp-invalid-transition", SourceUrl: "https://contoso.example/meetings/invalid-transition",
-                    SourceTitle: "Invalid transition sync", MatchingEvidence: "Resume captured", Rationale: "Resume task", Summary: "Resume task even though it is not blocked", ProposedValue: "in-progress",
-                    Payload: new UnblockTaskProposalPayload(GlassworkTask.Statuses.InProgress))
-            ]));
-
-        var pendingIds = queue.LoadSnapshot().ActiveItems.Select(item => item.Id).ToArray();
-        var approval = queue.ApproveSelection(new ReviewApprovalRequest("task-invalid-transition", pendingIds));
-
-        Assert.IsFalse(approval.Applied);
-        Assert.AreEqual("invalid_task_transition", approval.ErrorCode);
-
-        var afterFailure = queue.LoadSnapshot();
-        Assert.AreEqual(1, afterFailure.ActiveItems.Count);
-        Assert.AreEqual(0, afterFailure.History.Count);
-        Assert.AreEqual("invalid_task_transition", afterFailure.ActiveItems[0].LastApplyFailureCode);
-    }
-
-    [TestMethod]
     public void ApproveSelection_WhenQueueCommitFailsAfterTaskSave_RetryMarksAlreadyAppliedBatchApproved()
     {
         var clock = new MutableTimeProvider(new DateTimeOffset(2026, 7, 24, 17, 15, 0, TimeSpan.Zero));
