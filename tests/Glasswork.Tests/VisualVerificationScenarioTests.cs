@@ -82,6 +82,33 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void FromJson_ReplaceTaskTextAction_LoadsSafeTaskMutation()
+    {
+        const string json = """
+        {
+          "name": "external edit",
+          "actions": [
+            {
+              "type": "replace-task-text",
+              "taskId": "active-task",
+              "oldValue": "title: Original",
+              "value": "title: External"
+            }
+          ],
+          "captures": [
+            { "name": "screen" }
+          ]
+        }
+        """;
+
+        var action = VisualVerificationScenario.FromJson(json).Actions.Single();
+
+        Assert.AreEqual("active-task", action.TaskId);
+        Assert.AreEqual("title: Original", action.OldValue);
+        Assert.AreEqual("title: External", action.Value);
+    }
+
+    [TestMethod]
     public void ToGlassworkTask_NormalizesType()
     {
         var today = new DateTime(2026, 6, 29);

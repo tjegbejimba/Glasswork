@@ -337,10 +337,10 @@ public sealed partial class ResourceMutationService
         var expected = expectedOriginal ?? original;
         if (expectedRevision is not null
             && (original is null || !string.Equals(Revision(original), expectedRevision, StringComparison.Ordinal)))
-            throw new InvalidOperationException("Task changed before commit.");
+            throw new ResourceRevisionConflictException("Task changed before commit.");
         if ((expected is null) != (original is null)
             || (expected is not null && original is not null && !expected.AsSpan().SequenceEqual(original)))
-            throw new InvalidOperationException("Task changed before commit.");
+            throw new ResourceRevisionConflictException("Task changed before commit.");
 
         if (original is not null && original.AsSpan().SequenceEqual(updated))
             return;
@@ -363,7 +363,7 @@ public sealed partial class ResourceMutationService
         var current = _vault.TryReadBytesUnsafe(taskId);
         if ((expected is null) != (current is null)
             || (expected is not null && current is not null && !expected.AsSpan().SequenceEqual(current)))
-            throw new InvalidOperationException("Task changed before commit.");
+            throw new ResourceRevisionConflictException("Task changed before commit.");
 
         _faults?.ThrowIfInjected(ResourceMutationFailurePoint.BeforeJournal);
         WriteJournal(journal);

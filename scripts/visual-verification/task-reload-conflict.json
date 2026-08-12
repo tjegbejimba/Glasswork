@@ -1,0 +1,72 @@
+{
+  "name": "Task reload after external edit",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "vv-reload-conflict",
+      "title": "Original task title",
+      "description": "The task remains open while an external agent edits its file.",
+      "status": "in_progress",
+      "priority": "high",
+      "subtasks": [
+        {
+          "text": "Legacy carried-over step",
+          "notes": "Carried over to [[target-task]]."
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "BacklogHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Original task title",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskTitleBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "TaskTitleBox",
+      "value": "My pending title"
+    },
+    {
+      "type": "replace-task-text",
+      "taskId": "vv-reload-conflict",
+      "oldValue": "title: Original task title",
+      "value": "title: External task title"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskReloadButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "TaskReloadButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 800
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-reloaded",
+      "waitMilliseconds": 400
+    }
+  ]
+}

@@ -92,7 +92,7 @@ internal static partial class VisualVerificationRunner
 
             foreach (var action in scenario.Actions)
             {
-                PerformAction(hwnd, action);
+                PerformAction(hwnd, todoPath, action);
             }
 
             var inspection = options.Inspect
@@ -305,7 +305,7 @@ internal static partial class VisualVerificationRunner
         throw new TimeoutException($"Glasswork did not show a window within {timeout.TotalSeconds:0}s.");
     }
 
-    private static void PerformAction(IntPtr hwnd, VisualVerificationAction action)
+    private static void PerformAction(IntPtr hwnd, string todoPath, VisualVerificationAction action)
     {
         switch (action.Type.Trim().ToLowerInvariant())
         {
@@ -327,9 +327,23 @@ internal static partial class VisualVerificationRunner
             case "delay":
                 System.Threading.Thread.Sleep(Math.Max(0, action.TimeoutMilliseconds));
                 return;
+            case "replace-task-text":
+                ReplaceTaskText(todoPath, action);
+                return;
             default:
                 throw new FormatException($"Unsupported visual verification action type '{action.Type}'.");
         }
+    }
+
+    private static void ReplaceTaskText(string todoPath, VisualVerificationAction action)
+    {
+        var path = Path.Combine(todoPath, action.TaskId + ".md");
+        var original = File.ReadAllText(path);
+        var updated = original.Replace(action.OldValue!, action.Value!, StringComparison.Ordinal);
+        if (updated == original)
+            throw new InvalidOperationException(
+                $"replace-task-text did not find '{action.OldValue}' in task '{action.TaskId}'.");
+        File.WriteAllText(path, updated);
     }
 
     private static InspectionPaths EmitInspection(IntPtr hwnd, VisualVerificationScenario scenario, string outDir)
