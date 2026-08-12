@@ -9,9 +9,10 @@ namespace Glasswork.Core.Services;
 /// Pure, presentation-only grouping for the My Day surface (issue #337 / ADR 0017).
 ///
 /// Given the already-promoted set of today's tasks, nests each promoted child Task
-/// whose <c>parent</c> resolves to an in-app <c>type: pbi</c> task under that PBI as a
-/// container card (<see cref="GlassworkTask.TodaysChildren"/>). The PBI is pulled in to
-/// host its children even when it would not independently promote — a
+/// whose <c>parent</c> resolves by Glasswork id or ADO identity to an in-app
+/// <c>type: pbi</c> task under that PBI as a container card
+/// (<see cref="GlassworkTask.TodaysChildren"/>). The PBI is pulled in to host its
+/// children even when it would not independently promote — a
 /// <i>container-only host</i>. This never changes the promotion policy
 /// (<see cref="MyDayPromotionPolicy"/> / <see cref="Glasswork.Core.Queries.MyDayQueries"/>);
 /// it only reshapes the rows for display.
@@ -31,6 +32,8 @@ public static class MyDayContainerGrouper
         if (promoted is null) throw new ArgumentNullException(nameof(promoted));
         if (allTasks is null) throw new ArgumentNullException(nameof(allTasks));
 
+        var pbiIdByAdoId = BuildPbiAdoIdLookup(allTasks);
+
         // First pass: bucket promoted children under their resolved PBI parent,
         // preserving promoted order within each bucket.
         var childrenByPbi = new Dictionary<string, List<GlassworkTask>>(StringComparer.Ordinal);
@@ -38,7 +41,16 @@ public static class MyDayContainerGrouper
         {
             var parentId = t.Parent?.Trim();
             if (string.IsNullOrEmpty(parentId)) continue;
-            if (!allTasks.TryGetValue(parentId, out var parent)) continue;
+            if (!allTasks.TryGetValue(parentId, out var parent))
+            {
+                var adoParentId = AdoParentIdExtractor.TryExtractId(parentId);
+                if (!adoParentId.HasValue
+                    || !pbiIdByAdoId.TryGetValue(adoParentId.Value, out parentId)
+                    || !allTasks.TryGetValue(parentId, out parent))
+                {
+                    continue;
+                }
+            }
             if (parent.Type != GlassworkTask.Types.Pbi) continue;
 
             if (!childrenByPbi.TryGetValue(parentId, out var bucket))
@@ -68,9 +80,11 @@ public static class MyDayContainerGrouper
         var hostPbiIds = new HashSet<string>(childrenByPbi.Keys, StringComparer.Ordinal);
 
         // Standalone rows: promoted tasks that are neither nested children nor container
-        // hosts. Original promoted order is preserved.
+        // hosts. PBIs without actionable children are containers with nothing to show,
+        // so they are omitted even when directly pinned. Original promoted order is preserved.
         var standalone = promoted
             .Where(t => !nestedChildIds.Contains(t.Id) && !hostPbiIds.Contains(t.Id))
+            .Where(t => t.Type != GlassworkTask.Types.Pbi || t.TodaysSubtasks?.Count > 0)
             .ToList();
 
         // Container rows: reuse the promoted PBI instance when it independently promoted,
@@ -97,6 +111,32 @@ public static class MyDayContainerGrouper
         rows.AddRange(standalone);
         rows.AddRange(containers);
         return rows;
+    }
+
+    private static IReadOnlyDictionary<int, string> BuildPbiAdoIdLookup(
+        IReadOnlyDictionary<string, GlassworkTask> allTasks)
+    {
+        var pbiIdByAdoId = new Dictionary<int, string>();
+        var ambiguousAdoIds = new HashSet<int>();
+
+        foreach (var (taskId, task) in allTasks)
+        {
+            if (task.Type != GlassworkTask.Types.Pbi || !task.AdoLink.HasValue) continue;
+
+            var adoId = task.AdoLink.Value;
+            if (!pbiIdByAdoId.TryAdd(adoId, taskId))
+            {
+                pbiIdByAdoId.Remove(adoId);
+                ambiguousAdoIds.Add(adoId);
+            }
+        }
+
+        foreach (var adoId in ambiguousAdoIds)
+        {
+            pbiIdByAdoId.Remove(adoId);
+        }
+
+        return pbiIdByAdoId;
     }
 
     private static GlassworkTask PullInHost(GlassworkTask pbi, DateOnly today)

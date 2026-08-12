@@ -55,6 +55,11 @@ When a PBI surfaces via one of its children, it renders as a **container card**
 with the actionable children inline beneath it — not as a bare overdue row that
 hides its own work.
 
+My Day presentation applies one additional container rule: a PBI is rendered only
+when it has actionable in-file subtasks or cross-file child Tasks for today. A
+direct pin remains part of membership policy, but it cannot create an empty
+standalone PBI row.
+
 ### Serialization avoids file churn
 
 The field is parsed with `GlassworkTask.Types.Normalize` (null / empty /
