@@ -72,14 +72,6 @@ public sealed class AutomationReviewQueueService
         _ = new ResourceMutationService(_todoPath, _taskVault);
     }
 
-    public static IReadOnlyDictionary<string, IReadOnlyList<ReviewProposalType>> GetRegisteredSources()
-    {
-        return AllowedProposalTypesBySource.ToDictionary(
-            pair => pair.Key,
-            pair => (IReadOnlyList<ReviewProposalType>)pair.Value.OrderBy(value => value).ToArray(),
-            StringComparer.Ordinal);
-    }
-
     public ReviewSourceRunResult SubmitSourceRun(ReviewSourceRunSubmission submission)
     {
         ArgumentNullException.ThrowIfNull(submission);
