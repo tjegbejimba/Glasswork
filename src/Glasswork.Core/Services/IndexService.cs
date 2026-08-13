@@ -619,22 +619,4 @@ public class IndexService
         }
     }
 
-    /// <summary>
-    /// Tasks completed within the half-open range <c>[from, to)</c>. Powers
-    /// <see cref="WorkLogService"/>'s weekly digest.
-    /// </summary>
-    public IReadOnlyList<GlassworkTask> CompletedBetween(DateTime from, DateTime to)
-    {
-        lock (_gate)
-        {
-            return _store.Values
-                .Where(t => t.Status == GlassworkTask.Statuses.Done
-                         && t.CompletedAt.HasValue
-                         && t.CompletedAt.Value >= from
-                         && t.CompletedAt.Value < to)
-                .OrderBy(t => t.CompletedAt)
-                .Select(t => t.Clone())
-                .ToList();
-        }
-    }
 }

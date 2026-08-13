@@ -690,6 +690,41 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(inputError);
             }
 
+            var querySnapshot = _taskQuery.Execute(new TaskQueryRequest(
+                _timeProvider.GetLocalNow(),
+                new ListTaskSelection(
+                    Projection: new SelectedTaskFieldsProjection(
+                        new HashSet<TaskQueryField>
+                        {
+                            TaskQueryField.Title,
+                            TaskQueryField.Status,
+                            TaskQueryField.ParentId,
+                            TaskQueryField.Created,
+                            TaskQueryField.Description,
+                            TaskQueryField.Notes,
+                            TaskQueryField.Subtasks,
+                            TaskQueryField.Tags,
+                            TaskQueryField.Ready,
+                            TaskQueryField.UrgencyScore,
+                            TaskQueryField.BacklinkCount,
+                        }))));
+            var tasksById = querySnapshot.Tasks.ToDictionary(task => task.Id, StringComparer.Ordinal);
+            var documents = querySnapshot.Tasks
+                .Select(task => new TaskSearchDocument(
+                    task.Id,
+                    task.Title,
+                    task.RawStatus,
+                    task.ParentId,
+                    task.Created,
+                    task.Description,
+                    task.Notes,
+                    task.Subtasks?
+                        .Select(subtask => $"{subtask.Text}\n{subtask.Notes}".Trim())
+                        .ToArray()
+                        ?? [],
+                    task.Tags))
+                .ToArray();
+
             // Defensive net: pre-validation should have caught known cases, but a
             // future Core validation we didn't mirror still surfaces as a structured
             // envelope rather than crashing the transport. Wraps ONLY the Search
@@ -698,7 +733,7 @@ public sealed class GlassworkTools
             IReadOnlyList<TaskSearchHit> searchHits;
             try
             {
-                searchHits = _search.Search(query, @in, tags, status, limit);
+                searchHits = _search.Search(documents, query, @in, tags, status, limit);
             }
             catch (ArgumentException ex)
             {
@@ -706,15 +741,10 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("invalid_argument", ex.Message));
             }
 
-            var tasksById = _vault.LoadAll().ToDictionary(t => t.Id, StringComparer.Ordinal);
-            var backlinkCounts = BuildBacklinkCounts(tasksById.Values);
             var hits = searchHits
                 .Select(h =>
                 {
-                    tasksById.TryGetValue(h.Id, out var task);
-                    var signals = task is null
-                        ? new TaskActionabilitySignals(true, 0, 0)
-                        : SignalsFor(task, backlinkCounts);
+                    var task = tasksById[h.Id];
                     return new TaskSearchSummary(
                         Id: h.Id,
                         Title: h.Title,
@@ -722,10 +752,10 @@ public sealed class GlassworkTools
                         ParentId: h.ParentId,
                         MatchedIn: h.MatchedIn.ToArray(),
                         Snippet: h.Snippet,
-                        Ready: signals.Ready,
-                        UrgencyScore: signals.UrgencyScore,
-                        BacklinkCount: signals.BacklinkCount,
-                        ResourceRevision: ResourceRevision(h.Id));
+                        Ready: task.Ready,
+                        UrgencyScore: task.UrgencyScore,
+                        BacklinkCount: task.BacklinkCount,
+                        ResourceRevision: task.ResourceRevision!);
                 })
                 .ToList();
             scope?.SetCount("task_count", hits.Count);
@@ -2408,31 +2438,6 @@ public sealed class GlassworkTools
         return dict;
     }
 
-    private TaskActionabilitySignals SignalsFor(
-        GlassworkTask task,
-        IReadOnlyDictionary<string, int> backlinkCounts)
-    {
-        return TaskActionability.Compute(
-            task,
-            new TaskSignalContext(
-                DateOnly.FromDateTime(DateTime.Today),
-                backlinkCounts.TryGetValue(task.Id, out var count) ? count : 0));
-    }
-
-    private Dictionary<string, int> BuildBacklinkCounts(IEnumerable<GlassworkTask> tasks)
-    {
-        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        var index = new BacklinkIndex();
-        try { index.Build(_vaultRoot); }
-        catch { return counts; }
-
-        foreach (var task in tasks)
-        {
-            counts[task.Id] = index.GetBacklinks(task.Id).Count;
-        }
-        return counts;
-    }
-
     // ────── output path helpers (slash-normalized, always forward slashes) ──────
 
     private static string TodoRelativeTaskPath(string id) => $"{id}.md";
@@ -3099,21 +3104,17 @@ public sealed class GlassworkTools
         using var scope = _logger?.BeginCall("get_activity");
         try
         {
-            if (!TryParsePeriod(period, out var from, out var to, out var parseError))
+            var queryTime = _timeProvider.GetLocalNow();
+            if (!TryParsePeriod(period, queryTime.DateTime, out var from, out var to, out var parseError))
             {
                 scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_period", parseError!));
             }
 
-            var allTasks = _vault.LoadAll();
-            
-            // Filter tasks completed in the period (must have status=done AND completed_at in range)
-            var completedInPeriod = allTasks
-                .Where(t => t.Status == GlassworkTask.Statuses.Done &&
-                            t.CompletedAt.HasValue && 
-                            t.CompletedAt.Value >= from && 
-                            t.CompletedAt.Value <= to)
-                .OrderBy(t => t.CompletedAt)
+            var completed = _taskQuery.Execute(new TaskQueryRequest(
+                queryTime,
+                new CompletedWorkTaskSelection(from, to.AddTicks(1))));
+            var completedInPeriod = completed.Tasks
                 .Select(t =>
                 {
                     var adoLink = t.Links.FirstOrDefault(l => l.Type == TaskLink.Types.Ado);
@@ -3122,9 +3123,14 @@ public sealed class GlassworkTools
                         Title: t.Title,
                         CompletedAt: t.CompletedAt!.Value.ToString("O"),
                         Priority: t.Priority,
-                        Links: t.Links.ToArray(),
+                        Links: t.Links.Select(link => new TaskLink
+                        {
+                            Type = link.Type,
+                            Value = link.Value,
+                            Label = link.Label,
+                        }).ToArray(),
                         AdoLink: adoLink?.Value,
-                        ResourceRevision: ResourceRevision(t.Id)); // Just the ID, not a constructed URL
+                        ResourceRevision: t.ResourceRevision!);
                 })
                 .ToArray();
 
@@ -3149,10 +3155,14 @@ public sealed class GlassworkTools
         }
     }
 
-    private static bool TryParsePeriod(string period, out DateTime from, out DateTime to, out string? error)
+    private static bool TryParsePeriod(
+        string period,
+        DateTime localNow,
+        out DateTime from,
+        out DateTime to,
+        out string? error)
     {
-        var now = DateTime.Now;
-        var today = DateTime.Today;
+        var today = localNow.Date;
 
         switch (period?.ToLowerInvariant())
         {
@@ -3167,13 +3177,13 @@ public sealed class GlassworkTools
                 error = null;
                 return true;
             case "week":
-                from = now.AddDays(-7);
-                to = now;
+                from = localNow.AddDays(-7);
+                to = localNow;
                 error = null;
                 return true;
             case "month":
-                from = now.AddMonths(-1);
-                to = now;
+                from = localNow.AddMonths(-1);
+                to = localNow;
                 error = null;
                 return true;
             default:
