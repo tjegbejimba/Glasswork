@@ -21,6 +21,7 @@ public sealed partial class MainWindow : Window
     // Guards NavView_SelectionChanged from performing a parameter-less navigation while
     // NavigateToSettingsUpdates() syncs the Settings chrome selection (issue #241).
     private bool _suppressSettingsNav;
+    private EventHandler<object>? _firstFrameHandler;
 
     public MainWindow()
     {
@@ -56,14 +57,33 @@ public sealed partial class MainWindow : Window
             root.PointerPressed += Root_PointerPressed;
         }
 
+        if (App.Performance.IsEnabled)
+        {
+            _firstFrameHandler = (_, _) =>
+            {
+                Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _firstFrameHandler;
+                _firstFrameHandler = null;
+                App.Performance.EmitMilestone("app.window_first_frame");
+            };
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += _firstFrameHandler;
+        }
+
         // Flush ui-state on shutdown to close the rapid-exit data-loss window (ADR 0014).
         Closed += (_, _) =>
         {
+            if (_firstFrameHandler is not null)
+            {
+                Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _firstFrameHandler;
+                _firstFrameHandler = null;
+            }
+
             if (App.UiState is AutoSavingUiStateService autoSaving)
             {
                 try { autoSaving.Flush(); }
                 catch { /* Flush failure must not block shutdown */ }
             }
+
+            App.Performance.Dispose();
         };
     }
 

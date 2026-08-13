@@ -45,7 +45,13 @@ public sealed partial class BacklogPage : Page
 
     public BacklogPage()
     {
-        ViewModel = new BacklogViewModel(App.Vault, App.Tasks, App.Index, App.UiState, App.SavedTaskViews);
+        ViewModel = new BacklogViewModel(
+            App.Vault,
+            App.Tasks,
+            App.Index,
+            App.UiState,
+            App.SavedTaskViews,
+            App.Performance);
         ViewModel.RefreshSavedViews();
         // Load persisted ViewMode (default "list") BEFORE InitializeComponent
         ViewModel.ViewMode = App.UiState.Get<string>(App.BacklogViewModeKey) ?? "list";
@@ -677,7 +683,7 @@ public sealed partial class BacklogPage : Page
         for (var i = 0; i < childCount; i++)
         {
             var child = VisualTreeHelper.GetChild(parent, i);
-            
+
             if (child is T element && element.DataContext == dataContext)
             {
                 return element;
@@ -734,8 +740,8 @@ public sealed partial class BacklogPage : Page
         _draggedTask = null;
 
         // Determine target status from column name
-        var targetStatus = targetColumn.ColumnName == "To Do" 
-            ? GlassworkTask.Statuses.Todo 
+        var targetStatus = targetColumn.ColumnName == "To Do"
+            ? GlassworkTask.Statuses.Todo
             : GlassworkTask.Statuses.InProgress;
 
         // No-op if dropping in same column
@@ -761,8 +767,8 @@ public sealed partial class BacklogPage : Page
             if (!result.Success)
             {
                 // Snap back on failure
-                task.Status = task.Status == GlassworkTask.Statuses.Todo 
-                    ? GlassworkTask.Statuses.InProgress 
+                task.Status = task.Status == GlassworkTask.Statuses.Todo
+                    ? GlassworkTask.Statuses.InProgress
                     : GlassworkTask.Statuses.Todo;
                 if (originalColumn is not null)
                 {
@@ -777,8 +783,8 @@ public sealed partial class BacklogPage : Page
         catch (Exception ex)
         {
             // Snap back on exception (e.g., disk full, permissions error)
-            task.Status = task.Status == GlassworkTask.Statuses.Todo 
-                ? GlassworkTask.Statuses.InProgress 
+            task.Status = task.Status == GlassworkTask.Statuses.Todo
+                ? GlassworkTask.Statuses.InProgress
                 : GlassworkTask.Statuses.Todo;
             if (originalColumn is not null)
             {
@@ -851,10 +857,10 @@ public sealed partial class BacklogPage : Page
 
         // Layout context changed since capture (user toggled view-mode, group,
         // status filter, or search)? The captured offset is meaningless now. Drop it.
-        if (snapshot.ViewMode    != ViewModel.ViewMode    ||
-            snapshot.IsGrouped   != ViewModel.IsGrouped   ||
+        if (snapshot.ViewMode != ViewModel.ViewMode ||
+            snapshot.IsGrouped != ViewModel.IsGrouped ||
             snapshot.FilterStatus != ViewModel.FilterStatus ||
-            snapshot.SearchText   != ViewModel.SearchText)
+            snapshot.SearchText != ViewModel.SearchText)
         {
             _pendingRestore = null;
             return;

@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using Glasswork.Core.AppUpdate;
 using Glasswork.Core.Models;
+using Glasswork.Core.Services;
 using Glasswork.Services;
 using Glasswork.ViewModels;
 using Microsoft.UI.Xaml;
@@ -24,6 +25,9 @@ public sealed partial class MyDayPage : Page
     // MinHeight 320) scroll surface and the user-reported pain; the short secondary
     // lists (recently-completed / suggestions, MaxHeight 140-400) are left as-is.
     private ScrollSnapshot? _pendingRestore;
+    private bool _initialRenderMeasured;
+    private IPerformanceTraceScope? _initialRenderTrace;
+    private EventHandler<object>? _initialRenderHandler;
 
     private sealed record ScrollSnapshot(double ListOffset);
 
@@ -34,7 +38,7 @@ public sealed partial class MyDayPage : Page
 
     public MyDayPage()
     {
-        ViewModel = new MyDayViewModel(App.Vault, App.Tasks, App.Index, App.UiState);
+        ViewModel = new MyDayViewModel(App.Vault, App.Tasks, App.Index, App.UiState, App.Performance);
         InitializeComponent();
 
         // Snapshot TodayList's scroll position before VM.Refresh() destroys it, then
@@ -84,7 +88,35 @@ public sealed partial class MyDayPage : Page
         // can't land in the gap between reading the cache and wiring the handler (#241).
         App.Updater.ResultChanged += OnUpdaterResultChanged;
         RefreshUpdateHint();
-        Refresh();
+
+        if (!_initialRenderMeasured && App.Performance.IsEnabled)
+        {
+            _initialRenderMeasured = true;
+            _initialRenderTrace = App.Performance.BeginSpan("my_day.initial_render");
+        }
+
+        try
+        {
+            Refresh();
+        }
+        catch
+        {
+            CancelInitialRenderMeasurement();
+            throw;
+        }
+
+        if (_initialRenderTrace is not null)
+        {
+            _initialRenderHandler = (_, _) =>
+            {
+                Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _initialRenderHandler;
+                _initialRenderHandler = null;
+                _initialRenderTrace.Dispose();
+                _initialRenderTrace = null;
+            };
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += _initialRenderHandler;
+        }
+
         App.Index.Changed += OnIndexChanged;
     }
 
@@ -93,11 +125,30 @@ public sealed partial class MyDayPage : Page
         base.OnNavigatedFrom(e);
         App.Updater.ResultChanged -= OnUpdaterResultChanged;
         App.Index.Changed -= OnIndexChanged;
+
+        CancelInitialRenderMeasurement();
     }
 
     private void OnIndexChanged(object? sender, Glasswork.Core.Services.TasksChanged e)
     {
         DispatcherQueue.TryEnqueue(Refresh);
+    }
+
+    private void CancelInitialRenderMeasurement()
+    {
+        if (_initialRenderHandler is not null)
+        {
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _initialRenderHandler;
+            _initialRenderHandler = null;
+        }
+
+        if (_initialRenderTrace is null)
+            return;
+
+        _initialRenderTrace.Cancel();
+        _initialRenderTrace.Dispose();
+        _initialRenderTrace = null;
+        _initialRenderMeasured = false;
     }
 
     private void OnUpdaterResultChanged(object? sender, EventArgs e)

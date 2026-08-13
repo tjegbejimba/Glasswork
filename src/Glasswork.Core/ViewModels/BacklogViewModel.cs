@@ -19,6 +19,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     private readonly TaskService _taskService;
     private readonly VaultService _vault;
     private readonly SavedTaskViewService? _savedTaskViews;
+    private readonly IPerformanceTracer _performanceTracer;
 
     /// <summary>
     /// Flat list of tasks (ungrouped). Kept for backward compat / count exposure.
@@ -86,11 +87,21 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         IndexService index,
         IUiStateService? uiState = null,
         SavedTaskViewService? savedTaskViews = null)
+        : this(vault, taskService, index, uiState, savedTaskViews, null) { }
+
+    public BacklogViewModel(
+        VaultService vault,
+        TaskService taskService,
+        IndexService index,
+        IUiStateService? uiState,
+        SavedTaskViewService? savedTaskViews,
+        IPerformanceTracer? performanceTracer = null)
     {
         _vault = vault;
         _taskService = taskService;
         _index = index;
         _savedTaskViews = savedTaskViews;
+        _performanceTracer = performanceTracer ?? PerformanceTracer.Disabled;
         _parentTitleStore = uiState is null ? null : new AdoParentTitleCacheStore(uiState);
         // Issue #188: Page (BacklogPage) subscribes to Index.Changed and marshals to UI thread.
         // ViewModel stays on Core and has no dispatcher access.
@@ -107,6 +118,23 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     public void Refresh()
     {
         Refreshing?.Invoke();
+        using (var trace = _performanceTracer.BeginSpan("backlog.refresh_data"))
+        {
+            try
+            {
+                RefreshData(trace);
+            }
+            catch
+            {
+                trace.SetOutcome("error");
+                throw;
+            }
+        }
+        Refreshed?.Invoke();
+    }
+
+    private void RefreshData(IPerformanceTraceScope trace)
+    {
         Tasks.Clear();
         Rows.Clear();
         BoardColumns.Clear();
@@ -178,7 +206,11 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
             }
         }
 
-        Refreshed?.Invoke();
+        trace.SetTag("view_mode", ViewMode);
+        trace.SetTag("is_grouped", IsGrouped);
+        trace.SetCount("task_count", Tasks.Count);
+        trace.SetCount("row_count", Rows.Count);
+        trace.SetCount("board_column_count", BoardColumns.Count);
     }
 
     private IReadOnlyList<GlassworkTask> FilterTasks(IReadOnlyList<GlassworkTask> all, string fallbackStatus)
