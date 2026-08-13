@@ -5,6 +5,8 @@
 mutation boundary; the mtime and runtime-negotiation text below is superseded.
 The shipped tool surface has grown well beyond the v1 four; see the
 [2026-07-06 Amendment](#amendment--2026-07-06-shipped-tool-surface).
+Task-bearing MCP queries now translate to the stateless fresh-Vault Task Query
+adapter recorded by ADR 0010.
 **Context slice**: resolves issue #67 (MCP server); depends on a new prerequisite issue (file-based `SelfWriteCoordinator`); loosely related to #84 (vault settings) and #69 (quick-capture).
 
 ## Context
@@ -92,7 +94,9 @@ For `add_task` and `add_artifact` (creating new files), the equivalent check is 
 
 ### 6. Read consistency: stateless, re-read every call
 
-No in-process index, no caching. Every `list_tasks` / `get_task` re-reads the vault via `TaskService.LoadAll()` or equivalent.
+No in-process index, no caching. Task Query tools execute through
+`FreshVaultTaskQuery`, which acquires one fresh coherent managed Vault snapshot
+per call. Other reads such as `get_task` remain direct managed Vault reads.
 
 - Single-user vaults are unlikely to have thousands of tasks; per-call YAML parsing should be sub-100ms.
 - Agent call volume is bursty but low (5-20 calls per session, not per second).
@@ -205,14 +209,12 @@ transport still delegates the transition rules to `Glasswork.Core`:
 
 ### Amendment — relation-aware Task queries
 
-The MCP server now implements relation-aware Task queries. The `query_tasks`
-tool reads one managed Task snapshot, applies typed parent/status/Task
-type/Tag predicates, and supports the generic top-level `blocked_by`
-relationship through empty-set and all-target-status predicates. It requires
-bounded deterministic paging, returns an opaque continuation cursor, and
-includes a deduplicated `read_basis` of dependency Tasks with Resource
-Revisions. Invalid self-edges and missing targets in the queried scope return
-structured validation diagnostics.
+The MCP server exposes relation-aware Task queries as a thin transport adapter.
+The `query_tasks` tool maps parameters to `ITaskQuery.Execute` through
+`FreshVaultTaskQuery`; Core applies typed parent/status/Task type/Tag and
+`blocked_by` predicates, validates relationships, performs bounded deterministic
+paging, owns the opaque cursor, and returns typed Tasks plus a deduplicated
+`read_basis`. MCP only preserves the established JSON and error contracts.
 
 ## Consequences
 

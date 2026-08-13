@@ -143,6 +143,7 @@ public sealed record TaskQueryDiagnostic(
 
 public sealed record TaskQuerySubtask(
     string Text,
+    string Notes,
     bool IsCompleted,
     string? Status,
     IReadOnlyDictionary<string, string> Metadata);
@@ -200,6 +201,7 @@ public sealed class TaskQueryItem
         Subtasks = includeSubtasks
             ? task.Subtasks.Select(subtask => new TaskQuerySubtask(
                 subtask.Text,
+                subtask.Notes,
                 subtask.IsCompleted,
                 subtask.Status,
                 new Dictionary<string, string>(subtask.Metadata))).ToArray()

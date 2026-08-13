@@ -72,6 +72,8 @@ internal static class TaskQueryPolicy
             TaskQueryField.Status,
             TaskQueryField.Type,
             TaskQueryField.ParentId,
+            TaskQueryField.Priority,
+            TaskQueryField.Links,
             TaskQueryField.CompletedAt);
 
     public static TaskQueryResult Execute(
@@ -149,7 +151,12 @@ internal static class TaskQueryPolicy
             .Where(task => parentId is null || string.Equals(task.Parent, parentId, StringComparison.Ordinal))
             .OrderBy(task => task.Created)
             .ThenBy(task => task.Id, StringComparer.Ordinal)
-            .Select(task => Project(snapshot, task, queryTime, fields, includeSubtasks: false))
+            .Select(task => Project(
+                snapshot,
+                task,
+                queryTime,
+                fields,
+                includeSubtasks: fields.Contains(TaskQueryField.Subtasks)))
             .ToList();
         return TaskQueryResult.Success(tasks);
     }

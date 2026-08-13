@@ -39,6 +39,59 @@ public sealed class TaskQueryConformanceTests
     [DataTestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
+    public void Execute_MyDaySelectionAppliesDismissalsOptionsAndStableOrdering(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        var urgent = new GlassworkTask
+        {
+            Id = "a-urgent",
+            Title = "Urgent",
+            Status = GlassworkTask.Statuses.Todo,
+            Priority = GlassworkTask.Priorities.Urgent,
+            MyDay = QueryTime.Date,
+        };
+        urgent.Subtasks.Add(new SubTask { Text = "Included subtask" });
+        fixture.Save(
+            urgent,
+            new GlassworkTask
+            {
+                Id = "b-done",
+                Title = "Done",
+                Status = GlassworkTask.Statuses.Done,
+                MyDay = QueryTime.Date,
+            },
+            new GlassworkTask
+            {
+                Id = "c-normal",
+                Title = "Normal",
+                Status = GlassworkTask.Statuses.Todo,
+                MyDay = QueryTime.Date,
+            },
+            new GlassworkTask
+            {
+                Id = "dismissed",
+                Title = "Dismissed",
+                Status = GlassworkTask.Statuses.Todo,
+                Priority = GlassworkTask.Priorities.Urgent,
+                MyDay = QueryTime.Date,
+            });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new MyDayTaskSelection(
+                new HashSet<string>(StringComparer.Ordinal) { "dismissed" },
+                IncludeDone: true,
+                IncludeSubtasks: true)));
+
+        CollectionAssert.AreEqual(
+            new[] { "a-urgent", "b-done", "c-normal" },
+            result.Tasks.Select(task => task.Id).ToArray());
+        Assert.AreEqual("Included subtask", result.Tasks[0].Subtasks?.Single().Text);
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
     public void Execute_RelationSelectionFiltersTypedStructureAndBuildsOrderedReadBasis(string adapter)
     {
         using var fixture = TaskQueryFixture.Create(adapter);
@@ -174,6 +227,35 @@ public sealed class TaskQueryConformanceTests
         Assert.IsFalse(item.Includes(TaskQueryField.Title));
         Assert.IsNull(item.ParentId);
         Assert.IsNull(item.Due);
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
+    public void Execute_SelectedSubtasksProjectionIncludesSearchableNotes(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        var task = new GlassworkTask
+        {
+            Id = "searchable",
+            Title = "Searchable",
+        };
+        task.Subtasks.Add(new SubTask
+        {
+            Text = "Prepare rollout",
+            Notes = "Coordinate the special-keyword migration.",
+        });
+        fixture.Save(task);
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField> { TaskQueryField.Subtasks }))));
+
+        var subtask = result.Tasks.Single().Subtasks?.Single();
+        Assert.IsNotNull(subtask);
+        Assert.AreEqual("Coordinate the special-keyword migration.", subtask.Notes);
     }
 
     [DataTestMethod]
@@ -634,6 +716,8 @@ public sealed class TaskQueryConformanceTests
         CollectionAssert.AreEqual(
             new[] { "a", "b" },
             result.Tasks.Select(task => task.Id).ToArray());
+        Assert.IsTrue(result.Tasks.All(task => task.Includes(TaskQueryField.Priority)));
+        Assert.IsTrue(result.Tasks.All(task => task.Includes(TaskQueryField.Links)));
     }
 
     private static readonly DateTimeOffset QueryTime =

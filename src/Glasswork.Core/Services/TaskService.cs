@@ -162,46 +162,6 @@ public class TaskService
         _vault.Save(parent);
     }
 
-    /// <summary>
-    /// Get tasks in My Day for today, applying the four-condition promotion rule from ADR 0008:
-    /// 1. Direct pin: task.MyDay == today
-    /// 2. Task due: task.Due &lt;= today &amp;&amp; Status != Done &amp;&amp; Type != pbi (PBIs don't self-promote on their own due — ADR 0016)
-    /// 3. Flagged subtask: any subtask has IsMyDay == true
-    /// 4. Due subtask: any subtask has Due &lt;= today &amp;&amp; Status != Done
-    /// </summary>
-    public List<GlassworkTask> GetMyDay(bool includeDone, bool includeSubtasks)
-    {
-        var today = DateOnly.FromDateTime(DateTime.Today);
-        var tasks = new List<GlassworkTask>();
-
-        foreach (var task in _index.All)
-        {
-            var promoted = MyDayPromotionPolicy.IsTaskInMyDayToday(task, today, new HashSet<string>(StringComparer.Ordinal))
-                || (includeDone
-                    && task.Status == GlassworkTask.Statuses.Done
-                    && task.MyDay.HasValue
-                    && DateOnly.FromDateTime(task.MyDay.Value.Date) == today);
-
-            if (promoted)
-            {
-                if (includeDone || task.Status != GlassworkTask.Statuses.Done)
-                {
-                    var clone = task.Clone();
-                    
-                    // Apply includeSubtasks filter
-                    if (!includeSubtasks)
-                    {
-                        clone.Subtasks.Clear();
-                    }
-                    
-                    tasks.Add(clone);
-                }
-            }
-        }
-
-        return tasks;
-    }
-
     public static void EnsureCanMutate(GlassworkTask task)
     {
         if (task.IsBlocked && task.NeedsBlockerDetails)
