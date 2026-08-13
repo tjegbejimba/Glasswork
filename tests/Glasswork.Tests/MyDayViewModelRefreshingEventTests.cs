@@ -259,6 +259,40 @@ public class MyDayViewModelRefreshingEventTests
         Assert.AreEqual("From query snapshot", vm.TodayTasks.Single().Title);
     }
 
+    [TestMethod]
+    public void Refresh_DismissedTaskRecreatedBeforeWarmSnapshotStaysExcluded()
+    {
+        var task = CreateMyDayTask("Dismissed then recreated");
+        var recreated = task.Clone();
+        recreated.ResourceRevision = null;
+        var uiState = new JsonFileUiStateService(Path.Combine(_tempDir, "ui-state.json"));
+        uiState.Set(
+            MyDayDismissals.KeyFor(task.Id, DateOnly.FromDateTime(DateTime.Today)),
+            true);
+        _vault.Delete(task.Id);
+        Assert.IsNull(_index.ById(task.Id), "precondition: the first Index snapshot omits the Task");
+
+        var query = new WarmIndexTaskQuery(
+            () =>
+            {
+                _vault.Save(recreated, ifAbsent: true);
+                return _index.All;
+            },
+            new BacklinkIndex());
+        var vm = new MyDayViewModel(
+            _vault,
+            _taskService,
+            _index,
+            uiState,
+            query);
+
+        vm.Refresh();
+
+        Assert.IsNotNull(_index.ById(task.Id), "precondition: the warm query snapshot includes the recreated Task");
+        Assert.AreEqual(0, vm.TodayTasks.Count,
+            "dismissal lookup and My Day selection must use the same warm Index snapshot");
+    }
+
     private sealed class BeforeExecuteTaskQuery(ITaskQuery inner, Action beforeExecute) : ITaskQuery
     {
         private bool _hasExecuted;

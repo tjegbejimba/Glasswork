@@ -59,20 +59,13 @@ public partial class MyDayViewModel : ObservableObject
     {
         Refreshing?.Invoke();
 
-        var indexedTasks = _index.Tasks;
         var queryTime = DateTimeOffset.Now;
         var today = DateOnly.FromDateTime(queryTime.Date);
 
-        // Build the dismissed-today set once so the predicate stays pure.
-        var dismissed = new System.Collections.Generic.HashSet<string>(
-            indexedTasks.Values.Where(t => IsDismissedToday(t.Id)).Select(t => t.Id));
-
-        var queryResult = _taskQuery.Execute(new TaskQueryRequest(
-            queryTime,
-            new MyDayTaskSelection(
-                dismissed,
-                IncludeDone: false,
-                IncludeSubtasks: false)));
+        var queryResult = _taskQuery is IWarmTaskQueryExecution warmTaskQuery
+            ? warmTaskQuery.ExecuteWithSnapshotContext(
+                taskIds => CreateMyDayRequest(queryTime, taskIds))
+            : _taskQuery.Execute(CreateMyDayRequest(queryTime, _index.Tasks.Keys));
         EnsureSuccessful(queryResult, "My Day");
         var all = queryResult.MaterializeSourceTasks();
         var todayTasks = queryResult.MaterializeTasks();
@@ -138,6 +131,21 @@ public partial class MyDayViewModel : ObservableObject
         ReconcileTaskCollection(Suggestions, suggestions);
 
         Refreshed?.Invoke();
+    }
+
+    private TaskQueryRequest CreateMyDayRequest(
+        DateTimeOffset queryTime,
+        IEnumerable<string> taskIds)
+    {
+        var dismissed = taskIds
+            .Where(IsDismissedToday)
+            .ToHashSet(StringComparer.Ordinal);
+        return new TaskQueryRequest(
+            queryTime,
+            new MyDayTaskSelection(
+                dismissed,
+                IncludeDone: false,
+                IncludeSubtasks: false));
     }
 
     private static void EnsureSuccessful(TaskQueryResult result, string selection)
