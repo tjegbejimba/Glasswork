@@ -54,7 +54,6 @@ public partial class App : Application
     public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
-    public static AutomationReviewQueueService ReviewQueue { get; private set; } = null!;
 
     // Coalesces a burst of watcher-overflow events into a single full rehydrate.
     // An OS buffer overflow can fire repeatedly while a bulk write is still in
@@ -333,10 +332,6 @@ public partial class App : Application
 
         Artifacts = new FileSystemArtifactStore(VaultRoot);
         ObsidianLauncher = new ObsidianLauncher(VaultRoot);
-        ReviewQueue = new AutomationReviewQueueService(
-            VaultRoot,
-            selfWrites: SelfWrites,
-            taskVault: Vault);
 
         // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
         // that mention a Glasswork task via [[stem]] / [[stem|alias]].
