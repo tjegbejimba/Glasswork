@@ -37,10 +37,13 @@ public sealed class FreshVaultTaskQuery : ITaskQuery
     public TaskQueryResult Execute(TaskQueryRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var tasks = _vault.LoadAll();
-        var backlinks = new BacklinkIndex();
-        backlinks.Build(_vaultRoot);
-        return TaskQueryPolicy.Execute(TaskQuerySnapshot.Create(tasks, backlinks), request);
+        var snapshot = _vault.ReadAllSnapshot(tasks =>
+        {
+            var backlinks = new BacklinkIndex();
+            backlinks.Build(_vaultRoot);
+            return TaskQuerySnapshot.Create(tasks, backlinks);
+        });
+        return TaskQueryPolicy.Execute(snapshot, request);
     }
 }
 
