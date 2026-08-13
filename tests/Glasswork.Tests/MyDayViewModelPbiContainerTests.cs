@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 using Glasswork.ViewModels;
 
@@ -58,7 +59,12 @@ public class MyDayViewModelPbiContainerTests
         });
         _vault.Save(pbi);
 
-        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        var vm = new MyDayViewModel(
+            _vault,
+            _taskService,
+            _index,
+            uiState: null,
+            taskQuery: new WarmIndexTaskQuery(_index, new BacklinkIndex()));
         vm.Refresh();
 
         var row = vm.TodayTasks.SingleOrDefault(t => t.Id == pbi.Id);

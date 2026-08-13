@@ -11,7 +11,11 @@
 
     <Grid Padding="32" RowDefinitions="Auto,Auto,*,Auto">
 
-        <TextBlock Grid.Row="0" Style="{StaticResource TitleTextBlockStyle}" Text="Work Log" />
+        <TextBlock
+            Grid.Row="0"
+            AutomationProperties.AutomationId="WorkLogHeader"
+            Style="{StaticResource TitleTextBlockStyle}"
+            Text="Work Log" />
 
         <!-- Week selector -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12" Margin="0,16,0,16">
@@ -24,7 +28,11 @@
         <!-- Log content -->
         <ScrollViewer Grid.Row="2">
             <Grid>
-                <TextBlock x:Name="LogContent" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                <TextBlock
+                    x:Name="LogContent"
+                    AutomationProperties.AutomationId="WorkLogContent"
+                    TextWrapping="Wrap"
+                    IsTextSelectionEnabled="True" />
                 <controls:EmptyState
                     x:Name="EmptyStateView"
                     Glyph="&#xE9D5;"

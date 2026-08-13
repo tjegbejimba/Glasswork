@@ -180,6 +180,7 @@ public sealed class VisualVerificationTask
     public string? Notes { get; init; }
     public string? Due { get; init; }
     public string? MyDay { get; init; }
+    public string? CompletedAt { get; init; }
     public string? Parent { get; init; }
     public List<VisualVerificationSubtask> Subtasks { get; init; } = [];
     public List<VisualVerificationArtifact> Artifacts { get; init; } = [];
@@ -196,6 +197,7 @@ public sealed class VisualVerificationTask
             Created = today.Date,
             Due = ParseScenarioDate(Due, today),
             MyDay = ParseScenarioDate(MyDay, today),
+            CompletedAt = ParseScenarioDate(CompletedAt, today),
             Parent = Parent,
             Description = Description ?? string.Empty,
             Notes = Notes ?? string.Empty,

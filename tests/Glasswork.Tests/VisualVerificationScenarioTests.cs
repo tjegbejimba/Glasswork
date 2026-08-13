@@ -119,4 +119,19 @@ public class VisualVerificationScenarioTests
         Assert.AreEqual(GlassworkTask.Types.Task, defaulted.ToGlassworkTask(today).Type,
             "A task with no scenario type normalizes to the default task type.");
     }
+
+    [TestMethod]
+    public void ToGlassworkTask_ResolvesRelativeCompletionDate()
+    {
+        var today = new DateTime(2026, 6, 29);
+        var task = new VisualVerificationTask
+        {
+            Id = "completed",
+            Title = "Completed",
+            Status = GlassworkTask.Statuses.Done,
+            CompletedAt = "today",
+        };
+
+        Assert.AreEqual(today, task.ToGlassworkTask(today).CompletedAt);
+    }
 }

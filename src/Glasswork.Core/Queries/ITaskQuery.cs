@@ -42,6 +42,9 @@ public sealed record MyDayTaskSelection(
 public sealed record BacklogTaskSelection(
     TaskQueryStatus? Status = null) : TaskQuerySelection;
 
+public sealed record BacklogStatusesTaskSelection(
+    IReadOnlySet<TaskQueryStatus> Statuses) : TaskQuerySelection;
+
 public sealed record CompletedWorkTaskSelection(
     DateTime From,
     DateTime To) : TaskQuerySelection;
@@ -164,7 +167,10 @@ public sealed class TaskQueryItem
         ResourceRevision = task.ResourceRevision;
         _includedFields = includedFields;
         Title = task.Title;
-        Status = TaskQueryValueMapper.Status(task.Status);
+        RawStatus = task.Status;
+        Status = TaskQueryValueMapper.TryStatus(task.Status, out var status)
+            ? status
+            : null;
         Type = TaskQueryValueMapper.Type(task.Type);
         ParentId = task.Parent;
         Path = $"{task.Id}.md";
@@ -180,9 +186,11 @@ public sealed class TaskQueryItem
         InMyDayToday = inMyDayToday;
         BlockedReason = task.BlockedReason;
         BlockedAt = task.BlockedAt;
-        BlockedFromStatus = task.BlockedFromStatus is null
-            ? null
-            : TaskQueryValueMapper.Status(task.BlockedFromStatus);
+        RawBlockedFromStatus = task.BlockedFromStatus;
+        BlockedFromStatus = task.BlockedFromStatus is not null
+            && TaskQueryValueMapper.TryStatus(task.BlockedFromStatus, out var blockedFromStatus)
+                ? blockedFromStatus
+                : null;
         NeedsBlockerDetails = task.NeedsBlockerDetails;
         Tags = task.Tags.ToArray();
         BlockedBy = task.BlockedBy.ToArray();
@@ -204,7 +212,8 @@ public sealed class TaskQueryItem
     public string Id { get; }
     public string? ResourceRevision { get; }
     public string Title { get; }
-    public TaskQueryStatus Status { get; }
+    public string RawStatus { get; }
+    public TaskQueryStatus? Status { get; }
     public TaskQueryType Type { get; }
     public string? ParentId { get; }
     public string Path { get; }
@@ -220,6 +229,7 @@ public sealed class TaskQueryItem
     public bool InMyDayToday { get; }
     public string? BlockedReason { get; }
     public DateTimeOffset? BlockedAt { get; }
+    public string? RawBlockedFromStatus { get; }
     public TaskQueryStatus? BlockedFromStatus { get; }
     public bool NeedsBlockerDetails { get; }
     public IReadOnlyList<string> Tags { get; }
@@ -240,7 +250,38 @@ public sealed record TaskQueryResult(
     string? NextCursor,
     IReadOnlyList<TaskQueryDiagnostic> Diagnostics)
 {
+    private IReadOnlyDictionary<string, GlassworkTask>? _sourceTasks;
+
     public bool IsSuccess => Diagnostics.Count == 0;
+
+    internal TaskQueryResult WithSourceTasks(IReadOnlyDictionary<string, GlassworkTask> sourceTasks)
+    {
+        _sourceTasks = sourceTasks ?? throw new ArgumentNullException(nameof(sourceTasks));
+        return this;
+    }
+
+    internal IReadOnlyDictionary<string, GlassworkTask> MaterializeSourceTasks()
+    {
+        if (_sourceTasks is null)
+            throw new InvalidOperationException("Task Query source snapshot is unavailable.");
+
+        return _sourceTasks.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    internal IReadOnlyList<GlassworkTask> MaterializeTasks()
+    {
+        if (_sourceTasks is null)
+            throw new InvalidOperationException("Task Query source snapshot is unavailable.");
+
+        return Tasks
+            .Select(item => _sourceTasks.GetValueOrDefault(item.Id))
+            .Where(task => task is not null)
+            .Select(task => task!.Clone())
+            .ToList();
+    }
 
     internal static TaskQueryResult Success(
         IReadOnlyList<TaskQueryItem> tasks,
@@ -258,14 +299,32 @@ public sealed record TaskQueryResult(
 
 internal static class TaskQueryValueMapper
 {
-    public static TaskQueryStatus Status(string status) => status switch
+    public static bool TryStatus(string status, out TaskQueryStatus mapped)
     {
-        GlassworkTask.Statuses.Todo => TaskQueryStatus.Todo,
-        GlassworkTask.Statuses.InProgress => TaskQueryStatus.InProgress,
-        GlassworkTask.Statuses.Blocked => TaskQueryStatus.Blocked,
-        GlassworkTask.Statuses.Done => TaskQueryStatus.Done,
-        _ => throw new InvalidOperationException($"Unknown Task status '{status}'."),
-    };
+        switch (status)
+        {
+            case GlassworkTask.Statuses.Todo:
+                mapped = TaskQueryStatus.Todo;
+                return true;
+            case GlassworkTask.Statuses.InProgress:
+                mapped = TaskQueryStatus.InProgress;
+                return true;
+            case GlassworkTask.Statuses.Blocked:
+                mapped = TaskQueryStatus.Blocked;
+                return true;
+            case GlassworkTask.Statuses.Done:
+                mapped = TaskQueryStatus.Done;
+                return true;
+            default:
+                mapped = default;
+                return false;
+        }
+    }
+
+    public static TaskQueryStatus Status(string status) =>
+        TryStatus(status, out var mapped)
+            ? mapped
+            : throw new InvalidOperationException($"Unknown Task status '{status}'.");
 
     public static string Status(TaskQueryStatus status) => status switch
     {

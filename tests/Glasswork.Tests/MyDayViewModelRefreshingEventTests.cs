@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 using Glasswork.ViewModels;
 
@@ -234,5 +235,77 @@ public class MyDayViewModelRefreshingEventTests
         Assert.AreEqual("Updated title", row.Title);
         Assert.IsTrue(row.IsManuallyCollapsed,
             "Domain refresh must not wipe per-page transient collapse state before the page hydrates it.");
+    }
+
+    [TestMethod]
+    public void Refresh_MaterializesTasksFromTheQueryExecutionSnapshot()
+    {
+        var task = CreateMyDayTask("Before query");
+        var inner = new WarmIndexTaskQuery(_index, new BacklinkIndex());
+        var query = new BeforeExecuteTaskQuery(inner, () =>
+        {
+            task.Title = "From query snapshot";
+            _vault.Save(task);
+        });
+        var vm = new MyDayViewModel(
+            _vault,
+            _taskService,
+            _index,
+            uiState: null,
+            taskQuery: query);
+
+        vm.Refresh();
+
+        Assert.AreEqual("From query snapshot", vm.TodayTasks.Single().Title);
+    }
+
+    [TestMethod]
+    public void Refresh_DismissedTaskRecreatedBeforeWarmSnapshotStaysExcluded()
+    {
+        var task = CreateMyDayTask("Dismissed then recreated");
+        var recreated = task.Clone();
+        recreated.ResourceRevision = null;
+        var uiState = new JsonFileUiStateService(Path.Combine(_tempDir, "ui-state.json"));
+        uiState.Set(
+            MyDayDismissals.KeyFor(task.Id, DateOnly.FromDateTime(DateTime.Today)),
+            true);
+        _vault.Delete(task.Id);
+        Assert.IsNull(_index.ById(task.Id), "precondition: the first Index snapshot omits the Task");
+
+        var query = new WarmIndexTaskQuery(
+            () =>
+            {
+                _vault.Save(recreated, ifAbsent: true);
+                return _index.All;
+            },
+            new BacklinkIndex());
+        var vm = new MyDayViewModel(
+            _vault,
+            _taskService,
+            _index,
+            uiState,
+            query);
+
+        vm.Refresh();
+
+        Assert.IsNotNull(_index.ById(task.Id), "precondition: the warm query snapshot includes the recreated Task");
+        Assert.AreEqual(0, vm.TodayTasks.Count,
+            "dismissal lookup and My Day selection must use the same warm Index snapshot");
+    }
+
+    private sealed class BeforeExecuteTaskQuery(ITaskQuery inner, Action beforeExecute) : ITaskQuery
+    {
+        private bool _hasExecuted;
+
+        public TaskQueryResult Execute(TaskQueryRequest request)
+        {
+            if (!_hasExecuted)
+            {
+                _hasExecuted = true;
+                beforeExecute();
+            }
+
+            return inner.Execute(request);
+        }
     }
 }

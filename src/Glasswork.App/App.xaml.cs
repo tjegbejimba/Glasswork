@@ -4,6 +4,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Glasswork.Core.Diagnostics;
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 using Glasswork.Core.VisualVerification;
 using Glasswork.Services;
@@ -39,6 +40,7 @@ public partial class App : Application
     public static ResourceMutationService Mutations { get; private set; } = null!;
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
+    public static ITaskQuery TaskQuery { get; private set; } = null!;
     public static IndexMarkdownWriter? IndexMarkdownWriter { get; private set; }
     public static IArtifactStore Artifacts { get; private set; } = null!;
     public static FileWatcherService? Watcher { get; private set; }
@@ -362,6 +364,7 @@ public partial class App : Application
         // emit TasksChanged: it's a snapshot, not a delta.
         Index = new IndexService(Vault);
         Index.EnsureLoaded();
+        TaskQuery = new WarmIndexTaskQuery(Index, BacklinkIndex);
         Tasks = new TaskService(Vault, Index);
 
         // Issue #186: the IndexMarkdownWriter is the new owner of _index.md /

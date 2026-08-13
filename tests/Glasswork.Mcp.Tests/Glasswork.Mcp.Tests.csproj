@@ -19,4 +19,9 @@
     <ProjectReference Include="..\..\src\Glasswork.Mcp\Glasswork.Mcp.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\TestInfrastructure\UnreadableDirectoryScope.cs"
+             Link="TestInfrastructure\UnreadableDirectoryScope.cs" />
+  </ItemGroup>
+
 </Project>
