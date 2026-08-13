@@ -3,6 +3,7 @@ using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Mcp;
 using Glasswork.Mcp.Tools;
+using Glasswork.TestInfrastructure;
 
 namespace Glasswork.Mcp.Tests;
 
@@ -119,6 +120,21 @@ public sealed class QueryTasksToolTests
             new[] { "free" },
             document.RootElement.GetProperty("tasks").EnumerateArray()
                 .Select(item => item.GetProperty("id").GetString()).ToArray());
+    }
+
+    [TestMethod]
+    public void QueryTasks_DoesNotScanUnrelatedVaultMarkdown()
+    {
+        _vault.Save(new GlassworkTask { Id = "task", Title = "Task" });
+        using var unreadable = UnreadableDirectoryScope.Create(
+            Path.Combine(_vaultDir, "unrelated-private"));
+
+        using var document = JsonDocument.Parse(_tools.QueryTasks());
+
+        Assert.IsFalse(document.RootElement.TryGetProperty("error", out _));
+        Assert.AreEqual(
+            "task",
+            document.RootElement.GetProperty("tasks")[0].GetProperty("id").GetString());
     }
 
     [TestMethod]

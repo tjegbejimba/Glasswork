@@ -1,6 +1,7 @@
 using Glasswork.Core.Models;
 using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
+using Glasswork.TestInfrastructure;
 
 namespace Glasswork.Tests;
 
@@ -233,6 +234,94 @@ public sealed class TaskQueryConformanceTests
                     new HashSet<TaskQueryField> { TaskQueryField.BacklinkCount }))));
 
         Assert.AreEqual(1, result.Tasks.Single().BacklinkCount);
+    }
+
+    [TestMethod]
+    public void Execute_FreshReadyOnlyProjectionIgnoresUnreadableVaultSubtree()
+    {
+        using var fixture = TaskQueryFixture.Create("fresh");
+        fixture.Save(new GlassworkTask { Id = "ready", Title = "Ready" });
+        using var unreadable = UnreadableDirectoryScope.Create(
+            Path.Combine(fixture.VaultRoot, "unrelated-private"));
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField> { TaskQueryField.Ready }))));
+
+        Assert.IsTrue(result.IsSuccess);
+        Assert.IsTrue(result.Tasks.Single().Ready);
+    }
+
+    [TestMethod]
+    public void Execute_FreshUrgencyProjectionAcquiresBacklinkCounts()
+    {
+        using var fixture = TaskQueryFixture.Create("fresh");
+        fixture.Save(new GlassworkTask
+        {
+            Id = "urgent",
+            Title = "Urgent",
+            Created = QueryTime.Date,
+        });
+        fixture.WriteWikiPage("concept.md", "[[urgent]]");
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField> { TaskQueryField.UrgencyScore }))));
+
+        Assert.AreEqual(2.5, result.Tasks.Single().UrgencyScore);
+    }
+
+    [TestMethod]
+    public void Execute_FreshBacklinkFailureFallsBackToZeroCounts()
+    {
+        using var fixture = TaskQueryFixture.Create("fresh");
+        fixture.Save(new GlassworkTask
+        {
+            Id = "fallback",
+            Title = "Fallback",
+            Created = QueryTime.Date,
+        });
+        using var unreadable = UnreadableDirectoryScope.Create(
+            Path.Combine(fixture.VaultRoot, "unrelated-private"));
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField>
+                    {
+                        TaskQueryField.UrgencyScore,
+                        TaskQueryField.BacklinkCount,
+                    }))));
+
+        var item = result.Tasks.Single();
+        Assert.AreEqual(0, item.BacklinkCount);
+        Assert.AreEqual(1, item.UrgencyScore);
+    }
+
+    [TestMethod]
+    public void Execute_FreshBacklogAcquiresBacklinkCountsForActionability()
+    {
+        using var fixture = TaskQueryFixture.Create("fresh");
+        fixture.Save(new GlassworkTask
+        {
+            Id = "backlog",
+            Title = "Backlog",
+            Created = QueryTime.Date,
+        });
+        fixture.WriteWikiPage("concept.md", "[[backlog]]");
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new BacklogTaskSelection()));
+
+        var item = result.Tasks.Single();
+        Assert.AreEqual(1, item.BacklinkCount);
+        Assert.AreEqual(2.5, item.UrgencyScore);
     }
 
     [DataTestMethod]
@@ -472,6 +561,7 @@ public sealed class TaskQueryConformanceTests
         public VaultService Vault { get; }
         public ITaskQuery Query { get; private set; }
         public string TaskPath => Vault.VaultPath;
+        public string VaultRoot => _vaultRoot;
 
         public static TaskQueryFixture Create(string adapter)
         {

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Mcp.Tools;
+using Glasswork.TestInfrastructure;
 
 namespace Glasswork.Mcp.Tests;
 
@@ -408,6 +409,26 @@ public class GlassworkToolsTests
 
         Assert.AreEqual(true, task.GetProperty("ready").GetBoolean());
         Assert.IsTrue(task.GetProperty("urgency_score").GetDouble() > 0);
+    }
+
+    [TestMethod]
+    public void ListTasks_BacklinkProjectionFallsBackToZeroWhenVaultScanFails()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task",
+            Title = "Task",
+            Created = DateTime.Today,
+        });
+        using var unreadable = UnreadableDirectoryScope.Create(
+            Path.Combine(_vaultDir, "unrelated-private"));
+
+        using var document = JsonDocument.Parse(_tools.ListTasks(
+            fields: ["backlink_count", "urgency_score"]));
+        var task = document.RootElement.GetProperty("tasks")[0];
+
+        Assert.AreEqual(0, task.GetProperty("backlink_count").GetInt32());
+        Assert.AreEqual(1, task.GetProperty("urgency_score").GetDouble());
     }
 
     [TestMethod]

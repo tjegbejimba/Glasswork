@@ -2,6 +2,7 @@ using System.Text.Json;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Mcp.Tools;
+using Glasswork.TestInfrastructure;
 
 namespace Glasswork.Mcp.Tests;
 
@@ -90,6 +91,25 @@ public class GetMyDayToolTests
         var json = _tools.GetMyDay();
         using var doc = JsonDocument.Parse(json);
         Assert.AreEqual(0, doc.RootElement.GetProperty("tasks").GetArrayLength());
+    }
+
+    [TestMethod]
+    public void GetMyDay_DoesNotScanUnrelatedVaultMarkdown()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "today",
+            Title = "Today",
+            MyDay = DateTime.Today,
+        });
+        using var unreadable = UnreadableDirectoryScope.Create(
+            Path.Combine(_vaultDir, "unrelated-private"));
+
+        using var document = JsonDocument.Parse(_tools.GetMyDay());
+
+        Assert.AreEqual(
+            "today",
+            document.RootElement.GetProperty("tasks")[0].GetProperty("id").GetString());
     }
 
     [TestMethod]
