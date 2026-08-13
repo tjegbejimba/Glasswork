@@ -1,6 +1,8 @@
 # ADR 0010: Index is an in-memory aggregate with a typed delta channel
 
 **Status**: Accepted
+**Amended**: 2026-08-12 - Task Query is the shared Index-context retrieval seam
+with warm Index and stateless fresh-Vault adapters.
 **Context slice**: `IndexService`, `VaultService`, `FileWatcherService`,
 `SelfWriteCoordinator`, every view model that used to call `VaultService.LoadAll()`.
 
@@ -120,6 +122,37 @@ side. v1 view models re-run their predicate on any delta.
    `_*.md` regeneration).
 7. Starts the watcher; `FileWatcherService.TaskFileChange` →
    `Index.OnFileChangedOnDisk`.
+
+### Shared Task Query seam
+
+The Index context owns **Task Query**, the canonical module for typed structural
+and relationship-aware Task retrieval. Its external interface is one
+discriminated `ITaskQuery.Execute` operation with closed selection types and
+explicit query time. Transport-neutral results carry projections, typed
+diagnostics, Resource Revisions, read basis, and opaque continuation cursors.
+
+Two adapters make the seam real:
+
+- `WarmIndexTaskQuery` acquires one defensive `IndexService.All` snapshot per
+  execution.
+- `FreshVaultTaskQuery` acquires one managed `VaultService.LoadAll()` snapshot
+  per execution, preserving Resource Revisions derived from the exact bytes read.
+
+Both adapters delegate filtering, relationship validation, deterministic
+ordering and bounded paging, projections, actionability, Backlink counts,
+Resource Revisions, read basis, and completed-work windows to one shared
+implementation. They vary only in coherent snapshot acquisition. Operational
+snapshot failures propagate separately from typed request and relationship
+diagnostics.
+
+Continuation cursors are opaque, fingerprinted by normalized query semantics,
+and owned by Core. They do not pin historical state: every continuation executes
+against a newly acquired coherent snapshot. Every ordering ends with ordinal
+Task ID.
+
+Task Query is distinct from free-text Task search. PBI container grouping,
+Backlog row construction, collection reconciliation, and Work Log markdown
+grouping remain with their presentation or formatting owners.
 
 The legacy `TaskFileChangedExternally` event still fires (driven by the
 string-payload watcher event) so existing page subscribers — `MyDayPage`,
