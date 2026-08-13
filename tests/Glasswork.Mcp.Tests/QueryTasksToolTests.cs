@@ -76,6 +76,22 @@ public sealed class QueryTasksToolTests
         Assert.AreEqual(1, tasks.GetArrayLength());
         Assert.AreEqual("ready", tasks[0].GetProperty("id").GetString());
         Assert.IsFalse(string.IsNullOrWhiteSpace(tasks[0].GetProperty("resource_revision").GetString()));
+        CollectionAssert.AreEqual(
+            new[] { "next_cursor", "read_basis", "tasks" },
+            root.EnumerateObject()
+                .Select(property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "blocked_by", "description", "id", "notes", "parent_id",
+                "resource_revision", "status", "tags", "title", "type",
+            },
+            tasks[0].EnumerateObject()
+                .Select(property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray());
 
         var readBasis = root.GetProperty("read_basis");
         CollectionAssert.AreEquivalent(
@@ -154,5 +170,120 @@ public sealed class QueryTasksToolTests
             second.RootElement.GetProperty("tasks").EnumerateArray()
                 .Select(item => item.GetProperty("id").GetString()).ToArray());
         Assert.AreEqual(JsonValueKind.Null, second.RootElement.GetProperty("next_cursor").ValueKind);
+    }
+
+    [TestMethod]
+    public void QueryTasks_CursorAcceptsEquivalentNormalizedTagFilters()
+    {
+        foreach (var id in new[] { "a", "b" })
+        {
+            _vault.Save(new GlassworkTask
+            {
+                Id = id,
+                Title = id,
+                Tags = ["Ready"],
+            });
+        }
+
+        using var first = JsonDocument.Parse(_tools.QueryTasks(tags: ["Ready"], limit: 1));
+        var cursor = first.RootElement.GetProperty("next_cursor").GetString();
+        Assert.IsFalse(string.IsNullOrWhiteSpace(cursor));
+
+        using var second = JsonDocument.Parse(_tools.QueryTasks(
+            tags: ["ready", "READY"],
+            limit: 1,
+            cursor: cursor));
+
+        Assert.IsFalse(second.RootElement.TryGetProperty("error", out _));
+        Assert.AreEqual(
+            "b",
+            second.RootElement.GetProperty("tasks")[0].GetProperty("id").GetString());
+    }
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(101)]
+    public void QueryTasks_InvalidLimitPreservesErrorContract(int limit)
+    {
+        using var document = JsonDocument.Parse(_tools.QueryTasks(limit: limit));
+
+        AssertError(
+            document.RootElement,
+            "invalid_limit",
+            "limit must be between 1 and 100.");
+    }
+
+    [TestMethod]
+    public void QueryTasks_InvalidLimitRetainsFirstValidationPrecedence()
+    {
+        using var document = JsonDocument.Parse(_tools.QueryTasks(
+            order_by: "created",
+            limit: 0));
+
+        AssertError(
+            document.RootElement,
+            "invalid_limit",
+            "limit must be between 1 and 100.");
+    }
+
+    [TestMethod]
+    public void QueryTasks_InvalidOrderPreservesErrorContract()
+    {
+        using var document = JsonDocument.Parse(_tools.QueryTasks(order_by: "created"));
+
+        AssertError(
+            document.RootElement,
+            "invalid_order",
+            "order_by must be 'created_id' or 'id'.");
+    }
+
+    [TestMethod]
+    public void QueryTasks_InvalidTypePreservesErrorContract()
+    {
+        using var document = JsonDocument.Parse(_tools.QueryTasks(type: "feature"));
+
+        AssertError(
+            document.RootElement,
+            "invalid_type",
+            "type must be 'task', 'pbi', or 'bug'.");
+    }
+
+    [TestMethod]
+    public void QueryTasks_ConflictingRelationshipPredicatesPreserveErrorContract()
+    {
+        using var document = JsonDocument.Parse(_tools.QueryTasks(
+            blocked_by_empty: true,
+            blocked_by_status: ["done"]));
+
+        AssertError(
+            document.RootElement,
+            "invalid_relationship_predicate",
+            "blocked_by_empty cannot be combined with blocked_by_status.");
+    }
+
+    [TestMethod]
+    public void QueryTasks_InvalidCursorPreservesErrorContract()
+    {
+        using var document = JsonDocument.Parse(_tools.QueryTasks(cursor: "not-a-cursor"));
+
+        AssertError(
+            document.RootElement,
+            "invalid_cursor",
+            "The continuation cursor is invalid.");
+    }
+
+    private static void AssertError(
+        JsonElement root,
+        string expectedCode,
+        string expectedMessage)
+    {
+        CollectionAssert.AreEqual(
+            new[] { "error", "message" },
+            root.EnumerateObject()
+                .Select(property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        Assert.AreEqual(expectedCode, root.GetProperty("error").GetString());
+        Assert.AreEqual(expectedMessage, root.GetProperty("message").GetString());
     }
 }

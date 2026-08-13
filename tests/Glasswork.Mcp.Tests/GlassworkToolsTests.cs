@@ -468,6 +468,26 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    [DataRow("")]
+    [DataRow(" ")]
+    [DataRow(" parent ")]
+    public void ListTasks_ParentFilterPreservesExactLegacyMatching(string parentTaskId)
+    {
+        _tools.AddTask("Standalone");
+        _vault.Save(new GlassworkTask
+        {
+            Id = "child",
+            Title = "Child",
+            Parent = "parent",
+        });
+
+        var json = _tools.ListTasks(parent_task_id: parentTaskId);
+        var tasks = JsonDocument.Parse(json).RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(0, tasks.GetArrayLength());
+    }
+
+    [TestMethod]
     public void ListTasks_NoFilter_ReturnsAllTasks()
     {
         _tools.AddTask("A");
@@ -669,6 +689,27 @@ public class GlassworkToolsTests
 
         Assert.IsTrue(byTitle["Today pin"]);
         Assert.IsFalse(byTitle["Not today"]);
+    }
+
+    [TestMethod]
+    public void ListTasks_FieldsInMyDayToday_UsesTheToolQueryTime()
+    {
+        var queryTime = new DateTimeOffset(2031, 4, 5, 12, 0, 0, TimeSpan.Zero);
+        _vault.Save(new GlassworkTask
+        {
+            Id = "query-time-pin",
+            Title = "Query-time pin",
+            Status = GlassworkTask.Statuses.Todo,
+            MyDay = queryTime.Date,
+        });
+        var tools = new GlassworkTools(
+            new VaultContext(_vaultDir),
+            clock: () => queryTime);
+
+        var json = tools.ListTasks(fields: ["in_my_day_today"]);
+        var task = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
+
+        Assert.IsTrue(task.GetProperty("in_my_day_today").GetBoolean());
     }
 
     [TestMethod]
