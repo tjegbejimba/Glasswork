@@ -2,6 +2,7 @@ using System.Text.Json;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Mcp.Tools;
+using Glasswork.TestInfrastructure;
 
 namespace Glasswork.Mcp.Tests;
 
@@ -90,5 +91,125 @@ public class GetMyDayToolTests
         var json = _tools.GetMyDay();
         using var doc = JsonDocument.Parse(json);
         Assert.AreEqual(0, doc.RootElement.GetProperty("tasks").GetArrayLength());
+    }
+
+    [TestMethod]
+    public void GetMyDay_DoesNotScanUnrelatedVaultMarkdown()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "today",
+            Title = "Today",
+            MyDay = DateTime.Today,
+        });
+        using var unreadable = UnreadableDirectoryScope.Create(
+            Path.Combine(_vaultDir, "unrelated-private"));
+
+        using var document = JsonDocument.Parse(_tools.GetMyDay());
+
+        Assert.AreEqual(
+            "today",
+            document.RootElement.GetProperty("tasks")[0].GetProperty("id").GetString());
+    }
+
+    [TestMethod]
+    public void GetMyDay_PreservesLegacyStatusAndKnownDoingMapping()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "legacy",
+            Title = "Legacy",
+            Status = "someday",
+            MyDay = DateTime.Today,
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "doing",
+            Title = "Doing",
+            Status = GlassworkTask.Statuses.InProgress,
+            MyDay = DateTime.Today,
+        });
+
+        using var document = JsonDocument.Parse(_tools.GetMyDay());
+        var statuses = document.RootElement.GetProperty("tasks")
+            .EnumerateArray()
+            .ToDictionary(
+                task => task.GetProperty("id").GetString()!,
+                task => task.GetProperty("status").GetString());
+
+        Assert.AreEqual("someday", statuses["legacy"]);
+        Assert.AreEqual("doing", statuses["doing"]);
+    }
+
+    [TestMethod]
+    public void GetMyDay_PreservesTheExactEnvelopeAtTheToolQueryTime()
+    {
+        var queryTime = new DateTimeOffset(2031, 4, 5, 12, 0, 0, TimeSpan.Zero);
+        _vault.Save(new GlassworkTask
+        {
+            Id = "query-time-task",
+            Title = "Query-time task",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Bug,
+            Priority = GlassworkTask.Priorities.High,
+            Due = queryTime.Date,
+            MyDay = queryTime.Date,
+            Parent = "parent",
+            Links =
+            {
+                new TaskLink
+                {
+                    Type = "pr",
+                    Value = "https://example.test/pr/1",
+                    Label = "Review PR",
+                },
+            },
+        });
+        var tools = new GlassworkTools(
+            new VaultContext(_vaultDir),
+            clock: () => queryTime);
+
+        using var document = JsonDocument.Parse(tools.GetMyDay(include_subtasks: true));
+        var root = document.RootElement;
+        CollectionAssert.AreEqual(
+            new[] { "as_of", "count", "tasks" },
+            root.EnumerateObject()
+                .Select(property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        Assert.AreEqual("2031-04-05", root.GetProperty("as_of").GetString());
+        Assert.AreEqual(1, root.GetProperty("count").GetInt32());
+
+        var task = root.GetProperty("tasks")[0];
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "due_date", "id", "links", "parent_id", "priority",
+                "resource_revision", "scheduled", "status", "title", "type",
+            },
+            task.EnumerateObject()
+                .Select(property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        Assert.AreEqual("query-time-task", task.GetProperty("id").GetString());
+        Assert.AreEqual("Query-time task", task.GetProperty("title").GetString());
+        Assert.AreEqual("todo", task.GetProperty("status").GetString());
+        Assert.AreEqual("bug", task.GetProperty("type").GetString());
+        Assert.AreEqual("high", task.GetProperty("priority").GetString());
+        Assert.AreEqual("parent", task.GetProperty("parent_id").GetString());
+        Assert.AreEqual("2031-04-05", task.GetProperty("due_date").GetString());
+        Assert.AreEqual("2031-04-05", task.GetProperty("scheduled").GetString());
+        Assert.IsFalse(string.IsNullOrWhiteSpace(
+            task.GetProperty("resource_revision").GetString()));
+        var link = task.GetProperty("links")[0];
+        CollectionAssert.AreEqual(
+            new[] { "title", "type", "url" },
+            link.EnumerateObject()
+                .Select(property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray());
+        Assert.AreEqual("pr", link.GetProperty("type").GetString());
+        Assert.AreEqual("https://example.test/pr/1", link.GetProperty("url").GetString());
+        Assert.AreEqual("Review PR", link.GetProperty("title").GetString());
     }
 }

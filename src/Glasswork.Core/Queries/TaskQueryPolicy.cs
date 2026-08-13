@@ -95,6 +95,24 @@ internal static class TaskQueryPolicy
         };
     }
 
+    internal static bool RequiresBacklinkCounts(TaskQuerySelection selection)
+    {
+        ArgumentNullException.ThrowIfNull(selection);
+        return selection switch
+        {
+            ListTaskSelection { Projection: null or DefaultTaskSummaryProjection } => true,
+            ListTaskSelection { Projection: SelectedTaskFieldsProjection projection } =>
+                projection.Fields?.Contains(TaskQueryField.UrgencyScore) == true
+                || projection.Fields?.Contains(TaskQueryField.BacklinkCount) == true,
+            RelationTaskSelection or MyDayTaskSelection or CompletedWorkTaskSelection => false,
+            BacklogTaskSelection => true,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(selection),
+                selection.GetType(),
+                "Unknown Task Query selection."),
+        };
+    }
+
     private static TaskQueryResult SelectList(
         TaskQuerySnapshot snapshot,
         DateTimeOffset queryTime,
