@@ -1,3 +1,4 @@
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 using Glasswork.ViewModels;
 
@@ -42,7 +43,8 @@ public class ViewModelPerformanceTracingTests
             _taskService,
             _index,
             uiState: null,
-            tracer);
+            taskQuery: null,
+            performanceTracer: tracer);
 
         viewModel.Refresh();
 
@@ -63,7 +65,8 @@ public class ViewModelPerformanceTracingTests
             _index,
             uiState: null,
             savedTaskViews: null,
-            tracer);
+            taskQuery: null,
+            performanceTracer: tracer);
 
         viewModel.Refresh();
 
@@ -86,10 +89,8 @@ public class ViewModelPerformanceTracingTests
             _index,
             uiState: null,
             savedTaskViews: null,
-            tracer)
-        {
-            BacklinkCountProvider = _ => throw new InvalidOperationException("Test failure"),
-        };
+            taskQuery: new ThrowingTaskQuery(),
+            performanceTracer: tracer);
 
         Assert.ThrowsExactly<InvalidOperationException>(() => viewModel.Refresh());
 
@@ -144,5 +145,11 @@ public class ViewModelPerformanceTracingTests
                     _outcome));
             }
         }
+    }
+
+    private sealed class ThrowingTaskQuery : ITaskQuery
+    {
+        public TaskQueryResult Execute(TaskQueryRequest request) =>
+            throw new InvalidOperationException("Test failure");
     }
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Mcp.Tools;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -67,6 +68,16 @@ public class GetActivityToolTests
         var todayTask = allTasks.First(t => t.Title == "Task completed today");
         todayTask.Status = "done";
         todayTask.CompletedAt = DateTime.Today.AddHours(10);
+        todayTask.Priority = GlassworkTask.Priorities.High;
+        todayTask.Links =
+        [
+            new TaskLink
+            {
+                Type = TaskLink.Types.Ado,
+                Value = "https://dev.azure.com/example/42",
+                Label = "ADO 42",
+            },
+        ];
         vault.Save(todayTask);
         
         var yesterdayTask = allTasks.First(t => t.Title == "Task completed yesterday");
@@ -85,6 +96,15 @@ public class GetActivityToolTests
         Assert.AreEqual(1, completedTasks.Count, "Should only include task completed today");
         Assert.AreEqual(todayTask.Id, completedTasks[0].GetProperty("id").GetString());
         Assert.AreEqual("Task completed today", completedTasks[0].GetProperty("title").GetString());
+        Assert.AreEqual("high", completedTasks[0].GetProperty("priority").GetString());
+        Assert.AreEqual(
+            "https://dev.azure.com/example/42",
+            completedTasks[0].GetProperty("ado_link").GetString());
+        Assert.AreEqual(
+            "ADO 42",
+            completedTasks[0].GetProperty("links")[0].GetProperty("Label").GetString());
+        Assert.IsTrue(
+            completedTasks[0].GetProperty("resource_revision").GetString()?.StartsWith("rr1-"));
         
         // Stats should also reflect this
         Assert.IsTrue(result.TryGetProperty("stats", out var statsElem));

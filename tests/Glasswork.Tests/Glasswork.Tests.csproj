@@ -20,4 +20,9 @@
     <ProjectReference Include="..\..\src\Glasswork.Core\Glasswork.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\TestInfrastructure\UnreadableDirectoryScope.cs"
+             Link="TestInfrastructure\UnreadableDirectoryScope.cs" />
+  </ItemGroup>
+
 </Project>

@@ -1,8 +1,9 @@
 # ADR 0010: Index is an in-memory aggregate with a typed delta channel
 
 **Status**: Accepted
-**Amended**: 2026-08-12 - Task Query is the shared Index-context retrieval seam
-with warm Index and stateless fresh-Vault adapters.
+**Amended**: 2026-08-13 - Task Query is the shared Index-context retrieval seam
+with warm Index and stateless fresh-Vault adapters; superseded shallow query
+helpers have been retired.
 **Context slice**: `IndexService`, `VaultService`, `FileWatcherService`,
 `SelfWriteCoordinator`, every view model that used to call `VaultService.LoadAll()`.
 
@@ -36,7 +37,7 @@ Deepen `IndexService` into the in-memory aggregate it always claimed to be.
 ### Snapshot store, never shared references
 
 `IndexService` owns `Dictionary<TaskId, GlassworkTask>` guarded by a single
-lock. Every query (`All`, `ById`, `Carryover`, `CompletedBetween`) returns
+lock. Every Index accessor (`All`, `ById`, `Carryover`) returns
 **defensive clones** via the new `GlassworkTask.Clone()` method. `GlassworkTask`
 is mutable, `TaskDetailPage` two-way binds to it, and view models hydrate
 transient UI fields (`IsManuallyCollapsed`, `TodaysSubtasks`) onto it —
@@ -127,9 +128,10 @@ side. v1 view models re-run their predicate on any delta.
 
 The Index context owns **Task Query**, the canonical module for typed structural
 and relationship-aware Task retrieval. Its external interface is one
-discriminated `ITaskQuery.Execute` operation with closed selection types and
-explicit query time. Transport-neutral results carry projections, typed
-diagnostics, Resource Revisions, read basis, and opaque continuation cursors.
+discriminated `ITaskQuery.Execute` operation with closed List, relation-aware,
+My Day, Backlog, and completed-work selections plus explicit query time.
+Transport-neutral typed results carry projections, diagnostics, Resource
+Revisions, read basis, and opaque continuation cursors.
 
 Two adapters make the seam real:
 
@@ -141,9 +143,9 @@ Two adapters make the seam real:
 Both adapters delegate filtering, relationship validation, deterministic
 ordering and bounded paging, projections, actionability, Backlink counts,
 Resource Revisions, read basis, and completed-work windows to one shared
-implementation. They vary only in coherent snapshot acquisition. Operational
-snapshot failures propagate separately from typed request and relationship
-diagnostics.
+`TaskQueryPolicy` implementation. They vary only in coherent snapshot
+acquisition. Operational snapshot failures propagate separately from typed
+request and relationship diagnostics.
 
 Continuation cursors are opaque, fingerprinted by normalized query semantics,
 and owned by Core. They do not pin historical state: every continuation executes
@@ -153,6 +155,12 @@ Task ID.
 Task Query is distinct from free-text Task search. PBI container grouping,
 Backlog row construction, collection reconciliation, and Work Log markdown
 grouping remain with their presentation or formatting owners.
+
+The former `MyDayQueries`, `BacklogQueries`, and `WorkLogQueries` modules,
+`TaskService.GetMyDay`, and `IndexService.CompletedBetween` are retired rather
+than retained as forwarding facades. MCP adapters translate unchanged tool
+contracts to Task Query requests and shape typed results back to JSON; they do
+not reimplement query policy.
 
 The legacy `TaskFileChangedExternally` event still fires (driven by the
 string-payload watcher event) so existing page subscribers — `MyDayPage`,
@@ -167,9 +175,10 @@ Page navigation no longer does disk I/O. The status-bar count is O(1).
 **Locality** — "completed-this-week" and "carryover" predicates moved from
 duplicated view-model code into named methods on `IndexService`.
 
-**Testability** — the seam for "which tasks are on My Day" can now be
-seeded in-memory (`new IndexService(vault); idx.EnsureLoaded();` for
-disk-bound tests, or future fixtures that bypass the vault entirely).
+**Testability** — one interface-level conformance suite exercises the same
+requests through both adapters. MCP tests stay at parameter translation and
+exact JSON contracts; desktop tests cover presentation shaping and collection
+reconciliation instead of duplicating query policy.
 
 **No regression for MCP** — ADR 0007 is unchanged. MCP remains stateless and
 disk-bound; cross-process coherence with the desktop Index is deliberately

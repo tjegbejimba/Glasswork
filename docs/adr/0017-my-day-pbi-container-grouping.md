@@ -35,8 +35,8 @@ Task under its parent PBI as a container card.
    references, a different relationship.
 2. **Container-only host.** A PBI with ≥1 in-My-Day child is shown in My Day to host
    those children **even if it would not independently promote**. This is a view-model
-   construct: `MyDayPromotionPolicy`, `MyDayQueries.Today`, and `TaskService.GetMyDay`
-   are **unchanged**. A container-only PBI is *not* "in My Day" by policy — it is a host.
+   construct: `MyDayPromotionPolicy` and Task Query membership are **unchanged**.
+   A container-only PBI is *not* "in My Day" by policy — it is a host.
 3. **New transient model field `GlassworkTask.TodaysChildren`**
    (`IReadOnlyList<GlassworkTask>?`), parallel to `TodaysSubtasks`, carrying the
    in-My-Day child Tasks to render beneath the PBI card. `HasTodaysChildren` gates

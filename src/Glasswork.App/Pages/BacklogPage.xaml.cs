@@ -51,6 +51,7 @@ public sealed partial class BacklogPage : Page
             App.Index,
             App.UiState,
             App.SavedTaskViews,
+            App.TaskQuery,
             App.Performance);
         ViewModel.RefreshSavedViews();
         // Load persisted ViewMode (default "list") BEFORE InitializeComponent
@@ -59,7 +60,6 @@ public sealed partial class BacklogPage : Page
         // x:Bind TwoWay binding to ToggleButton.IsChecked picks up the right value.
         ViewModel.IsGrouped = App.UiState.Get<bool?>(App.BacklogGroupByParentKey) ?? true;
         ViewModel.GroupCollapseStateProvider = LoadGroupCollapseState;
-        ViewModel.BacklinkCountProvider = id => App.BacklinkIndex.GetBacklinks(id).Count;
         ViewModel.AdoBaseUrlProvider = () => App.UiState.Get<string>(App.AdoBaseUrlKey);
         ViewModel.AdoTitleFetcher = (id, ct) =>
         {

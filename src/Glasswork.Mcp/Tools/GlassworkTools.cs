@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 using Glasswork.Mcp.Preconditions;
 using ModelContextProtocol.Server;
@@ -28,6 +29,7 @@ public sealed class GlassworkTools
     private readonly McpLogger? _logger;
     private readonly ResourceMutationService _mutations;
     private readonly TimeProvider _timeProvider;
+    private readonly ITaskQuery _taskQuery;
 
     public GlassworkTools(
         VaultContext vaultContext,
@@ -47,6 +49,7 @@ public sealed class GlassworkTools
         clock ??= TimeProvider.System.GetUtcNow;
         _mutations = new ResourceMutationService(_vaultPath, _vault, clock, faults);
         _timeProvider = new DelegateTimeProvider(clock);
+        _taskQuery = new FreshVaultTaskQuery(_vault, _vaultRoot);
         _logger = logger;
     }
 
@@ -261,88 +264,57 @@ public sealed class GlassworkTools
         using var scope = _logger?.BeginCall("list_tasks");
         try
         {
-            string? internalStatus = null;
+            TaskQueryStatus? queryStatus = null;
             if (status is not null)
             {
-                if (!TryMapToInternalStatus(status, out var mapped, out var statusError))
+                if (!TryMapToTaskQueryStatus(status, out var mapped, out var statusError))
                 {
                     scope?.SetResult("error");
                     return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
                 }
 
-                internalStatus = mapped;
+                queryStatus = mapped;
             }
 
-            List<GlassworkTask> all;
+            var projection = fields is null || fields.Length == 0
+                ? null
+                : new SelectedTaskFieldsProjection(MapTaskQueryFields(fields));
+            var queryTime = _timeProvider.GetLocalNow();
+            var querySw = scope is { IsTracing: true } ? Stopwatch.StartNew() : null;
+            var result = _taskQuery.Execute(new TaskQueryRequest(
+                queryTime,
+                new ListTaskSelection(
+                    queryStatus,
+                    MapListParentTaskId(parent_task_id),
+                    projection)));
             if (scope is { IsTracing: true })
             {
-                // Phase: glob — enumerate markdown files in the vault root.
-                var globSw = Stopwatch.StartNew();
-                var files = Directory.GetFiles(_vaultPath, "*.md")
-                    .Where(f => !Path.GetFileName(f).StartsWith('_'))
-                    .ToArray();
-                scope.RecordPhase("glob", globSw.ElapsedMilliseconds);
-
-                // Phase: yaml_parse — read and parse each file individually.
-                var parseSw = Stopwatch.StartNew();
-                var parsed = new List<GlassworkTask>(files.Length);
-                foreach (var file in files)
-                {
-                    var id = Path.GetFileNameWithoutExtension(file);
-                    var task = _vault.Load(id);
-                    if (task != null) parsed.Add(task);
-                }
-                all = parsed;
-                scope.RecordPhase("yaml_parse", parseSw.ElapsedMilliseconds);
-            }
-            else
-            {
-                all = _vault.LoadAll();
+                scope.RecordPhase("glob", 0);
+                scope.RecordPhase("yaml_parse", querySw!.ElapsedMilliseconds);
+                scope.RecordPhase("filter", 0);
+                scope.RecordPhase("sort", 0);
             }
 
-            // Phase: filter
-            var filterSw = Stopwatch.StartNew();
-            var filtered = all
-                .Where(t => internalStatus is null || t.Status == internalStatus)
-                .Where(t => parent_task_id is null || t.Parent == parent_task_id)
-                .ToList();
-            scope?.RecordPhase("filter", filterSw.ElapsedMilliseconds);
-
-            // Phase: sort
-            var sortSw = Stopwatch.StartNew();
-            var sortedTasks = filtered
-                .OrderBy(t => t.Created)
-                .ThenBy(t => t.Id)
-                .ToList();
-            scope?.RecordPhase("sort", sortSw.ElapsedMilliseconds);
-
-            scope?.SetCount("task_count", sortedTasks.Count);
-            var backlinkCounts = BuildBacklinkCounts(sortedTasks);
-
-            var projection = NormalizeFieldProjection(fields);
-            if (projection.Mode == FieldProjectionMode.UseDefault)
+            scope?.SetCount("task_count", result.Tasks.Count);
+            if (projection is null)
             {
-                var summaries = sortedTasks
-                    .Select(t =>
-                    {
-                        var signals = SignalsFor(t, backlinkCounts);
-                        return new TaskSummary(
-                            Id: t.Id,
-                            Title: t.Title,
-                            Status: MapToExternalStatus(t.Status),
-                            ParentId: t.Parent,
-                            Path: TodoRelativeTaskPath(t.Id),
-                            Ready: signals.Ready,
-                            UrgencyScore: signals.UrgencyScore,
-                            BacklinkCount: signals.BacklinkCount,
-                            ResourceRevision: ResourceRevision(t.Id));
-                    })
+                var summaries = result.Tasks
+                    .Select(task => new TaskSummary(
+                        Id: task.Id,
+                        Title: task.Title,
+                        Status: MapToExternalStatus(task.RawStatus),
+                        ParentId: task.ParentId,
+                        Path: task.Path,
+                        Ready: task.Ready,
+                        UrgencyScore: task.UrgencyScore,
+                        BacklinkCount: task.BacklinkCount,
+                        ResourceRevision: task.ResourceRevision!))
                     .ToList();
                 return JsonSerializer.Serialize(new ListTasksResult(summaries));
             }
 
-            var projected = sortedTasks
-                .Select(t => ProjectTaskSummary(t, projection.Fields, backlinkCounts))
+            var projected = result.Tasks
+                .Select(ProjectTaskSummary)
                 .ToList();
             return JsonSerializer.Serialize(new ListTasksProjectedResult(projected));
         }
@@ -372,36 +344,39 @@ public sealed class GlassworkTools
         {
             if (limit is < 1 or > 100)
             {
+                var invalidLimit = _taskQuery.Execute(new TaskQueryRequest(
+                    _timeProvider.GetLocalNow(),
+                    new RelationTaskSelection(Limit: limit)));
                 scope?.SetResult("error");
-                return JsonSerializer.Serialize(new ErrorResult("invalid_limit", "limit must be between 1 and 100."));
+                return SerializeTaskQueryDiagnostics(invalidLimit.Diagnostics);
             }
 
-            if (order_by is not ("created_id" or "id"))
+            if (!TryMapTaskQueryOrder(order_by, out var queryOrder))
             {
                 scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_order", "order_by must be 'created_id' or 'id'."));
             }
 
-            var statuses = new HashSet<string>(StringComparer.Ordinal);
+            var statuses = new HashSet<TaskQueryStatus>();
             foreach (var rawStatus in status ?? [])
             {
-                if (!TryMapToInternalStatus(rawStatus, out var internalStatus, out var error))
+                if (!TryMapToTaskQueryStatus(rawStatus, out var queryStatus, out var error))
                 {
                     scope?.SetResult("error");
                     return JsonSerializer.Serialize(new ErrorResult("invalid_status", error!));
                 }
-                statuses.Add(internalStatus);
+                statuses.Add(queryStatus);
             }
 
-            var dependencyStatuses = new HashSet<string>(StringComparer.Ordinal);
+            var dependencyStatuses = new HashSet<TaskQueryStatus>();
             foreach (var rawStatus in blocked_by_status ?? [])
             {
-                if (!TryMapToInternalStatus(rawStatus, out var internalStatus, out var error))
+                if (!TryMapToTaskQueryStatus(rawStatus, out var queryStatus, out var error))
                 {
                     scope?.SetResult("error");
                     return JsonSerializer.Serialize(new ErrorResult("invalid_status", error!));
                 }
-                dependencyStatuses.Add(internalStatus);
+                dependencyStatuses.Add(queryStatus);
             }
 
             if (blocked_by_empty && dependencyStatuses.Count > 0)
@@ -412,103 +387,43 @@ public sealed class GlassworkTools
                     "blocked_by_empty cannot be combined with blocked_by_status."));
             }
 
-            var all = _vault.LoadAll();
-            var byId = all
-                .Where(task => !string.IsNullOrEmpty(task.Id))
-                .GroupBy(task => task.Id, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
-
-            var normalizedParent = string.IsNullOrWhiteSpace(parent_task_id) ? null : parent_task_id.Trim();
-            string? normalizedType = null;
-            if (type is not null)
-            {
-                normalizedType = GlassworkTask.Types.Normalize(type);
-                if (type.Trim().ToLowerInvariant() is not ("task" or "pbi" or "bug"))
-                {
-                    scope?.SetResult("error");
-                    return JsonSerializer.Serialize(new ErrorResult(
-                        "invalid_type",
-                        "type must be 'task', 'pbi', or 'bug'."));
-                }
-            }
-            var requestedTags = (tags ?? [])
-                .Where(tag => !string.IsNullOrWhiteSpace(tag))
-                .Select(tag => tag.Trim())
-                .ToArray();
-
-            var scoped = all.Where(task =>
-                    normalizedParent is null || string.Equals(task.Parent, normalizedParent, StringComparison.Ordinal))
-                .Where(task => statuses.Count == 0 || statuses.Contains(task.Status))
-                .Where(task => normalizedType is null || GlassworkTask.Types.Normalize(task.Type) == normalizedType)
-                .Where(task => requestedTags.All(tag =>
-                    task.Tags.Any(existing => string.Equals(existing, tag, StringComparison.OrdinalIgnoreCase))))
-                .ToList();
-
-            var diagnostics = ValidateDependencies(scoped, byId);
-            if (diagnostics.Count > 0)
+            TaskQueryType? queryType = null;
+            if (type is not null && !TryMapTaskQueryType(type, out queryType))
             {
                 scope?.SetResult("error");
-                return JsonSerializer.Serialize(new
-                {
-                    error = "validation_error",
-                    message = "One or more Task relationships are invalid.",
-                    diagnostics,
-                });
+                return JsonSerializer.Serialize(new ErrorResult(
+                    "invalid_type",
+                    "type must be 'task', 'pbi', or 'bug'."));
             }
 
-            var candidates = scoped
-                .Where(task => !blocked_by_empty || task.BlockedBy.Count == 0)
-                .Where(task => dependencyStatuses.Count == 0 || (
-                    task.BlockedBy.Count > 0
-                    && task.BlockedBy.All(id => dependencyStatuses.Contains(byId[id].Status))))
-                .ToList();
-
-            var ordered = order_by == "id"
-                ? candidates.OrderBy(task => task.Id, StringComparer.Ordinal).ToList()
-                : candidates.OrderBy(task => task.Created).ThenBy(task => task.Id, StringComparer.Ordinal).ToList();
-
-            var fingerprint = QueryFingerprint(normalizedParent, statuses, normalizedType, requestedTags, blocked_by_empty, dependencyStatuses, order_by);
-            if (!TryDecodeQueryCursor(cursor, order_by, fingerprint, out var queryCursor))
+            TaskRelationshipPredicate? relationship = blocked_by_empty
+                ? new BlockedByEmptyRelation()
+                : dependencyStatuses.Count > 0
+                    ? new BlockedByStatusesRelation(dependencyStatuses)
+                    : null;
+            var result = _taskQuery.Execute(new TaskQueryRequest(
+                _timeProvider.GetLocalNow(),
+                new RelationTaskSelection(
+                    parent_task_id,
+                    statuses,
+                    queryType,
+                    tags,
+                    relationship,
+                    queryOrder,
+                    limit,
+                    cursor)));
+            if (!result.IsSuccess)
             {
                 scope?.SetResult("error");
-                return JsonSerializer.Serialize(new ErrorResult("invalid_cursor", "The continuation cursor is invalid."));
+                return SerializeTaskQueryDiagnostics(result.Diagnostics);
             }
 
-            if (queryCursor is not null)
-            {
-                ordered = order_by == "id"
-                    ? ordered.Where(task => string.CompareOrdinal(task.Id, queryCursor.LastId) > 0).ToList()
-                    : ordered.Where(task =>
-                        task.Created > queryCursor.LastCreated
-                        || (task.Created == queryCursor.LastCreated
-                            && string.CompareOrdinal(task.Id, queryCursor.LastId) > 0)).ToList();
-            }
-
-            var page = ordered.Take(limit).ToList();
-            var readBasisIds = new HashSet<string>(StringComparer.Ordinal);
-            if (blocked_by_empty || dependencyStatuses.Count > 0)
-            {
-                foreach (var task in page)
-                {
-                    foreach (var dependencyId in task.BlockedBy)
-                        readBasisIds.Add(dependencyId);
-                }
-            }
-
-            var readBasis = readBasisIds
-                .Select(id => byId[id])
-                .OrderBy(task => task.Id, StringComparer.Ordinal)
-                .Select(QueryTaskSnapshot)
-                .ToList();
-
-            scope?.SetCount("task_count", page.Count);
+            scope?.SetCount("task_count", result.Tasks.Count);
             return JsonSerializer.Serialize(new
             {
-                tasks = page.Select(QueryTaskSnapshot).ToList(),
-                read_basis = readBasis,
-                next_cursor = page.Count == limit && page.Count < ordered.Count
-                    ? EncodeQueryCursor(page[^1], order_by, fingerprint)
-                    : null,
+                tasks = result.Tasks.Select(QueryTaskSnapshot).ToList(),
+                read_basis = result.ReadBasis.Select(QueryTaskSnapshot).ToList(),
+                next_cursor = result.NextCursor,
             });
         }
         catch
@@ -528,24 +443,25 @@ public sealed class GlassworkTools
         using var scope = _logger?.BeginCall("get_my_day");
         try
         {
-            var index = new IndexService(_vault);
-            index.EnsureLoaded();
-            var taskService = new TaskService(_vault, index);
-
-            var myDayTasks = taskService.GetMyDay(include_done, include_subtasks);
-
-            var tasks = myDayTasks
-                .Select(t => new MyDayTask(
-                    Id: t.Id,
-                    Title: t.Title,
-                    Status: MapToExternalStatus(t.Status),
-                    Type: GlassworkTask.Types.Normalize(t.Type),
-                    Priority: t.Priority,
-                    DueDate: t.Due?.ToString("yyyy-MM-dd"),
-                    Scheduled: t.MyDay?.ToString("yyyy-MM-dd"),
-                    ParentId: t.Parent,
-                    ResourceRevision: ResourceRevision(t.Id),
-                    Links: t.Links.Select(link => new MyDayLink(
+            var queryTime = _timeProvider.GetLocalNow();
+            var queryResult = _taskQuery.Execute(new TaskQueryRequest(
+                queryTime,
+                new MyDayTaskSelection(
+                    new HashSet<string>(StringComparer.Ordinal),
+                    include_done,
+                    include_subtasks)));
+            var tasks = queryResult.Tasks
+                .Select(task => new MyDayTask(
+                    Id: task.Id,
+                    Title: task.Title,
+                    Status: MapToExternalStatus(task.RawStatus),
+                    Type: MapToExternalType(task.Type),
+                    Priority: task.Priority,
+                    DueDate: task.Due?.ToString("yyyy-MM-dd"),
+                    Scheduled: task.MyDay?.ToString("yyyy-MM-dd"),
+                    ParentId: task.ParentId,
+                    ResourceRevision: task.ResourceRevision!,
+                    Links: task.Links.Select(link => new MyDayLink(
                         Type: link.Type,
                         Url: link.Value,
                         Title: link.Label ?? link.Value
@@ -555,7 +471,7 @@ public sealed class GlassworkTools
             var result = new GetMyDayResult(
                 Tasks: tasks,
                 Count: tasks.Count,
-                AsOf: DateTime.Today.ToString("yyyy-MM-dd"));
+                AsOf: queryTime.ToString("yyyy-MM-dd"));
 
             return JsonSerializer.Serialize(result);
         }
@@ -774,6 +690,41 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(inputError);
             }
 
+            var querySnapshot = _taskQuery.Execute(new TaskQueryRequest(
+                _timeProvider.GetLocalNow(),
+                new ListTaskSelection(
+                    Projection: new SelectedTaskFieldsProjection(
+                        new HashSet<TaskQueryField>
+                        {
+                            TaskQueryField.Title,
+                            TaskQueryField.Status,
+                            TaskQueryField.ParentId,
+                            TaskQueryField.Created,
+                            TaskQueryField.Description,
+                            TaskQueryField.Notes,
+                            TaskQueryField.Subtasks,
+                            TaskQueryField.Tags,
+                            TaskQueryField.Ready,
+                            TaskQueryField.UrgencyScore,
+                            TaskQueryField.BacklinkCount,
+                        }))));
+            var tasksById = querySnapshot.Tasks.ToDictionary(task => task.Id, StringComparer.Ordinal);
+            var documents = querySnapshot.Tasks
+                .Select(task => new TaskSearchDocument(
+                    task.Id,
+                    task.Title,
+                    task.RawStatus,
+                    task.ParentId,
+                    task.Created,
+                    task.Description,
+                    task.Notes,
+                    task.Subtasks?
+                        .Select(subtask => $"{subtask.Text}\n{subtask.Notes}".Trim())
+                        .ToArray()
+                        ?? [],
+                    task.Tags))
+                .ToArray();
+
             // Defensive net: pre-validation should have caught known cases, but a
             // future Core validation we didn't mirror still surfaces as a structured
             // envelope rather than crashing the transport. Wraps ONLY the Search
@@ -782,7 +733,7 @@ public sealed class GlassworkTools
             IReadOnlyList<TaskSearchHit> searchHits;
             try
             {
-                searchHits = _search.Search(query, @in, tags, status, limit);
+                searchHits = _search.Search(documents, query, @in, tags, status, limit);
             }
             catch (ArgumentException ex)
             {
@@ -790,15 +741,10 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("invalid_argument", ex.Message));
             }
 
-            var tasksById = _vault.LoadAll().ToDictionary(t => t.Id, StringComparer.Ordinal);
-            var backlinkCounts = BuildBacklinkCounts(tasksById.Values);
             var hits = searchHits
                 .Select(h =>
                 {
-                    tasksById.TryGetValue(h.Id, out var task);
-                    var signals = task is null
-                        ? new TaskActionabilitySignals(true, 0, 0)
-                        : SignalsFor(task, backlinkCounts);
+                    var task = tasksById[h.Id];
                     return new TaskSearchSummary(
                         Id: h.Id,
                         Title: h.Title,
@@ -806,10 +752,10 @@ public sealed class GlassworkTools
                         ParentId: h.ParentId,
                         MatchedIn: h.MatchedIn.ToArray(),
                         Snippet: h.Snippet,
-                        Ready: signals.Ready,
-                        UrgencyScore: signals.UrgencyScore,
-                        BacklinkCount: signals.BacklinkCount,
-                        ResourceRevision: ResourceRevision(h.Id));
+                        Ready: task.Ready,
+                        UrgencyScore: task.UrgencyScore,
+                        BacklinkCount: task.BacklinkCount,
+                        ResourceRevision: task.ResourceRevision!);
                 })
                 .ToList();
             scope?.SetCount("task_count", hits.Count);
@@ -2412,101 +2358,84 @@ public sealed class GlassworkTools
         return true;
     }
 
-    private static readonly HashSet<string> AllowedSummaryFields = new(StringComparer.Ordinal)
+    private static IReadOnlySet<TaskQueryField> MapTaskQueryFields(IEnumerable<string> fields)
     {
-        "title", "status", "type", "parent_id", "path", "created", "priority", "due", "start", "my_day", "defer_until",
-        "ready", "urgency_score", "backlink_count", "in_my_day_today", "blocked_reason", "blocked_at", "blocked_from_status", "needs_blocker_details",
-    };
-
-    /// <summary>
-    /// Three-state result of normalising the requested fields[] for list_tasks:
-    /// <list type="bullet">
-    /// <item><c>UseDefault</c>: caller did not request a projection — null or empty input. Use the typed 5-field shape.</item>
-    /// <item><c>EmptyProjection</c>: caller requested a projection but every name was unknown after normalisation. Return id-only summaries.</item>
-    /// <item><c>Projection</c>: at least one valid field was requested. Project on the returned set.</item>
-    /// </list>
-    /// </summary>
-    private enum FieldProjectionMode { UseDefault, EmptyProjection, Projection }
-
-    private static (FieldProjectionMode Mode, HashSet<string> Fields) NormalizeFieldProjection(string[]? fields)
-    {
-        if (fields is null || fields.Length == 0)
-            return (FieldProjectionMode.UseDefault, new HashSet<string>(StringComparer.Ordinal));
-
-        var set = new HashSet<string>(StringComparer.Ordinal);
+        var mapped = new HashSet<TaskQueryField>();
         foreach (var raw in fields)
         {
-            if (raw is null) continue;
-            var normalized = raw.Trim().ToLowerInvariant();
-            if (normalized.Length == 0) continue;
-            if (AllowedSummaryFields.Contains(normalized))
-                set.Add(normalized);
+            var field = raw?.Trim().ToLowerInvariant() switch
+            {
+                "title" => TaskQueryField.Title,
+                "status" => TaskQueryField.Status,
+                "type" => TaskQueryField.Type,
+                "parent_id" => TaskQueryField.ParentId,
+                "path" => TaskQueryField.Path,
+                "created" => TaskQueryField.Created,
+                "priority" => TaskQueryField.Priority,
+                "due" => TaskQueryField.Due,
+                "start" => TaskQueryField.Start,
+                "my_day" => TaskQueryField.MyDay,
+                "defer_until" => TaskQueryField.DeferUntil,
+                "ready" => TaskQueryField.Ready,
+                "urgency_score" => TaskQueryField.UrgencyScore,
+                "backlink_count" => TaskQueryField.BacklinkCount,
+                "in_my_day_today" => TaskQueryField.InMyDayToday,
+                "blocked_reason" => TaskQueryField.BlockedReason,
+                "blocked_at" => TaskQueryField.BlockedAt,
+                "blocked_from_status" => TaskQueryField.BlockedFromStatus,
+                "needs_blocker_details" => TaskQueryField.NeedsBlockerDetails,
+                _ => (TaskQueryField?)null,
+            };
+            if (field.HasValue)
+                mapped.Add(field.Value);
         }
-        return set.Count == 0
-            ? (FieldProjectionMode.EmptyProjection, set)
-            : (FieldProjectionMode.Projection, set);
+        return mapped;
     }
 
-    private Dictionary<string, object?> ProjectTaskSummary(
-        GlassworkTask task,
-        HashSet<string> fields,
-        IReadOnlyDictionary<string, int> backlinkCounts)
+    private static string? MapListParentTaskId(string? parentTaskId)
+    {
+        if (parentTaskId is null)
+            return null;
+
+        // The legacy tool compared parent IDs exactly. A NUL cannot occur in a
+        // file-backed Task ID, so it preserves "filter matches nothing" after
+        // Core normalizes blank or padded IDs.
+        return parentTaskId.Length == 0
+            || !string.Equals(parentTaskId, parentTaskId.Trim(), StringComparison.Ordinal)
+                ? "\0"
+                : parentTaskId;
+    }
+
+    private static Dictionary<string, object?> ProjectTaskSummary(TaskQueryItem task)
     {
         var dict = new Dictionary<string, object?>
         {
             ["id"] = task.Id,
-            ["resource_revision"] = ResourceRevision(task.Id),
+            ["resource_revision"] = task.ResourceRevision,
         };
-        var signals = SignalsFor(task, backlinkCounts);
-        if (fields.Contains("title")) dict["title"] = task.Title;
-        if (fields.Contains("status")) dict["status"] = MapToExternalStatus(task.Status);
-        if (fields.Contains("type")) dict["type"] = GlassworkTask.Types.Normalize(task.Type);
-        if (fields.Contains("parent_id")) dict["parent_id"] = task.Parent;
-        if (fields.Contains("path")) dict["path"] = TodoRelativeTaskPath(task.Id);
-        if (fields.Contains("created")) dict["created"] = task.Created.ToString("yyyy-MM-dd");
-        if (fields.Contains("priority")) dict["priority"] = task.Priority;
-        if (fields.Contains("due")) dict["due"] = task.Due?.ToString("yyyy-MM-dd");
-        if (fields.Contains("start")) dict["start"] = task.Start?.ToString("yyyy-MM-dd");
-        if (fields.Contains("my_day")) dict["my_day"] = task.MyDay?.ToString("yyyy-MM-dd");
-        if (fields.Contains("defer_until")) dict["defer_until"] = task.DeferUntil?.ToString("yyyy-MM-dd");
-        if (fields.Contains("ready")) dict["ready"] = signals.Ready;
-        if (fields.Contains("urgency_score")) dict["urgency_score"] = signals.UrgencyScore;
-        if (fields.Contains("backlink_count")) dict["backlink_count"] = signals.BacklinkCount;
-        if (fields.Contains("blocked_reason")) dict["blocked_reason"] = task.BlockedReason;
-        if (fields.Contains("blocked_at")) dict["blocked_at"] = task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
-        if (fields.Contains("blocked_from_status")) dict["blocked_from_status"] = task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus);
-        if (fields.Contains("needs_blocker_details")) dict["needs_blocker_details"] = task.NeedsBlockerDetails;
-        if (fields.Contains("in_my_day_today"))
-            dict["in_my_day_today"] = MyDayPromotionPolicy.IsTaskInMyDayToday(
-                task,
-                DateOnly.FromDateTime(DateTime.Today),
-                new HashSet<string>(StringComparer.Ordinal));
+        if (task.Includes(TaskQueryField.Title)) dict["title"] = task.Title;
+        if (task.Includes(TaskQueryField.Status)) dict["status"] = MapToExternalStatus(task.RawStatus);
+        if (task.Includes(TaskQueryField.Type)) dict["type"] = MapToExternalType(task.Type);
+        if (task.Includes(TaskQueryField.ParentId)) dict["parent_id"] = task.ParentId;
+        if (task.Includes(TaskQueryField.Path)) dict["path"] = task.Path;
+        if (task.Includes(TaskQueryField.Created)) dict["created"] = task.Created.ToString("yyyy-MM-dd");
+        if (task.Includes(TaskQueryField.Priority)) dict["priority"] = task.Priority;
+        if (task.Includes(TaskQueryField.Due)) dict["due"] = task.Due?.ToString("yyyy-MM-dd");
+        if (task.Includes(TaskQueryField.Start)) dict["start"] = task.Start?.ToString("yyyy-MM-dd");
+        if (task.Includes(TaskQueryField.MyDay)) dict["my_day"] = task.MyDay?.ToString("yyyy-MM-dd");
+        if (task.Includes(TaskQueryField.DeferUntil)) dict["defer_until"] = task.DeferUntil?.ToString("yyyy-MM-dd");
+        if (task.Includes(TaskQueryField.Ready)) dict["ready"] = task.Ready;
+        if (task.Includes(TaskQueryField.UrgencyScore)) dict["urgency_score"] = task.UrgencyScore;
+        if (task.Includes(TaskQueryField.BacklinkCount)) dict["backlink_count"] = task.BacklinkCount;
+        if (task.Includes(TaskQueryField.BlockedReason)) dict["blocked_reason"] = task.BlockedReason;
+        if (task.Includes(TaskQueryField.BlockedAt)) dict["blocked_at"] = task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        if (task.Includes(TaskQueryField.BlockedFromStatus))
+            dict["blocked_from_status"] = task.RawBlockedFromStatus is null
+                ? null
+                : MapToExternalStatus(task.RawBlockedFromStatus);
+        if (task.Includes(TaskQueryField.NeedsBlockerDetails)) dict["needs_blocker_details"] = task.NeedsBlockerDetails;
+        if (task.Includes(TaskQueryField.InMyDayToday)) dict["in_my_day_today"] = task.InMyDayToday;
         return dict;
-    }
-
-    private TaskActionabilitySignals SignalsFor(
-        GlassworkTask task,
-        IReadOnlyDictionary<string, int> backlinkCounts)
-    {
-        return TaskActionability.Compute(
-            task,
-            new TaskSignalContext(
-                DateOnly.FromDateTime(DateTime.Today),
-                backlinkCounts.TryGetValue(task.Id, out var count) ? count : 0));
-    }
-
-    private Dictionary<string, int> BuildBacklinkCounts(IEnumerable<GlassworkTask> tasks)
-    {
-        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        var index = new BacklinkIndex();
-        try { index.Build(_vaultRoot); }
-        catch { return counts; }
-
-        foreach (var task in tasks)
-        {
-            counts[task.Id] = index.GetBacklinks(task.Id).Count;
-        }
-        return counts;
     }
 
     // ────── output path helpers (slash-normalized, always forward slashes) ──────
@@ -2525,127 +2454,114 @@ public sealed class GlassworkTools
         return $"rr1-{Convert.ToHexString(digest).ToLowerInvariant()}";
     }
 
-    private Dictionary<string, object?> QueryTaskSnapshot(GlassworkTask task)
+    private static Dictionary<string, object?> QueryTaskSnapshot(TaskQueryItem task)
     {
         return new Dictionary<string, object?>
         {
             ["id"] = task.Id,
             ["title"] = task.Title,
-            ["status"] = MapToExternalStatus(task.Status),
-            ["type"] = GlassworkTask.Types.Normalize(task.Type),
-            ["parent_id"] = task.Parent,
+            ["status"] = MapToExternalStatus(task.RawStatus),
+            ["type"] = MapToExternalType(task.Type),
+            ["parent_id"] = task.ParentId,
             ["tags"] = task.Tags.ToArray(),
             ["blocked_by"] = task.BlockedBy.ToArray(),
             ["description"] = task.Description,
             ["notes"] = task.Notes,
-            ["resource_revision"] = ResourceRevision(task.Id),
+            ["resource_revision"] = task.ResourceRevision,
         };
     }
 
-    private static List<Dictionary<string, string>> ValidateDependencies(
-        IEnumerable<GlassworkTask> tasks,
-        IReadOnlyDictionary<string, GlassworkTask> byId)
+    private static string SerializeTaskQueryDiagnostics(
+        IReadOnlyList<TaskQueryDiagnostic> diagnostics)
     {
-        var diagnostics = new List<Dictionary<string, string>>();
-        foreach (var task in tasks)
+        if (diagnostics.Count == 1)
         {
-            foreach (var dependencyId in task.BlockedBy)
+            var diagnostic = diagnostics[0];
+            if (diagnostic.Code == TaskQueryDiagnosticCode.InvalidLimit)
             {
-                if (string.Equals(task.Id, dependencyId, StringComparison.Ordinal))
-                {
-                    diagnostics.Add(new Dictionary<string, string>
-                    {
-                        ["code"] = "self_dependency",
-                        ["task_id"] = task.Id,
-                        ["dependency_id"] = dependencyId,
-                    });
-                }
-                else if (!byId.ContainsKey(dependencyId))
-                {
-                    diagnostics.Add(new Dictionary<string, string>
-                    {
-                        ["code"] = "missing_dependency",
-                        ["task_id"] = task.Id,
-                        ["dependency_id"] = dependencyId,
-                    });
-                }
+                return JsonSerializer.Serialize(new ErrorResult(
+                    "invalid_limit",
+                    "limit must be between 1 and 100."));
+            }
+            if (diagnostic.Code == TaskQueryDiagnosticCode.InvalidCursor)
+            {
+                return JsonSerializer.Serialize(new ErrorResult(
+                    "invalid_cursor",
+                    "The continuation cursor is invalid."));
             }
         }
 
-        return diagnostics;
-    }
-
-    private static string QueryFingerprint(
-        string? parentId,
-        IEnumerable<string> statuses,
-        string? type,
-        IEnumerable<string> tags,
-        bool blockedByEmpty,
-        IEnumerable<string> dependencyStatuses,
-        string orderBy)
-    {
-        var payload = JsonSerializer.Serialize(new
+        var relationshipDiagnostics = diagnostics.Select(diagnostic => new Dictionary<string, string>
         {
-            parentId,
-            statuses = statuses.OrderBy(value => value, StringComparer.Ordinal),
-            type,
-            tags = tags.OrderBy(value => value, StringComparer.OrdinalIgnoreCase),
-            blockedByEmpty,
-            dependencyStatuses = dependencyStatuses.OrderBy(value => value, StringComparer.Ordinal),
-            orderBy,
-        });
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
-    }
-
-    private static string EncodeQueryCursor(GlassworkTask task, string orderBy, string fingerprint)
-    {
-        var payload = JsonSerializer.Serialize(new
-        {
-            order_by = orderBy,
-            last_id = task.Id,
-            last_created = task.Created.Ticks,
-            fingerprint,
-        });
-        return Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
-    }
-
-    private static bool TryDecodeQueryCursor(
-        string? cursor,
-        string orderBy,
-        string fingerprint,
-        out QueryCursor? queryCursor)
-    {
-        if (string.IsNullOrWhiteSpace(cursor))
-        {
-            queryCursor = null;
-            return true;
-        }
-
-        try
-        {
-            var payload = Encoding.UTF8.GetString(Convert.FromBase64String(cursor));
-            using var document = JsonDocument.Parse(payload);
-            var root = document.RootElement;
-            if (root.GetProperty("order_by").GetString() != orderBy
-                || root.GetProperty("fingerprint").GetString() != fingerprint)
+            ["code"] = diagnostic.Code switch
             {
-                queryCursor = null;
-                return false;
-            }
-
-            queryCursor = new QueryCursor(
-                root.GetProperty("last_id").GetString() ?? string.Empty,
-                new DateTime(root.GetProperty("last_created").GetInt64()));
-            return true;
-        }
-        catch (Exception ex) when (ex is FormatException or JsonException or KeyNotFoundException or InvalidOperationException)
+                TaskQueryDiagnosticCode.SelfRelationship => "self_dependency",
+                TaskQueryDiagnosticCode.MissingRelationship => "missing_dependency",
+                _ => throw new InvalidOperationException(
+                    $"Unsupported Task Query diagnostic '{diagnostic.Code}'."),
+            },
+            ["task_id"] = diagnostic.TaskId
+                ?? throw new InvalidOperationException("Relationship diagnostic is missing task_id."),
+            ["dependency_id"] = diagnostic.RelatedTaskId
+                ?? throw new InvalidOperationException("Relationship diagnostic is missing dependency_id."),
+        }).ToList();
+        return JsonSerializer.Serialize(new
         {
-            queryCursor = null;
+            error = "validation_error",
+            message = "One or more Task relationships are invalid.",
+            diagnostics = relationshipDiagnostics,
+        });
+    }
+
+    private static bool TryMapToTaskQueryStatus(
+        string? status,
+        out TaskQueryStatus queryStatus,
+        out string? error)
+    {
+        if (!TryMapToInternalStatus(status, out var internalStatus, out error))
+        {
+            queryStatus = default;
             return false;
         }
+
+        queryStatus = internalStatus switch
+        {
+            GlassworkTask.Statuses.Todo => TaskQueryStatus.Todo,
+            GlassworkTask.Statuses.InProgress => TaskQueryStatus.InProgress,
+            GlassworkTask.Statuses.Blocked => TaskQueryStatus.Blocked,
+            GlassworkTask.Statuses.Done => TaskQueryStatus.Done,
+            _ => throw new InvalidOperationException($"Unknown Task status '{internalStatus}'."),
+        };
+        return true;
     }
 
-    private sealed record QueryCursor(string LastId, DateTime LastCreated);
+    private static bool TryMapTaskQueryType(string value, out TaskQueryType? queryType)
+    {
+        queryType = value.Trim().ToLowerInvariant() switch
+        {
+            "task" => TaskQueryType.Task,
+            "pbi" => TaskQueryType.Pbi,
+            "bug" => TaskQueryType.Bug,
+            _ => null,
+        };
+        return queryType.HasValue;
+    }
+
+    private static bool TryMapTaskQueryOrder(string value, out TaskQueryOrder queryOrder)
+    {
+        switch (value)
+        {
+            case "id":
+                queryOrder = TaskQueryOrder.Id;
+                return true;
+            case "created_id":
+                queryOrder = TaskQueryOrder.CreatedThenId;
+                return true;
+            default:
+                queryOrder = default;
+                return false;
+        }
+    }
 
     private static string SerializeMutationOutcome(ResourceMutationOutcome outcome)
     {
@@ -2716,6 +2632,23 @@ public sealed class GlassworkTools
     {
         GlassworkTask.Statuses.InProgress => "doing",
         _ => internalStatus,
+    };
+
+    private static string MapToExternalStatus(TaskQueryStatus status) => status switch
+    {
+        TaskQueryStatus.Todo => "todo",
+        TaskQueryStatus.InProgress => "doing",
+        TaskQueryStatus.Blocked => "blocked",
+        TaskQueryStatus.Done => "done",
+        _ => throw new ArgumentOutOfRangeException(nameof(status), status, null),
+    };
+
+    private static string MapToExternalType(TaskQueryType type) => type switch
+    {
+        TaskQueryType.Task => "task",
+        TaskQueryType.Pbi => "pbi",
+        TaskQueryType.Bug => "bug",
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
     };
 
     /// <summary>
@@ -3171,21 +3104,17 @@ public sealed class GlassworkTools
         using var scope = _logger?.BeginCall("get_activity");
         try
         {
-            if (!TryParsePeriod(period, out var from, out var to, out var parseError))
+            var queryTime = _timeProvider.GetLocalNow();
+            if (!TryParsePeriod(period, queryTime.DateTime, out var from, out var to, out var parseError))
             {
                 scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_period", parseError!));
             }
 
-            var allTasks = _vault.LoadAll();
-            
-            // Filter tasks completed in the period (must have status=done AND completed_at in range)
-            var completedInPeriod = allTasks
-                .Where(t => t.Status == GlassworkTask.Statuses.Done &&
-                            t.CompletedAt.HasValue && 
-                            t.CompletedAt.Value >= from && 
-                            t.CompletedAt.Value <= to)
-                .OrderBy(t => t.CompletedAt)
+            var completed = _taskQuery.Execute(new TaskQueryRequest(
+                queryTime,
+                new CompletedWorkTaskSelection(from, to.AddTicks(1))));
+            var completedInPeriod = completed.Tasks
                 .Select(t =>
                 {
                     var adoLink = t.Links.FirstOrDefault(l => l.Type == TaskLink.Types.Ado);
@@ -3194,9 +3123,14 @@ public sealed class GlassworkTools
                         Title: t.Title,
                         CompletedAt: t.CompletedAt!.Value.ToString("O"),
                         Priority: t.Priority,
-                        Links: t.Links.ToArray(),
+                        Links: t.Links.Select(link => new TaskLink
+                        {
+                            Type = link.Type,
+                            Value = link.Value,
+                            Label = link.Label,
+                        }).ToArray(),
                         AdoLink: adoLink?.Value,
-                        ResourceRevision: ResourceRevision(t.Id)); // Just the ID, not a constructed URL
+                        ResourceRevision: t.ResourceRevision!);
                 })
                 .ToArray();
 
@@ -3221,10 +3155,14 @@ public sealed class GlassworkTools
         }
     }
 
-    private static bool TryParsePeriod(string period, out DateTime from, out DateTime to, out string? error)
+    private static bool TryParsePeriod(
+        string period,
+        DateTime localNow,
+        out DateTime from,
+        out DateTime to,
+        out string? error)
     {
-        var now = DateTime.Now;
-        var today = DateTime.Today;
+        var today = localNow.Date;
 
         switch (period?.ToLowerInvariant())
         {
@@ -3239,13 +3177,13 @@ public sealed class GlassworkTools
                 error = null;
                 return true;
             case "week":
-                from = now.AddDays(-7);
-                to = now;
+                from = localNow.AddDays(-7);
+                to = localNow;
                 error = null;
                 return true;
             case "month":
-                from = now.AddMonths(-1);
-                to = now;
+                from = localNow.AddMonths(-1);
+                to = localNow;
                 error = null;
                 return true;
             default:

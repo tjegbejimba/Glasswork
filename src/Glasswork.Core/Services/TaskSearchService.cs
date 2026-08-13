@@ -32,10 +32,34 @@ public sealed class TaskSearchService
         var allowedStatuses = TaskSearchText.NormalizeStatuses(statuses);
         var tokens = TaskSearchText.Tokenize(query);
 
-        var all = _vault.LoadAll();
+        var documents = _vault.LoadAll()
+            .Select(TaskSearchDocument.FromTask)
+            .ToArray();
+        return Search(documents, query, fields, requiredTags, statuses, limit);
+    }
+
+    public IReadOnlyList<TaskSearchHit> Search(
+        IReadOnlyList<TaskSearchDocument> documents,
+        string query,
+        IReadOnlyList<string>? fields = null,
+        IReadOnlyList<string>? requiredTags = null,
+        IReadOnlyList<string>? statuses = null,
+        int limit = 20)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+        if (string.IsNullOrWhiteSpace(query))
+            throw new ArgumentException("query is required.");
+        if (query.Length > 500)
+            throw new ArgumentException("query must be 500 characters or fewer.");
+
+        var clampedLimit = Math.Clamp(limit, 1, 100);
+        var scope = TaskSearchText.NormalizeScope(fields);
+        var requiredTagSet = TaskSearchText.NormalizeTags(requiredTags);
+        var allowedStatuses = TaskSearchText.NormalizeStatuses(statuses);
+        var tokens = TaskSearchText.Tokenize(query);
         var hits = new List<ScoredHit>();
 
-        foreach (var task in all)
+        foreach (var task in documents)
         {
             if (allowedStatuses is not null && !allowedStatuses.Contains(task.Status))
                 continue;
@@ -64,7 +88,7 @@ public sealed class TaskSearchService
                     task.Id,
                     task.Title,
                     effectiveStatus,
-                    task.Parent,
+                    task.ParentId,
                     matchedFields,
                     snippet),
                 score,
@@ -114,6 +138,11 @@ internal static class TaskSearchText
     }
 
     internal static Dictionary<string, string> BuildSearchableFields(GlassworkTask task, HashSet<string> scope)
+        => BuildSearchableFields(TaskSearchDocument.FromTask(task), scope);
+
+    internal static Dictionary<string, string> BuildSearchableFields(
+        TaskSearchDocument task,
+        HashSet<string> scope)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         if (scope.Contains("title")) result["title"] = task.Title ?? string.Empty;
@@ -121,9 +150,7 @@ internal static class TaskSearchText
         if (scope.Contains("notes")) result["notes"] = task.Notes ?? string.Empty;
         if (scope.Contains("subtasks"))
         {
-            result["subtasks"] = string.Join(
-                "\n",
-                task.Subtasks.Select(s => $"{s.Text}\n{s.Notes}".Trim()));
+            result["subtasks"] = string.Join("\n", task.Subtasks);
         }
 
         if (scope.Contains("tags")) result["tags"] = string.Join(" ", task.Tags);
@@ -247,3 +274,27 @@ public sealed record TaskSearchHit(
     string? ParentId,
     IReadOnlyList<string> MatchedIn,
     string Snippet);
+
+public sealed record TaskSearchDocument(
+    string Id,
+    string Title,
+    string Status,
+    string? ParentId,
+    DateTime Created,
+    string Description,
+    string Notes,
+    IReadOnlyList<string> Subtasks,
+    IReadOnlyList<string> Tags)
+{
+    internal static TaskSearchDocument FromTask(GlassworkTask task) =>
+        new(
+            task.Id,
+            task.Title,
+            task.Status,
+            task.Parent,
+            task.Created,
+            task.Description,
+            task.Notes,
+            task.Subtasks.Select(subtask => $"{subtask.Text}\n{subtask.Notes}".Trim()).ToArray(),
+            task.Tags.ToArray());
+}

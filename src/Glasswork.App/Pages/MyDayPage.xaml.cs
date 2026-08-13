@@ -38,7 +38,13 @@ public sealed partial class MyDayPage : Page
 
     public MyDayPage()
     {
-        ViewModel = new MyDayViewModel(App.Vault, App.Tasks, App.Index, App.UiState, App.Performance);
+        ViewModel = new MyDayViewModel(
+            App.Vault,
+            App.Tasks,
+            App.Index,
+            App.UiState,
+            App.TaskQuery,
+            App.Performance);
         InitializeComponent();
 
         // Snapshot TodayList's scroll position before VM.Refresh() destroys it, then

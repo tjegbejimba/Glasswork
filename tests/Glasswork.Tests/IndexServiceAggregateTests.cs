@@ -7,8 +7,8 @@ namespace Glasswork.Tests;
 /// Tests for the in-memory aggregate behaviour added to <see cref="IndexService"/>
 /// for issue #184. These exercise the snapshot store, the typed delta channel,
 /// the watcher seam (<see cref="IndexService.OnFileChangedOnDisk"/>), and the
-/// query surface (<c>All</c>, <c>ById</c>, <c>Count</c>, <c>Carryover</c>,
-/// <c>CompletedBetween</c>). The legacy <c>Refresh()</c>+ on-disk writer behaviour
+/// Index accessors (<c>All</c>, <c>ById</c>, <c>Count</c>, and
+/// <c>Carryover</c>). The legacy <c>Refresh()</c>+ on-disk writer behaviour
 /// is covered by <see cref="IndexServiceTests"/>.
 /// </summary>
 [TestClass]
@@ -247,40 +247,6 @@ public class IndexServiceAggregateTests
         var carry = _index.Carryover(DateTime.Today).ToList();
 
         CollectionAssert.AreEquivalent(new[] { "stale" }, carry.Select(t => t.Id).ToList());
-    }
-
-    [TestMethod]
-    public void CompletedBetween_FiltersByCompletedAt()
-    {
-        var weekStart = new DateTime(2026, 1, 5); // Monday
-        var weekEnd = weekStart.AddDays(7);
-        _vault.Save(new GlassworkTask
-        {
-            Id = "in",
-            Title = "In Week",
-            Status = "done",
-            CompletedAt = new DateTime(2026, 1, 7),
-        });
-        _vault.Save(new GlassworkTask
-        {
-            Id = "before",
-            Title = "Before",
-            Status = "done",
-            CompletedAt = new DateTime(2026, 1, 4),
-        });
-        _vault.Save(new GlassworkTask
-        {
-            Id = "after",
-            Title = "After",
-            Status = "done",
-            CompletedAt = new DateTime(2026, 1, 12),
-        });
-        _vault.Save(new GlassworkTask { Id = "open", Title = "Open", Status = "todo" });
-        _index.EnsureLoaded();
-
-        var completed = _index.CompletedBetween(weekStart, weekEnd).ToList();
-
-        CollectionAssert.AreEquivalent(new[] { "in" }, completed.Select(t => t.Id).ToList());
     }
 
     // ── Refresh decoupling (issue #184 review fix) ─────────────────────────

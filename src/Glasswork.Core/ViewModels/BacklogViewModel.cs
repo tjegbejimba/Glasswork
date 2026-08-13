@@ -20,6 +20,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     private readonly VaultService _vault;
     private readonly SavedTaskViewService? _savedTaskViews;
     private readonly IPerformanceTracer _performanceTracer;
+    private readonly ITaskQuery _taskQuery;
 
     /// <summary>
     /// Flat list of tasks (ungrouped). Kept for backward compat / count exposure.
@@ -54,8 +55,6 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     /// </summary>
     public Func<string?>? AdoBaseUrlProvider { get; set; }
 
-    public Func<string, int>? BacklinkCountProvider { get; set; }
-
     /// <summary>
     /// Optional async resolver used to enrich numeric parent group headers with the
     /// real ADO work-item title. Page wires this to <see cref="App.AdoFetcher"/>.
@@ -86,8 +85,9 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         TaskService taskService,
         IndexService index,
         IUiStateService? uiState = null,
-        SavedTaskViewService? savedTaskViews = null)
-        : this(vault, taskService, index, uiState, savedTaskViews, null) { }
+        SavedTaskViewService? savedTaskViews = null,
+        ITaskQuery? taskQuery = null)
+        : this(vault, taskService, index, uiState, savedTaskViews, taskQuery, null) { }
 
     public BacklogViewModel(
         VaultService vault,
@@ -95,13 +95,15 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         IndexService index,
         IUiStateService? uiState,
         SavedTaskViewService? savedTaskViews,
-        IPerformanceTracer? performanceTracer = null)
+        ITaskQuery? taskQuery,
+        IPerformanceTracer? performanceTracer)
     {
-        _vault = vault;
-        _taskService = taskService;
-        _index = index;
+        _vault = vault ?? throw new ArgumentNullException(nameof(vault));
+        _taskService = taskService ?? throw new ArgumentNullException(nameof(taskService));
+        _index = index ?? throw new ArgumentNullException(nameof(index));
         _savedTaskViews = savedTaskViews;
         _performanceTracer = performanceTracer ?? PerformanceTracer.Disabled;
+        _taskQuery = taskQuery ?? new WarmIndexTaskQuery(index, new BacklinkIndex());
         _parentTitleStore = uiState is null ? null : new AdoParentTitleCacheStore(uiState);
         // Issue #188: Page (BacklogPage) subscribes to Index.Changed and marshals to UI thread.
         // ViewModel stays on Core and has no dispatcher access.
@@ -138,12 +140,13 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         Tasks.Clear();
         Rows.Clear();
         BoardColumns.Clear();
-        var all = _index.All;
+        var queryTime = DateTimeOffset.Now;
+        var filtered = FilterTasks(ViewMode == "board" ? "all" : FilterStatus, queryTime);
 
         if (ViewMode == "board")
         {
             // Board mode: use BacklogBoardGrouper, ignore FilterStatus and IsGrouped.
-            var searched = FilterTasks(all, "all");
+            var searched = filtered.Tasks;
             var columns = BacklogBoardGrouper.GroupByStatus(searched);
             foreach (var col in columns)
             {
@@ -160,16 +163,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         }
         else
         {
-            var filtered = FilterTasks(all, FilterStatus);
-
-            var ordered = filtered
-                .Select(t => new { Task = t, Signals = SignalsFor(t) })
-                .OrderByDescending(x => x.Signals.Ready)
-                .ThenByDescending(x => x.Signals.UrgencyScore)
-                .ThenByDescending(x => x.Task.Created)
-                .ThenBy(x => x.Task.Id, StringComparer.Ordinal)
-                .Select(x => x.Task)
-                .ToList();
+            var ordered = filtered.Tasks;
 
             foreach (var task in ordered)
             {
@@ -181,7 +175,9 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
                 // Hydrate cache from persisted store before grouping so headers render
                 // resolved titles on the first frame instead of flashing the bare ID.
                 HydrateParentTitleCache(ordered);
-                var liveBacklogTasks = BacklogQueries.Filter(all, "all");
+                var liveBacklogTasks = filtered.SourceTasks.Values
+                    .Where(task => task.Status != GlassworkTask.Statuses.Done)
+                    .ToList();
 
                 var collapseState = GroupCollapseStateProvider?.Invoke()
                                     ?? new Dictionary<string, bool>();
@@ -213,21 +209,108 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         trace.SetCount("board_column_count", BoardColumns.Count);
     }
 
-    private IReadOnlyList<GlassworkTask> FilterTasks(IReadOnlyList<GlassworkTask> all, string fallbackStatus)
+    private BacklogQueryData FilterTasks(
+        string fallbackStatus,
+        DateTimeOffset queryTime)
     {
         if (_savedTaskViews is not null && !string.IsNullOrWhiteSpace(SelectedSavedViewId))
-            return _savedTaskViews.Apply(all, SelectedSavedViewId!);
+        {
+            var savedView = _savedTaskViews.List()
+                .FirstOrDefault(view => string.Equals(
+                    view.Id,
+                    SelectedSavedViewId,
+                    StringComparison.Ordinal));
+            var statuses = savedView is null
+                ? new HashSet<TaskQueryStatus>()
+                : MapStatuses(savedView.Filter?.Statuses);
+            var queried = QueryBacklogTasks(
+                new BacklogStatusesTaskSelection(statuses),
+                queryTime);
+            var matches = _savedTaskViews.Apply(
+                queried.SourceTasks.Values,
+                SelectedSavedViewId!,
+                DateOnly.FromDateTime(queryTime.Date));
+            var savedViewMatchIds = matches.Select(task => task.Id).ToHashSet(StringComparer.Ordinal);
+            return queried with
+            {
+                Tasks = queried.Tasks
+                    .Where(task => savedViewMatchIds.Contains(task.Id))
+                    .ToList(),
+            };
+        }
 
-        return BacklogQueries.Filter(all, fallbackStatus, SearchText);
+        if (!TryMapStatus(fallbackStatus, out var status))
+            return new BacklogQueryData(
+                new Dictionary<string, GlassworkTask>(StringComparer.Ordinal),
+                []);
+
+        var queriedTasks = QueryBacklogTasks(new BacklogTaskSelection(status), queryTime);
+        if (string.IsNullOrWhiteSpace(SearchText))
+            return queriedTasks;
+
+        var matchIds = queriedTasks.SourceTasks.Values
+            .Where(task => TaskSearchText.Matches(task, SearchText))
+            .Select(task => task.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        return queriedTasks with
+        {
+            Tasks = queriedTasks.Tasks.Where(task => matchIds.Contains(task.Id)).ToList(),
+        };
     }
 
-    private TaskActionabilitySignals SignalsFor(GlassworkTask task)
+    private BacklogQueryData QueryBacklogTasks(
+        TaskQuerySelection selection,
+        DateTimeOffset queryTime)
     {
-        var backlinkCount = BacklinkCountProvider?.Invoke(task.Id) ?? 0;
-        return TaskActionability.Compute(
-            task,
-            new TaskSignalContext(DateOnly.FromDateTime(DateTime.Today), backlinkCount));
+        var result = _taskQuery.Execute(new TaskQueryRequest(
+            queryTime,
+            selection));
+        if (!result.IsSuccess)
+        {
+            var diagnostics = string.Join(
+                "; ",
+                result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}: {diagnostic.Message}"));
+            throw new InvalidOperationException($"Backlog Task Query failed: {diagnostics}");
+        }
+
+        return new BacklogQueryData(
+            result.MaterializeSourceTasks(),
+            result.MaterializeTasks());
     }
+
+    private static IReadOnlySet<TaskQueryStatus> MapStatuses(IReadOnlyList<string>? statuses)
+    {
+        if (statuses is null || statuses.Count == 0)
+            return new HashSet<TaskQueryStatus>();
+
+        var mapped = new HashSet<TaskQueryStatus>();
+        foreach (var statusValue in statuses)
+        {
+            if (!TryMapStatus(statusValue, out var status) || status is null)
+                return new HashSet<TaskQueryStatus>();
+            mapped.Add(status.Value);
+        }
+
+        return mapped;
+    }
+
+    private static bool TryMapStatus(string value, out TaskQueryStatus? status)
+    {
+        status = value switch
+        {
+            "all" => null,
+            GlassworkTask.Statuses.Todo => TaskQueryStatus.Todo,
+            GlassworkTask.Statuses.InProgress => TaskQueryStatus.InProgress,
+            GlassworkTask.Statuses.Blocked => TaskQueryStatus.Blocked,
+            GlassworkTask.Statuses.Done => TaskQueryStatus.Done,
+            _ => null,
+        };
+        return value == "all" || status is not null;
+    }
+
+    private sealed record BacklogQueryData(
+        IReadOnlyDictionary<string, GlassworkTask> SourceTasks,
+        IReadOnlyList<GlassworkTask> Tasks);
 
     public void RefreshSavedViews()
     {

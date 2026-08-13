@@ -14,12 +14,17 @@ namespace Glasswork.Core.Services;
 public class WorkLogService
 {
     private readonly VaultService _vault;
-    private readonly IndexService _index;
+    private readonly ITaskQuery _taskQuery;
 
     public WorkLogService(VaultService vault, IndexService index)
+        : this(vault, new WarmIndexTaskQuery(index, new BacklinkIndex()))
     {
-        _vault = vault;
-        _index = index;
+    }
+
+    public WorkLogService(VaultService vault, ITaskQuery taskQuery)
+    {
+        _vault = vault ?? throw new ArgumentNullException(nameof(vault));
+        _taskQuery = taskQuery ?? throw new ArgumentNullException(nameof(taskQuery));
     }
 
     /// <summary>
@@ -28,7 +33,18 @@ public class WorkLogService
     /// </summary>
     public string GenerateWeeklyLog(DateTime weekStart)
     {
-        var completed = WorkLogQueries.WeeklyLog(_index.Tasks, weekStart);
+        var result = _taskQuery.Execute(new TaskQueryRequest(
+            DateTimeOffset.Now,
+            new CompletedWorkTaskSelection(weekStart, weekStart.AddDays(7))));
+        if (!result.IsSuccess)
+        {
+            var diagnostics = string.Join(
+                "; ",
+                result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}: {diagnostic.Message}"));
+            throw new InvalidOperationException($"Completed-work Task Query failed: {diagnostics}");
+        }
+
+        var completed = result.MaterializeTasks();
 
         var sb = new StringBuilder();
         sb.AppendLine($"# Work Log: Week of {weekStart:yyyy-MM-dd}");

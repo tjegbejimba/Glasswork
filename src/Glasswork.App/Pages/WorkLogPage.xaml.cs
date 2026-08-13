@@ -15,7 +15,7 @@ public sealed partial class WorkLogPage : Page
 
     public WorkLogPage()
     {
-        _workLog = new WorkLogService(App.Vault, App.Index);
+        _workLog = new WorkLogService(App.Vault, App.TaskQuery);
         InitializeComponent();
     }
 

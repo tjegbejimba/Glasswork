@@ -14,7 +14,7 @@ namespace Glasswork.Core.Services;
 /// (<see cref="GlassworkTask.TodaysChildren"/>). The PBI is pulled in to host its
 /// children even when it would not independently promote — a
 /// <i>container-only host</i>. This never changes the promotion policy
-/// (<see cref="MyDayPromotionPolicy"/> / <see cref="Glasswork.Core.Queries.MyDayQueries"/>);
+/// (<see cref="MyDayPromotionPolicy"/> / Task Query);
 /// it only reshapes the rows for display.
 ///
 /// Layout: standalone (non-container) rows first, in their original promoted order;

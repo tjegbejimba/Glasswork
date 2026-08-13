@@ -1,6 +1,7 @@
 using Glasswork.Core.Models;
 using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
+using Glasswork.TestInfrastructure;
 
 namespace Glasswork.Tests;
 
@@ -33,6 +34,59 @@ public sealed class TaskQueryConformanceTests
         CollectionAssert.AreEqual(
             new[] { "due-on-query-day" },
             result.Tasks.Select(task => task.Id).ToArray());
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
+    public void Execute_MyDaySelectionAppliesDismissalsOptionsAndStableOrdering(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        var urgent = new GlassworkTask
+        {
+            Id = "a-urgent",
+            Title = "Urgent",
+            Status = GlassworkTask.Statuses.Todo,
+            Priority = GlassworkTask.Priorities.Urgent,
+            MyDay = QueryTime.Date,
+        };
+        urgent.Subtasks.Add(new SubTask { Text = "Included subtask" });
+        fixture.Save(
+            urgent,
+            new GlassworkTask
+            {
+                Id = "b-done",
+                Title = "Done",
+                Status = GlassworkTask.Statuses.Done,
+                MyDay = QueryTime.Date,
+            },
+            new GlassworkTask
+            {
+                Id = "c-normal",
+                Title = "Normal",
+                Status = GlassworkTask.Statuses.Todo,
+                MyDay = QueryTime.Date,
+            },
+            new GlassworkTask
+            {
+                Id = "dismissed",
+                Title = "Dismissed",
+                Status = GlassworkTask.Statuses.Todo,
+                Priority = GlassworkTask.Priorities.Urgent,
+                MyDay = QueryTime.Date,
+            });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new MyDayTaskSelection(
+                new HashSet<string>(StringComparer.Ordinal) { "dismissed" },
+                IncludeDone: true,
+                IncludeSubtasks: true)));
+
+        CollectionAssert.AreEqual(
+            new[] { "a-urgent", "b-done", "c-normal" },
+            result.Tasks.Select(task => task.Id).ToArray());
+        Assert.AreEqual("Included subtask", result.Tasks[0].Subtasks?.Single().Text);
     }
 
     [DataTestMethod]
@@ -178,6 +232,35 @@ public sealed class TaskQueryConformanceTests
     [DataTestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
+    public void Execute_SelectedSubtasksProjectionIncludesSearchableNotes(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        var task = new GlassworkTask
+        {
+            Id = "searchable",
+            Title = "Searchable",
+        };
+        task.Subtasks.Add(new SubTask
+        {
+            Text = "Prepare rollout",
+            Notes = "Coordinate the special-keyword migration.",
+        });
+        fixture.Save(task);
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField> { TaskQueryField.Subtasks }))));
+
+        var subtask = result.Tasks.Single().Subtasks?.Single();
+        Assert.IsNotNull(subtask);
+        Assert.AreEqual("Coordinate the special-keyword migration.", subtask.Notes);
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
     public void Execute_ListSelectionComputesActionabilityAndBacklinkCounts(string adapter)
     {
         using var fixture = TaskQueryFixture.Create(adapter);
@@ -233,6 +316,129 @@ public sealed class TaskQueryConformanceTests
                     new HashSet<TaskQueryField> { TaskQueryField.BacklinkCount }))));
 
         Assert.AreEqual(1, result.Tasks.Single().BacklinkCount);
+    }
+
+    [TestMethod]
+    public void Execute_FreshReadyOnlyProjectionIgnoresUnreadableVaultSubtree()
+    {
+        using var fixture = TaskQueryFixture.Create("fresh");
+        fixture.Save(new GlassworkTask { Id = "ready", Title = "Ready" });
+        using var unreadable = UnreadableDirectoryScope.Create(
+            Path.Combine(fixture.VaultRoot, "unrelated-private"));
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField> { TaskQueryField.Ready }))));
+
+        Assert.IsTrue(result.IsSuccess);
+        Assert.IsTrue(result.Tasks.Single().Ready);
+    }
+
+    [TestMethod]
+    public void Execute_FreshUrgencyProjectionAcquiresBacklinkCounts()
+    {
+        using var fixture = TaskQueryFixture.Create("fresh");
+        fixture.Save(new GlassworkTask
+        {
+            Id = "urgent",
+            Title = "Urgent",
+            Created = QueryTime.Date,
+        });
+        fixture.WriteWikiPage("concept.md", "[[urgent]]");
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField> { TaskQueryField.UrgencyScore }))));
+
+        Assert.AreEqual(2.5, result.Tasks.Single().UrgencyScore);
+    }
+
+    [TestMethod]
+    public void Execute_FreshBacklinkFailureFallsBackToZeroCounts()
+    {
+        using var fixture = TaskQueryFixture.Create("fresh");
+        fixture.Save(new GlassworkTask
+        {
+            Id = "fallback",
+            Title = "Fallback",
+            Created = QueryTime.Date,
+        });
+        using var unreadable = UnreadableDirectoryScope.Create(
+            Path.Combine(fixture.VaultRoot, "unrelated-private"));
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField>
+                    {
+                        TaskQueryField.UrgencyScore,
+                        TaskQueryField.BacklinkCount,
+                    }))));
+
+        var item = result.Tasks.Single();
+        Assert.AreEqual(0, item.BacklinkCount);
+        Assert.AreEqual(1, item.UrgencyScore);
+    }
+
+    [TestMethod]
+    public void Execute_FreshBacklogAcquiresBacklinkCountsForActionability()
+    {
+        using var fixture = TaskQueryFixture.Create("fresh");
+        fixture.Save(new GlassworkTask
+        {
+            Id = "backlog",
+            Title = "Backlog",
+            Created = QueryTime.Date,
+        });
+        fixture.WriteWikiPage("concept.md", "[[backlog]]");
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new BacklogTaskSelection()));
+
+        var item = result.Tasks.Single();
+        Assert.AreEqual(1, item.BacklinkCount);
+        Assert.AreEqual(2.5, item.UrgencyScore);
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
+    public void Execute_PreservesRawLegacyStatusMetadataWithoutInventingTypedValues(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        fixture.Save(new GlassworkTask
+        {
+            Id = "legacy",
+            Title = "Legacy",
+            Status = "someday",
+        });
+        fixture.Save(new GlassworkTask
+        {
+            Id = "malformed-blocked",
+            Title = "Malformed blocked",
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedReason = "Waiting",
+            BlockedAt = new DateTimeOffset(2026, 8, 12, 12, 0, 0, TimeSpan.Zero),
+            BlockedFromStatus = "doing",
+        });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField> { TaskQueryField.Title }))));
+        var items = result.Tasks.ToDictionary(item => item.Id);
+
+        Assert.AreEqual("someday", items["legacy"].RawStatus);
+        Assert.IsNull(items["legacy"].Status);
+        Assert.AreEqual("doing", items["malformed-blocked"].RawBlockedFromStatus);
+        Assert.IsNull(items["malformed-blocked"].BlockedFromStatus);
     }
 
     [DataTestMethod]
@@ -406,6 +612,75 @@ public sealed class TaskQueryConformanceTests
     [DataTestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
+    public void Execute_BacklogStatusesSelectionPreservesMixedSavedViewStatuses(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        fixture.Save(
+            new GlassworkTask
+            {
+                Id = "todo",
+                Title = "Todo",
+                Status = GlassworkTask.Statuses.Todo,
+            },
+            new GlassworkTask
+            {
+                Id = "done",
+                Title = "Done",
+                Status = GlassworkTask.Statuses.Done,
+            },
+            new GlassworkTask
+            {
+                Id = "in-progress",
+                Title = "In progress",
+                Status = GlassworkTask.Statuses.InProgress,
+            });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new BacklogStatusesTaskSelection(
+                new HashSet<TaskQueryStatus>
+                {
+                    TaskQueryStatus.Todo,
+                    TaskQueryStatus.Done,
+                })));
+
+        CollectionAssert.AreEqual(
+            new[] { "todo", "done" },
+            result.Tasks.Select(task => task.Id).ToArray());
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
+    public void Execute_EmptyBacklogStatusesSelectionIncludesAllStatuses(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        fixture.Save(
+            new GlassworkTask
+            {
+                Id = "todo",
+                Title = "Todo",
+                Status = GlassworkTask.Statuses.Todo,
+            },
+            new GlassworkTask
+            {
+                Id = "done",
+                Title = "Done",
+                Status = GlassworkTask.Statuses.Done,
+            });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new BacklogStatusesTaskSelection(new HashSet<TaskQueryStatus>())));
+
+        CollectionAssert.AreEquivalent(
+            new[] { "todo", "done" },
+            result.Tasks.Select(task => task.Id).ToArray());
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
     public void Execute_CompletedWorkUsesHalfOpenWindowAndDeterministicOrdering(string adapter)
     {
         using var fixture = TaskQueryFixture.Create(adapter);
@@ -441,6 +716,8 @@ public sealed class TaskQueryConformanceTests
         CollectionAssert.AreEqual(
             new[] { "a", "b" },
             result.Tasks.Select(task => task.Id).ToArray());
+        Assert.IsTrue(result.Tasks.All(task => task.Includes(TaskQueryField.Priority)));
+        Assert.IsTrue(result.Tasks.All(task => task.Includes(TaskQueryField.Links)));
     }
 
     private static readonly DateTimeOffset QueryTime =
@@ -472,6 +749,7 @@ public sealed class TaskQueryConformanceTests
         public VaultService Vault { get; }
         public ITaskQuery Query { get; private set; }
         public string TaskPath => Vault.VaultPath;
+        public string VaultRoot => _vaultRoot;
 
         public static TaskQueryFixture Create(string adapter)
         {
