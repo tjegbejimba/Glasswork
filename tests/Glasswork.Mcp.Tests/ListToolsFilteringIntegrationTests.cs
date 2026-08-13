@@ -46,13 +46,6 @@ public sealed class ListToolsFilteringIntegrationTests
             new Tool { Name = "add_artifact" },
             new Tool { Name = "load_context" },
             new Tool { Name = "search_tasks" },
-            new Tool { Name = "submit_review_source_run" },
-            new Tool { Name = "get_review_queue_actionable" },
-            new Tool { Name = "get_review_queue_needs_refresh" },
-            new Tool { Name = "get_review_queue_history" },
-            new Tool { Name = "get_review_queue_source_health" },
-            new Tool { Name = "reject_review_item" },
-            new Tool { Name = "acknowledge_review_queue_recovery" },
             new Tool { Name = "get_capabilities" },
         ],
     };
@@ -96,7 +89,7 @@ public sealed class ListToolsFilteringIntegrationTests
 
             PreconditionFilters.FilterUnavailableTools(result, registry, logger);
 
-            Assert.HasCount(14, result.Tools!);
+            Assert.HasCount(7, result.Tools!);
         }
         finally
         {

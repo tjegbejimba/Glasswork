@@ -146,11 +146,6 @@ no domain logic — composes the other contexts into screens.
 
 - **Owns**: `MainWindow`, all `Pages/*`, all `Controls/*`, navigation,
   page-local view state, the `App` service-locator entry point.
-- **Review Page**: the top-level decision and health surface for the
-  **Automation Review Queue**. It renders actionable **Pending** grouped by
-  Task, collapsed **Waiting for refresh**, compact 30-day **History**, and
-  **Review source health** over the single Core queue seam; selection state is
-  page-local and clears when leaving the Page.
 - **Blocked-task surfaces**: Backlog renders a dedicated blocked board column /
   list section; Task Detail owns the user-facing actions to mark blocked, edit
   blocker details, repair malformed blocked metadata, resume, override the
