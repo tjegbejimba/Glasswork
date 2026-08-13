@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using Glasswork.Core.Diagnostics;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.Core.VisualVerification;
@@ -16,6 +17,11 @@ public partial class App : Application
 {
     private Window? _window;
     private static AppInstance? _mainAppInstance;
+    private static readonly string CrashReportDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Glasswork",
+        "logs");
+    private static readonly CrashReportStore CrashReports = new(CrashReportDirectory);
 
     public const string AppUserModelId = "Glasswork.Desktop";
 
@@ -165,42 +171,44 @@ public partial class App : Application
         // Set AUMID before any window creation for consistent taskbar identity
         SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
 
-        // Capture unhandled exceptions to a known file. Without this, self-contained
-        // WinUI desktop apps crash silently with only a STOWED_EXCEPTION (0xc000027b)
-        // in WER — no stack trace, no managed exception info.
-        UnhandledException += (_, e) =>
-        {
-            try
-            {
-                var logPath = Path.Combine(Path.GetTempPath(), "glasswork-unhandled.log");
-                File.AppendAllText(logPath,
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] UI thread:\n{e.Exception}\n\n");
-            }
-            catch { /* logging failure must not crash again */ }
-            // Don't mark Handled — let the app crash so we still get the WER report.
-        };
+        // Self-contained WinUI crashes otherwise surface only as STOWED_EXCEPTION in WER.
+        // Keep the latest reports in durable app-local storage for later triage.
+        UnhandledException += (_, e) => RecordCrash("UI thread", e.Exception);
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
-        {
-            try
-            {
-                var logPath = Path.Combine(Path.GetTempPath(), "glasswork-unhandled.log");
-                File.AppendAllText(logPath,
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] AppDomain:\n{e.ExceptionObject}\n\n");
-            }
-            catch { }
-        };
+            RecordCrash(
+                "AppDomain",
+                e.ExceptionObject as Exception
+                    ?? new InvalidOperationException(e.ExceptionObject?.ToString() ?? "Unknown AppDomain exception."));
         System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
-        {
-            try
-            {
-                var logPath = Path.Combine(Path.GetTempPath(), "glasswork-unhandled.log");
-                File.AppendAllText(logPath,
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] Unobserved Task:\n{e.Exception}\n\n");
-            }
-            catch { }
-        };
+            RecordCrash("Unobserved task", e.Exception);
 
         InitializeComponent();
+    }
+
+    private static void RecordCrash(string source, Exception exception)
+    {
+        try
+        {
+            var appVersion = typeof(App).Assembly
+                .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+                .FirstOrDefault()
+                ?.InformationalVersion
+                ?? typeof(App).Assembly.GetName().Version?.ToString()
+                ?? "unknown";
+
+            CrashReports.Record(
+                source,
+                exception,
+                new CrashReportContext(
+                    appVersion,
+                    RuntimeInformation.OSDescription,
+                    RuntimeInformation.FrameworkDescription));
+        }
+        catch
+        {
+            // A diagnostics failure must never replace the original unhandled exception.
+        }
     }
 
     protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
