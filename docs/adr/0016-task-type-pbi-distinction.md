@@ -1,7 +1,7 @@
 # ADR 0016: Tasks carry an explicit `type` (`task` / `pbi` / `bug`); PBIs are containers and don't self-promote to My Day
 
 **Status**: Accepted
-**Context slice**: `GlassworkTask`, `FrontmatterParser`, `MyDayPromotionPolicy`, `MyDayViewModel`, `TaskService.GetMyDay`, the ADO import skill
+**Context slice**: `GlassworkTask`, `FrontmatterParser`, `MyDayPromotionPolicy`, Task Query, `MyDayViewModel`, the ADO import skill
 **Relates to**: ADR 0008 (My Day promotion model), ADR 0013 (date-scoped pins)
 
 ## Context
@@ -33,17 +33,10 @@ ADO's work-item types, normalized to one of:
   than getting their own values.)
 - **`bug`** — an actionable leaf; behaves exactly like `task` for promotion.
 
-Only `pbi` changes behavior. A `pbi` is excluded from the **own-due** promotion
-clause in three places that each check it independently:
-
-1. `MyDayPromotionPolicy.IsTaskInMyDayToday` — the My Day membership gate
-   (`MyDayQueries.Today` routes through it).
-2. `MyDayViewModel.Refresh`'s `directlyPromoted` check — which decides whether a
-   surfaced task renders as a bare row (`TodaysSubtasks = null`) or a container
-   card (`TodaysSubtasks` populated).
-3. `TaskService.GetMyDay` — the My Day path consumed by the MCP `get_my_day`
-   agent tool. Without the gate here, imported PBIs still flood My Day on the
-   agent/import surface even though the app UI is correct.
+Only `pbi` changes behavior. `MyDayPromotionPolicy.IsTaskInMyDayToday` is the
+single own-due membership rule. Task Query's My Day selection and
+`MyDayViewModel` presentation consume that shared policy; the MCP `get_my_day`
+tool translates to Task Query rather than maintaining a separate selection.
 
 A `pbi` still promotes when:
 
@@ -100,11 +93,10 @@ new imports from re-polluting My Day at the source.
 - `GlassworkTask` gains an observable `Type` (default `"task"`) and a `Types`
   static class (`Task` / `Pbi` / `Bug`) with `Normalize`. `Clone()` and
   `MyDayViewModel.CopyTaskState` both carry `Type`.
-- The own-due promotion gate now lives in **three** places
-  (`MyDayPromotionPolicy`, `MyDayViewModel`, and `TaskService.GetMyDay` — the
-  MCP `get_my_day` path); all three must stay in sync. A PBI
-  that reaches My Day only via a stale own-due no longer appears at all; one that
-  reaches it via a child renders as a container.
+- The own-due promotion gate lives in `MyDayPromotionPolicy` and is consumed by
+  Task Query and presentation. A PBI that reaches My Day only via a stale
+  own-due no longer appears at all; one that reaches it via a child renders as a
+  container.
 - **Phase 1 scope.** This ADR covers the type field plus the My Day own-due gate.
   It does **not** introduce between-file PBI→Task container *grouping* in My Day
   (rendering imported child Tasks visually nested under their imported PBI across

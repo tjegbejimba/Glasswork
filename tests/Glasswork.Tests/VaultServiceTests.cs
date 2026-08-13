@@ -187,7 +187,7 @@ public class VaultServiceTests
             "---\nid: stale-save\ntitle: External\n---\n");
         observed.Title = "App update";
 
-        Assert.ThrowsExactly<InvalidOperationException>(() => _vault.Save(observed));
+        Assert.ThrowsExactly<ResourceRevisionConflictException>(() => _vault.Save(observed));
         Assert.AreEqual("External", _vault.Load("stale-save")!.Title);
     }
 

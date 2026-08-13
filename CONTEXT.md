@@ -97,8 +97,24 @@ surfaces are subscribers on the delta channel (debounced ~500ms), not
 initiators. See ADR 0010 and issue #184.
 
 - **Owns**: `IndexService`, the `TasksChanged` delta channel, the
-  `_index.md` / `_today.md` writers, and the carryover / completed-between /
-  by-id query surface that view models share.
+  `_index.md` / `_today.md` writers, the carryover / by-id Index accessors,
+  and **Task Query**, the
+  canonical typed structural and relationship-aware retrieval module exposed
+  through `ITaskQuery.Execute`. Task Query concentrates filtering, validation,
+  deterministic ordering and paging, projections, actionability, Backlink
+  counts, Resource Revisions, read basis, and completed-work windows behind one
+  policy implementation.
+- **Task Query adapters**: the warm Index adapter captures one defensive
+  in-memory snapshot per execution; the stateless fresh-Vault adapter captures
+  one managed disk snapshot per execution. Continuation cursors are opaque and
+  Core-owned, but do not pin a historical snapshot: every page executes against
+  a newly acquired coherent snapshot.
+- **Task Query boundary**: explicit query time is required. Presentation shaping
+  (PBI container grouping, Backlog rows, collection reconciliation, and Work Log
+  markdown grouping) remains outside the module. Free-text Task search is a
+  separate Task Model capability; transports may feed a Task Query prose
+  projection into its matching/ranking policy without moving text matching
+  into Task Query.
 - **Blocked-task contract**: `_index.md` represents blocked state explicitly;
   `_today.md`, carryover, and other actionable projections exclude Blocked
   Tasks even when they have stale direct pins or overdue dates.

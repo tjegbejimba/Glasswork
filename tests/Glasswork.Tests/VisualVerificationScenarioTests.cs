@@ -82,6 +82,33 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void FromJson_ReplaceTaskTextAction_LoadsSafeTaskMutation()
+    {
+        const string json = """
+        {
+          "name": "external edit",
+          "actions": [
+            {
+              "type": "replace-task-text",
+              "taskId": "active-task",
+              "oldValue": "title: Original",
+              "value": "title: External"
+            }
+          ],
+          "captures": [
+            { "name": "screen" }
+          ]
+        }
+        """;
+
+        var action = VisualVerificationScenario.FromJson(json).Actions.Single();
+
+        Assert.AreEqual("active-task", action.TaskId);
+        Assert.AreEqual("title: Original", action.OldValue);
+        Assert.AreEqual("title: External", action.Value);
+    }
+
+    [TestMethod]
     public void ToGlassworkTask_NormalizesType()
     {
         var today = new DateTime(2026, 6, 29);
@@ -91,5 +118,20 @@ public class VisualVerificationScenarioTests
         Assert.AreEqual(GlassworkTask.Types.Pbi, pbi.ToGlassworkTask(today).Type);
         Assert.AreEqual(GlassworkTask.Types.Task, defaulted.ToGlassworkTask(today).Type,
             "A task with no scenario type normalizes to the default task type.");
+    }
+
+    [TestMethod]
+    public void ToGlassworkTask_ResolvesRelativeCompletionDate()
+    {
+        var today = new DateTime(2026, 6, 29);
+        var task = new VisualVerificationTask
+        {
+            Id = "completed",
+            Title = "Completed",
+            Status = GlassworkTask.Statuses.Done,
+            CompletedAt = "today",
+        };
+
+        Assert.AreEqual(today, task.ToGlassworkTask(today).CompletedAt);
     }
 }

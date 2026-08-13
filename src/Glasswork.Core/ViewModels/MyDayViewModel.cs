@@ -16,6 +16,7 @@ public partial class MyDayViewModel : ObservableObject
     private readonly VaultService _vault;
     private readonly IndexService _index;
     private readonly IUiStateService? _uiState;
+    private readonly ITaskQuery _taskQuery;
 
     public ObservableCollection<GlassworkTask> TodayTasks { get; } = [];
     public ObservableCollection<GlassworkTask> RecentlyCompletedTasks { get; } = [];
@@ -26,12 +27,18 @@ public partial class MyDayViewModel : ObservableObject
     public MyDayViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
         : this(vault, taskService, EnsureSeededIndex(vault), uiState) { }
 
-    public MyDayViewModel(VaultService vault, TaskService taskService, IndexService index, IUiStateService? uiState = null)
+    public MyDayViewModel(
+        VaultService vault,
+        TaskService taskService,
+        IndexService index,
+        IUiStateService? uiState = null,
+        ITaskQuery? taskQuery = null)
     {
-        _vault = vault;
-        _taskService = taskService;
-        _index = index;
+        _vault = vault ?? throw new ArgumentNullException(nameof(vault));
+        _taskService = taskService ?? throw new ArgumentNullException(nameof(taskService));
+        _index = index ?? throw new ArgumentNullException(nameof(index));
         _uiState = uiState;
+        _taskQuery = taskQuery ?? new WarmIndexTaskQuery(index, new BacklinkIndex());
     }
 
     private static IndexService EnsureSeededIndex(VaultService vault)
@@ -40,14 +47,6 @@ public partial class MyDayViewModel : ObservableObject
         idx.EnsureLoaded();
         return idx;
     }
-
-    /// <summary>
-    /// A task is "on My Day today" per <see cref="MyDayPromotionPolicy.IsTaskInMyDayToday"/>:
-    /// pinned via my_day, due-today/overdue, OR has a flagged-or-due-today subtask — and the
-    /// user has not dismissed it for today. See ADR 0008.
-    /// </summary>
-    private bool IsOnMyDayToday(GlassworkTask t, System.DateOnly today, System.Collections.Generic.IReadOnlySet<string> dismissed)
-        => MyDayPromotionPolicy.IsTaskInMyDayToday(t, today, dismissed);
 
     private static string DismissKey(string taskId) =>
         MyDayDismissals.KeyFor(taskId, System.DateOnly.FromDateTime(System.DateTime.Today));
@@ -60,15 +59,16 @@ public partial class MyDayViewModel : ObservableObject
     {
         Refreshing?.Invoke();
 
-        var all = _index.Tasks;
-        var today = System.DateOnly.FromDateTime(System.DateTime.Today);
+        var queryTime = DateTimeOffset.Now;
+        var today = DateOnly.FromDateTime(queryTime.Date);
 
-        // Build the dismissed-today set once so the predicate stays pure.
-        var dismissed = new System.Collections.Generic.HashSet<string>(
-            all.Values.Where(t => IsDismissedToday(t.Id)).Select(t => t.Id));
-
-        // Today's tasks via MyDayQueries.Today (issue #186/189)
-        var todayTasks = MyDayQueries.Today(all, today, dismissed);
+        var queryResult = _taskQuery is IWarmTaskQueryExecution warmTaskQuery
+            ? warmTaskQuery.ExecuteWithSnapshotContext(
+                taskIds => CreateMyDayRequest(queryTime, taskIds))
+            : _taskQuery.Execute(CreateMyDayRequest(queryTime, _index.Tasks.Keys));
+        EnsureSuccessful(queryResult, "My Day");
+        var all = queryResult.MaterializeSourceTasks();
+        var todayTasks = queryResult.MaterializeTasks();
         var targetTodayTasks = new List<GlassworkTask>();
         foreach (var task in todayTasks)
         {
@@ -131,6 +131,32 @@ public partial class MyDayViewModel : ObservableObject
         ReconcileTaskCollection(Suggestions, suggestions);
 
         Refreshed?.Invoke();
+    }
+
+    private TaskQueryRequest CreateMyDayRequest(
+        DateTimeOffset queryTime,
+        IEnumerable<string> taskIds)
+    {
+        var dismissed = taskIds
+            .Where(IsDismissedToday)
+            .ToHashSet(StringComparer.Ordinal);
+        return new TaskQueryRequest(
+            queryTime,
+            new MyDayTaskSelection(
+                dismissed,
+                IncludeDone: false,
+                IncludeSubtasks: false));
+    }
+
+    private static void EnsureSuccessful(TaskQueryResult result, string selection)
+    {
+        if (result.IsSuccess)
+            return;
+
+        var diagnostics = string.Join(
+            "; ",
+            result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}: {diagnostic.Message}"));
+        throw new InvalidOperationException($"{selection} Task Query failed: {diagnostics}");
     }
 
     private static void ReconcileTaskCollection(

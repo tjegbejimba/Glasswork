@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -116,6 +117,51 @@ public class BacklinkIndexIncrementalTests
         var links = idx.GetBacklinks("TASK-R");
         Assert.AreEqual(1, links.Count);
         Assert.AreEqual(newPath, links[0].LinkingPagePath, ignoreCase: true);
+    }
+
+    [TestMethod]
+    public async Task Rename_DoesNotExposeIntermediateBacklinkGeneration()
+    {
+        var oldPath = SeedWikiPage("concepts", "old-name.md", "Mentions [[later-task]].");
+        var index = new BacklinkIndex();
+        index.Build(_vault);
+
+        var newPath = Path.Combine(Path.GetDirectoryName(oldPath)!, "new-name.md");
+        File.Copy(oldPath, newPath);
+
+        using var start = new ManualResetEventSlim(false);
+        var observedCounts = new ConcurrentBag<int>();
+        var renameCompleted = 0;
+        var rename = Task.Run(() =>
+        {
+            start.Wait();
+            for (var iteration = 0; iteration < 2_000; iteration++)
+            {
+                if ((iteration & 1) == 0)
+                    index.Rename(_vault, oldPath, newPath);
+                else
+                    index.Rename(_vault, newPath, oldPath);
+            }
+            Volatile.Write(ref renameCompleted, 1);
+        });
+        var readers = Enumerable.Range(0, 4)
+            .Select(_ => Task.Run(() =>
+            {
+                start.Wait();
+                do
+                {
+                    var count = index.SnapshotCounts(["later-task"])["later-task"];
+                    if (count != 1)
+                        observedCounts.Add(count);
+                }
+                while (Volatile.Read(ref renameCompleted) == 0);
+            }))
+            .ToArray();
+
+        start.Set();
+        await Task.WhenAll(readers.Append(rename));
+
+        Assert.IsEmpty(observedCounts);
     }
 
     [TestMethod]

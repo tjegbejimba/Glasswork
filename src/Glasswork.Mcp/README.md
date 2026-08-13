@@ -223,6 +223,8 @@ creation to explicit `transact_tasks` operations.
 typed predicates for `parent_task_id`, a status set, Task `type`, and required
 Tags. The general `blocked_by` relationship is stored as a top-level list of
 Task IDs. Duplicate IDs are canonicalized during parse and serialization.
+Internally this is a thin translation to Core's stateless fresh-Vault Task Query
+adapter; query policy, cursors, diagnostics, and read basis remain Core-owned.
 
 **Input**
 
@@ -439,6 +441,10 @@ The `updated_fields` array lists field names that actually changed. Fields provi
 | `invalid_parent` | `parent_task_id` doesn't exist in the vault |
 
 ### `list_tasks`
+
+`list_tasks` is a thin transport projection over the same stateless fresh-Vault
+Task Query adapter used by `query_tasks`; each call acquires a new coherent
+managed snapshot.
 
 **Input**
 
@@ -879,17 +885,17 @@ Fields:
 **With `GLASSWORK_MCP_TRACE=1` (Layer 2 — adds `phases`):**
 
 ```json
-{"ts":"2024-06-01T12:34:56.789Z","tool":"list_tasks","duration_ms":47,"result":"ok","task_count":3,"phases":{"glob":12,"yaml_parse":31,"filter":1,"sort":3}}
+{"ts":"2024-06-01T12:34:56.789Z","tool":"list_tasks","duration_ms":47,"result":"ok","task_count":3,"phases":{"glob":0,"yaml_parse":47,"filter":0,"sort":0}}
 ```
 
 Phases instrumented in v1:
 
 | Phase | Tools | Description |
 |---|---|---|
-| `glob` | `list_tasks` | Directory scan for `*.md` files |
-| `yaml_parse` | `list_tasks` | Reading and parsing each file's YAML frontmatter |
-| `filter` | `list_tasks` | Applying status / parent_task_id filters |
-| `sort` | `list_tasks` | Sorting results by created date and ID |
+| `glob` | `list_tasks` | Retained compatibility phase; emitted as `0` after Task Query migration |
+| `yaml_parse` | `list_tasks` | Whole fresh-Vault Task Query execution, including snapshot acquisition and policy |
+| `filter` | `list_tasks` | Retained compatibility phase; emitted as `0` because filtering is inside Task Query |
+| `sort` | `list_tasks` | Retained compatibility phase; emitted as `0` because ordering is inside Task Query |
 | `write` | `add_task`, `add_artifact`, `set_my_day` | Writing the file to disk |
 | `load_task` | `get_task`, `load_context` | Loading the root task from disk |
 | `scan_artifacts` | `get_task` | Enumerating the task's artifact folder |
