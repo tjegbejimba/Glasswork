@@ -84,8 +84,12 @@
                      Title="This file changed on disk"
                      Message="Another tool (e.g. Obsidian or an agent) modified this task while you were editing it.">
                 <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-                    <Button Content="Reload" Click="Reload_Click" />
-                    <Button Content="Keep my version" Click="KeepMine_Click" />
+                    <Button Content="Reload"
+                            Click="Reload_Click"
+                            AutomationProperties.AutomationId="TaskReloadButton" />
+                    <Button Content="Keep my version"
+                            Click="KeepMine_Click"
+                            AutomationProperties.AutomationId="TaskKeepMineButton" />
                 </StackPanel>
             </InfoBar>
 
@@ -102,7 +106,7 @@
                      Message="Someone (probably an agent) changed this task's Notes while you were editing.">
                 <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
                     <Button Content="Discard mine and reload" Click="NotesConflictDiscard_Click" />
-                    <Button Content="Keep mine and overwrite on save" Click="NotesConflictKeep_Click" />
+                    <Button Content="Keep mine and overwrite" Click="NotesConflictKeep_Click" />
                     <Button Content="Open Obsidian to merge" Click="NotesConflictOpenObsidian_Click" />
                 </StackPanel>
             </InfoBar>
@@ -122,6 +126,7 @@
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                     <TextBox x:Name="TitleBox" Grid.Column="0" Header="Title" FontSize="18"
                              Text="{x:Bind Task.Title, Mode=TwoWay}"
+                             AutomationProperties.AutomationId="TaskTitleBox"
                              LostFocus="Field_LostFocus" />
                     <Button Grid.Column="1" VerticalAlignment="Bottom"
                             Click="OpenObsidian_Click"

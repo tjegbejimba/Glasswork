@@ -139,6 +139,15 @@ public sealed partial class VisualVerificationScenario
         {
             if (string.IsNullOrWhiteSpace(action.Type))
                 throw new FormatException("Every scenario action requires a non-empty type.");
+            if (action.Type.Equals("replace-task-text", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(action.TaskId) || !IsSafeTaskId(action.TaskId))
+                    throw new FormatException("replace-task-text requires a safe taskId.");
+                if (string.IsNullOrEmpty(action.OldValue))
+                    throw new FormatException("replace-task-text requires a non-empty oldValue.");
+                if (action.Value is null)
+                    throw new FormatException("replace-task-text requires value.");
+            }
         }
 
         foreach (var capture in Captures)
@@ -274,6 +283,8 @@ public sealed class VisualVerificationAction
     public string Type { get; init; } = string.Empty;
     public string? AutomationId { get; init; }
     public string? Name { get; init; }
+    public string? TaskId { get; init; }
+    public string? OldValue { get; init; }
     public string? Value { get; init; }
     public int TimeoutMilliseconds { get; init; } = 5000;
 }

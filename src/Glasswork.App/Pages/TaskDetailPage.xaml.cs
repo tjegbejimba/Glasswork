@@ -28,6 +28,7 @@ public sealed partial class TaskDetailPage : Page
     private bool _isLoading;
     private bool _suppressNextNotesSave;
     private NotesEditController _notesEdit = new(string.Empty);
+    private readonly TaskEditSaveController _saveController;
     private string _pendingDiskNotes = string.Empty;
     private ParentLinkResolution? _parentResolution;
 
@@ -43,6 +44,7 @@ public sealed partial class TaskDetailPage : Page
 
     public TaskDetailPage()
     {
+        _saveController = new TaskEditSaveController(App.Vault);
         InitializeComponent();
         // Always re-create this page on navigation so Reload (which re-navigates
         // with a fresh GlassworkTask) cannot be deduped to the cached instance.
@@ -180,15 +182,15 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
-    private void NotesEditToggle_Click(object sender, RoutedEventArgs e) => ToggleNotesMode();
+    private async void NotesEditToggle_Click(object sender, RoutedEventArgs e) => await ToggleNotesMode();
 
-    private void NotesEditAccelerator_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    private async void NotesEditAccelerator_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
     {
-        ToggleNotesMode();
+        await ToggleNotesMode();
         args.Handled = true;
     }
 
-    private void ToggleNotesMode()
+    private async Task ToggleNotesMode()
     {
         if (_isLoading) return;
         if (_notesEdit.Mode == NotesEditMode.Read)
@@ -201,9 +203,11 @@ public sealed partial class TaskDetailPage : Page
             // Done: flush the TwoWay binding into Task.Notes, then save.
             Task.Notes = NotesBox.Text ?? string.Empty;
             _notesEdit.UpdateBuffer(Task.Notes);
-            _notesEdit.Done();
-            Save();
-            ApplyNotesMode(NotesEditMode.Read);
+            if (await SaveAsync())
+            {
+                _notesEdit.Done();
+                ApplyNotesMode(NotesEditMode.Read);
+            }
         }
     }
 
@@ -768,10 +772,10 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
-    private void KeepMine_Click(object sender, RoutedEventArgs e)
+    private async void KeepMine_Click(object sender, RoutedEventArgs e)
     {
-        // Dismiss only — the next Save() will overwrite the on-disk change.
-        ReloadBanner.IsOpen = false;
+        if (await SaveAsync(overwrite: true))
+            ReloadBanner.IsOpen = false;
     }
 
     private void NotesConflictDiscard_Click(object sender, RoutedEventArgs e)
@@ -788,16 +792,17 @@ public sealed partial class TaskDetailPage : Page
         _pendingDiskNotes = string.Empty;
     }
 
-    private void NotesConflictKeep_Click(object sender, RoutedEventArgs e)
+    private async void NotesConflictKeep_Click(object sender, RoutedEventArgs e)
     {
-        // Keep mine and overwrite on save: snap baseline to disk so the next
-        // watcher tick reading the same content does not re-fire the conflict.
-        // The user's buffer (and edit mode) are preserved. The eventual Save()
-        // path goes through Vault.Save → SelfWriteCoordinator, so the
-        // overwrite will not bounce back as a new external change.
+        // The user's buffer and edit mode are preserved while the explicit
+        // overwrite advances the resource revision through the save controller.
         _notesEdit.ApplyKeepAndOverwrite(_pendingDiskNotes);
-        NotesConflictBanner.IsOpen = false;
-        _pendingDiskNotes = string.Empty;
+        if (await SaveAsync(overwrite: true))
+        {
+            _notesEdit.OnExternalSave(Task.Notes);
+            NotesConflictBanner.IsOpen = false;
+            _pendingDiskNotes = string.Empty;
+        }
     }
 
     private async void NotesConflictOpenObsidian_Click(object sender, RoutedEventArgs e)
@@ -810,15 +815,18 @@ public sealed partial class TaskDetailPage : Page
         await App.ObsidianLauncher.Open(vaultRelative);
     }
 
-    private void Field_LostFocus(object sender, RoutedEventArgs e)
+    private async void Field_LostFocus(object sender, RoutedEventArgs e)
     {
         if (_isLoading) return;
+        // Button.Click runs after focus leaves the editor. Let the conflict
+        // action decide between Reload and Keep before any stale autosave.
+        if (ReloadBanner.IsOpen || NotesConflictBanner.IsOpen) return;
         if ((TextBox)sender == NotesBox && _suppressNextNotesSave)
         {
             _suppressNextNotesSave = false;
             return;
         }
-        Save();
+        await SaveAsync();
     }
 
     private async void Status_Changed(object sender, SelectionChangedEventArgs e)
@@ -855,21 +863,21 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
-    private void Priority_Changed(object sender, SelectionChangedEventArgs e)
+    private async void Priority_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_isLoading) return;
         if (PriorityBox.SelectedItem is ComboBoxItem item)
         {
             Task.Priority = item.Tag?.ToString() ?? "medium";
-            Save();
+            await SaveAsync();
         }
     }
 
-    private void DueDate_Changed(CalendarDatePicker sender, CalendarDatePickerDateChangedEventArgs args)
+    private async void DueDate_Changed(CalendarDatePicker sender, CalendarDatePickerDateChangedEventArgs args)
     {
         if (_isLoading) return;
         Task.Due = args.NewDate?.DateTime;
-        Save();
+        await SaveAsync();
     }
 
     private void Subtask_Click(object sender, RoutedEventArgs e)
@@ -1303,7 +1311,36 @@ public sealed partial class TaskDetailPage : Page
         ClipboardHint.Text = "Copied — paste into your Copilot CLI session.";
     }
 
-    private void Save() => App.Vault.Save(Task);
+    private async Task<bool> SaveAsync(bool overwrite = false)
+    {
+        try
+        {
+            var result = overwrite
+                ? _saveController.Overwrite(Task)
+                : _saveController.Save(Task);
+
+            switch (result)
+            {
+                case TaskEditSaveResult.Saved:
+                    return true;
+                case TaskEditSaveResult.Conflict:
+                    ReloadBanner.IsOpen = true;
+                    return false;
+                case TaskEditSaveResult.Missing:
+                    await ShowOperationErrorAsync(
+                        "Unable to save task",
+                        "The task file no longer exists in the active task folder.");
+                    return false;
+                default:
+                    throw new InvalidOperationException($"Unknown task save result: {result}");
+            }
+        }
+        catch (Exception ex)
+        {
+            await ShowOperationErrorAsync("Unable to save task", ex.Message);
+            return false;
+        }
+    }
 
     private void RestoreStatusSelection()
     {
