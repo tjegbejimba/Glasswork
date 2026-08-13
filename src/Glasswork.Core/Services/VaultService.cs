@@ -115,8 +115,18 @@ public class VaultService
     /// Load all tasks from the vault directory.
     /// Skips files starting with _ (index, today, schema).
     /// </summary>
-    public List<GlassworkTask> LoadAll()
+    public List<GlassworkTask> LoadAll() =>
+        ReadAllSnapshot(tasks => tasks.ToList());
+
+    /// <summary>
+    /// Builds a result from one managed Task snapshot while its shared Vault
+    /// lease is still held. Internal adapters use this to sample adjunct Vault
+    /// indexes without allowing a cooperating Task writer between the reads.
+    /// </summary>
+    internal TResult ReadAllSnapshot<TResult>(
+        Func<IReadOnlyList<GlassworkTask>, TResult> createResult)
     {
+        ArgumentNullException.ThrowIfNull(createResult);
         RunManagedRecovery();
         using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         var tasks = new List<GlassworkTask>();
@@ -140,7 +150,7 @@ public class VaultService
             }
         }
 
-        return tasks;
+        return createResult(tasks);
     }
 
     /// <summary>
