@@ -42,6 +42,9 @@ public sealed record MyDayTaskSelection(
 public sealed record BacklogTaskSelection(
     TaskQueryStatus? Status = null) : TaskQuerySelection;
 
+public sealed record BacklogStatusesTaskSelection(
+    IReadOnlySet<TaskQueryStatus> Statuses) : TaskQuerySelection;
+
 public sealed record CompletedWorkTaskSelection(
     DateTime From,
     DateTime To) : TaskQuerySelection;
@@ -247,7 +250,38 @@ public sealed record TaskQueryResult(
     string? NextCursor,
     IReadOnlyList<TaskQueryDiagnostic> Diagnostics)
 {
+    private IReadOnlyDictionary<string, GlassworkTask>? _sourceTasks;
+
     public bool IsSuccess => Diagnostics.Count == 0;
+
+    internal TaskQueryResult WithSourceTasks(IReadOnlyDictionary<string, GlassworkTask> sourceTasks)
+    {
+        _sourceTasks = sourceTasks ?? throw new ArgumentNullException(nameof(sourceTasks));
+        return this;
+    }
+
+    internal IReadOnlyDictionary<string, GlassworkTask> MaterializeSourceTasks()
+    {
+        if (_sourceTasks is null)
+            throw new InvalidOperationException("Task Query source snapshot is unavailable.");
+
+        return _sourceTasks.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Clone(),
+            StringComparer.Ordinal);
+    }
+
+    internal IReadOnlyList<GlassworkTask> MaterializeTasks()
+    {
+        if (_sourceTasks is null)
+            throw new InvalidOperationException("Task Query source snapshot is unavailable.");
+
+        return Tasks
+            .Select(item => _sourceTasks.GetValueOrDefault(item.Id))
+            .Where(task => task is not null)
+            .Select(task => task!.Clone())
+            .ToList();
+    }
 
     internal static TaskQueryResult Success(
         IReadOnlyList<TaskQueryItem> tasks,

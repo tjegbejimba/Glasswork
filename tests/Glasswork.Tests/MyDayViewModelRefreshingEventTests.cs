@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 using Glasswork.ViewModels;
 
@@ -234,5 +235,43 @@ public class MyDayViewModelRefreshingEventTests
         Assert.AreEqual("Updated title", row.Title);
         Assert.IsTrue(row.IsManuallyCollapsed,
             "Domain refresh must not wipe per-page transient collapse state before the page hydrates it.");
+    }
+
+    [TestMethod]
+    public void Refresh_MaterializesTasksFromTheQueryExecutionSnapshot()
+    {
+        var task = CreateMyDayTask("Before query");
+        var inner = new WarmIndexTaskQuery(_index, new BacklinkIndex());
+        var query = new BeforeExecuteTaskQuery(inner, () =>
+        {
+            task.Title = "From query snapshot";
+            _vault.Save(task);
+        });
+        var vm = new MyDayViewModel(
+            _vault,
+            _taskService,
+            _index,
+            uiState: null,
+            taskQuery: query);
+
+        vm.Refresh();
+
+        Assert.AreEqual("From query snapshot", vm.TodayTasks.Single().Title);
+    }
+
+    private sealed class BeforeExecuteTaskQuery(ITaskQuery inner, Action beforeExecute) : ITaskQuery
+    {
+        private bool _hasExecuted;
+
+        public TaskQueryResult Execute(TaskQueryRequest request)
+        {
+            if (!_hasExecuted)
+            {
+                _hasExecuted = true;
+                beforeExecute();
+            }
+
+            return inner.Execute(request);
+        }
     }
 }

@@ -530,6 +530,75 @@ public sealed class TaskQueryConformanceTests
     [DataTestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
+    public void Execute_BacklogStatusesSelectionPreservesMixedSavedViewStatuses(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        fixture.Save(
+            new GlassworkTask
+            {
+                Id = "todo",
+                Title = "Todo",
+                Status = GlassworkTask.Statuses.Todo,
+            },
+            new GlassworkTask
+            {
+                Id = "done",
+                Title = "Done",
+                Status = GlassworkTask.Statuses.Done,
+            },
+            new GlassworkTask
+            {
+                Id = "in-progress",
+                Title = "In progress",
+                Status = GlassworkTask.Statuses.InProgress,
+            });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new BacklogStatusesTaskSelection(
+                new HashSet<TaskQueryStatus>
+                {
+                    TaskQueryStatus.Todo,
+                    TaskQueryStatus.Done,
+                })));
+
+        CollectionAssert.AreEqual(
+            new[] { "todo", "done" },
+            result.Tasks.Select(task => task.Id).ToArray());
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
+    public void Execute_EmptyBacklogStatusesSelectionIncludesAllStatuses(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        fixture.Save(
+            new GlassworkTask
+            {
+                Id = "todo",
+                Title = "Todo",
+                Status = GlassworkTask.Statuses.Todo,
+            },
+            new GlassworkTask
+            {
+                Id = "done",
+                Title = "Done",
+                Status = GlassworkTask.Statuses.Done,
+            });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new BacklogStatusesTaskSelection(new HashSet<TaskQueryStatus>())));
+
+        CollectionAssert.AreEquivalent(
+            new[] { "todo", "done" },
+            result.Tasks.Select(task => task.Id).ToArray());
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
     public void Execute_CompletedWorkUsesHalfOpenWindowAndDeterministicOrdering(string adapter)
     {
         using var fixture = TaskQueryFixture.Create(adapter);

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 using Glasswork.ViewModels;
 
@@ -105,7 +106,13 @@ public class BacklogViewModelIndexSubscriptionTests
         due.Created = DateTime.Today;
         _vault.Save(due);
 
-        var vm = new BacklogViewModel(_vault, _taskService, _index);
+        var vm = new BacklogViewModel(
+            _vault,
+            _taskService,
+            _index,
+            uiState: null,
+            savedTaskViews: null,
+            taskQuery: new WarmIndexTaskQuery(_index, new BacklinkIndex()));
         vm.Refresh();
 
         Assert.AreEqual("Medium due today", vm.Tasks[0].Title);
@@ -136,6 +143,54 @@ public class BacklogViewModelIndexSubscriptionTests
 
         Assert.AreEqual(1, vm.Tasks.Count);
         Assert.AreEqual("Urgent customer work", vm.Tasks[0].Title);
+    }
+
+    [TestMethod]
+    public void SelectedSavedTaskView_IntersectsMixedStatusesWithOtherCriteria()
+    {
+        var todo = _taskService.CreateTask("Todo customer work");
+        todo.Priority = GlassworkTask.Priorities.Urgent;
+        todo.Tags = ["customer"];
+        _vault.Save(todo);
+
+        var done = _taskService.CreateTask("Done customer work");
+        done.Priority = GlassworkTask.Priorities.Urgent;
+        done.Tags = ["customer"];
+        _vault.Save(done);
+        _taskService.SetStatus(done, GlassworkTask.Statuses.Done);
+
+        var inProgress = _taskService.CreateTask("In-progress customer work");
+        inProgress.Priority = GlassworkTask.Priorities.Urgent;
+        inProgress.Tags = ["customer"];
+        _vault.Save(inProgress);
+        _taskService.SetStatus(inProgress, GlassworkTask.Statuses.InProgress);
+
+        var wrongTag = _taskService.CreateTask("Todo internal work");
+        wrongTag.Priority = GlassworkTask.Priorities.Urgent;
+        wrongTag.Tags = ["internal"];
+        _vault.Save(wrongTag);
+
+        var ui = new JsonFileUiStateService(Path.Combine(_tempDir, "mixed-status-saved-view.json"));
+        var savedViews = new SavedTaskViewService(ui);
+        var saved = savedViews.Save("Customer todo and done", new TaskViewFilter
+        {
+            Statuses = [GlassworkTask.Statuses.Todo, GlassworkTask.Statuses.Done],
+            Priorities = [GlassworkTask.Priorities.Urgent],
+            Tags = ["customer"],
+        });
+
+        var vm = new BacklogViewModel(
+            _vault,
+            _taskService,
+            _index,
+            ui,
+            savedViews,
+            new WarmIndexTaskQuery(_index, new BacklinkIndex()));
+        vm.SelectedSavedViewId = saved.Id;
+
+        CollectionAssert.AreEqual(
+            new[] { "Todo customer work", "Done customer work" },
+            vm.Tasks.Select(task => task.Title).ToArray());
     }
 
     [TestMethod]

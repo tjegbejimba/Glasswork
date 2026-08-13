@@ -81,18 +81,30 @@ internal static class TaskQueryPolicy
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(request.Selection);
 
-        return request.Selection switch
+        var result = request.Selection switch
         {
             ListTaskSelection selection => SelectList(snapshot, request.QueryTime, selection),
             RelationTaskSelection selection => SelectRelations(snapshot, request, selection),
             MyDayTaskSelection selection => SelectMyDay(snapshot, request.QueryTime, selection),
-            BacklogTaskSelection selection => SelectBacklog(snapshot, request.QueryTime, selection),
+            BacklogTaskSelection selection => SelectBacklog(
+                snapshot,
+                request.QueryTime,
+                selection.Status is null
+                    ? null
+                    : new HashSet<TaskQueryStatus> { selection.Status.Value },
+                excludeDoneWhenUnfiltered: true),
+            BacklogStatusesTaskSelection selection => SelectBacklog(
+                snapshot,
+                request.QueryTime,
+                selection.Statuses ?? throw new ArgumentNullException(nameof(selection.Statuses)),
+                excludeDoneWhenUnfiltered: false),
             CompletedWorkTaskSelection selection => SelectCompletedWork(snapshot, request.QueryTime, selection),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(request),
                 request.Selection.GetType(),
                 "Unknown Task Query selection."),
         };
+        return result.WithSourceTasks(snapshot.TasksById);
     }
 
     internal static bool RequiresBacklinkCounts(TaskQuerySelection selection)
@@ -105,7 +117,7 @@ internal static class TaskQueryPolicy
                 projection.Fields?.Contains(TaskQueryField.UrgencyScore) == true
                 || projection.Fields?.Contains(TaskQueryField.BacklinkCount) == true,
             RelationTaskSelection or MyDayTaskSelection or CompletedWorkTaskSelection => false,
-            BacklogTaskSelection => true,
+            BacklogTaskSelection or BacklogStatusesTaskSelection => true,
             _ => throw new ArgumentOutOfRangeException(
                 nameof(selection),
                 selection.GetType(),
@@ -273,15 +285,16 @@ internal static class TaskQueryPolicy
     private static TaskQueryResult SelectBacklog(
         TaskQuerySnapshot snapshot,
         DateTimeOffset queryTime,
-        BacklogTaskSelection selection)
+        IReadOnlySet<TaskQueryStatus>? selectedStatuses,
+        bool excludeDoneWhenUnfiltered)
     {
-        var status = selection.Status is null
-            ? null
-            : TaskQueryValueMapper.Status(selection.Status.Value);
+        var statuses = selectedStatuses?
+            .Select(TaskQueryValueMapper.Status)
+            .ToHashSet(StringComparer.Ordinal);
         var selected = snapshot.Tasks
-            .Where(task => status is null
-                ? task.Status != GlassworkTask.Statuses.Done
-                : task.Status == status)
+            .Where(task => statuses is { Count: > 0 }
+                ? statuses.Contains(task.Status)
+                : !excludeDoneWhenUnfiltered || task.Status != GlassworkTask.Statuses.Done)
             .Select(task => new
             {
                 Task = task,

@@ -1,4 +1,5 @@
 using Glasswork.Core.Models;
+using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
 
 namespace Glasswork.Tests;
@@ -49,7 +50,9 @@ public class WorkLogServiceTests
         _vault.Save(t2);
         _vault.Save(t3);
 
-        var service = new WorkLogService(_vault, _index);
+        var service = new WorkLogService(
+            _vault,
+            new WarmIndexTaskQuery(_index, new BacklinkIndex()));
         var weekStart = new DateTime(2026, 4, 13); // Monday
         var log = service.GenerateWeeklyLog(weekStart);
 
