@@ -327,6 +327,41 @@ public sealed class TaskQueryConformanceTests
     [DataTestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
+    public void Execute_PreservesRawLegacyStatusMetadataWithoutInventingTypedValues(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        fixture.Save(new GlassworkTask
+        {
+            Id = "legacy",
+            Title = "Legacy",
+            Status = "someday",
+        });
+        fixture.Save(new GlassworkTask
+        {
+            Id = "malformed-blocked",
+            Title = "Malformed blocked",
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedReason = "Waiting",
+            BlockedAt = new DateTimeOffset(2026, 8, 12, 12, 0, 0, TimeSpan.Zero),
+            BlockedFromStatus = "doing",
+        });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField> { TaskQueryField.Title }))));
+        var items = result.Tasks.ToDictionary(item => item.Id);
+
+        Assert.AreEqual("someday", items["legacy"].RawStatus);
+        Assert.IsNull(items["legacy"].Status);
+        Assert.AreEqual("doing", items["malformed-blocked"].RawBlockedFromStatus);
+        Assert.IsNull(items["malformed-blocked"].BlockedFromStatus);
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
     public void Execute_AllOrderingsUseOrdinalTaskIdAsFinalTieBreaker(string adapter)
     {
         using var fixture = TaskQueryFixture.Create(adapter);

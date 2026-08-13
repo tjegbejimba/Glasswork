@@ -302,7 +302,7 @@ public sealed class GlassworkTools
                     .Select(task => new TaskSummary(
                         Id: task.Id,
                         Title: task.Title,
-                        Status: MapToExternalStatus(task.Status),
+                        Status: MapToExternalStatus(task.RawStatus),
                         ParentId: task.ParentId,
                         Path: task.Path,
                         Ready: task.Ready,
@@ -454,7 +454,7 @@ public sealed class GlassworkTools
                 .Select(task => new MyDayTask(
                     Id: task.Id,
                     Title: task.Title,
-                    Status: MapToExternalStatus(task.Status),
+                    Status: MapToExternalStatus(task.RawStatus),
                     Type: MapToExternalType(task.Type),
                     Priority: task.Priority,
                     DueDate: task.Due?.ToString("yyyy-MM-dd"),
@@ -2384,7 +2384,7 @@ public sealed class GlassworkTools
             ["resource_revision"] = task.ResourceRevision,
         };
         if (task.Includes(TaskQueryField.Title)) dict["title"] = task.Title;
-        if (task.Includes(TaskQueryField.Status)) dict["status"] = MapToExternalStatus(task.Status);
+        if (task.Includes(TaskQueryField.Status)) dict["status"] = MapToExternalStatus(task.RawStatus);
         if (task.Includes(TaskQueryField.Type)) dict["type"] = MapToExternalType(task.Type);
         if (task.Includes(TaskQueryField.ParentId)) dict["parent_id"] = task.ParentId;
         if (task.Includes(TaskQueryField.Path)) dict["path"] = task.Path;
@@ -2399,7 +2399,10 @@ public sealed class GlassworkTools
         if (task.Includes(TaskQueryField.BacklinkCount)) dict["backlink_count"] = task.BacklinkCount;
         if (task.Includes(TaskQueryField.BlockedReason)) dict["blocked_reason"] = task.BlockedReason;
         if (task.Includes(TaskQueryField.BlockedAt)) dict["blocked_at"] = task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
-        if (task.Includes(TaskQueryField.BlockedFromStatus)) dict["blocked_from_status"] = task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus.Value);
+        if (task.Includes(TaskQueryField.BlockedFromStatus))
+            dict["blocked_from_status"] = task.RawBlockedFromStatus is null
+                ? null
+                : MapToExternalStatus(task.RawBlockedFromStatus);
         if (task.Includes(TaskQueryField.NeedsBlockerDetails)) dict["needs_blocker_details"] = task.NeedsBlockerDetails;
         if (task.Includes(TaskQueryField.InMyDayToday)) dict["in_my_day_today"] = task.InMyDayToday;
         return dict;
@@ -2452,7 +2455,7 @@ public sealed class GlassworkTools
         {
             ["id"] = task.Id,
             ["title"] = task.Title,
-            ["status"] = MapToExternalStatus(task.Status),
+            ["status"] = MapToExternalStatus(task.RawStatus),
             ["type"] = MapToExternalType(task.Type),
             ["parent_id"] = task.ParentId,
             ["tags"] = task.Tags.ToArray(),

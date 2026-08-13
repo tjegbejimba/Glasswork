@@ -138,6 +138,38 @@ public sealed class QueryTasksToolTests
     }
 
     [TestMethod]
+    public void QueryTasks_PreservesLegacyStatusAndIgnoresMalformedBlockedMetadata()
+    {
+        File.WriteAllText(Path.Combine(_vault.VaultPath, "legacy.md"), """
+            ---
+            id: legacy
+            title: Legacy
+            status: someday
+            ---
+            """);
+        File.WriteAllText(Path.Combine(_vault.VaultPath, "malformed-blocked.md"), """
+            ---
+            id: malformed-blocked
+            title: Malformed blocked
+            status: blocked
+            blocked_reason: Waiting
+            blocked_at: 2026-08-12T12:00:00Z
+            blocked_from_status: doing
+            ---
+            """);
+
+        using var document = JsonDocument.Parse(_tools.QueryTasks());
+        var statuses = document.RootElement.GetProperty("tasks")
+            .EnumerateArray()
+            .ToDictionary(
+                task => task.GetProperty("id").GetString()!,
+                task => task.GetProperty("status").GetString());
+
+        Assert.AreEqual("someday", statuses["legacy"]);
+        Assert.AreEqual("blocked", statuses["malformed-blocked"]);
+    }
+
+    [TestMethod]
     public void QueryTasks_InvalidRelationshipsReturnStructuredDiagnostics()
     {
         _vault.Save(new GlassworkTask

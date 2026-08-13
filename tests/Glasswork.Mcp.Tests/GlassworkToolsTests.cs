@@ -400,6 +400,84 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void ListTasks_TitleProjectionToleratesLegacyStatusMetadata()
+    {
+        File.WriteAllText(Path.Combine(TasksDir, "legacy.md"), """
+            ---
+            id: legacy
+            title: Legacy
+            status: someday
+            ---
+            """);
+        File.WriteAllText(Path.Combine(TasksDir, "malformed-blocked.md"), """
+            ---
+            id: malformed-blocked
+            title: Malformed blocked
+            status: blocked
+            blocked_reason: Waiting
+            blocked_at: 2026-08-12T12:00:00Z
+            blocked_from_status: doing
+            ---
+            """);
+
+        using var document = JsonDocument.Parse(_tools.ListTasks(fields: ["title"]));
+        var tasks = document.RootElement.GetProperty("tasks");
+
+        CollectionAssert.AreEquivalent(
+            new[] { "Legacy", "Malformed blocked" },
+            tasks.EnumerateArray().Select(task => task.GetProperty("title").GetString()).ToArray());
+        Assert.IsTrue(tasks.EnumerateArray().All(task => !task.TryGetProperty("status", out _)));
+    }
+
+    [TestMethod]
+    public void ListTasks_DefaultSummaryPreservesLegacyStatusAndKnownDoingMapping()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "legacy",
+            Title = "Legacy",
+            Status = "someday",
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "doing",
+            Title = "Doing",
+            Status = GlassworkTask.Statuses.InProgress,
+        });
+
+        using var document = JsonDocument.Parse(_tools.ListTasks());
+        var statuses = document.RootElement.GetProperty("tasks")
+            .EnumerateArray()
+            .ToDictionary(
+                task => task.GetProperty("id").GetString()!,
+                task => task.GetProperty("status").GetString());
+
+        Assert.AreEqual("someday", statuses["legacy"]);
+        Assert.AreEqual("doing", statuses["doing"]);
+    }
+
+    [TestMethod]
+    public void ListTasks_BlockedFromStatusProjectionPreservesLegacyValue()
+    {
+        File.WriteAllText(Path.Combine(TasksDir, "malformed-blocked.md"), """
+            ---
+            id: malformed-blocked
+            title: Malformed blocked
+            status: blocked
+            blocked_reason: Waiting
+            blocked_at: 2026-08-12T12:00:00Z
+            blocked_from_status: doing
+            ---
+            """);
+
+        using var document = JsonDocument.Parse(_tools.ListTasks(
+            fields: ["blocked_from_status"]));
+        var task = document.RootElement.GetProperty("tasks")[0];
+
+        Assert.AreEqual("doing", task.GetProperty("blocked_from_status").GetString());
+    }
+
+    [TestMethod]
     public void ListTasks_DefaultSummaryIncludesReadinessAndUrgencySignals()
     {
         _tools.AddTask("Due task", due_date: DateTime.Today.ToString("yyyy-MM-dd"));

@@ -113,6 +113,35 @@ public class GetMyDayToolTests
     }
 
     [TestMethod]
+    public void GetMyDay_PreservesLegacyStatusAndKnownDoingMapping()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "legacy",
+            Title = "Legacy",
+            Status = "someday",
+            MyDay = DateTime.Today,
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "doing",
+            Title = "Doing",
+            Status = GlassworkTask.Statuses.InProgress,
+            MyDay = DateTime.Today,
+        });
+
+        using var document = JsonDocument.Parse(_tools.GetMyDay());
+        var statuses = document.RootElement.GetProperty("tasks")
+            .EnumerateArray()
+            .ToDictionary(
+                task => task.GetProperty("id").GetString()!,
+                task => task.GetProperty("status").GetString());
+
+        Assert.AreEqual("someday", statuses["legacy"]);
+        Assert.AreEqual("doing", statuses["doing"]);
+    }
+
+    [TestMethod]
     public void GetMyDay_PreservesTheExactEnvelopeAtTheToolQueryTime()
     {
         var queryTime = new DateTimeOffset(2031, 4, 5, 12, 0, 0, TimeSpan.Zero);
