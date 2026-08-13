@@ -71,54 +71,13 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
 
     public IReadOnlyCollection<string> UpdateForFile(string vaultRoot, string filePath)
     {
-        if (string.IsNullOrWhiteSpace(vaultRoot) || string.IsNullOrWhiteSpace(filePath))
-            return Array.Empty<string>();
-
-        // Ignore anything outside the vault, or under wiki/todo/ (task files
-        // themselves are never indexed as linking pages).
-        string fullVault, fullFile;
-        try
-        {
-            fullVault = Path.GetFullPath(vaultRoot);
-            fullFile = Path.GetFullPath(filePath);
-        }
-        catch { return Array.Empty<string>(); }
-
-        if (!IsUnderPrefix(fullFile, NormalizeDirectoryPrefix(fullVault)))
-            return Array.Empty<string>();
-
-        var todoPrefix = NormalizeDirectoryPrefix(Path.Combine(fullVault, "wiki", "todo"));
-        if (IsUnderPrefix(fullFile, todoPrefix))
+        if (!TryResolveLinkingFile(vaultRoot, filePath, out var fullVault, out var fullFile))
             return Array.Empty<string>();
 
         lock (_lock)
         {
             var affected = new HashSet<string>(StringComparer.Ordinal);
-            RemoveFileEntries(fullFile, affected);
-
-            if (File.Exists(fullFile))
-            {
-                var sink = new Dictionary<string, List<Backlink>>(StringComparer.Ordinal);
-                ProcessFile(fullFile, fullVault, sink);
-                foreach (var (stem, list) in sink)
-                {
-                    if (!_byTaskId.TryGetValue(stem, out var existing))
-                    {
-                        existing = new List<Backlink>();
-                        _byTaskId[stem] = existing;
-                    }
-                    existing.AddRange(list);
-                    affected.Add(stem);
-
-                    if (!_fileToTaskIds.TryGetValue(fullFile, out var fileSet))
-                    {
-                        fileSet = new HashSet<string>(StringComparer.Ordinal);
-                        _fileToTaskIds[fullFile] = fileSet;
-                    }
-                    fileSet.Add(stem);
-                }
-            }
-
+            ReplaceFileEntries(fullVault, fullFile, affected);
             ReSortAffected(affected);
             return affected;
         }
@@ -142,13 +101,59 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
 
     public IReadOnlyCollection<string> Rename(string vaultRoot, string oldPath, string newPath)
     {
-        var removed = RemoveForFile(oldPath);
-        var added = UpdateForFile(vaultRoot, newPath);
-        if (removed.Count == 0) return added;
-        if (added.Count == 0) return removed;
-        var union = new HashSet<string>(removed, StringComparer.Ordinal);
-        foreach (var t in added) union.Add(t);
-        return union;
+        var hasOldPath = TryGetFullPath(oldPath, out var fullOldPath);
+        var hasNewPath = TryResolveLinkingFile(
+            vaultRoot,
+            newPath,
+            out var fullVault,
+            out var fullNewPath);
+        if (!hasOldPath && !hasNewPath)
+            return Array.Empty<string>();
+
+        lock (_lock)
+        {
+            var affected = new HashSet<string>(StringComparer.Ordinal);
+            if (hasOldPath)
+                RemoveFileEntries(fullOldPath, affected);
+            if (hasNewPath)
+                ReplaceFileEntries(fullVault, fullNewPath, affected);
+            ReSortAffected(affected);
+            return affected;
+        }
+    }
+
+    /// <summary>
+    /// Caller must already hold <see cref="_lock"/>. Replaces one linking
+    /// file's complete contribution without exposing an intermediate state.
+    /// </summary>
+    private void ReplaceFileEntries(
+        string fullVault,
+        string fullFile,
+        HashSet<string> affected)
+    {
+        RemoveFileEntries(fullFile, affected);
+        if (!File.Exists(fullFile))
+            return;
+
+        var sink = new Dictionary<string, List<Backlink>>(StringComparer.Ordinal);
+        ProcessFile(fullFile, fullVault, sink);
+        foreach (var (stem, list) in sink)
+        {
+            if (!_byTaskId.TryGetValue(stem, out var existing))
+            {
+                existing = new List<Backlink>();
+                _byTaskId[stem] = existing;
+            }
+            existing.AddRange(list);
+            affected.Add(stem);
+
+            if (!_fileToTaskIds.TryGetValue(fullFile, out var fileSet))
+            {
+                fileSet = new HashSet<string>(StringComparer.Ordinal);
+                _fileToTaskIds[fullFile] = fileSet;
+            }
+            fileSet.Add(stem);
+        }
     }
 
     /// <summary>
@@ -305,5 +310,41 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
     {
         var full = Path.GetFullPath(file);
         return full.StartsWith(normalizedPrefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryResolveLinkingFile(
+        string vaultRoot,
+        string filePath,
+        out string fullVault,
+        out string fullFile)
+    {
+        fullVault = string.Empty;
+        fullFile = string.Empty;
+        if (string.IsNullOrWhiteSpace(vaultRoot) || string.IsNullOrWhiteSpace(filePath))
+            return false;
+
+        if (!TryGetFullPath(vaultRoot, out fullVault)
+            || !TryGetFullPath(filePath, out fullFile)
+            || !IsUnderPrefix(fullFile, NormalizeDirectoryPrefix(fullVault)))
+            return false;
+
+        var todoPrefix = NormalizeDirectoryPrefix(Path.Combine(fullVault, "wiki", "todo"));
+        return !IsUnderPrefix(fullFile, todoPrefix);
+    }
+
+    private static bool TryGetFullPath(string? path, out string fullPath)
+    {
+        fullPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
