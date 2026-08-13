@@ -140,6 +140,7 @@ Azure DevOps is good at team-level work tracking, but it is not a personal execu
 - `Glasswork.App` contains the WinUI 3 Pages, controls, and service-locator wiring.
 - `Glasswork.Mcp` exposes the Vault through a typed Model Context Protocol server for agents.
 - Any code that writes the Vault must register with `SelfWriteCoordinator` so file-watcher events do not echo the app's own writes.
+- Local startup and refresh measurements are available through the opt-in [performance trace](docs/performance-tracing.md).
 - The latest ten unhandled exception reports are stored locally under `%LocalAppData%\Glasswork\logs`.
 
 ## Contributing and feedback

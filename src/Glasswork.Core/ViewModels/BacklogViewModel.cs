@@ -19,6 +19,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     private readonly TaskService _taskService;
     private readonly VaultService _vault;
     private readonly SavedTaskViewService? _savedTaskViews;
+    private readonly IPerformanceTracer _performanceTracer;
     private readonly ITaskQuery _taskQuery;
 
     /// <summary>
@@ -86,11 +87,22 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
         IUiStateService? uiState = null,
         SavedTaskViewService? savedTaskViews = null,
         ITaskQuery? taskQuery = null)
+        : this(vault, taskService, index, uiState, savedTaskViews, taskQuery, null) { }
+
+    public BacklogViewModel(
+        VaultService vault,
+        TaskService taskService,
+        IndexService index,
+        IUiStateService? uiState,
+        SavedTaskViewService? savedTaskViews,
+        ITaskQuery? taskQuery,
+        IPerformanceTracer? performanceTracer)
     {
         _vault = vault ?? throw new ArgumentNullException(nameof(vault));
         _taskService = taskService ?? throw new ArgumentNullException(nameof(taskService));
         _index = index ?? throw new ArgumentNullException(nameof(index));
         _savedTaskViews = savedTaskViews;
+        _performanceTracer = performanceTracer ?? PerformanceTracer.Disabled;
         _taskQuery = taskQuery ?? new WarmIndexTaskQuery(index, new BacklinkIndex());
         _parentTitleStore = uiState is null ? null : new AdoParentTitleCacheStore(uiState);
         // Issue #188: Page (BacklogPage) subscribes to Index.Changed and marshals to UI thread.
@@ -108,6 +120,23 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     public void Refresh()
     {
         Refreshing?.Invoke();
+        using (var trace = _performanceTracer.BeginSpan("backlog.refresh_data"))
+        {
+            try
+            {
+                RefreshData(trace);
+            }
+            catch
+            {
+                trace.SetOutcome("error");
+                throw;
+            }
+        }
+        Refreshed?.Invoke();
+    }
+
+    private void RefreshData(IPerformanceTraceScope trace)
+    {
         Tasks.Clear();
         Rows.Clear();
         BoardColumns.Clear();
@@ -173,7 +202,11 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
             }
         }
 
-        Refreshed?.Invoke();
+        trace.SetTag("view_mode", ViewMode);
+        trace.SetTag("is_grouped", IsGrouped);
+        trace.SetCount("task_count", Tasks.Count);
+        trace.SetCount("row_count", Rows.Count);
+        trace.SetCount("board_column_count", BoardColumns.Count);
     }
 
     private BacklogQueryData FilterTasks(

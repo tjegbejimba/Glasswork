@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -18,6 +19,7 @@ public partial class App : Application
 {
     private Window? _window;
     private static AppInstance? _mainAppInstance;
+    private readonly long _managedStartupTimestamp;
     private static readonly string CrashReportDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Glasswork",
@@ -54,6 +56,7 @@ public partial class App : Application
     public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
+    public static IPerformanceTracer Performance { get; private set; } = PerformanceTracer.Disabled;
 
     // Coalesces a burst of watcher-overflow events into a single full rehydrate.
     // An OS buffer overflow can fire repeatedly while a bulk write is still in
@@ -169,6 +172,8 @@ public partial class App : Application
 
     public App()
     {
+        _managedStartupTimestamp = Stopwatch.GetTimestamp();
+
         // Set AUMID before any window creation for consistent taskbar identity
         SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
 
@@ -231,6 +236,8 @@ public partial class App : Application
             return;
         }
 
+        Performance = PerformanceTracer.CreateFromProcessEnvironment(_managedStartupTimestamp);
+
         // Primary instance: receive forwarded activations from any second instance.
         _mainAppInstance.Activated += OnAppInstanceActivated;
 
@@ -253,11 +260,11 @@ public partial class App : Application
             .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
             .FirstOrDefault()
             ?.InformationalVersion ?? "0.0.0";
-        
+
         var detector = new Glasswork.Core.AppUpdate.GitHubReleaseDetector();
         var repoPathProvider = new Services.UiStateRepoPathProvider(_uiStateImpl, RepoPathKey);
         Updater = new Glasswork.Core.AppUpdate.UpdateCheckService(detector, installedVersion, repoPathProvider);
-        
+
         if (!launchOptions.SkipUpdateCheck)
         {
             // Fire-and-forget startup check: runs in background, failures cached/never surfaced at startup (ADR 0011).
@@ -317,6 +324,21 @@ public partial class App : Application
     /// <param name="uiStateImpl">The already-initialised UI state service, used for GC.</param>
     private static void InitVaultServices(string configuredVaultPath, JsonFileUiStateService uiStateImpl)
     {
+        using var initializeTrace = Performance.BeginSpan("vault.services_initialize");
+        try
+        {
+            InitVaultServicesCore(configuredVaultPath, uiStateImpl);
+            initializeTrace.SetCount("task_count", Index.Count);
+        }
+        catch
+        {
+            initializeTrace.SetOutcome("error");
+            throw;
+        }
+    }
+
+    private static void InitVaultServicesCore(string configuredVaultPath, JsonFileUiStateService uiStateImpl)
+    {
         // Tear down existing watchers (no-op on first launch).
         Watcher?.Stop();
         ArtifactsWatcher?.Stop();
@@ -336,29 +358,62 @@ public partial class App : Application
         // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
         // that mention a Glasswork task via [[stem]] / [[stem|alias]].
         var backlinkIndex = new BacklinkIndex();
-        try { backlinkIndex.Build(VaultRoot); }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Backlink index build failed: {ex.Message}"); }
+        using (var trace = Performance.BeginSpan("vault.backlink_index_build"))
+        {
+            try { backlinkIndex.Build(VaultRoot); }
+            catch (Exception ex)
+            {
+                trace.SetOutcome("error");
+                System.Diagnostics.Debug.WriteLine($"Backlink index build failed: {ex.Message}");
+            }
+        }
         BacklinkIndex = backlinkIndex;
 
         // One-shot V1 → V2 migration of any pre-existing files. Idempotent: V2 files
         // are skipped, so re-running on every launch is cheap.
         // IMPORTANT (issue #184): migration MUST run before Index.EnsureLoaded so the
         // in-memory aggregate is never seeded with pre-migration parse artefacts.
-        try { Vault.MigrateAllToV2(); }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"V2 migration failed: {ex.Message}"); }
+        using (var trace = Performance.BeginSpan("vault.v1_migration"))
+        {
+            try { trace.SetCount("migrated_task_count", Vault.MigrateAllToV2()); }
+            catch (Exception ex)
+            {
+                trace.SetOutcome("error");
+                System.Diagnostics.Debug.WriteLine($"V2 migration failed: {ex.Message}");
+            }
+        }
 
         // One-shot my_day date-scoped migration (ADR 0013, issue #260). Rolls forward
         // any past-dated my_day pins to today so they aren't mass-evicted on upgrade.
         // Flag-guarded: runs exactly once, then never again.
-        try { MyDayPinMigrationRunner.ApplyMigration(Vault, uiStateImpl, DateOnly.FromDateTime(DateTime.Today)); }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"My Day migration failed: {ex.Message}"); }
+        using (var trace = Performance.BeginSpan("vault.my_day_pin_migration"))
+        {
+            try { MyDayPinMigrationRunner.ApplyMigration(Vault, uiStateImpl, DateOnly.FromDateTime(DateTime.Today)); }
+            catch (Exception ex)
+            {
+                trace.SetOutcome("error");
+                System.Diagnostics.Debug.WriteLine($"My Day migration failed: {ex.Message}");
+            }
+        }
 
         // In-memory aggregate (issue #184). Subscribe to vault domain events
         // BEFORE EnsureLoaded so we still capture writes that happen on the seed
         // pass (defensive — none expected in practice). EnsureLoaded does not
         // emit TasksChanged: it's a snapshot, not a delta.
         Index = new IndexService(Vault);
-        Index.EnsureLoaded();
+        using (var trace = Performance.BeginSpan("vault.index_hydration"))
+        {
+            try
+            {
+                Index.EnsureLoaded();
+                trace.SetCount("task_count", Index.Count);
+            }
+            catch
+            {
+                trace.SetOutcome("error");
+                throw;
+            }
+        }
         TaskQuery = new WarmIndexTaskQuery(Index, BacklinkIndex);
         Tasks = new TaskService(Vault, Index);
 
@@ -461,6 +516,7 @@ public partial class App : Application
         BacklinksWatcher = new BacklinksWatcher(VaultRoot, BacklinkIndex);
         BacklinksWatcher.BacklinksChanged += (s, e) => BacklinksChangedExternally?.Invoke(s, e);
         BacklinksWatcher.Start();
+
     }
 
     /// <summary>

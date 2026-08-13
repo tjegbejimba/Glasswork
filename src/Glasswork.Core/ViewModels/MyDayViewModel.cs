@@ -16,6 +16,7 @@ public partial class MyDayViewModel : ObservableObject
     private readonly VaultService _vault;
     private readonly IndexService _index;
     private readonly IUiStateService? _uiState;
+    private readonly IPerformanceTracer _performanceTracer;
     private readonly ITaskQuery _taskQuery;
 
     public ObservableCollection<GlassworkTask> TodayTasks { get; } = [];
@@ -25,7 +26,7 @@ public partial class MyDayViewModel : ObservableObject
     [ObservableProperty] public partial bool ShowSuggestions { get; set; }
 
     public MyDayViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
-        : this(vault, taskService, EnsureSeededIndex(vault), uiState) { }
+        : this(vault, taskService, EnsureSeededIndex(vault), uiState, null, null) { }
 
     public MyDayViewModel(
         VaultService vault,
@@ -33,11 +34,21 @@ public partial class MyDayViewModel : ObservableObject
         IndexService index,
         IUiStateService? uiState = null,
         ITaskQuery? taskQuery = null)
+        : this(vault, taskService, index, uiState, taskQuery, null) { }
+
+    public MyDayViewModel(
+        VaultService vault,
+        TaskService taskService,
+        IndexService index,
+        IUiStateService? uiState,
+        ITaskQuery? taskQuery,
+        IPerformanceTracer? performanceTracer)
     {
         _vault = vault ?? throw new ArgumentNullException(nameof(vault));
         _taskService = taskService ?? throw new ArgumentNullException(nameof(taskService));
         _index = index ?? throw new ArgumentNullException(nameof(index));
         _uiState = uiState;
+        _performanceTracer = performanceTracer ?? PerformanceTracer.Disabled;
         _taskQuery = taskQuery ?? new WarmIndexTaskQuery(index, new BacklinkIndex());
     }
 
@@ -58,7 +69,23 @@ public partial class MyDayViewModel : ObservableObject
     public void Refresh()
     {
         Refreshing?.Invoke();
+        using (var trace = _performanceTracer.BeginSpan("my_day.refresh_data"))
+        {
+            try
+            {
+                RefreshData(trace);
+            }
+            catch
+            {
+                trace.SetOutcome("error");
+                throw;
+            }
+        }
+        Refreshed?.Invoke();
+    }
 
+    private void RefreshData(IPerformanceTraceScope trace)
+    {
         var queryTime = DateTimeOffset.Now;
         var today = DateOnly.FromDateTime(queryTime.Date);
 
@@ -130,7 +157,9 @@ public partial class MyDayViewModel : ObservableObject
             .ToList();
         ReconcileTaskCollection(Suggestions, suggestions);
 
-        Refreshed?.Invoke();
+        trace.SetCount("today_count", TodayTasks.Count);
+        trace.SetCount("recently_completed_count", RecentlyCompletedTasks.Count);
+        trace.SetCount("suggestion_count", Suggestions.Count);
     }
 
     private TaskQueryRequest CreateMyDayRequest(
