@@ -51,6 +51,24 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
         }
     }
 
+    public IReadOnlyDictionary<string, int> SnapshotCounts(IReadOnlyCollection<string> taskIds)
+    {
+        ArgumentNullException.ThrowIfNull(taskIds);
+        lock (_lock)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var taskId in taskIds)
+            {
+                if (string.IsNullOrEmpty(taskId) || counts.ContainsKey(taskId))
+                    continue;
+                counts[taskId] = _byTaskId.TryGetValue(taskId, out var list)
+                    ? list.Count
+                    : 0;
+            }
+            return counts;
+        }
+    }
+
     public IReadOnlyCollection<string> UpdateForFile(string vaultRoot, string filePath)
     {
         if (string.IsNullOrWhiteSpace(vaultRoot) || string.IsNullOrWhiteSpace(filePath))
@@ -73,9 +91,6 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
         if (IsUnderPrefix(fullFile, todoPrefix))
             return Array.Empty<string>();
 
-        var todoDir = Path.Combine(fullVault, "wiki", "todo");
-        var taskIds = EnumerateTaskIds(todoDir);
-
         lock (_lock)
         {
             var affected = new HashSet<string>(StringComparer.Ordinal);
@@ -84,7 +99,7 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
             if (File.Exists(fullFile))
             {
                 var sink = new Dictionary<string, List<Backlink>>(StringComparer.Ordinal);
-                ProcessFile(fullFile, fullVault, taskIds, sink);
+                ProcessFile(fullFile, fullVault, sink);
                 foreach (var (stem, list) in sink)
                 {
                     if (!_byTaskId.TryGetValue(stem, out var existing))
@@ -179,16 +194,13 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
             return (byTask, byFile);
 
         var todoDir = Path.Combine(vaultRoot, "wiki", "todo");
-        var taskIds = EnumerateTaskIds(todoDir);
-        if (taskIds.Count == 0) return (byTask, byFile);
-
         var todoPrefix = NormalizeDirectoryPrefix(todoDir);
 
         foreach (var file in Directory.EnumerateFiles(vaultRoot, "*.md", SearchOption.AllDirectories))
         {
             if (IsUnderPrefix(file, todoPrefix)) continue;
             var perFile = new Dictionary<string, List<Backlink>>(StringComparer.Ordinal);
-            ProcessFile(file, vaultRoot, taskIds, perFile);
+            ProcessFile(file, vaultRoot, perFile);
             if (perFile.Count == 0) continue;
 
             var fullFile = Path.GetFullPath(file);
@@ -210,38 +222,24 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
         return (byTask, byFile);
     }
 
-    private static HashSet<string> EnumerateTaskIds(string todoDir)
-    {
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        if (!Directory.Exists(todoDir)) return ids;
-        foreach (var file in Directory.EnumerateFiles(todoDir, "*.md", SearchOption.TopDirectoryOnly))
-        {
-            var fileName = Path.GetFileName(file);
-            // Skip Glasswork's auto-generated index files (_index.md, _today.md, etc.).
-            if (fileName.StartsWith('_')) continue;
-            ids.Add(Path.GetFileNameWithoutExtension(file));
-        }
-        return ids;
-    }
-
     private static void ProcessFile(
         string file,
         string vaultRoot,
-        HashSet<string> taskIds,
         Dictionary<string, List<Backlink>> sink)
     {
         string content;
         try { content = File.ReadAllText(file); }
         catch { return; }
 
-        // Per-file dedup: collect each task id at most once even if the page
-        // mentions it multiple times.
+        // Per-file dedup: collect each stem at most once even if the page
+        // mentions it multiple times. Unresolved stems stay indexed so a later
+        // Task creation does not require a full backlink rebuild.
         var matchedStems = new HashSet<string>(StringComparer.Ordinal);
         foreach (Match m in WikiLinkRegex().Matches(content))
         {
             var stem = m.Groups[1].Value.Trim();
             if (stem.Length == 0) continue;
-            if (taskIds.Contains(stem)) matchedStems.Add(stem);
+            matchedStems.Add(stem);
         }
         if (matchedStems.Count == 0) return;
 

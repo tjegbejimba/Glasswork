@@ -60,10 +60,7 @@ internal sealed record TaskQuerySnapshot(
             .Where(task => !string.IsNullOrEmpty(task.Id))
             .GroupBy(task => task.Id, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
-        var backlinkCounts = byId.Keys.ToDictionary(
-            id => id,
-            id => backlinks.GetBacklinks(id).Count,
-            StringComparer.Ordinal);
+        var backlinkCounts = backlinks.SnapshotCounts(byId.Keys.ToArray());
         return new TaskQuerySnapshot(tasks, byId, backlinkCounts);
     }
 }

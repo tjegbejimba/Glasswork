@@ -5,9 +5,10 @@ namespace Glasswork.Core.Services;
 
 /// <summary>
 /// In-memory index of incoming wiki-links to Glasswork tasks. Built by scanning
-/// the vault for <c>[[task-id]]</c> and <c>[[task-id|display]]</c> patterns in
-/// every <c>*.md</c> file outside <c>wiki/todo/</c>. One entry per linking page
-/// (per-file dedup), keyed by task id.
+/// the vault for <c>[[stem]]</c> and <c>[[stem|display]]</c> patterns in every
+/// <c>*.md</c> file outside <c>wiki/todo/</c>. Unresolved stems are retained so
+/// a link that predates its Task becomes visible when that Task is created.
+/// One entry per linking page (per-file dedup), keyed by stem.
 /// </summary>
 public interface IBacklinkIndex
 {
@@ -24,6 +25,12 @@ public interface IBacklinkIndex
     /// Returns an empty list when the task has no backlinks.
     /// </summary>
     IReadOnlyList<Backlink> GetBacklinks(string taskId);
+
+    /// <summary>
+    /// Returns one coherent count snapshot for the supplied Task IDs. Every
+    /// distinct ID is present in the result, including IDs with zero backlinks.
+    /// </summary>
+    IReadOnlyDictionary<string, int> SnapshotCounts(IReadOnlyCollection<string> taskIds);
 
     /// <summary>
     /// Re-parse a single file and update its contribution to the index.
@@ -47,4 +54,3 @@ public interface IBacklinkIndex
     /// </summary>
     IReadOnlyCollection<string> Rename(string vaultRoot, string oldPath, string newPath);
 }
-

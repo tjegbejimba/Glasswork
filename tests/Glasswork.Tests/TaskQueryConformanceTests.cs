@@ -216,6 +216,28 @@ public sealed class TaskQueryConformanceTests
     [DataTestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
+    public void Execute_BacklinkThatPredatesTaskIsVisibleWithoutManualIndexRebuild(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        fixture.WriteWikiPage("concept.md", "[[later-task]]");
+        fixture.SaveWithoutBacklinkRefresh(new GlassworkTask
+        {
+            Id = "later-task",
+            Title = "Created after the wiki link",
+        });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField> { TaskQueryField.BacklinkCount }))));
+
+        Assert.AreEqual(1, result.Tasks.Single().BacklinkCount);
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
     public void Execute_AllOrderingsUseOrdinalTaskIdAsFinalTieBreaker(string adapter)
     {
         using var fixture = TaskQueryFixture.Create(adapter);
@@ -500,6 +522,9 @@ public sealed class TaskQueryConformanceTests
                 Vault.Save(task);
             Refresh();
         }
+
+        public void SaveWithoutBacklinkRefresh(GlassworkTask task) =>
+            Vault.Save(task);
 
         public void WriteWikiPage(string relativePath, string content)
         {
