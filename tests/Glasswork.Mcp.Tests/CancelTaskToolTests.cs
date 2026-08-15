@@ -135,6 +135,26 @@ public sealed class CancelTaskToolTests
     }
 
     [TestMethod]
+    public void SearchTasks_StatusFilter_NormalizesCancelledValue()
+    {
+        using var created = JsonDocument.Parse(_tools.AddTask("Archived casing token"));
+        var taskId = created.RootElement.GetProperty("task_id").GetString()!;
+        using var cancelled = JsonDocument.Parse(_tools.CancelTask(
+            taskId,
+            "cancel-search-case",
+            created.RootElement.GetProperty("resource_revision").GetString(),
+            "Superseded"));
+
+        using var result = JsonDocument.Parse(
+            _tools.SearchTasks("casing", status: [" CANCELLED "]));
+        var tasks = result.RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(1, tasks.GetArrayLength());
+        Assert.AreEqual(taskId, tasks[0].GetProperty("id").GetString());
+        Assert.AreEqual("cancelled", tasks[0].GetProperty("status").GetString());
+    }
+
+    [TestMethod]
     public void CancelTask_RequiresMutationPreconditionsAndRejectsDoneTask()
     {
         using var created = JsonDocument.Parse(_tools.AddTask("Already finished", status: "done"));

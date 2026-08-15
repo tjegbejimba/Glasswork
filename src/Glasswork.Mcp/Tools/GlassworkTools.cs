@@ -490,7 +490,7 @@ public sealed class GlassworkTools
     public string ListSubtasks(
         [Description("Parent task ID (required).")] string parent_task_id,
         [Description("Include descendants recursively. Default false.")] bool recursive = false,
-        [Description("Filter by status: todo, doing, blocked, or done.")] string? status_filter = null)
+        [Description("Filter by status: todo, doing, blocked, done, or cancelled.")] string? status_filter = null)
     {
         using var scope = _logger?.BeginCall("list_subtasks");
         try
@@ -721,14 +721,18 @@ public sealed class GlassworkTools
                     TaskQueryField.BacklinkCount,
                 });
             var queryTime = _timeProvider.GetLocalNow();
-            var queryTasks = status is { Length: > 0 }
-                ? status
-                    .Select(value =>
-                    {
-                        TryMapToTaskQueryStatus(value, out var mapped, out _);
-                        return mapped;
-                    })
-                    .Distinct()
+            var queryStatuses = new HashSet<TaskQueryStatus>();
+            foreach (var value in status ?? [])
+            {
+                if (!TryMapToTaskQueryStatus(value, out var mapped, out var statusError))
+                {
+                    scope?.SetResult("error");
+                    return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
+                }
+                queryStatuses.Add(mapped);
+            }
+            var queryTasks = queryStatuses.Count > 0
+                ? queryStatuses
                     .SelectMany(mapped => _taskQuery.Execute(new TaskQueryRequest(
                         queryTime,
                         new ListTaskSelection(Status: mapped, Projection: projection))).Tasks)
@@ -2630,14 +2634,15 @@ public sealed class GlassworkTools
         out TaskQueryStatus queryStatus,
         out string? error)
     {
-        if (string.Equals(status?.Trim(), "cancelled", StringComparison.OrdinalIgnoreCase))
+        var normalizedStatus = status?.Trim().ToLowerInvariant();
+        if (normalizedStatus == "cancelled")
         {
             queryStatus = TaskQueryStatus.Cancelled;
             error = null;
             return true;
         }
 
-        if (!TryMapToInternalStatus(status, out var internalStatus, out error))
+        if (!TryMapToInternalStatus(normalizedStatus, out var internalStatus, out error))
         {
             queryStatus = default;
             return false;
