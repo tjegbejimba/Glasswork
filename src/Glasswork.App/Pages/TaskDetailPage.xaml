@@ -145,6 +145,7 @@
                         <ComboBoxItem Tag="blocked" Content="Blocked" />
                         <ComboBoxItem Tag="in-progress" Content="In Progress" />
                         <ComboBoxItem Tag="done" Content="Done" />
+                        <ComboBoxItem Tag="cancelled" Content="Cancelled" IsEnabled="False" />
                     </ComboBox>
                     <ComboBox x:Name="PriorityBox" Header="Priority" Width="160" SelectionChanged="Priority_Changed">
                         <ComboBoxItem Tag="low" Content="Low" />
@@ -541,7 +542,7 @@
                 <StackPanel x:Name="LinksSection" Spacing="8" Margin="0,16,0,0">
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBlock Grid.Column="0" Text="Links" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
-                        <Button Grid.Column="1" Content="Add link" Click="AddLink_Click"
+                        <Button Grid.Column="1" x:Name="AddLinkButton" Content="Add link" Click="AddLink_Click"
                                 FontSize="12" Padding="8,4"
                                 ToolTipService.ToolTip="Add a structured link (ADO, PR, ICM, Doc, Build, or Other)" />
                     </Grid>
@@ -591,11 +592,12 @@
                 <StackPanel Spacing="4" Opacity="0.5" Margin="0,16,0,0">
                     <TextBlock x:Name="CreatedText" FontSize="12" />
                     <TextBlock x:Name="CompletedText" FontSize="12" />
+                    <TextBlock x:Name="CancelledText" FontSize="12" />
                     <TextBlock x:Name="IdText" FontSize="12" />
                 </StackPanel>
 
                 <!-- Agent invocation buttons (copy one-liner to clipboard, paste into Copilot CLI) -->
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                <StackPanel x:Name="LifecycleActions" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
                     <Button x:Name="StartWorkButton" Content="Start work" Click="StartWork_Click" />
                     <Button x:Name="ResumeButton" Content="Resume" Click="Resume_Click" />
                     <Button x:Name="WrapUpButton" Content="Wrap up" Click="WrapUp_Click" />
@@ -715,6 +717,34 @@
                             AutomationProperties.Name="Copy task link"
                             ToolTipService.ToolTip="Copy glasswork:// deep-link to clipboard" />
                 </StackPanel>
+
+                <Border
+                    x:Name="DangerZone"
+                    AutomationProperties.AutomationId="TaskDangerZone"
+                    Margin="0,16,0,0"
+                    Padding="16"
+                    BorderBrush="#C50F1F"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <StackPanel Spacing="8">
+                        <TextBlock
+                            Text="Danger zone"
+                            FontWeight="SemiBold"
+                            Foreground="#C50F1F" />
+                        <TextBlock
+                            Text="Hard deletion permanently removes this Task, its descendant subtree, and owned Artifacts after rewriting inbound wiki links."
+                            TextWrapping="Wrap"
+                            Opacity="0.75" />
+                        <Button
+                            x:Name="DeleteTaskButton"
+                            AutomationProperties.AutomationId="DeleteTaskButton"
+                            AutomationProperties.Name="Open permanent deletion confirmation"
+                            Content="Delete permanently..."
+                            Click="DeleteTask_Click"
+                            Foreground="#C50F1F"
+                            HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </ScrollViewer>
     </Grid>

@@ -32,6 +32,7 @@ public sealed class BacklinksWatcher : IDisposable
     private readonly FileSystemWatcher _watcher;
     private readonly TimeSpan _quietPeriod;
     private readonly IBacklinkIndex _index;
+    private readonly SelfWriteCoordinator? _selfWrites;
     private readonly string _vaultRoot;
     private readonly string _todoPrefix;
     private readonly ConcurrentDictionary<string, Debouncer> _debouncers =
@@ -41,11 +42,19 @@ public sealed class BacklinksWatcher : IDisposable
     public event EventHandler<BacklinksChangedEventArgs>? BacklinksChanged;
 
     public BacklinksWatcher(string vaultRoot, IBacklinkIndex index)
-        : this(vaultRoot, index, DefaultQuietPeriod) { }
+        : this(vaultRoot, index, null, DefaultQuietPeriod) { }
 
     public BacklinksWatcher(string vaultRoot, IBacklinkIndex index, TimeSpan quietPeriod)
+        : this(vaultRoot, index, null, quietPeriod) { }
+
+    public BacklinksWatcher(
+        string vaultRoot,
+        IBacklinkIndex index,
+        SelfWriteCoordinator? selfWrites,
+        TimeSpan quietPeriod)
     {
         _index = index ?? throw new ArgumentNullException(nameof(index));
+        _selfWrites = selfWrites;
         _quietPeriod = quietPeriod;
 
         if (string.IsNullOrWhiteSpace(vaultRoot))
@@ -78,13 +87,13 @@ public sealed class BacklinksWatcher : IDisposable
 
     private void OnFileEvent(object sender, FileSystemEventArgs e)
     {
-        if (IsExcluded(e.FullPath)) return;
+        if (IsExcluded(e.FullPath) || IsOwnProcessWrite(e.FullPath)) return;
         Schedule(e.FullPath, () => _index.UpdateForFile(_vaultRoot, e.FullPath));
     }
 
     private void OnDeleted(object sender, FileSystemEventArgs e)
     {
-        if (IsExcluded(e.FullPath)) return;
+        if (IsExcluded(e.FullPath) || IsOwnProcessWrite(e.FullPath)) return;
         Schedule(e.FullPath, () => _index.RemoveForFile(e.FullPath));
     }
 
@@ -97,6 +106,7 @@ public sealed class BacklinksWatcher : IDisposable
         var newExcluded = IsExcluded(newPath);
         var oldExcluded = IsExcluded(oldPath);
         if (newExcluded && oldExcluded) return;
+        if (IsOwnProcessWrite(newPath) || IsOwnProcessWrite(oldPath)) return;
 
         Schedule(newPath, () => _index.Rename(_vaultRoot, oldPath, newPath));
     }
@@ -123,6 +133,9 @@ public sealed class BacklinksWatcher : IDisposable
         }
         catch { return true; }
     }
+
+    private bool IsOwnProcessWrite(string fullPath) =>
+        _selfWrites?.IsOwnProcessWrite(fullPath) == true;
 
     public void Dispose()
     {

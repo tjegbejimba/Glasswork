@@ -111,6 +111,10 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | `get_capabilities` | v1.0 contract | Read-only handshake for MCP contract version and supported guarantees |
 | `query_tasks` | v0.8.0 | Query Tasks by typed fields and dependency readiness with deterministic paging |
 | `transact_tasks` | v0.9.0 | Idempotently create explicit-ID Tasks or conditionally update existing Tasks |
+| `cancel_task` | current | Reversibly archive an active Task |
+| `restore_task` | current | Restore a Cancelled Task to todo |
+| `preflight_delete_task` | current | Preview Hard-deletion impact and obtain its preflight revision |
+| `delete_task` | current | Permanently delete a guarded Task subtree and repair inbound Wiki links |
 | `add_task` | v0.2.0 | Create a new task file |
 | `update_task` | v0.8.0 | Update an existing task (partial updates supported) |
 | `list_tasks` | v0.2.0 | List task summaries (structural enumeration — filter by status or parent) |
@@ -136,7 +140,8 @@ Use this read-only operation before relying on optional workflow guarantees:
     "typed_transactions",
     "complete_set_relationships",
     "transaction_idempotency",
-    "recoverable_all_or_none_commit"
+    "recoverable_all_or_none_commit",
+    "guarded_hard_deletion"
   ]
 }
 ```
@@ -205,6 +210,39 @@ creation to explicit `transact_tasks` operations.
 }
 ```
 
+### `delete_task`
+
+`delete_task` means **Hard deletion only**. Use `cancel_task` for the safe,
+reversible archive lifecycle. Hard deletion applies to Tasks, Bugs, and PBIs and
+requires all destructive guards. Call `preflight_delete_task` first and retain
+its opaque `preflight_revision`:
+
+```json
+{
+  "task_id": "obsolete-plan",
+  "mutation_id": "delete-obsolete-plan-1",
+  "if_revision": "rr1-...",
+  "confirm_title": "Obsolete plan",
+  "cascade_children": false,
+  "if_preflight_revision": null
+}
+```
+
+When descendants exist and `cascade_children` is false, the call fails without
+mutation using `descendants_require_cascade` and returns `descendant_ids` plus
+the complete preflight. Retry with a new `mutation_id`,
+`cascade_children: true`, and that preflight's `preflight_revision` only after
+reviewing the subtree. If the subtree or other impact changes, the opaque
+revision conflicts and a refreshed preflight is returned.
+
+Success returns `deleted_tasks`, `descendants`, `removed_artifacts`,
+`rewritten_backlink_pages`, and `recovery_outcome`. Exact `[[task-id|alias]]`
+links become the alias; bare `[[task-id]]` links become the deleted Task title.
+The operation is journaled with hidden staged backups, rolls back ordinary
+failures, finishes or rolls back deterministically after restart, and replays an
+identical request by `mutation_id`. Recovery refuses to overwrite post-crash
+Vault edits and retains invalid deletion journals/backups for explicit repair.
+
 ### When to use which tool
 
 | Goal | Use |
@@ -215,6 +253,10 @@ creation to explicit `transact_tasks` operations.
 | Read all artifacts for a task | `load_context` or `get_task(include_artifact_bodies=true)` |
 | Discover tasks related to a concept or keyword | `search_tasks` |
 | Add an existing task to My Day | `set_my_day` |
+| Archive abandoned work safely | `cancel_task` |
+| Restore archived work | `restore_task` |
+| Preview permanent deletion impact | `preflight_delete_task` |
+| Irreversibly remove a reviewed Task subtree | `delete_task` |
 | Orient before starting work on a new issue | `search_tasks` (find prior art), then `load_context` (deep-dive) |
 
 ### `query_tasks`

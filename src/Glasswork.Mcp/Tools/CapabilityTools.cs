@@ -23,6 +23,7 @@ public sealed class CapabilityTools
                 "complete_set_relationships",
                 "transaction_idempotency",
                 "recoverable_all_or_none_commit",
+                "guarded_hard_deletion",
             ],
             FutureCapabilities: []));
     }

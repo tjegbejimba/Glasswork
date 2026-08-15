@@ -1365,6 +1365,89 @@ public sealed class GlassworkTools
             mutation.Task?.ResourceRevision));
     }
 
+    [McpServerTool(Name = "preflight_delete_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Preview every Task, Artifact, and inbound Wiki-link page affected by a permanent Task deletion. Returns the opaque preflight_revision required for cascade deletion.")]
+    public string PreflightDeleteTask(
+        [Description("Task ID to inspect for permanent deletion.")] string task_id)
+    {
+        using var scope = _logger?.BeginCall("preflight_delete_task");
+        var safeId = SanitizeId(task_id);
+        if (safeId is null)
+        {
+            scope?.SetResult("validation_error");
+            return JsonSerializer.Serialize(new ErrorResult(
+                "validation_error",
+                "task_id must be a safe Task ID."));
+        }
+
+        try
+        {
+            var result = _mutations.PreflightTaskDeletion(safeId);
+            scope?.SetResult(result.Outcome);
+            return SerializeTaskDeletionPreflightOutcome(result);
+        }
+        catch (Exception ex)
+        {
+            scope?.SetResult("operation_failed");
+            return JsonSerializer.Serialize(new ErrorResult(
+                "operation_failed",
+                ex.Message));
+        }
+    }
+
+    [McpServerTool(Name = "delete_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Permanently and irreversibly delete a Task. Requires the latest Resource Revision, the exact Task title, and explicit cascade_children acknowledgement when descendants exist.")]
+    public string DeleteTask(
+        [Description("Task ID to permanently delete.")] string task_id,
+        [Description("Client-generated idempotency key.")] string? mutation_id,
+        [Description("Latest Resource Revision observed for the Task.")] string? if_revision,
+        [Description("Exact current Task title.")] string? confirm_title,
+        [Description("Explicitly delete the complete descendant subtree. Defaults to false and is required when descendants exist.")] bool cascade_children = false,
+        [Description("Opaque preflight_revision from preflight_delete_task. Required when cascade_children is true.")] string? if_preflight_revision = null)
+    {
+        using var scope = _logger?.BeginCall("delete_task");
+        if (string.IsNullOrWhiteSpace(mutation_id)
+            || string.IsNullOrWhiteSpace(if_revision)
+            || confirm_title is null)
+        {
+            return SerializePreconditionRequired(scope);
+        }
+
+        var safeId = SanitizeId(task_id);
+        if (safeId is null)
+        {
+            scope?.SetResult("validation_error");
+            return JsonSerializer.Serialize(new ErrorResult(
+                "validation_error",
+                "task_id must be a safe Task ID."));
+        }
+
+        try
+        {
+            var mutation = _mutations.DeleteTask(
+                mutation_id,
+                safeId,
+                if_revision,
+                confirm_title,
+                cascade_children,
+                if_preflight_revision);
+            scope?.SetResult(
+                mutation.Outcome is "applied" or "no_op"
+                    ? "success"
+                    : mutation.Outcome);
+            return SerializeTaskDeletionOutcome(mutation);
+        }
+        catch (Exception ex)
+        {
+            scope?.SetResult("operation_failed");
+            return JsonSerializer.Serialize(new ErrorResult(
+                "operation_failed",
+                ex.Message));
+        }
+    }
+
     public string UpdateTask(string task_id, JsonElement fields)
         => UpdateTask(task_id, fields, Guid.NewGuid().ToString("N"),
             _vault.Exists(SanitizeId(task_id) ?? string.Empty) ? ResourceRevision(SanitizeId(task_id)!) : "missing");
@@ -2710,6 +2793,89 @@ public sealed class GlassworkTools
             }).ToArray()
         });
     }
+
+    private static string SerializeTaskDeletionOutcome(ResourceMutationOutcome outcome)
+    {
+        var success = outcome.Outcome is "applied" or "no_op";
+        var preflight = outcome.DeletionPreflight;
+        var report = outcome.DeletionReport;
+        return JsonSerializer.Serialize(new
+        {
+            mutation_id = outcome.MutationId,
+            outcome = success ? outcome.Outcome : null,
+            error = success ? null : outcome.Outcome,
+            message = outcome.Error,
+            replayed = outcome.Replayed,
+            expected_revision = outcome.ExpectedRevision,
+            current_revision = outcome.CurrentRevision,
+            descendant_ids = preflight?.Descendants.Select(task => task.Id).ToArray(),
+            preflight = preflight is null ? null : new
+            {
+                preflight_revision = preflight.PreflightRevision,
+                task = SerializeDeletionTask(preflight.Task),
+                descendants = preflight.Descendants.Select(SerializeDeletionTask).ToArray(),
+                artifacts = preflight.Artifacts.Select(artifact => new
+                {
+                    task_id = artifact.TaskId,
+                    path = artifact.VaultRelativePath,
+                }).ToArray(),
+                backlink_pages = preflight.BacklinkPages.Select(page => new
+                {
+                    path = page.VaultRelativePath,
+                    replacement_count = page.ReplacementCount,
+                }).ToArray(),
+                artifact_directories = preflight.ArtifactDirectories,
+            },
+            recovery_outcome = report?.RecoveryOutcome,
+            deleted_tasks = report?.DeletedTasks.Select(SerializeDeletionTask).ToArray(),
+            descendants = report?.Descendants.Select(SerializeDeletionTask).ToArray(),
+            removed_artifacts = report?.RemovedArtifacts.Select(artifact => new
+            {
+                task_id = artifact.TaskId,
+                path = artifact.VaultRelativePath,
+            }).ToArray(),
+            rewritten_backlink_pages = report?.RewrittenBacklinkPages.Select(page => new
+            {
+                path = page.VaultRelativePath,
+                replacement_count = page.ReplacementCount,
+            }).ToArray(),
+            removed_artifact_directories = report?.RemovedArtifactDirectories,
+        });
+    }
+
+    private static string SerializeTaskDeletionPreflightOutcome(
+        TaskDeletionPreflightOutcome outcome)
+    {
+        var preflight = outcome.Preflight;
+        return JsonSerializer.Serialize(new
+        {
+            outcome = outcome.Outcome == "ready" ? outcome.Outcome : null,
+            error = outcome.Outcome == "ready" ? null : outcome.Outcome,
+            message = outcome.Error,
+            preflight_revision = preflight?.PreflightRevision,
+            task = preflight is null ? null : SerializeDeletionTask(preflight.Task),
+            descendant_ids = preflight?.Descendants.Select(task => task.Id).ToArray(),
+            descendants = preflight?.Descendants.Select(SerializeDeletionTask).ToArray(),
+            artifacts = preflight?.Artifacts.Select(artifact => new
+            {
+                task_id = artifact.TaskId,
+                path = artifact.VaultRelativePath,
+            }).ToArray(),
+            backlink_pages = preflight?.BacklinkPages.Select(page => new
+            {
+                path = page.VaultRelativePath,
+                replacement_count = page.ReplacementCount,
+            }).ToArray(),
+            artifact_directories = preflight?.ArtifactDirectories,
+        });
+    }
+
+    private static object SerializeDeletionTask(TaskDeletionTask task) => new
+    {
+        id = task.Id,
+        title = task.Title,
+        resource_revision = task.ResourceRevision,
+    };
 
     private static object? SerializeTaskSnapshot(ResourceMutationTaskSnapshot? task)
     {

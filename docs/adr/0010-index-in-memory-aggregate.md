@@ -4,6 +4,9 @@
 **Amended**: 2026-08-13 - Task Query is the shared Index-context retrieval seam
 with warm Index and stateless fresh-Vault adapters; superseded shallow query
 helpers have been retired.
+**Amended**: 2026-08-14 - guarded Hard deletion emits one `TaskDeleted` event
+per removed Task and `TaskWritten` for surviving Task pages repaired in the same
+transaction; cross-process deletion still converges through watcher deltas.
 **Context slice**: `IndexService`, `VaultService`, `FileWatcherService`,
 `SelfWriteCoordinator`, every view model that used to call `VaultService.LoadAll()`.
 

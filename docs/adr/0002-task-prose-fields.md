@@ -1,6 +1,9 @@
 # ADR 0002: Task prose lives in three named slots — Description, Notes, Artifacts
 
 **Status**: Accepted
+**Amended**: 2026-08-14 — Artifacts remain owned by their Task through
+Cancellation and are removed with the complete owned Artifact folder only by
+the guarded Hard-deletion transaction in ADR 0018.
 **Context slice**: Artifacts feature (PRD `wiki/decisions/glasswork-artifacts-prd.md`); resolves issue #45
 
 ## Context

@@ -113,6 +113,14 @@ public sealed partial class WorkLogPage : Page
         }
     }
 
+    private void OpenCancelledTask_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: CancelledTaskRow row }) return;
+        var task = App.Index.ById(row.Id) ?? App.Vault.Load(row.Id);
+        if (task is not null)
+            Frame.Navigate(typeof(TaskDetailPage), task);
+    }
+
     private void PrevWeek_Click(object sender, RoutedEventArgs e)
     {
         _currentWeekStart = _currentWeekStart.AddDays(-7);
@@ -157,6 +165,7 @@ public sealed class CancelledTaskRow
     public string CancelledAtText { get; set; } = string.Empty;
     public string ReasonText { get; set; } = string.Empty;
     public string RestoreAccessibilityName { get; set; } = string.Empty;
+    public string OpenAccessibilityName { get; set; } = string.Empty;
 
     public static CancelledTaskRow From(Glasswork.Core.Models.GlassworkTask task)
     {
@@ -171,6 +180,7 @@ public sealed class CancelledTaskRow
             CancelledAtText = cancelledAtText,
             ReasonText = reasonText,
             RestoreAccessibilityName = $"Restore {task.Title} to Backlog",
+            OpenAccessibilityName = $"Open {task.Title}",
         };
     }
 }
