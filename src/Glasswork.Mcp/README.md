@@ -2,7 +2,8 @@
 
 `glasswork-mcp` is a standalone [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI agents typed read/write access to a [Glasswork](https://github.com/tjegbejimba/Glasswork) task vault. It communicates over stdio and requires no running Glasswork app instance.
 
-> **v0.9.0**: enforces fail-closed mutations. Clients must provide a
+> **v0.10.0**: adds capability-gated Authoritative ADO reconciliation while
+> preserving the fail-closed mutation contract. Clients must provide a
 > `mutation_id` and an applicable `if_absent` or Resource Revision precondition
 > on every Task and task-owned-file mutation. See [CHANGELOG](./CHANGELOG.md)
 > for migration notes.
@@ -113,6 +114,7 @@ The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., 
 | `transact_tasks` | v0.9.0 | Idempotently create explicit-ID Tasks or conditionally update existing Tasks |
 | `cancel_task` | current | Reversibly archive an active Task |
 | `restore_task` | current | Restore a Cancelled Task to todo |
+| `reconcile_ado_task` | current | Apply the exact authoritative ADO cancellation/resumed-active state machine |
 | `preflight_delete_task` | current | Preview Hard-deletion impact and obtain its preflight revision |
 | `delete_task` | current | Permanently delete a guarded Task subtree and repair inbound Wiki links |
 | `add_task` | v0.2.0 | Create a new task file |
@@ -141,7 +143,8 @@ Use this read-only operation before relying on optional workflow guarantees:
     "complete_set_relationships",
     "transaction_idempotency",
     "recoverable_all_or_none_commit",
-    "guarded_hard_deletion"
+    "guarded_hard_deletion",
+    "authoritative_ado_reconciliation"
   ]
 }
 ```
@@ -180,6 +183,34 @@ Reusing a mutation ID for a changed request is rejected.
 `transact_tasks` accepts read-only Revision assertions, typed field operations,
 and complete relationship replacement. Recovery runs before managed access and
 commits changes all-or-none.
+
+### `reconcile_ado_task`
+
+This is the only MCP interface for Authoritative ADO reconciliation. It requires
+the named `authoritative_ado_reconciliation` capability and accepts:
+
+```json
+{
+  "task_id": "imported-task-id",
+  "ado_work_item_id": 12345678,
+  "authoritative_state": "Removed",
+  "mutation_id": "ado-reconcile-12345678-1",
+  "if_revision": "rr1-..."
+}
+```
+
+Core verifies that the Task represents that ADO work-item ID before applying an
+exact, case-sensitive state transition. `Removed` cancels only `todo`, `doing`,
+or `blocked`, stamps reason `ADO work item removed`, and clears `my_day`.
+`Active`, `In Progress`, and `In Review` restore only a Cancelled Task directly
+to `doing` while clearing Cancellation metadata. Every other state is a no-op;
+`done` is never reopened or reclassified. The response reports
+`source: "azure-devops"`, the authoritative state, `action` (`cancelled`,
+`restored`, or `unchanged`), final status, and the new Resource Revision.
+
+The operation uses the existing journaled conditional mutation and idempotency
+contract. It does not call `delete_task`, and clients must not replace it with
+raw Cancellation YAML or `restore_task` followed by generic status mutation.
 
 `add_artifact` uses the same fail-closed rule: creation requires
 `mutation_id` and `if_absent: true`; overwrite requires `mutation_id` and the
@@ -255,6 +286,7 @@ Vault edits and retains invalid deletion journals/backups for explicit repair.
 | Add an existing task to My Day | `set_my_day` |
 | Archive abandoned work safely | `cancel_task` |
 | Restore archived work | `restore_task` |
+| Reconcile exact authoritative ADO removal/resumption | `reconcile_ado_task` after `get_capabilities` |
 | Preview permanent deletion impact | `preflight_delete_task` |
 | Irreversibly remove a reviewed Task subtree | `delete_task` |
 | Orient before starting work on a new issue | `search_tasks` (find prior art), then `load_context` (deep-dive) |

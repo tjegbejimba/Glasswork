@@ -48,8 +48,10 @@ The in-memory shape of a task and its subtasks. Pure C# in
   `cancellation_reason` live in Task frontmatter. Cancellation clears only
   `my_day` among user scheduling fields and preserves Task prose, dates, Links,
   Artifacts, and relationships. A Cancelled Task can be restored to `todo`;
-  Core also exposes a guarded `in-progress` restore target for authoritative
-  automation. See ADR 0018.
+  Authoritative ADO reconciliation is the only MCP automation seam that may use
+  Core's guarded direct `in-progress` restore target. It validates the matching
+  ADO identity and exact state, never reopens `done`, and never Hard-deletes.
+  See ADR 0018.
 - **Hard deletion**: a separate irreversible operation, never a Cancellation
   mode. It is available for every Task type only after a preflight and exact
   title/Resource Revision guards. Descendant Tasks require explicit full-subtree

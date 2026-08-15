@@ -1365,6 +1365,57 @@ public sealed class GlassworkTools
             mutation.Task?.ResourceRevision));
     }
 
+    [McpServerTool(Name = "reconcile_ado_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Apply the narrowly bounded authoritative Azure DevOps cancellation or resumed-active restoration lifecycle to a matching imported Task.")]
+    public string ReconcileAdoTask(
+        [Description("Glasswork Task ID matched to the imported Azure DevOps work item.")] string task_id,
+        [Description("Authoritative Azure DevOps work-item ID represented by the Task.")] int? ado_work_item_id,
+        [Description("Exact authoritative Azure DevOps state.")] string? authoritative_state,
+        [Description("Client-generated idempotency key.")] string? mutation_id,
+        [Description("Resource Revision observed before the update.")] string? if_revision)
+    {
+        using var scope = _logger?.BeginCall("reconcile_ado_task");
+        if (string.IsNullOrWhiteSpace(mutation_id) || string.IsNullOrWhiteSpace(if_revision))
+            return SerializePreconditionRequired(scope);
+
+        var safeId = SanitizeId(task_id);
+        if (safeId is null)
+        {
+            scope?.SetResult("not_found");
+            return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+        }
+
+        var mutation = _mutations.ReconcileAdoTask(
+            mutation_id,
+            safeId,
+            if_revision,
+            ado_work_item_id,
+            authoritative_state);
+        if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
+            return SerializeMutationOutcome(mutation);
+
+        var action = mutation.Outcome == "applied"
+            ? mutation.Task?.Status switch
+            {
+                GlassworkTask.Statuses.Cancelled => "cancelled",
+                "doing" => "restored",
+                _ => "unchanged",
+            }
+            : "unchanged";
+        scope?.SetResult("success");
+        return JsonSerializer.Serialize(new AdoTaskReconciliationResult(
+            safeId,
+            ado_work_item_id!.Value,
+            "azure-devops",
+            authoritative_state!,
+            action,
+            mutation.Task?.Status ?? string.Empty,
+            mutation.Task?.ResourceRevision,
+            mutation.Task?.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+            mutation.Task?.CancellationReason));
+    }
+
     [McpServerTool(Name = "preflight_delete_task")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("Preview every Task, Artifact, and inbound Wiki-link page affected by a permanent Task deletion. Returns the opaque preflight_revision required for cascade deletion.")]
@@ -3053,6 +3104,17 @@ public sealed class GlassworkTools
 
     private sealed record TaskLifecycleResult(
         [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("resource_revision")] string? ResourceRevision,
+        [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,
+        [property: JsonPropertyName("cancellation_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancellationReason = null);
+
+    private sealed record AdoTaskReconciliationResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("ado_work_item_id")] int AdoWorkItemId,
+        [property: JsonPropertyName("source")] string Source,
+        [property: JsonPropertyName("authoritative_state")] string AuthoritativeState,
+        [property: JsonPropertyName("action")] string Action,
         [property: JsonPropertyName("status")] string Status,
         [property: JsonPropertyName("resource_revision")] string? ResourceRevision,
         [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,

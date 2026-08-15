@@ -70,7 +70,8 @@ public sealed class ResourceRevisionTests
         CollectionAssert.Contains(implemented, "transaction_idempotency");
         CollectionAssert.Contains(implemented, "recoverable_all_or_none_commit");
         CollectionAssert.Contains(implemented, "guarded_hard_deletion");
-        Assert.AreEqual(0, future.Length);
+        CollectionAssert.Contains(implemented, "authoritative_ado_reconciliation");
+        Assert.IsEmpty(future);
     }
 
     [TestMethod]

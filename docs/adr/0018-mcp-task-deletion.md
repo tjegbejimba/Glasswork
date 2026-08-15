@@ -52,8 +52,9 @@ Restoring a Cancelled Task clears `cancelled_at` and `cancellation_reason`.
 User and MCP restore defaults to `todo`.
 
 Core accepts an explicit restore target of `todo` or `in-progress`. The latter
-is a guarded seam for a later authoritative automation workflow; it is not
-exposed as an arbitrary MCP restore choice in this layer.
+is a guarded seam for Authoritative ADO reconciliation; it is not exposed as an
+arbitrary MCP restore choice. Manual UI and ordinary MCP `restore_task` remain
+fixed to `todo`.
 
 ### 4. Work Log owns the cancellation archive UI
 
@@ -85,6 +86,23 @@ manual MCP reason is normalized to `Cancelled by agent`.
 Generic Task status mutation does not accept `cancelled`, and a Cancelled Task
 must be restored before ordinary mutation. This keeps lifecycle invariants
 behind the cancellation module rather than duplicating them across callers.
+
+MCP additionally exposes the dedicated `reconcile_ado_task` operation behind
+the named `authoritative_ado_reconciliation` capability. It requires the
+Glasswork Task ID, matching ADO work-item ID, exact authoritative ADO state,
+client mutation ID, and current Resource Revision. Core validates the imported
+ADO identity before applying either transition:
+
+- exact `Removed` cancels only `todo`, `in-progress`, or `blocked`, using reason
+  `ADO work item removed`;
+- exact `Active`, `In Progress`, or `In Review` restores only a Cancelled Task,
+  directly to `in-progress` in the same journaled mutation;
+- every other state is a semantic no-op, and `done` always wins.
+
+The operation never infers `Removed` from absence, never calls Hard deletion,
+and never chains `restore_task` through an observable intermediate `todo`
+state. Capability discovery lets the external sprint skill fail closed and
+report pending transitions when the supporting MCP release is not installed.
 
 ### 6. Hard deletion is explicit and irreversible
 

@@ -203,6 +203,23 @@ Resource Mutation Module. MCP only serializes the structured preflight, complete
 mutation report, and stable error codes. Capability discovery advertises
 `guarded_hard_deletion`.
 
+### Amendment — Authoritative ADO reconciliation
+
+`reconcile_ado_task` is the dedicated transport interface for the bounded
+Azure DevOps lifecycle state machine recorded in ADR 0018. The
+`authoritative_ado_reconciliation` capability names the complete guarantee:
+matching ADO identity validation, exact-state allowlists, direct
+Cancelled-to-`in-progress` restoration with no intermediate `todo`, done-wins,
+Resource Revision and idempotency guards, journal recovery, and Self-write
+registration. The operation may cancel but can never Hard-delete.
+
+Clients must capability-discover before relying on this workflow. A missing
+capability or tool is not a downgrade path: the client reports pending
+transitions and requires the independently distributed `glasswork-mcp` 0.10.0
+or later rather than writing Cancellation YAML or composing `restore_task` with
+generic status mutation. The app Release package does not install the MCP tool;
+the repository's `scripts/install-mcp.ps1` owns that deployment.
+
 ### Amendment — blocked task contract
 
 Task-level status `blocked` is now first-class across the MCP surface. The
