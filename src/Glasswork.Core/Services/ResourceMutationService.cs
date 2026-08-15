@@ -52,7 +52,9 @@ public sealed record ResourceMutationOutcome(
     ResourceMutationTaskSnapshot? Task,
     string? Error = null,
     IReadOnlyList<ResourceMutationTaskSnapshot>? Tasks = null,
-    IReadOnlyList<ResourceMutationDiagnostic>? Diagnostics = null);
+    IReadOnlyList<ResourceMutationDiagnostic>? Diagnostics = null,
+    TaskDeletionPreflight? DeletionPreflight = null,
+    TaskDeletionReport? DeletionReport = null);
 
 public sealed record ResourceMutationDiagnostic(
     string Code,
@@ -79,12 +81,14 @@ public sealed partial class ResourceMutationService
         string vaultPath,
         VaultService? vault = null,
         Func<DateTimeOffset>? clock = null,
-        IResourceMutationFaultInjector? faults = null)
+        IResourceMutationFaultInjector? faults = null,
+        IBacklinkIndex? backlinkIndex = null)
     {
         _vaultPath = vaultPath;
         _vault = vault ?? new VaultService(vaultPath);
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _faults = faults;
+        _backlinkIndex = backlinkIndex;
         _statePath = Path.Combine(vaultPath, ".glasswork", "resource-mutations.json");
         _vault.RegisterManagedRecovery(RecoverWithExclusiveLease);
         _vault.RegisterManagedDeleteRecovery(DrainRecoveredDeletes);
@@ -1738,11 +1742,22 @@ public sealed partial class ResourceMutationService
 
     private IReadOnlyList<string> RecoverUnsafe()
     {
-        if (!File.Exists(JournalPath)) return Array.Empty<string>();
+        if (!File.Exists(JournalPath))
+        {
+            CleanupOrphanDeletionOperations();
+            return Array.Empty<string>();
+        }
 
+        var isTaskDeletionJournal = false;
         try
         {
             using var document = JsonDocument.Parse(File.ReadAllText(JournalPath));
+            if (document.RootElement.TryGetProperty("Kind", out var kind)
+                && string.Equals(kind.GetString(), TaskDeletionJournalKind, StringComparison.Ordinal))
+            {
+                isTaskDeletionJournal = true;
+                return RecoverTaskDeletionUnsafe(document.RootElement);
+            }
             if (document.RootElement.TryGetProperty("Entries", out _)
                 || document.RootElement.TryGetProperty("entries", out _))
                 return RecoverGraphUnsafe(document.RootElement);
@@ -1813,6 +1828,24 @@ public sealed partial class ResourceMutationService
 
             DeleteJournal();
             return entry.Committed && !entry.Deleted ? [entry.TaskId] : Array.Empty<string>();
+        }
+        catch (JsonException ex) when (HasPendingDeletionOperations())
+        {
+            throw new InvalidDataException(
+                "Task deletion recovery is blocked because its journal could not be parsed safely.",
+                ex);
+        }
+        catch (FormatException ex) when (isTaskDeletionJournal || HasPendingDeletionOperations())
+        {
+            throw new InvalidDataException(
+                "Task deletion recovery is blocked because its journal content is invalid.",
+                ex);
+        }
+        catch (InvalidDataException ex) when (isTaskDeletionJournal || HasPendingDeletionOperations())
+        {
+            throw new InvalidDataException(
+                "Task deletion recovery could not safely validate its journal.",
+                ex);
         }
         catch (JsonException)
         {

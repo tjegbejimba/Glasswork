@@ -207,6 +207,40 @@ public class VaultServiceTests
     }
 
     [TestMethod]
+    public void TargetedMutations_RejectPersistedCancelledTasks()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "cancelled",
+            Title = "Cancelled",
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = DateTimeOffset.UtcNow,
+            CancellationReason = "Superseded",
+            Links = [new TaskLink { Type = TaskLink.Types.Doc, Value = "before" }],
+            Subtasks =
+            [
+                new SubTask { Text = "One" },
+                new SubTask { Text = "Two" },
+            ],
+        };
+        _vault.Save(task);
+
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            _vault.UpdateSubtaskCheckbox("cancelled", "One", isCompleted: true));
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            _vault.SetLinks(
+                "cancelled",
+                [new TaskLink { Type = TaskLink.Types.Doc, Value = "after" }]));
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            _vault.ReorderSubtask("cancelled", 0, 1));
+
+        var persisted = _vault.Load("cancelled")!;
+        Assert.IsFalse(persisted.Subtasks[0].IsCompleted);
+        Assert.AreEqual("before", persisted.Links[0].Value);
+        Assert.AreEqual("One", persisted.Subtasks[0].Text);
+    }
+
+    [TestMethod]
     public void UpdateSubtaskCheckbox_RegistersWriteWithCoordinator()
     {
         var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));

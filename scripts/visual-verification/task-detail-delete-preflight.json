@@ -1,0 +1,78 @@
+{
+  "name": "Task Detail hard deletion preflight",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "vv-delete-root",
+      "title": "Delete obsolete launch plan",
+      "description": "A guarded hard deletion previews every affected resource.",
+      "status": "todo",
+      "artifacts": [
+        {
+          "name": "old-plan.md",
+          "markdown": "# Obsolete plan"
+        }
+      ]
+    },
+    {
+      "id": "vv-delete-child",
+      "title": "Delete obsolete launch child",
+      "parent": "vv-delete-root",
+      "status": "todo"
+    },
+    {
+      "id": "vv-delete-linker",
+      "title": "Keep launch context",
+      "description": "Historical context points to [[vv-delete-root]].",
+      "status": "todo"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Delete obsolete launch plan",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Delete obsolete launch plan",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "DeleteTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "DeleteTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "DeleteTaskImpactSummary",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "DeleteCascadeCheckBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "DeleteTaskConfirmTitleBox",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-detail-delete-preflight",
+      "waitMilliseconds": 800
+    }
+  ]
+}

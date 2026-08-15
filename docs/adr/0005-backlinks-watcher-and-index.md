@@ -1,6 +1,9 @@
 # ADR 0005: Backlinks index and watcher pipeline
 
 **Status**: Accepted
+**Amended**: 2026-08-14 — guarded Hard deletion now performs precise writes
+outside `wiki/todo/`; the historical disjoint-write assumption below is
+superseded by the same-process/cross-process rule in this amendment.
 **Context slice**: Backlinks feature (PRD #54, slices #55–#58); wiki PRD `wiki/decisions/glasswork-backlinks-prd.md`
 
 ## Context
@@ -31,9 +34,26 @@ The Backlinks feature surfaces those incoming wiki references on TaskDetail (PRD
 
 Three independent pipelines (task / artifact / backlinks), each with a single concern, is cleaner than one pipeline with mode-switching.
 
-### Why the watcher does NOT register with `SelfWriteCoordinator`
+### Self-write coordination after guarded Hard deletion
 
-Glasswork only writes to `wiki/todo/`. `BacklinksWatcher` explicitly excludes `wiki/todo/`. The two sets are disjoint by construction — the backlinks watcher will never see one of our own writes, so there is nothing to suppress. Recording this here so a future contributor doesn't add `SelfWrites` plumbing reflexively.
+The original implementation deliberately omitted `SelfWriteCoordinator`
+because Glasswork wrote only under `wiki/todo/`. Hard deletion changes that
+boundary: exact inbound Wiki links are rewritten in arbitrary Markdown pages
+inside the Vault before their Task targets are removed.
+
+`BacklinksWatcher` therefore receives the shared coordinator and applies the
+same split established by ADR 0010:
+
+- a **same-process** rewrite is suppressed at the watcher because the Resource
+  Mutation Module refreshes the injected `IBacklinkIndex` directly and emits one
+  coherent affected-ID event after commit;
+- a **cross-process** MCP rewrite exists only in the marker file, not the
+  desktop process's in-memory set, so the watcher still consumes it and refreshes
+  the desktop Backlink index.
+
+This prevents duplicate same-process updates without hiding MCP changes. The
+task watcher remains scoped to top-level Task files, and Artifact watching
+remains independent.
 
 ### Why refresh-section-only, never reload the task model
 

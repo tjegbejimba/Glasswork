@@ -69,6 +69,12 @@ Manual cancellation supplies `Cancelled by user` when no reason is entered.
 Both UI actions call the dedicated Task cancellation lifecycle seam; generic
 status mutation remains unavailable for cancellation or restore.
 
+Cancelled rows open Task Detail so the Hard-deletion danger zone remains
+reachable. The rest of Cancelled Task Detail is read-only: title, Task fields,
+Notes, Links, and Subtasks cannot be changed until Restore. The shared Task-edit
+save controller enforces that policy against the persisted lifecycle state, not
+only disabled controls.
+
 ### 5. MCP exposes lifecycle verbs
 
 MCP exposes `cancel_task` and `restore_task`, not delete/undelete aliases.
@@ -80,13 +86,79 @@ Generic Task status mutation does not accept `cancelled`, and a Cancelled Task
 must be restored before ordinary mutation. This keeps lifecycle invariants
 behind the cancellation module rather than duplicating them across callers.
 
-### 6. Hard deletion is a later dependent layer
+### 6. Hard deletion is explicit and irreversible
 
-No hard-delete guarantee ships with this decision. A later layer may define
-explicit guarded removal of the Task file, Artifact folder, and optional child
-Task cascade, including self-write coordination, dangling-link policy, and
-crash recovery. That work depends on the cancellation/archive lifecycle but is
-not implied by it.
+**Hard deletion** is a separate operation, not a mode of Cancellation. It
+applies equally to `task`, `bug`, and `pbi` Task types and never happens as a
+default or automatic lifecycle transition.
+
+The Core interface exposes a read-only deletion preflight and one guarded
+mutation. The mutation requires:
+
+- a client-generated `mutation_id`;
+- the latest Resource Revision for the selected Task;
+- `confirm_title` matching the current Task title with ordinal exactness;
+- `cascade_children: true` when any descendants exist;
+- the opaque `if_preflight_revision` returned by the reviewed preflight whenever
+  cascade is enabled.
+
+Missing guards, a stale Revision, title mismatch, descendants without cascade,
+or a changed preflight revision fail before any Vault content changes. A
+descendant failure returns the complete ordered descendant ID set and the full
+preflight for an informed retry. A newly added descendant can therefore never
+join an already-approved cascade silently.
+
+### 7. The Task subtree owns its Artifact folders
+
+Child Tasks are separate resources. Preflight resolves the complete descendant
+subtree from fresh Task files, including the existing PBI ADO-parent identity
+form. Without cascade the operation fails; with cascade it deletes every
+descendant and reports each removed ID/title.
+
+Every deleted Task owns `<taskId>.artifacts/`. The complete folder is backed up
+and removed, including nested and non-Markdown files. The mutation report lists
+every removed Artifact path. PBIs receive exactly the same guards and cascade
+policy as other Tasks.
+
+### 8. Exact inbound Wiki links are repaired first
+
+Before deleting files, Core scans Vault Markdown pages, including surviving Task
+files rather than assuming the external-only Backlink index is complete. It
+uses the canonical Wiki-link parser and replaces only exact supported forms:
+
+- `[[task-id|alias]]` becomes `alias`;
+- `[[task-id]]` becomes the deleted Task title.
+
+Multiple occurrences and every Task in a cascaded subtree are handled.
+Unrelated targets and surrounding prose remain byte-for-byte unchanged.
+Encoding, BOM, and line endings are preserved. Generated `_*.md` Task surfaces
+and internal `.glasswork` state are not rewritten. Every edited Vault-relative
+page and replacement count appears in the mutation report.
+
+### 9. One recoverable multi-file mutation
+
+Hard deletion deepens the Resource Mutation Module rather than adding a second
+filesystem workflow. Under the Vault-scoped exclusive lease it:
+
+1. captures a coherent preflight and revalidates the complete impact;
+2. stages durable file/directory backups and intended replacement bytes under
+   `wiki/todo/.glasswork/deletion-operations/`;
+3. writes the existing atomic mutation journal;
+4. applies exact page rewrites, atomically moves Artifact folders into hidden
+   staged-deletion paths, then deletes Task files leaf-to-root;
+5. marks the journal committed, records the idempotent result, and removes
+   hidden staging state.
+
+An ordinary pre-commit failure rolls every path back. Startup recovery rolls an
+uncommitted journal back or finishes a committed journal, then reconstructs the
+same replayable mutation report with its recovery outcome. Before rollback,
+current paths must still match a journal-known original or staged state;
+post-crash edits/re-creations block recovery rather than being overwritten.
+Invalid/torn deletion journals retain their hidden backups and block managed
+access until repaired instead of being archived as ordinary single-file journal
+damage. Same-process writes register with `SelfWriteCoordinator`; Index and
+Backlink index updates are coherent after commit and rollback. Cross-process MCP
+changes remain visible to the desktop watcher paths from ADRs 0005 and 0010.
 
 Deleting an in-file checklist Subtask remains a separate operation backed by
 `TaskService.DeleteSubtask`; it does not delete a Task.
@@ -100,12 +172,16 @@ Deleting an in-file checklist Subtask remains a separate operation backed by
 - Backlinks, relationships, prose, and Artifacts remain intact.
 - Lifecycle validation, timestamping, Resource Revision, idempotency, and
   self-write notification stay concentrated behind one mutation seam.
+- Users and agents can deliberately remove mistakes without leaving owned
+  Artifacts or parser-supported inbound Wiki links dangling.
 
 ### Negative
 
 - Every default Task selection must deliberately exclude the archive state.
 - Consumers that need archived Tasks must request `status: cancelled`
   explicitly.
+- Hard deletion scans the Vault and stages backups, so it is intentionally
+  heavier than Cancellation.
 
 ### Neutral
 
@@ -114,6 +190,9 @@ Deleting an in-file checklist Subtask remains a separate operation backed by
 
 ## Out of scope
 
-- Hard deletion and cascade policy.
 - Bulk cancellation or bulk restore.
 - Undo history beyond explicit restore.
+- Bulk Hard deletion.
+- Automatic Hard deletion from ADO state or sprint automation.
+- Undo after a committed Hard deletion; crash recovery is transactional
+  completion/rollback, not user-facing undo history.

@@ -24,7 +24,8 @@ parses YAML frontmatter, watches for external changes (Obsidian editing,
 agent edits, git pulls), and serializes back without losing user content.
 
 - **Source of truth for**: every `GlassworkTask`, every subtask, every note.
-- **Key services**: `VaultService`, `FileWatcherService`, `SelfWriteCoordinator`.
+- **Key services**: `VaultService`, `ResourceMutationService`,
+  `FileWatcherService`, `SelfWriteCoordinator`.
 - **Speaks to**: Task Model (parses files into models), Presentation (raises
   `TaskFileChangedExternally` events).
 - **Does not own**: anything ephemeral, anything UI.
@@ -49,6 +50,14 @@ The in-memory shape of a task and its subtasks. Pure C# in
   Artifacts, and relationships. A Cancelled Task can be restored to `todo`;
   Core also exposes a guarded `in-progress` restore target for authoritative
   automation. See ADR 0018.
+- **Hard deletion**: a separate irreversible operation, never a Cancellation
+  mode. It is available for every Task type only after a preflight and exact
+  title/Resource Revision guards. Descendant Tasks require explicit full-subtree
+  acknowledgement; owned Artifacts are removed and exact inbound Wiki links are
+  rewritten before the Task files disappear. Cascades are bound to the opaque
+  preflight revision the caller reviewed. The operation is journaled, backed up,
+  all-or-none, and restart-recoverable; recovery fails closed rather than
+  overwriting post-crash Vault changes. See ADR 0018.
 - **Speaks to**: Vault Sync (deserialized from), Presentation (bound to).
 - **Does not own**: persistence, file paths, watch state.
 - **Three-tier task prose model** (see ADR 0002):
@@ -102,6 +111,11 @@ removal-from-set as well as add and replace. Every query method returns
 exposed by reference. The `_index.md` / `_today.md` agent-facing markdown
 surfaces are subscribers on the delta channel (debounced ~500ms), not
 initiators. See ADR 0010 and issue #184.
+
+Hard deletion emits `TaskDeleted` for every removed Task and `TaskWritten` for
+every surviving task page whose exact inbound Wiki links were rewritten. The
+external-page Backlink index is refreshed directly for same-process deletion;
+cross-process MCP rewrites converge through `BacklinksWatcher`.
 
 - **Owns**: `IndexService`, the `TasksChanged` delta channel, the
   `_index.md` / `_today.md` writers, the carryover / by-id Index accessors,
@@ -165,6 +179,12 @@ no domain logic — composes the other contexts into screens.
   successful work from the archive with Completed and Cancelled tabs. Cancelled
   is newest-first and restores Tasks to Backlog through the guarded lifecycle
   seam. Task Detail exposes manual Cancellation only for active Tasks.
+- **Hard-deletion surface**: Task Detail owns a distinct danger zone for every
+  Task type and lifecycle state. A preflight previews descendant, Artifact, and
+  inbound-link impact; exact title entry and explicit cascade acknowledgement
+  gate the irreversible action. Cancelled rows in Work Log open Task Detail so
+  archived Tasks remain eligible without weakening Restore. Cancelled Task
+  Detail is otherwise read-only; ordinary edits require Restore first.
 - **Speaks to**: every other context (consumes services).
 - **Default landing**: `MyDayPage` (Home Dashboard is a future concept).
 - **Wiki view**: out of scope for now. Vault is also the user's personal
@@ -246,9 +266,11 @@ App Update consumes as the **Available version**.
   When adding a new service, follow this shape.
 - **Debouncing** — `Debouncer` class (500ms) is the standard for batching
   writes. Reused for both index regen and UI state writes.
-- **Self-write tracking** — `SelfWriteCoordinator` suppresses watcher echoes
-  from our own writes. Any new code that writes the vault must register
-  with it, or watcher events will fire spuriously.
+- **Self-write tracking** — `SelfWriteCoordinator` distinguishes same-process
+  writes from cross-process MCP writes. Any new code that writes the vault must
+  register with it, including Hard-deletion backlink rewrites outside
+  `wiki/todo/`. Task and Backlink watcher pipelines suppress same-process echoes
+  while still consuming cross-process writes needed to refresh desktop indexes.
 - **Virtual My Day promotion** — a task can be "in My Day today" without
   `task.MyDay` being set. Sources: task due-date, flagged subtask, or
   subtask due-date. Computed by `MyDayViewModel`; the vault is never

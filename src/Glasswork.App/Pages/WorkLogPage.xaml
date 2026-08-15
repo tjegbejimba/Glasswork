@@ -101,10 +101,18 @@
                                     CornerRadius="8">
                                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                                         <StackPanel Spacing="4">
-                                            <TextBlock
+                                            <Button
+                                                AutomationProperties.AutomationId="OpenCancelledTaskButton"
+                                                AutomationProperties.Name="{Binding OpenAccessibilityName}"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                Click="OpenCancelledTask_Click"
+                                                Content="{Binding Title}"
+                                                DataContext="{Binding}"
                                                 FontSize="16"
                                                 FontWeight="SemiBold"
-                                                Text="{Binding Title}" />
+                                                HorizontalAlignment="Left"
+                                                Padding="0" />
                                             <TextBlock
                                                 AutomationProperties.AutomationId="CancelledTaskTimestamp"
                                                 Opacity="0.7"

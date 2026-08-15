@@ -355,7 +355,6 @@ public partial class App : Application
 
         SelfWrites = new SelfWriteCoordinator(vaultPath);
         Vault = new VaultService(vaultPath, SelfWrites);
-        Mutations = new ResourceMutationService(vaultPath, Vault);
 
         Artifacts = new FileSystemArtifactStore(VaultRoot);
         ObsidianLauncher = new ObsidianLauncher(VaultRoot);
@@ -373,6 +372,12 @@ public partial class App : Application
             }
         }
         BacklinkIndex = backlinkIndex;
+        Mutations = new ResourceMutationService(
+            vaultPath,
+            Vault,
+            backlinkIndex: BacklinkIndex);
+        Mutations.BacklinksChanged += (s, e) =>
+            BacklinksChangedExternally?.Invoke(s, e);
 
         // One-shot V1 → V2 migration of any pre-existing files. Idempotent: V2 files
         // are skipped, so re-running on every launch is cheap.
@@ -505,7 +510,11 @@ public partial class App : Application
         ArtifactsWatcher.ArtifactChanged += (s, e) => ArtifactChangedExternally?.Invoke(s, e);
         ArtifactsWatcher.Start();
 
-        BacklinksWatcher = new BacklinksWatcher(VaultRoot, BacklinkIndex);
+        BacklinksWatcher = new BacklinksWatcher(
+            VaultRoot,
+            BacklinkIndex,
+            SelfWrites,
+            TimeSpan.FromMilliseconds(250));
         BacklinksWatcher.BacklinksChanged += (s, e) => BacklinksChangedExternally?.Invoke(s, e);
         BacklinksWatcher.Start();
 

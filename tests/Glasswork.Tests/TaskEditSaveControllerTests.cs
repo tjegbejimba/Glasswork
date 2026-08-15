@@ -72,4 +72,27 @@ public class TaskEditSaveControllerTests
 
         Assert.AreEqual(TaskEditSaveResult.Missing, result);
     }
+
+    [TestMethod]
+    public void Save_WhenPersistedTaskIsCancelled_ReturnsReadOnlyAndPreservesDisk()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "task",
+            Title = "Archived",
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = DateTimeOffset.UtcNow,
+            CancellationReason = "Superseded",
+        });
+        var edit = _vault.Load("task")!;
+        edit.Title = "Changed";
+        edit.Status = GlassworkTask.Statuses.Todo;
+
+        var result = _controller.Save(edit);
+
+        Assert.AreEqual(TaskEditSaveResult.ReadOnly, result);
+        var persisted = _vault.Load("task")!;
+        Assert.AreEqual("Archived", persisted.Title);
+        Assert.IsTrue(persisted.IsCancelled);
+    }
 }
