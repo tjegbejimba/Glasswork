@@ -85,6 +85,31 @@ public class WorkLogService
     }
 
     /// <summary>
+    /// Returns the cancellation archive newest-first. Legacy entries without
+    /// <c>cancelled_at</c> fall back to creation time, then task id keeps the
+    /// order deterministic.
+    /// </summary>
+    public IReadOnlyList<GlassworkTask> GetCancelledTasks()
+    {
+        var result = _taskQuery.Execute(new TaskQueryRequest(
+            DateTimeOffset.Now,
+            new ListTaskSelection(TaskQueryStatus.Cancelled)));
+        if (!result.IsSuccess)
+        {
+            var diagnostics = string.Join(
+                "; ",
+                result.Diagnostics.Select(diagnostic => $"{diagnostic.Code}: {diagnostic.Message}"));
+            throw new InvalidOperationException($"Cancelled-task Task Query failed: {diagnostics}");
+        }
+
+        return result.MaterializeTasks()
+            .OrderByDescending(task => task.CancelledAt
+                ?? new DateTimeOffset(DateTime.SpecifyKind(task.Created, DateTimeKind.Utc)))
+            .ThenBy(task => task.Id, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
     /// Generate and save the work log to the vault as a special _worklog file.
     /// </summary>
     public string GenerateAndSave(DateTime weekStart)

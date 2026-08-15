@@ -85,4 +85,56 @@ public class WorkLogServiceTests
         Assert.IsTrue(log.Contains("This week"));
         Assert.IsFalse(log.Contains("Last week"));
     }
+
+    [TestMethod]
+    public void GetCancelledTasks_ReturnsOnlyCancelledNewestFirstWithDeterministicFallback()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "older-cancelled",
+            Title = "Older cancelled",
+            Status = GlassworkTask.Statuses.Cancelled,
+            Created = new DateTime(2026, 8, 10),
+            CancelledAt = DateTimeOffset.Parse("2026-08-12T18:00:00Z"),
+            CancellationReason = "No longer needed",
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "newer-cancelled",
+            Title = "Newer cancelled",
+            Status = GlassworkTask.Statuses.Cancelled,
+            Created = new DateTime(2026, 8, 11),
+            CancelledAt = DateTimeOffset.Parse("2026-08-14T18:00:00Z"),
+            CancellationReason = "Replaced",
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "fallback-b",
+            Title = "Fallback B",
+            Status = GlassworkTask.Statuses.Cancelled,
+            Created = new DateTime(2026, 8, 13),
+            CancellationReason = "Legacy cancellation",
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "fallback-a",
+            Title = "Fallback A",
+            Status = GlassworkTask.Statuses.Cancelled,
+            Created = new DateTime(2026, 8, 13),
+            CancellationReason = "Legacy cancellation",
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "completed",
+            Title = "Completed",
+            Status = GlassworkTask.Statuses.Done,
+            CompletedAt = new DateTime(2026, 8, 14),
+        });
+
+        var service = new WorkLogService(_vault, _index);
+
+        CollectionAssert.AreEqual(
+            new[] { "newer-cancelled", "fallback-a", "fallback-b", "older-cancelled" },
+            service.GetCancelledTasks().Select(task => task.Id).ToArray());
+    }
 }

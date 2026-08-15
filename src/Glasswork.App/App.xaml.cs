@@ -99,6 +99,11 @@ public partial class App : Application
     public const string BacklogViewModeKey = "backlog.viewMode";
 
     /// <summary>
+    /// UI state key for the Work Log page's selected tab ("completed" | "cancelled").
+    /// </summary>
+    public const string WorkLogSelectedTabKey = "worklog.selectedTab";
+
+    /// <summary>
     /// Key prefix for per-parent-group collapse state on the Backlog page.
     /// Suffix is the lowercased+trimmed parent string.
     /// </summary>

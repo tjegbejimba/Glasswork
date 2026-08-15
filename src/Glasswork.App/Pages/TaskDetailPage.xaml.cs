@@ -106,6 +106,12 @@ public sealed partial class TaskDetailPage : Page
         RepairBlockedButton.Visibility = task.IsBlocked && task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
         ResumeBlockedButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
         MarkBlockedDoneButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
+        CancelTaskButton.Visibility = task.Status is (
+            GlassworkTask.Statuses.Todo
+            or GlassworkTask.Statuses.InProgress
+            or GlassworkTask.Statuses.Blocked)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
         DueDatePicker.Date = task.Due.HasValue
             ? new DateTimeOffset(task.Due.Value)
@@ -992,12 +998,6 @@ public sealed partial class TaskDetailPage : Page
 
     }
 
-    private void Delete_Click(object sender, RoutedEventArgs e)
-    {
-        App.Vault.Delete(Task.Id);
-        if (Frame.CanGoBack) Frame.GoBack();
-    }
-
     private async void OpenObsidian_Click(object sender, RoutedEventArgs e)
         => await OpenCurrentTaskInObsidianAsync();
 
@@ -1520,6 +1520,49 @@ public sealed partial class TaskDetailPage : Page
         catch (Exception ex)
         {
             await ShowOperationErrorAsync("Unable to complete blocked task", ex.Message);
+        }
+    }
+
+    private async void CancelTask_Click(object sender, RoutedEventArgs e)
+    {
+        var reasonBox = new TextBox
+        {
+            Header = "Reason (optional)",
+            PlaceholderText = "Why are you cancelling this task?",
+            MinWidth = 360,
+        };
+        AutomationProperties.SetAutomationId(reasonBox, "CancelTaskReasonBox");
+
+        var dialog = new ContentDialog
+        {
+            Title = "Cancel task?",
+            Content = reasonBox,
+            PrimaryButtonText = "Cancel task",
+            CloseButtonText = "Keep task",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot,
+        };
+        AutomationProperties.SetAutomationId(dialog, "CancelTaskDialog");
+        dialog.WithAppTheme(this);
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            return;
+
+        try
+        {
+            var reason = string.IsNullOrWhiteSpace(reasonBox.Text)
+                ? "Cancelled by user"
+                : reasonBox.Text.Trim();
+            var taskToCancel = Task.Clone();
+            App.Tasks.Cancel(taskToCancel, reason);
+            if (Frame.CanGoBack)
+                Frame.GoBack();
+            else
+                Frame.Navigate(typeof(BacklogPage));
+        }
+        catch (Exception ex)
+        {
+            await ShowOperationErrorAsync("Unable to cancel task", ex.Message);
         }
     }
 

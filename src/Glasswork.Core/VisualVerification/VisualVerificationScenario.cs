@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -108,6 +109,8 @@ public sealed class VisualVerificationTask
     public string? Due { get; init; }
     public string? MyDay { get; init; }
     public string? CompletedAt { get; init; }
+    public string? CancelledAt { get; init; }
+    public string? CancellationReason { get; init; }
     public string? Parent { get; init; }
     public List<VisualVerificationSubtask> Subtasks { get; init; } = [];
     public List<VisualVerificationArtifact> Artifacts { get; init; } = [];
@@ -125,6 +128,8 @@ public sealed class VisualVerificationTask
             Due = ParseScenarioDate(Due, today),
             MyDay = ParseScenarioDate(MyDay, today),
             CompletedAt = ParseScenarioDate(CompletedAt, today),
+            CancelledAt = ParseScenarioDateTimeOffset(CancelledAt),
+            CancellationReason = CancellationReason,
             Parent = Parent,
             Description = Description ?? string.Empty,
             Notes = Notes ?? string.Empty,
@@ -150,6 +155,19 @@ public sealed class VisualVerificationTask
                 ? parsed.Date
                 : throw new FormatException($"Invalid scenario date '{value}'. Use yyyy-MM-dd, today, yesterday, or tomorrow.")
         };
+    }
+
+    private static DateTimeOffset? ParseScenarioDateTimeOffset(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal,
+            out var parsed)
+                ? parsed.ToUniversalTime()
+                : throw new FormatException(
+                    $"Invalid scenario timestamp '{value}'. Use an RFC 3339 timestamp.");
     }
 }
 

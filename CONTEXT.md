@@ -161,6 +161,10 @@ no domain logic — composes the other contexts into screens.
   list section; Task Detail owns the user-facing actions to mark blocked, edit
   blocker details, repair malformed blocked metadata, resume, override the
   resume target, or complete directly.
+- **Cancellation surfaces**: Work Log remains the top-level Page and separates
+  successful work from the archive with Completed and Cancelled tabs. Cancelled
+  is newest-first and restores Tasks to Backlog through the guarded lifecycle
+  seam. Task Detail exposes manual Cancellation only for active Tasks.
 - **Speaks to**: every other context (consumes services).
 - **Default landing**: `MyDayPage` (Home Dashboard is a future concept).
 - **Wiki view**: out of scope for now. Vault is also the user's personal

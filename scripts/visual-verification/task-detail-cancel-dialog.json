@@ -1,0 +1,51 @@
+{
+  "name": "Task Detail cancel confirmation",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "vv-cancel-task",
+      "title": "Cancel obsolete planning task",
+      "description": "An active task exposes the guarded cancellation confirmation.",
+      "status": "todo",
+      "priority": "medium"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Cancel obsolete planning task",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Cancel obsolete planning task",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "CancelTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "CancelTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "CancelTaskReasonBox",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-detail-cancel-dialog",
+      "waitMilliseconds": 800
+    }
+  ]
+}

@@ -134,4 +134,22 @@ public class VisualVerificationScenarioTests
 
         Assert.AreEqual(today, task.ToGlassworkTask(today).CompletedAt);
     }
+
+    [TestMethod]
+    public void ToGlassworkTask_SeedsCancellationMetadata()
+    {
+        var task = new VisualVerificationTask
+        {
+            Id = "cancelled",
+            Title = "Cancelled",
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = "2026-08-14T18:30:00Z",
+            CancellationReason = "Superseded by the final plan",
+        };
+
+        var seeded = task.ToGlassworkTask(new DateTime(2026, 8, 14));
+
+        Assert.AreEqual(DateTimeOffset.Parse("2026-08-14T18:30:00Z"), seeded.CancelledAt);
+        Assert.AreEqual("Superseded by the final plan", seeded.CancellationReason);
+    }
 }
