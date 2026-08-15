@@ -1183,6 +1183,70 @@ public sealed class ResourceMutationDeletionTests
     }
 
     [TestMethod]
+    [DataRow("wiki", "todo")]
+    [DataRow("Wiki", "Todo")]
+    public void StartupRecovery_RollsBackArtifactDeletionWithConfiguredTaskDirectoryCasing(
+        string wikiDirectoryName,
+        string todoDirectoryName)
+    {
+        var vaultRoot = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-delete-case-tests",
+            Guid.NewGuid().ToString("N"));
+        var todoPath = Path.Combine(vaultRoot, wikiDirectoryName, todoDirectoryName);
+        Directory.CreateDirectory(todoPath);
+        try
+        {
+            var vault = new VaultService(
+                todoPath,
+                new SelfWriteCoordinator(todoPath));
+            var task = new GlassworkTask { Id = "root", Title = "Root title" };
+            vault.Save(task);
+            var artifactDirectory = Path.Combine(todoPath, "root.artifacts");
+            Directory.CreateDirectory(artifactDirectory);
+            var artifactPath = Path.Combine(artifactDirectory, "plan.md");
+            File.WriteAllText(artifactPath, "artifact");
+            var root = vault.Load("root")!;
+            var interrupted = new ResourceMutationService(
+                todoPath,
+                vault,
+                faults: new InterruptDeleteRecoveryFault());
+            var preflight = interrupted.PreflightTaskDeletion("root").Preflight!;
+            Assert.AreEqual(
+                $"{wikiDirectoryName}/{todoDirectoryName}/root.artifacts",
+                preflight.ArtifactDirectories.Single());
+
+            Assert.ThrowsExactly<IOException>(() => interrupted.DeleteTask(
+                "delete-case-recovery",
+                "root",
+                root.ResourceRevision,
+                root.Title,
+                cascadeChildren: false));
+
+            var recoveredVault = new VaultService(
+                todoPath,
+                new SelfWriteCoordinator(todoPath));
+            _ = new ResourceMutationService(todoPath, recoveredVault);
+
+            Assert.IsNotNull(recoveredVault.Load("root"));
+            Assert.AreEqual("artifact", File.ReadAllText(artifactPath));
+            Assert.IsFalse(File.Exists(
+                Path.Combine(todoPath, ".glasswork", "mutation-journal.json")));
+            var operationsPath = Path.Combine(
+                todoPath,
+                ".glasswork",
+                "deletion-operations");
+            Assert.IsFalse(Directory.Exists(operationsPath)
+                && Directory.EnumerateFileSystemEntries(operationsPath).Any());
+        }
+        finally
+        {
+            if (Directory.Exists(vaultRoot))
+                Directory.Delete(vaultRoot, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void StartupRecovery_RejectsATornStagedBackup()
     {
         _vault.Save(new GlassworkTask { Id = "root", Title = "Root title" });

@@ -1609,7 +1609,7 @@ public sealed partial class ResourceMutationService
         ValidateDeletionManifest(journal);
     }
 
-    private static void ValidateDeletionManifest(DeletionJournal journal)
+    private void ValidateDeletionManifest(DeletionJournal journal)
     {
         var expectedDeletedTasks = journal.Preflight.Descendants
             .Prepend(journal.Preflight.Task)
@@ -1681,16 +1681,19 @@ public sealed partial class ResourceMutationService
                 "Task deletion journal does not contain the complete Artifact-directory manifest.");
         }
 
+        var vaultRoot = VaultPathResolver.Resolve(_vaultPath).VaultRoot;
         foreach (var artifact in journal.Preflight.Artifacts)
         {
-            var expectedDirectory = $"wiki/todo/{artifact.TaskId}.artifacts";
+            var expectedDirectory = NormalizeRelativePath(Path.GetRelativePath(
+                vaultRoot,
+                Path.Combine(_vaultPath, $"{artifact.TaskId}.artifacts")));
             if (!expectedTaskIds.Contains(artifact.TaskId)
                 || !journal.Preflight.ArtifactDirectories.Contains(
                     expectedDirectory,
-                    StringComparer.Ordinal)
+                    PathComparer)
                 || !artifact.VaultRelativePath.StartsWith(
                     expectedDirectory + "/",
-                    StringComparison.Ordinal))
+                    PathComparison))
             {
                 throw new InvalidDataException(
                     $"Task deletion Artifact '{artifact.VaultRelativePath}' is outside its owned directory.");
