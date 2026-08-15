@@ -499,6 +499,73 @@ public sealed partial class ResourceMutationService
             });
     }
 
+    public ResourceMutationOutcome ReconcileAdoTask(
+        string? mutationId,
+        string? taskId,
+        string? ifRevision,
+        int? adoWorkItemId,
+        string? authoritativeState)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            ado_work_item_id = adoWorkItemId,
+            authoritative_state = authoritativeState,
+        });
+        return TransactTaskLifecycle(
+            mutationId,
+            taskId,
+            ifRevision,
+            "reconcile_ado_task",
+            payload,
+            task =>
+            {
+                if (adoWorkItemId is null or <= 0)
+                    return "ado_work_item_id must be a positive integer.";
+                if (string.IsNullOrWhiteSpace(authoritativeState))
+                    return "authoritative_state is required.";
+
+                if (!RepresentsAdoWorkItem(task, adoWorkItemId.Value))
+                    return $"Task does not resolve to ADO work item {adoWorkItemId}.";
+
+                if (string.Equals(authoritativeState, "Removed", StringComparison.Ordinal)
+                    && task.Status is (
+                        GlassworkTask.Statuses.Todo
+                        or GlassworkTask.Statuses.InProgress
+                        or GlassworkTask.Statuses.Blocked))
+                {
+                    TaskService.ApplyCancel(task, "ADO work item removed", _clock);
+                }
+                else if (authoritativeState is "Active" or "In Progress" or "In Review"
+                         && task.IsCancelled)
+                {
+                    TaskService.ApplyRestoreCancelled(
+                        task,
+                        GlassworkTask.Statuses.InProgress);
+                }
+
+                return null;
+            });
+    }
+
+    private bool RepresentsAdoWorkItem(GlassworkTask task, int adoWorkItemId)
+    {
+        var adoLinks = task.Links
+            .Where(link => string.Equals(link.Type, TaskLink.Types.Ado, StringComparison.Ordinal))
+            .ToList();
+        if (adoLinks.Count > 0)
+        {
+            var resolved = adoLinks
+                .Select(link => AdoParentIdExtractor.TryExtractId(link.Value))
+                .ToList();
+            return resolved.All(id => id.HasValue)
+                   && resolved.Distinct().Count() == 1
+                   && resolved[0] == adoWorkItemId;
+        }
+
+        var ado = TaskTypeBackfillService.ResolveAdoId(_parser.Serialize(task));
+        return ado.Status == AdoIdStatus.Resolved && ado.Id == adoWorkItemId;
+    }
+
     private ResourceMutationOutcome TransactTaskLifecycle(
         string? mutationId,
         string? taskId,

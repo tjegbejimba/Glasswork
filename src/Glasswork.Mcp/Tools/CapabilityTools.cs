@@ -24,6 +24,7 @@ public sealed class CapabilityTools
                 "transaction_idempotency",
                 "recoverable_all_or_none_commit",
                 "guarded_hard_deletion",
+                "authoritative_ado_reconciliation",
             ],
             FutureCapabilities: []));
     }

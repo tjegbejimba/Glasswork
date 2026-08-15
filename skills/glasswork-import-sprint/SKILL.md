@@ -24,6 +24,23 @@ If you ever switch project, org, or iteration scheme, edit this block. The skill
 
 ## Process
 
+### 0. Discover the authoritative reconciliation contract
+
+Before reading or mutating Task lifecycle state, call `get_capabilities` and inspect
+the available Glasswork MCP tools. Authoritative ADO cancellation/restoration is
+available only when both of these are present:
+
+- implemented capability `authoritative_ado_reconciliation`
+- tool `reconcile_ado_task(task_id, ado_work_item_id, authoritative_state, mutation_id, if_revision)`
+
+If either is absent, continue the ordinary import, promotion, type, due-date, and
+stale-reporting work below, but do **not** cancel or restore any Task. Report every
+candidate under the matching pending-action section and say that a supporting
+`glasswork-mcp` 0.10.0 or later must be installed (repository checkout:
+`scripts\install-mcp.ps1`). Never emulate the missing lifecycle operation by
+writing `status: cancelled`, `cancelled_at`, or `cancellation_reason` as raw YAML,
+and never substitute `restore_task` plus a generic status update.
+
 ### 1. Resolve the current sprint
 
 Walk the project's iteration tree and find the leaf node whose date range contains today. Do **not** rely on a team's `timeframe=current` pointer — different teams keep different parts of the iteration tree current, and the team that owns the user's actual sprint backlog may not match what `work_list_team_iterations` reports.
@@ -50,11 +67,11 @@ Run a WIQL-style query (via the MCP tools available) to fetch every leaf-level w
 ```
 System.AssignedTo = @Me
 AND System.IterationPath = '<SPRINT_PATH>'
-AND System.State NOT IN ('Closed', 'Removed')
+AND System.State <> 'Removed'
 AND System.WorkItemType IN ('Task', 'Bug', 'Product Backlog Item', 'User Story')
 ```
 
-Note: `Resolved` is **not** filtered — Resolved items get imported as `done`. `Closed` and `Removed` are filtered. `Done` is sometimes used as a state too — filter it as well.
+Terminal items remain in the result so reconciliation can complete their Glasswork tasks. Only `Removed` is filtered. Exact `Removed` handling happens only after an authoritative per-item fetch in step 5; absence from this query is never evidence of removal.
 
 For each work item, retrieve at minimum:
 - `System.Id`
@@ -74,6 +91,12 @@ Before creating or updating any task, scan the Glasswork corpus to discover what
 
 Do **not** recurse into `wiki/todo/<id>.artifacts/` subdirectories. Artifacts often reference ADO ids that aren't the artifact's "primary" work item (cross-references, related-bug mentions, etc.) — counting those as "imported" would suppress legitimate imports.
 
+Cancelled Tasks remain in `wiki/todo/*.md`; they are not moved to a separate
+folder. Default `list_tasks`, `query_tasks`, and `search_tasks` calls exclude them,
+so those defaults must never be the sole dedup source. The direct file scan above
+must retain `status: cancelled`, and `list_tasks(status: "cancelled")` or
+`get_task(task_id)` may be used when an explicit MCP read is needed.
+
 **Patterns** — for each file in scope, match the body / frontmatter against these three precise patterns:
 
 | Pattern (regex)                              | What it matches                                     |
@@ -86,7 +109,11 @@ Do **not** match a bare `\bADO\s+\d+\b` (no line anchor) — casual Notes mentio
 
 Do **not** match the `parent:` frontmatter field or the `Parent ADO:` body line — those carry the *parent's* ADO id, which is a different work item from the one the task represents.
 
-Build a dictionary `imported: { ado_id -> file_path }`. This is the authoritative source of "already imported."
+Build a dictionary
+`imported: { ado_id -> { task_id, file_path, status, resource_revision? } }`.
+This is the authoritative source of "already imported." Before a conditional MCP
+mutation, call `get_task(task_id)` by exact ID and use its current
+`resource_revision`; do not reuse a revision from an earlier scan.
 
 ### 4. Per-item action: classify, then act
 
@@ -103,6 +130,8 @@ For each ADO work item from step 2:
 | `In Progress`      | `in-progress`      |
 | `In Review`        | `in-progress`      |
 | `Resolved`         | `done`             |
+| `Done`             | `done`             |
+| `Closed`           | `done`             |
 
 If you encounter an ADO state not in this table, **skip the item** and surface it in the summary under "Skipped (unmapped state)" with the state name. Do not guess a mapping — surface the gap so the skill can be updated.
 
@@ -120,7 +149,8 @@ A `pbi` is a **container** and will not self-promote to My Day on its sprint-end
 **Decide the action:**
 
 1. **Not in `imported`** → CREATE (step 4a).
-2. **In `imported`** → consider PROMOTION (step 4b).
+2. **In `imported`** → consider PROMOTION (step 4b), including a narrowly
+   authorized restore when the existing Task is cancelled (step 4c).
 
 #### 4a. Create
 
@@ -185,17 +215,74 @@ The task already exists. Read its current frontmatter `status`. Apply the forwar
 | `in-progress`                   | `in-progress`    | leave                                 |
 | `in-progress`                   | `done`            | promote → move to `done/` (see below) |
 | `done`                          | anything          | leave (never reopen)                  |
+| `cancelled`                     | `in-progress`     | restore only through step 4c          |
+| `cancelled`                     | anything else     | leave                                 |
 | anything non-canonical (e.g. `in_review`) | anything | leave (unknown ordering — don't guess) |
 
 **Promotions to in-progress** are an in-place frontmatter edit only (single field change — `status: in-progress`). Do not rewrite the file. Do not touch other fields.
 
-**Type backfill (every already-imported item, regardless of status change).** If the existing file has no `type:` frontmatter field and the item's `System.WorkItemType` maps to `pbi` or `bug` (per the ADO → Glasswork type map above), add the single `type:` field in place — an additive single-field edit, same tier as a status promotion (do **not** rewrite the file, do **not** touch other fields). This retro-stamps PBIs that were imported before the `type` field existed so they stop polluting My Day on their stale sprint-end `due` (ADR 0016). Items that map to `task` need no edit (default is omitted).
+**Due-date reconciliation (every already-imported actionable item).** If a
+`todo`, `in-progress`, or `blocked` Task's `due:` does not equal `SPRINT_END`,
+update only `due:` to `SPRINT_END`. Apply the same update after a successful
+restore. This keeps actionable Tasks aligned with their current sprint and
+prevents stale sprint dates from making My Day appear overdue. Never add, remove,
+or change `my_day:`. Do not edit a Task while it remains cancelled or done.
+
+**Type backfill (every already-imported non-cancelled item, regardless of status change).** If the existing file has no `type:` frontmatter field and the item's `System.WorkItemType` maps to `pbi` or `bug` (per the ADO → Glasswork type map above), add the single `type:` field in place — an additive single-field edit, same tier as a status promotion (do **not** rewrite the file, do **not** touch other fields). This retro-stamps PBIs that were imported before the `type` field existed so they stop polluting My Day on their stale sprint-end `due` (ADR 0016). Items that map to `task` need no edit (default is omitted). A cancelled Task must be restored before this ordinary mutation.
 
 > This per-sprint backfill only reaches items the current pull re-encounters. To stamp the **entire existing corpus** in one pass — including PBIs that aren't in any current sprint — use the `glasswork-backfill-types` skill (an ADO-authoritative, dry-run-then-apply maintenance pass over the whole vault). Both honor the same strict ADR 0016 mapping.
 
-**Promotions to done** require a file move (`wiki/todo/{slug}.md` → `wiki/todo/done/{slug}.md`) plus frontmatter edits (`status: done`, add `completed_at: <today>`). File moves are CONFIRM-tier per the D8 guardrails below — collect all promote-to-done candidates, list them in chat, and ask the user to confirm in one batch before performing the moves. Non-move promotions (todo → in-progress) execute without confirmation.
+**Promotions to done** require a file move (`wiki/todo/{slug}.md` → `wiki/todo/done/{slug}.md`) plus frontmatter edits (`status: done`, add `completed_at: <today>`). In an interactive run, these moves are CONFIRM-tier per the D8 guardrails below: collect all candidates and ask the user to confirm in one batch. Non-move promotions execute without confirmation.
 
-**Unattended / workflow mode.** If the user explicitly says you are running unattended (e.g. the workflow prompt includes "run unattended" or "workflow mode"), do **not** perform promote-to-done file moves. Instead, list them in the summary under a "Pending user action — promote to done" section with the source path, target path, and ADO id. The user will perform the moves manually next time they open the project. Non-move promotions (todo → in-progress) still execute as normal in unattended mode — they're single-field edits, not destructive.
+**Unattended / workflow mode.** An unattended run may perform promote-to-done moves only when its workflow prompt contains the exact durable authorization `AUTHORIZED_AUTONOMOUS_RECONCILIATION`. That token records the user's standing consent for status-to-done transitions, corresponding `todo/` → `done/` moves, and the bounded reconciliation described in step 4c. Without the token, list candidates under "Pending user action — promote to done" and do not move them. Non-move promotions, due-date reconciliation, and type backfill still execute normally.
+
+#### 4c. Authoritative ADO cancellation and restoration
+
+This is a dedicated lifecycle reconciliation, not generic status synchronization.
+It applies to current-sprint items and to the authoritative stale-item fetch in
+step 5.
+
+- Exact ADO state `Removed` cancels only a matching imported Task whose current
+  status is `todo`, `in-progress`, or `blocked`. The dedicated lifecycle sets
+  `status: cancelled`, stamps `cancelled_at`, sets reason
+  `ADO work item removed`, clears `my_day`, and preserves Task content,
+  dates, Links, Artifacts, and relationships.
+- A `done` Task always wins. Never reclassify it as cancelled.
+- A cancelled Task restores directly to `in-progress` only for exact ADO states
+  `Active`, `In Progress`, or `In Review`. The same operation clears
+  cancellation metadata atomically. `New`, `To Do`, `Committed`, terminal
+  states, unknown states, and case/whitespace variants do not restore.
+- Ordinary staleness, iteration movement, reassignment, or absence from the
+  current-sprint query is not `Removed` and must never trigger Cancellation.
+
+Both transitions require all of:
+
+1. the capability/tool gate from step 0;
+2. the exact durable workflow token `AUTHORIZED_AUTONOMOUS_RECONCILIATION`;
+3. a fresh exact-ID `get_task` read and its Resource Revision;
+4. a fresh authoritative ADO response carrying the exact state;
+5. the matching ADO ID from the dedup index.
+
+Call only:
+
+```text
+reconcile_ado_task(
+  task_id=<Glasswork task id>,
+  ado_work_item_id=<System.Id>,
+  authoritative_state=<exact System.State>,
+  mutation_id=<new client id; reuse only for an exact retry>,
+  if_revision=<fresh Resource Revision>)
+```
+
+Generate one `mutation_id` per candidate and reuse it only when retrying that
+identical request. On a Resource Revision conflict, re-read the Task, re-evaluate
+the state machine, and use a new mutation ID if a new request is still valid.
+Never call `delete_task`. Never use ordinary `restore_task` for resumed-active
+automation: it intentionally restores to `todo`, and chaining a generic update
+would expose an invalid intermediate state.
+
+Without the durable token or the capability/tool contract, record the candidate
+under the corresponding pending-action section and do not mutate it.
 
 ### 5. Detect stale tasks
 
@@ -203,7 +290,25 @@ A **stale task** is a previously-imported task whose ADO work item is no longer 
 
 Build the set `imported_ids_in_glasswork` (the keys of the `imported` dictionary from step 3, filtered to ids that are *not* in `done/` — completed tasks are not stale, they're done). Build the set `current_sprint_ids` (the ids returned from step 2). The **stale set** is `imported_ids_in_glasswork - current_sprint_ids`.
 
-For each stale id, fetch the work item from ADO once more (just `System.IterationPath` and `System.State`) so the output can tell the user where it went. Surface these in the final summary as a list — do **not** move, edit, or delete the stale task files. Cleanup is a user decision.
+For each stale id, fetch `System.Title`, `System.IterationPath`, `System.State`, and `System.WorkItemType` from ADO by exact ID. Treat this response as authoritative only for that ID.
+
+- If the exact state is `Removed`, apply the step 4c cancellation rules. Do not
+  infer `Removed` from a missing query result, reassignment, or iteration change.
+- If the Glasswork Task is cancelled and the exact state is `Active`,
+  `In Progress`, or `In Review`, apply the step 4c direct restoration rules even
+  when the item remains outside the current sprint.
+- Else if the state maps to `done`, apply the same forward-only
+  promotion-to-done behavior and authorization rules as step 4b. This catches
+  terminal items omitted by a query or moved out of the current sprint before
+  completion.
+- Otherwise, if its iteration resolves to a dated sprint leaf in the iteration
+  tree, update only `due:` to that iteration's finish date when different.
+- Otherwise, leave it unchanged and report it as stale. Never guess a due date
+  for an undated backlog iteration.
+
+Cancelled and restored candidates still appear in the Stale section when they
+are outside the sprint; the lifecycle counts below additionally record the
+transition that occurred.
 
 ### 6. Print summary
 
@@ -221,6 +326,18 @@ Promoted (M):
   - ADO <id>: <title> (in-progress → done, MOVED) — wiki/todo/done/<slug>.md
   ...
 
+Due dates updated (D):
+  - ADO <id>: <title> (<old-date> → <new-date>) — wiki/todo/<slug>.md
+  ...
+
+Cancelled (C):
+  - ADO <id>: <title> (<prior-status> → cancelled) — reason: ADO work item removed; source: Azure DevOps state Removed — wiki/todo/<slug>.md [task_id: <task-id>]
+  ...
+
+Restored (R):
+  - ADO <id>: <title> (cancelled → in-progress) — reason: resumed active; source: Azure DevOps state <Active|In Progress|In Review> — wiki/todo/<slug>.md [task_id: <task-id>]
+  ...
+
 Stale (K) — previously imported, not in current sprint:
   - ADO <id>: <title> → now in <new-iteration-path> [state: <ado-state>] — wiki/todo/<slug>.md
   ...
@@ -233,9 +350,20 @@ Skipped (J) — reason listed per item:
 Pending user action — promote to done (P, unattended mode only):
   - ADO <id>: <title> — move wiki/todo/<slug>.md → wiki/todo/done/<slug>.md
   ...
+
+Pending user action — cancel (X):
+  - ADO <id>: <title> (<prior-status> → cancelled) — source: Azure DevOps state Removed — wiki/todo/<slug>.md [task_id: <task-id>] [reason: missing authorization or supporting glasswork-mcp 0.10.0+]
+  ...
+
+Pending user action — restore (Y):
+  - ADO <id>: <title> (cancelled → in-progress) — source: Azure DevOps state <state> — wiki/todo/<slug>.md [task_id: <task-id>] [reason: missing authorization or supporting glasswork-mcp 0.10.0+]
+  ...
 ```
 
-If any list is empty, write `Imported (0): none` rather than omitting the section — the user wants to see all counts every run. Omit the "Pending user action" section entirely when running interactively (it's empty by construction).
+Always print `Imported`, `Promoted`, `Due dates updated`, `Cancelled`,
+`Restored`, `Stale`, and `Skipped`, using `(0): none` for empty sections. Omit a
+pending-action section only when it has no candidates. `Cancelled` and `Restored`
+must include ADO ID, prior/new status, reason/source, path, and Task ID.
 
 ## Sprint resolution example
 
@@ -260,7 +388,11 @@ These are **baked into this skill** and override any user request that conflicts
 - Do not send Teams messages, emails, or calendar invites.
 - Do not approve or merge pull requests.
 - Do not delete files in the wiki vault.
+- Do not call `delete_task` or otherwise Hard-delete a Task during reconciliation.
 - Do not close ADO work items.
+- Do not mutate ADO state, assignment, iteration, or content.
+- Do not infer ADO state `Removed` from absence, staleness, reassignment, or iteration movement.
+- Do not write Cancellation metadata as raw YAML or emulate direct restoration through `restore_task` plus a generic update.
 - Do not modify these task frontmatter fields once a task exists: `id`, `created`, `ado` (if present).
 
 ### CONFIRM — allowed only with explicit user confirmation in this session
@@ -269,10 +401,21 @@ These are **baked into this skill** and override any user request that conflicts
 - Run any command that mutates external state (git push, ADO comments, etc.).
 - Write source code.
 
+The first two items have one narrow unattended exception: a workflow prompt
+containing the exact token `AUTHORIZED_AUTONOMOUS_RECONCILIATION`.
+Cancellation/Restore is not ordinary CONFIRM-tier: the same exact token is
+mandatory in every automated run. The token has exactly two state-changing
+scopes: step 4b promote-to-done moves, and the step 4c state machine through
+`reconcile_ado_task`. Without it, report those pending transitions. The token
+does not authorize unrelated page moves, generic status changes, Hard deletion,
+or any ADO mutation.
+
 ### ALLOWED — proceed without asking
 - Read from any source: ADO, code, wiki vault.
 - Create new task files under `wiki/todo/` (initial imports of non-Resolved items).
 - Edit a single frontmatter field on an existing task (promote `status: todo` → `status: in-progress`).
+- Reconcile an existing actionable Task's `due:` with the authoritative finish date of its ADO sprint.
+- Backfill the mapped Task type on a non-cancelled import.
 - Print the summary to chat.
 
 If a request would require breaking a HARD NO rule, refuse and name which guardrail blocked it.
@@ -282,9 +425,10 @@ If a request would require breaking a HARD NO rule, refuse and name which guardr
 - **Does not** sync title changes. If ADO title changes after the initial import, the Glasswork file keeps its original title. Slugs are slugified once at create time and never renamed.
 - **Does not** sync description changes. The ADO description is never copied in — the link is the source of truth.
 - **Does not** reconcile backward. ADO state going from Active → New doesn't demote the Glasswork status.
-- **Does not** reopen done tasks. ADO bouncing a Resolved item back to Active won't touch a Glasswork `done` task — the user manually moves it back if needed.
+- **Does not** reopen done tasks. ADO bouncing a terminal item back to Active won't touch a Glasswork `done` Task.
 - **Does not** import work items where you are not the assignee, even if they're in your sprint.
-- **Does not** import work items in `Closed` or `Removed` state.
-- **Does not** delete or move stale tasks. They're flagged in the summary; user decides.
+- **Does not** import work items in `Removed` state. Exact `Removed` is relevant only when reconciling an existing matching import.
+- **Does not** Hard-delete stale Tasks. Exact Removed may cancel one through the guarded lifecycle; other stale Tasks may complete or refresh due dates, and all are reported.
+- **Does not** treat all cancelled Tasks as restorable. Only exact authoritative `Active`, `In Progress`, or `In Review` restores directly to `in-progress`.
 - **Does not** create the parent ADO work item as its own Glasswork task. The `parent:` frontmatter is just an integer — no link is followed.
 - **Does not** set `my_day:` on imported tasks. The user owns that field.
