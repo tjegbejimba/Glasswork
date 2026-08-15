@@ -1,7 +1,8 @@
 # ADR 0018: Task cancellation is a first-class terminal archive lifecycle
 
 **Status**: Accepted
-**Context slice**: Task Model, Vault Sync, Task Query, MCP Resource Mutation
+**Context slice**: Task Model, Vault Sync, Task Query, MCP Resource Mutation,
+Presentation
 **Relates to**: ADR 0002 (Task prose and Artifacts), ADR 0005 (Backlinks),
 ADR 0007 (MCP mutation guarantees), ADR 0010 (Index), ADR 0016 (Task type)
 
@@ -54,7 +55,21 @@ Core accepts an explicit restore target of `todo` or `in-progress`. The latter
 is a guarded seam for a later authoritative automation workflow; it is not
 exposed as an arbitrary MCP restore choice in this layer.
 
-### 4. MCP exposes lifecycle verbs
+### 4. Work Log owns the cancellation archive UI
+
+Work Log remains one top-level Page with two tabs:
+
+- **Completed** preserves the existing weekly completed-work log and metrics.
+- **Cancelled** explicitly queries `status: cancelled`, orders newest-cancelled
+  first with deterministic fallback ordering, and exposes Restore to Backlog.
+
+The selected tab is UI state and persists outside the vault. Task Detail exposes
+manual **Cancel task...** only for `todo`, `in-progress`, and `blocked` Tasks.
+Manual cancellation supplies `Cancelled by user` when no reason is entered.
+Both UI actions call the dedicated Task cancellation lifecycle seam; generic
+status mutation remains unavailable for cancellation or restore.
+
+### 5. MCP exposes lifecycle verbs
 
 MCP exposes `cancel_task` and `restore_task`, not delete/undelete aliases.
 Both use the Resource Revision and idempotency conventions from ADR 0007.
@@ -65,7 +80,7 @@ Generic Task status mutation does not accept `cancelled`, and a Cancelled Task
 must be restored before ordinary mutation. This keeps lifecycle invariants
 behind the cancellation module rather than duplicating them across callers.
 
-### 5. Hard deletion is a later dependent layer
+### 6. Hard deletion is a later dependent layer
 
 No hard-delete guarantee ships with this decision. A later layer may define
 explicit guarded removal of the Task file, Artifact folder, and optional child
@@ -101,5 +116,4 @@ Deleting an in-file checklist Subtask remains a separate operation backed by
 
 - Hard deletion and cascade policy.
 - Bulk cancellation or bulk restore.
-- A dedicated app UI for browsing or changing Cancelled Tasks.
 - Undo history beyond explicit restore.
