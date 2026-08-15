@@ -146,7 +146,7 @@ public partial class MyDayViewModel : ObservableObject
             }
         }
         var suggestions = all.Values.Where(t =>
-            t.Status != GlassworkTask.Statuses.Done &&
+            !t.IsTerminal &&
             t.Status != GlassworkTask.Statuses.Blocked &&
             !alreadyToday.Contains(t.Id) &&
             (

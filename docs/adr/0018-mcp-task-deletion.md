@@ -1,106 +1,105 @@
-# ADR 0018: MCP task deletion is soft-delete-first (`status: cancelled`); hard delete is an explicit, guarded opt-in
+# ADR 0018: Task cancellation is a first-class terminal archive lifecycle
 
-**Status**: Proposed
-**Context slice**: resolves #207 (`delete_task`); `VaultService`, `SelfWriteCoordinator`, `IndexService` (backlinks), `TaskService`; new `delete_subtask` MCP tool (tracked separately, *not* governed by this ADR)
-**Relates to**: ADR 0007 (MCP boundaries — stdio, vault-only writes, self-write marker, optimistic concurrency), ADR 0005 (backlinks watcher + index — deletion breaks link targets), ADR 0016 (task `type` / status enum), ADR 0002 (task prose + artifact siblings)
+**Status**: Accepted
+**Context slice**: Task Model, Vault Sync, Task Query, MCP Resource Mutation
+**Relates to**: ADR 0002 (Task prose and Artifacts), ADR 0005 (Backlinks),
+ADR 0007 (MCP mutation guarantees), ADR 0010 (Index), ADR 0016 (Task type)
 
 ## Context
 
-Agents create tasks during planning sessions — and therefore create duplicates,
-mistakes, and cancelled work. Without a deletion path, the vault accumulates stale
-`.md` files that pollute `list_tasks`, mislead the agent, and never get cleaned up.
-This is the motivation behind #207, which currently sits in `needs-triage` precisely
-because "delete" is not a clean file operation in Glasswork:
+Agents create Tasks during planning sessions and therefore also create
+duplicates, mistakes, and work that is intentionally abandoned. Removing the
+Task file is not a safe default:
 
-- **Backlinks break.** Other tasks and wiki pages may link to the target. Hard
-  removal orphans those links (ADR 0005). The app tolerates unresolved links, but
-  the information is lost.
-- **Artifacts are owned, not referenced.** A task owns a sibling
-  `<id>.artifacts/` folder (ADR 0002). Hard delete must decide whether that folder
-  and its agent-produced work-products die with the task.
-- **Cascade is cross-file.** In-file checklist subtasks travel with the task, but
-  child *tasks* (`parent:` frontmatter) live in separate files. Deleting a parent
-  PBI must decide those children's fate.
-- **Self-write coordination.** Every deletion must register with the
-  `SelfWriteCoordinator` marker or the running app fires a spurious "external
-  change" banner (ADR 0007). A multi-file cascade must hold the coordinator across
-  *all* deletions, not per-file.
-- **Crash safety.** A mid-cascade crash can orphan children. #207 proposes a
-  `_pending_operation.json` recovery log.
+- Backlinks and Task relationships would lose their target.
+- The Task owns a sibling `<id>.artifacts/` folder.
+- Child Tasks are separate files and require an explicit cascade policy.
+- Multi-file removal needs self-write coordination and crash recovery.
 
-There is currently **no delete-a-task method in `Glasswork.Core` at all** — only
-`TaskService.DeleteSubtask` for in-file checklist items. So this is a genuine green
-field, and the safe default matters more than raw parity with other tools.
+The domain also needs to distinguish work that succeeded from work that was
+abandoned. Reusing `done` would corrupt Work Log and completed metrics; generic
+"delete" language would hide that distinction.
 
-## Decision (proposed)
+## Decision
 
-### 1. Default is SOFT delete
+### 1. `cancelled` is a canonical terminal Task status
 
-`delete_task(task_id)` sets `status: cancelled` (a new value on the status enum) and
-does **not** remove the file.
+A **Cancelled Task** has `status: cancelled`, `cancelled_at` as an RFC 3339 UTC
+timestamp, and a non-empty `cancellation_reason`.
 
-- Preserves backlink targets, keeps the artifact folder, and is trivially
-  reversible (edit status back).
-- Removes the task from default `list_tasks` / My Day / Backlog views, which already
-  filter by status — this satisfies the "don't pollute the agent's list" goal
-  *without destroying data*.
-- Lowest-risk interaction with the self-write marker (single-file write).
+Cancellation is allowed only from `todo`, `in-progress`, or `blocked`. A done
+Task is already terminal and must never be reclassified as cancelled.
 
-### 2. HARD delete is an explicit, guarded opt-in
+Cancellation clears `my_day` so the Task cannot remain directly pinned. It
+preserves due/start/defer dates, Description, Notes, Links, Artifacts,
+`parent`, `blocked_by`, and other relationships. Completion and blocker
+metadata are cleared because they describe incompatible lifecycle states.
 
-`delete_task(task_id, hard: true, cascade_subtasks: bool)`:
+### 2. Cancellation is archive, not completion
 
-- If `hard: true` and child **tasks** exist and `cascade_subtasks: false` → **fail**
-  with a structured error listing the child IDs (mirrors the #207 spec).
-- Hard delete removes the `.md` file **and** its `<id>.artifacts/` folder.
-- Returns `{ deleted_id, title, deleted_children: [...], deleted_artifacts: [...] }`.
-- The entire cascade **acquires the `SelfWriteCoordinator` once and holds it** across
-  every file operation, and writes a `_pending_operation.json` before starting
-  (cleared on completion) for crash recovery.
+Cancelled Tasks are excluded from My Day, Backlog, Ready, Suggestions,
+carryover, overdue, Work Log/completed metrics, generated actionable surfaces,
+and default list/search/Task Query results.
 
-### 3. Dangling backlinks are tolerated by design
+The Task file remains the vault source of truth. A Cancelled Task remains
+loadable by exact ID and can be enumerated only through an explicit
+`status: cancelled` filter.
 
-Backlinks to a hard-deleted target are left dangling; the app already tolerates
-unresolved links (ADR 0005). A "target missing" affordance may follow but is out of
-scope here.
+### 3. Restore is an explicit guarded transition
 
-### 4. `delete_subtask` is a separate, low-risk tool
+Restoring a Cancelled Task clears `cancelled_at` and `cancellation_reason`.
+User and MCP restore defaults to `todo`.
 
-Removing an **in-file checklist subtask** is backed by the existing
-`TaskService.DeleteSubtask` and is **not** governed by this ADR's soft/hard/cascade
-machinery. It ships on its own track.
+Core accepts an explicit restore target of `todo` or `in-progress`. The latter
+is a guarded seam for a later authoritative automation workflow; it is not
+exposed as an arbitrary MCP restore choice in this layer.
+
+### 4. MCP exposes lifecycle verbs
+
+MCP exposes `cancel_task` and `restore_task`, not delete/undelete aliases.
+Both use the Resource Revision and idempotency conventions from ADR 0007.
+`cancel_task` requires a reason at the Core mutation seam; an omitted or blank
+manual MCP reason is normalized to `Cancelled by agent`.
+
+Generic Task status mutation does not accept `cancelled`, and a Cancelled Task
+must be restored before ordinary mutation. This keeps lifecycle invariants
+behind the cancellation module rather than duplicating them across callers.
+
+### 5. Hard deletion is a later dependent layer
+
+No hard-delete guarantee ships with this decision. A later layer may define
+explicit guarded removal of the Task file, Artifact folder, and optional child
+Task cascade, including self-write coordination, dangling-link policy, and
+crash recovery. That work depends on the cancellation/archive lifecycle but is
+not implied by it.
+
+Deleting an in-file checklist Subtask remains a separate operation backed by
+`TaskService.DeleteSubtask`; it does not delete a Task.
 
 ## Consequences
 
 ### Positive
-- Safe default: reversible, link- and artifact-preserving, and it already reads as
-  "gone" in every status-filtered view.
-- Agents can still hard-delete when they genuinely mean it.
-- Cascade risk (the dangerous part) is contained behind an explicit flag with a
-  guard, a held coordinator, and a recovery log.
+
+- Abandoned work is reversible and does not pollute actionable or completion
+  surfaces.
+- Backlinks, relationships, prose, and Artifacts remain intact.
+- Lifecycle validation, timestamping, Resource Revision, idempotency, and
+  self-write notification stay concentrated behind one mutation seam.
 
 ### Negative
-- Adds a `cancelled` status value — a small surface change across views, filters,
-  and the status enum/normalizer.
-- Two deletion semantics to document and test.
+
+- Every default Task selection must deliberately exclude the archive state.
+- Consumers that need archived Tasks must request `status: cancelled`
+  explicitly.
 
 ### Neutral
-- The hard-delete crash-recovery log (`_pending_operation.json`) is new infra,
-  exercised only on the rare hard cascade.
 
-## Open questions (resolve before moving to Accepted)
-
-1. **Archive by MOVE or by STATUS?** Should soft delete *move* the file to a
-   `<vault>/wiki/todo/.archive/` folder, or only flip `status: cancelled` and leave
-   it in place? Move keeps `list_tasks` scans small; status-only is simpler and keeps
-   Obsidian links resolvable.
-2. **Reversal ergonomics.** Is "edit status back" enough, or do we want an explicit
-   `restore_task` / `undelete` tool?
-3. **PBIs.** Does hard-deleting a PBI container ever make sense, or should containers
-   be soft-delete-only?
+- Vault scans still encounter cancelled files; cancellation changes selection
+  policy rather than moving files to a separate folder.
 
 ## Out of scope
 
-- Bulk deletion.
-- A UI affordance for dangling backlinks (ADR 0005 follow-up).
-- Undo history beyond the reversible `cancelled` status.
+- Hard deletion and cascade policy.
+- Bulk cancellation or bulk restore.
+- A dedicated app UI for browsing or changing Cancelled Tasks.
+- Undo history beyond explicit restore.

@@ -612,7 +612,7 @@ public class IndexService
             return _store.Values
                 .Where(t => t.MyDay.HasValue
                          && t.MyDay.Value.Date < todayDate
-                         && t.Status != GlassworkTask.Statuses.Done
+                         && !t.IsTerminal
                          && t.Status != GlassworkTask.Statuses.Blocked)
                 .Select(t => t.Clone())
                 .ToList();

@@ -18,6 +18,8 @@ public partial class GlassworkTask : ObservableObject
     public partial string Title { get; set; } = string.Empty;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDone))]
+    [NotifyPropertyChangedFor(nameof(IsCancelled))]
+    [NotifyPropertyChangedFor(nameof(IsTerminal))]
     public partial string Status { get; set; } = "todo";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPriorityChip))]
@@ -28,6 +30,8 @@ public partial class GlassworkTask : ObservableObject
     public partial string Type { get; set; } = "task";
     [ObservableProperty] public partial DateTime Created { get; set; } = DateTime.Today;
     [ObservableProperty] public partial DateTime? CompletedAt { get; set; }
+    [ObservableProperty] public partial DateTimeOffset? CancelledAt { get; set; }
+    [ObservableProperty] public partial string? CancellationReason { get; set; }
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsBlocked))]
     [NotifyPropertyChangedFor(nameof(NeedsBlockerDetails))]
@@ -104,6 +108,7 @@ public partial class GlassworkTask : ObservableObject
         public const string InProgress = "in-progress";
         public const string Blocked = "blocked";
         public const string Done = "done";
+        public const string Cancelled = "cancelled";
     }
 
     public static class Priorities
@@ -161,6 +166,8 @@ public partial class GlassworkTask : ObservableObject
     /// Status changes (see [NotifyPropertyChangedFor] on Status).
     /// </summary>
     public bool IsDone => Status == Statuses.Done;
+    public bool IsCancelled => Status == Statuses.Cancelled;
+    public bool IsTerminal => IsDone || IsCancelled;
     public bool IsBlocked => Status == Statuses.Blocked;
     public bool NeedsBlockerDetails => IsBlocked && BlockedMetadataState == BlockedMetadataState.NeedsDetails;
 
@@ -400,6 +407,8 @@ public partial class GlassworkTask : ObservableObject
             Type = Type,
             Created = Created,
             CompletedAt = CompletedAt,
+            CancelledAt = CancelledAt,
+            CancellationReason = CancellationReason,
             BlockedReason = BlockedReason,
             BlockedAt = BlockedAt,
             BlockedFromStatus = BlockedFromStatus,

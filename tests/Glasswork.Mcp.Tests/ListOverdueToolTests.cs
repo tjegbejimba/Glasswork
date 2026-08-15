@@ -97,6 +97,33 @@ public class ListOverdueToolTests
     }
 
     [TestMethod]
+    public void ListOverdue_ExcludesCancelledTasks()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "cancelled-overdue",
+            Title = "Cancelled overdue",
+            Due = DateTime.Today.AddDays(-2),
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = DateTimeOffset.UtcNow,
+            CancellationReason = "No longer needed",
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "active-overdue",
+            Title = "Active overdue",
+            Due = DateTime.Today.AddDays(-2),
+            Status = GlassworkTask.Statuses.Todo,
+        });
+
+        using var result = JsonDocument.Parse(_tools.ListOverdue());
+        var tasks = result.RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(1, tasks.GetArrayLength());
+        Assert.AreEqual("active-overdue", tasks[0].GetProperty("id").GetString());
+    }
+
+    [TestMethod]
     public void ListOverdue_RespectsLimitParameter()
     {
         var baseDir = Path.Combine(Path.GetTempPath(), "glasswork-mcp-tests", Guid.NewGuid().ToString("N"));

@@ -27,7 +27,7 @@ public static class BacklogGrouper
         System.Func<string, string?>? parentTitleResolver = null)
     {
         collapseState ??= new Dictionary<string, bool>();
-        var input = tasks.ToList();
+        var input = tasks.Where(task => !task.IsTerminal).ToList();
         var blocked = input
             .Where(t => t.Status == GlassworkTask.Statuses.Blocked)
             .OrderBy(t => t.BlockedAt ?? DateTimeOffset.MaxValue)

@@ -61,6 +61,8 @@ public sealed class TaskSearchService
 
         foreach (var task in documents)
         {
+            if (allowedStatuses is null && task.Status == GlassworkTask.Statuses.Cancelled)
+                continue;
             if (allowedStatuses is not null && !allowedStatuses.Contains(task.Status))
                 continue;
 
@@ -202,8 +204,12 @@ internal static class TaskSearchText
             {
                 "todo" => GlassworkTask.Statuses.Todo,
                 "doing" => GlassworkTask.Statuses.InProgress,
+                "in-progress" => GlassworkTask.Statuses.InProgress,
+                "blocked" => GlassworkTask.Statuses.Blocked,
                 "done" => GlassworkTask.Statuses.Done,
-                _ => throw new ArgumentException($"Invalid status '{raw}'. Valid values: todo, doing, done.")
+                "cancelled" => GlassworkTask.Statuses.Cancelled,
+                _ => throw new ArgumentException(
+                    $"Invalid status '{raw}'. Valid values: todo, doing, blocked, done, cancelled.")
             });
         }
 

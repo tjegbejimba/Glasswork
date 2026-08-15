@@ -129,6 +129,24 @@ public class MyDayPromotionPolicyTests
     }
 
     [TestMethod]
+    public void IsTaskInMyDayToday_CancelledTaskWithPromotionSignals_ReturnsFalse()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "cancelled",
+            Status = GlassworkTask.Statuses.Cancelled,
+            MyDay = DateTime.Today,
+            Due = DateTime.Today.AddDays(-1),
+            Subtasks =
+            [
+                new SubTask { Text = "Flagged", Metadata = new() { ["my_day"] = "true" } },
+            ],
+        };
+
+        Assert.IsFalse(MyDayPromotionPolicy.IsTaskInMyDayToday(task, Today, NoDismissals));
+    }
+
+    [TestMethod]
     public void IsTaskInMyDayToday_OneFlaggedSubtask_ReturnsTrue()
     {
         var task = new GlassworkTask

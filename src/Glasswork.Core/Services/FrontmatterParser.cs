@@ -29,6 +29,7 @@ public partial class FrontmatterParser
     private static readonly HashSet<string> KnownFrontmatterKeys = new(StringComparer.Ordinal)
     {
         "id", "title", "status", "priority", "type", "created", "completed_at",
+        "cancelled_at", "cancellation_reason",
         "blocked_reason", "blocked_at", "blocked_from_status", "due", "start",
         "my_day", "defer_until", "ado_link", "ado_title", "parent", "blocked_by",
         "context_links", "tags", "links",
@@ -98,6 +99,11 @@ public partial class FrontmatterParser
             ContextLinks = frontmatter.ContextLinks ?? [],
             Tags = frontmatter.Tags ?? [],
         };
+        if (task.Status == GlassworkTask.Statuses.Cancelled)
+        {
+            task.CancelledAt = ParseUtcTimestamp(frontmatter.CancelledAt);
+            task.CancellationReason = frontmatter.CancellationReason;
+        }
         task.FrontmatterExtensions = rawFrontmatter
             .Where(pair => !KnownFrontmatterKeys.Contains(pair.Key))
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
@@ -105,7 +111,7 @@ public partial class FrontmatterParser
         if (task.Status == GlassworkTask.Statuses.Blocked)
         {
             task.BlockedReason = frontmatter.BlockedReason;
-            task.BlockedAt = ParseBlockedAt(frontmatter.BlockedAt);
+            task.BlockedAt = ParseUtcTimestamp(frontmatter.BlockedAt);
             task.BlockedFromStatus = frontmatter.BlockedFromStatus;
             task.BlockedMetadataState =
                 !string.IsNullOrWhiteSpace(task.BlockedReason)
@@ -155,6 +161,12 @@ public partial class FrontmatterParser
             Type = task.Type == GlassworkTask.Types.Task ? null : task.Type,
             Created = task.Created.ToString("yyyy-MM-dd"),
             CompletedAt = task.CompletedAt?.ToString("yyyy-MM-dd"),
+            CancelledAt = task.Status == GlassworkTask.Statuses.Cancelled
+                ? task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)
+                : null,
+            CancellationReason = task.Status == GlassworkTask.Statuses.Cancelled
+                ? task.CancellationReason
+                : null,
             BlockedReason = task.Status == GlassworkTask.Statuses.Blocked ? task.BlockedReason : null,
             BlockedAt = task.Status == GlassworkTask.Statuses.Blocked ? task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) : null,
             BlockedFromStatus = task.Status == GlassworkTask.Statuses.Blocked ? task.BlockedFromStatus : null,
@@ -412,7 +424,7 @@ public partial class FrontmatterParser
         return null;
     }
 
-    private static DateTimeOffset? ParseBlockedAt(string? value)
+    private static DateTimeOffset? ParseUtcTimestamp(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         return DateTimeOffset.TryParseExact(
@@ -438,6 +450,10 @@ public partial class FrontmatterParser
         public string? Created { get; set; }
         [YamlMember(Alias = "completed_at")]
         public string? CompletedAt { get; set; }
+        [YamlMember(Alias = "cancelled_at")]
+        public string? CancelledAt { get; set; }
+        [YamlMember(Alias = "cancellation_reason")]
+        public string? CancellationReason { get; set; }
         [YamlMember(Alias = "blocked_reason")]
         public string? BlockedReason { get; set; }
         [YamlMember(Alias = "blocked_at")]

@@ -42,6 +42,13 @@ The in-memory shape of a task and its subtasks. Pure C# in
   `blocked_from_status`). This is independent from blocked Subtasks: a blocked
   Subtask still drives the card's blocker row, but only a task whose own
   `status` is `blocked` is a **Blocked Task**.
+- **Cancellation lifecycle**: `status: cancelled` is a terminal archive state,
+  distinct from successful completion. `cancelled_at` and
+  `cancellation_reason` live in Task frontmatter. Cancellation clears only
+  `my_day` among user scheduling fields and preserves Task prose, dates, Links,
+  Artifacts, and relationships. A Cancelled Task can be restored to `todo`;
+  Core also exposes a guarded `in-progress` restore target for authoritative
+  automation. See ADR 0018.
 - **Speaks to**: Vault Sync (deserialized from), Presentation (bound to).
 - **Does not own**: persistence, file paths, watch state.
 - **Three-tier task prose model** (see ADR 0002):
@@ -118,6 +125,10 @@ initiators. See ADR 0010 and issue #184.
 - **Blocked-task contract**: `_index.md` represents blocked state explicitly;
   `_today.md`, carryover, and other actionable projections exclude Blocked
   Tasks even when they have stale direct pins or overdue dates.
+- **Cancelled-task contract**: exact-ID reads retain Cancelled Tasks, while
+  default Task Query, free-text search, My Day, Backlog, Ready, Suggestions,
+  overdue, carryover, and completed-work selections exclude them. Callers must
+  request `status: cancelled` explicitly to enumerate the archive.
 - **Speaks to**: Task Model (consumes), Vault Sync (subscribes to events,
   reads on demand), Presentation (queried by pages, raises deltas to them).
 - **Does not own**: the tasks themselves (Vault Sync owns disk truth), nor
