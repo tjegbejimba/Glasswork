@@ -31,6 +31,19 @@ public class BacklogGrouperTests
     }
 
     [TestMethod]
+    public void CancelledTasks_AreExcluded()
+    {
+        var cancelled = Task("cancelled");
+        cancelled.Status = GlassworkTask.Statuses.Cancelled;
+
+        var rows = BacklogGrouper.Group([Task("active"), cancelled]);
+
+        CollectionAssert.AreEqual(
+            new[] { "active" },
+            rows.OfType<GlassworkTask>().Select(task => task.Id).ToArray());
+    }
+
+    [TestMethod]
     public void BlockedTasks_AppearInDedicatedSectionOrderedOldestFirst()
     {
         var rows = BacklogGrouper.Group([

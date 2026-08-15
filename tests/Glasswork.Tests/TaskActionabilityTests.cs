@@ -71,6 +71,28 @@ public sealed class TaskActionabilityTests
     }
 
     [TestMethod]
+    public void Compute_CancelledTask_IsNotReadyAndHasZeroUrgency()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "cancelled",
+            Title = "Cancelled",
+            Status = GlassworkTask.Statuses.Cancelled,
+            Priority = GlassworkTask.Priorities.Urgent,
+            Due = DateTime.Today.AddDays(-10),
+            CancelledAt = DateTimeOffset.UtcNow,
+            CancellationReason = "Superseded",
+        };
+
+        var signals = TaskActionability.Compute(
+            task,
+            new TaskSignalContext(DateOnly.FromDateTime(DateTime.Today), BacklinkCount: 10));
+
+        Assert.IsFalse(signals.Ready);
+        Assert.AreEqual(0d, signals.UrgencyScore);
+    }
+
+    [TestMethod]
     public void Compute_MarksFutureStartOrDeferTaskNotReady()
     {
         var today = new DateOnly(2026, 6, 10);

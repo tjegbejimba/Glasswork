@@ -176,7 +176,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
                 // resolved titles on the first frame instead of flashing the bare ID.
                 HydrateParentTitleCache(ordered);
                 var liveBacklogTasks = filtered.SourceTasks.Values
-                    .Where(task => task.Status != GlassworkTask.Statuses.Done)
+                    .Where(task => !task.IsTerminal)
                     .ToList();
 
                 var collapseState = GroupCollapseStateProvider?.Invoke()
@@ -303,6 +303,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
             GlassworkTask.Statuses.InProgress => TaskQueryStatus.InProgress,
             GlassworkTask.Statuses.Blocked => TaskQueryStatus.Blocked,
             GlassworkTask.Statuses.Done => TaskQueryStatus.Done,
+            GlassworkTask.Statuses.Cancelled => TaskQueryStatus.Cancelled,
             _ => null,
         };
         return value == "all" || status is not null;

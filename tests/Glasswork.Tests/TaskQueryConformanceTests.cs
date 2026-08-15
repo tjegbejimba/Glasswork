@@ -633,6 +633,14 @@ public sealed class TaskQueryConformanceTests
                 Id = "in-progress",
                 Title = "In progress",
                 Status = GlassworkTask.Statuses.InProgress,
+            },
+            new GlassworkTask
+            {
+                Id = "cancelled",
+                Title = "Cancelled",
+                Status = GlassworkTask.Statuses.Cancelled,
+                CancelledAt = QueryTime,
+                CancellationReason = "Superseded",
             });
 
         var result = fixture.Query.Execute(new TaskQueryRequest(
@@ -642,10 +650,11 @@ public sealed class TaskQueryConformanceTests
                 {
                     TaskQueryStatus.Todo,
                     TaskQueryStatus.Done,
+                    TaskQueryStatus.Cancelled,
                 })));
 
-        CollectionAssert.AreEqual(
-            new[] { "todo", "done" },
+        CollectionAssert.AreEquivalent(
+            new[] { "todo", "done", "cancelled" },
             result.Tasks.Select(task => task.Id).ToArray());
     }
 

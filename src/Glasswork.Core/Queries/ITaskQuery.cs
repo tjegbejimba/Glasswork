@@ -79,6 +79,7 @@ public enum TaskQueryStatus
     InProgress,
     Blocked,
     Done,
+    Cancelled,
 }
 
 public enum TaskQueryType
@@ -124,6 +125,8 @@ public enum TaskQueryField
     Subtasks,
     Links,
     CompletedAt,
+    CancelledAt,
+    CancellationReason,
 }
 
 public enum TaskQueryDiagnosticCode
@@ -198,6 +201,8 @@ public sealed class TaskQueryItem
         Description = task.Description;
         Notes = task.Notes;
         CompletedAt = task.CompletedAt;
+        CancelledAt = task.CancelledAt;
+        CancellationReason = task.CancellationReason;
         Subtasks = includeSubtasks
             ? task.Subtasks.Select(subtask => new TaskQuerySubtask(
                 subtask.Text,
@@ -241,6 +246,8 @@ public sealed class TaskQueryItem
     public IReadOnlyList<TaskQuerySubtask>? Subtasks { get; }
     public IReadOnlyList<TaskQueryLink> Links { get; }
     public DateTime? CompletedAt { get; }
+    public DateTimeOffset? CancelledAt { get; }
+    public string? CancellationReason { get; }
     public IReadOnlySet<TaskQueryField> IncludedFields => _includedFields;
 
     public bool Includes(TaskQueryField field) => _includedFields.Contains(field);
@@ -317,6 +324,9 @@ internal static class TaskQueryValueMapper
             case GlassworkTask.Statuses.Done:
                 mapped = TaskQueryStatus.Done;
                 return true;
+            case GlassworkTask.Statuses.Cancelled:
+                mapped = TaskQueryStatus.Cancelled;
+                return true;
             default:
                 mapped = default;
                 return false;
@@ -334,6 +344,7 @@ internal static class TaskQueryValueMapper
         TaskQueryStatus.InProgress => GlassworkTask.Statuses.InProgress,
         TaskQueryStatus.Blocked => GlassworkTask.Statuses.Blocked,
         TaskQueryStatus.Done => GlassworkTask.Statuses.Done,
+        TaskQueryStatus.Cancelled => GlassworkTask.Statuses.Cancelled,
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, null),
     };
 

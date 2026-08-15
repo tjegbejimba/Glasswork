@@ -242,6 +242,15 @@ public class IndexServiceAggregateTests
             CompletedAt = yesterday,
         });
         _vault.Save(new GlassworkTask { Id = "no-myday", Title = "Plain", Status = "todo" });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "cancelled-yesterday",
+            Title = "Cancelled",
+            MyDay = yesterday,
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = DateTimeOffset.UtcNow,
+            CancellationReason = "Superseded",
+        });
         _index.EnsureLoaded();
 
         var carry = _index.Carryover(DateTime.Today).ToList();

@@ -257,9 +257,9 @@ public sealed class GlassworkTools
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
     [Description("List task summaries filtered by status or parent. Re-reads from disk on every call. For topic or keyword search, use search_tasks.")]
     public string ListTasks(
-        [Description("Filter by status: todo, doing, blocked, or done.")] string? status = null,
+        [Description("Filter by status: todo, doing, blocked, done, or cancelled. Cancelled Tasks are excluded when omitted.")] string? status = null,
         [Description("Filter by parent task ID.")] string? parent_task_id = null,
-        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values: title, status, type, parent_id, path, created, priority, due, start, my_day, defer_until, ready, urgency_score, backlink_count, in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
+        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values include title, status, type, parent_id, path, created, priority, due, start, my_day, defer_until, cancelled_at, cancellation_reason, ready, urgency_score, backlink_count, and in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
     {
         using var scope = _logger?.BeginCall("list_tasks");
         try
@@ -308,7 +308,9 @@ public sealed class GlassworkTools
                         Ready: task.Ready,
                         UrgencyScore: task.UrgencyScore,
                         BacklinkCount: task.BacklinkCount,
-                        ResourceRevision: task.ResourceRevision!))
+                        ResourceRevision: task.ResourceRevision!,
+                        CancelledAt: task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+                        CancellationReason: task.CancellationReason))
                     .ToList();
                 return JsonSerializer.Serialize(new ListTasksResult(summaries));
             }
@@ -330,7 +332,7 @@ public sealed class GlassworkTools
     [Description("Query Tasks by typed fields and dependency readiness using deterministic bounded paging.")]
     public string QueryTasks(
         [Description("Filter by parent Task ID.")] string? parent_task_id = null,
-        [Description("Include Tasks whose status is in this set: todo, doing, blocked, or done.")] string[]? status = null,
+        [Description("Include Tasks whose status is in this set: todo, doing, blocked, done, or cancelled. Cancelled Tasks are excluded when omitted.")] string[]? status = null,
         [Description("Filter by Task type: task, pbi, or bug.")] string? type = null,
         [Description("Require every listed Tag to be present.")] string[]? tags = null,
         [Description("When true, select Tasks with an empty blocked_by relationship set.")] bool blocked_by_empty = false,
@@ -488,7 +490,7 @@ public sealed class GlassworkTools
     public string ListSubtasks(
         [Description("Parent task ID (required).")] string parent_task_id,
         [Description("Include descendants recursively. Default false.")] bool recursive = false,
-        [Description("Filter by status: todo, doing, blocked, or done.")] string? status_filter = null)
+        [Description("Filter by status: todo, doing, blocked, done, or cancelled.")] string? status_filter = null)
     {
         using var scope = _logger?.BeginCall("list_subtasks");
         try
@@ -510,12 +512,19 @@ public sealed class GlassworkTools
             string? internalStatus = null;
             if (status_filter is not null)
             {
-                if (!TryMapToInternalStatus(status_filter, out var mapped, out var statusError))
+                if (string.Equals(status_filter.Trim(), "cancelled", StringComparison.OrdinalIgnoreCase))
+                {
+                    internalStatus = GlassworkTask.Statuses.Cancelled;
+                }
+                else if (!TryMapToInternalStatus(status_filter, out var mapped, out var statusError))
                 {
                     scope?.SetResult("error");
                     return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
                 }
-                internalStatus = mapped;
+                else
+                {
+                    internalStatus = mapped;
+                }
             }
 
             // Load all tasks and filter for children
@@ -542,7 +551,11 @@ public sealed class GlassworkTools
                 subtasks = expanded;
             }
 
-            if (internalStatus is not null)
+            if (internalStatus is null)
+            {
+                subtasks = subtasks.Where(t => !t.IsCancelled).ToList();
+            }
+            else
             {
                 subtasks = subtasks.Where(t => t.Status == internalStatus).ToList();
             }
@@ -678,7 +691,7 @@ public sealed class GlassworkTools
         [Description("Free-text query (required).")] string query,
         [Description("Optional field scope. Valid values: title, description, notes, subtasks, tags.")] string[]? @in = null,
         [Description("Optional tags filter (AND).")] string[]? tags = null,
-        [Description("Optional status filter(s): todo, doing, done.")] string[]? status = null,
+        [Description("Optional status filter(s): todo, doing, blocked, done, or cancelled. Cancelled Tasks are excluded when omitted.")] string[]? status = null,
         [Description("Maximum results. Clamped to [1, 100]. Default: 20.")] int limit = 20)
     {
         using var scope = _logger?.BeginCall("search_tasks");
@@ -690,26 +703,46 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(inputError);
             }
 
-            var querySnapshot = _taskQuery.Execute(new TaskQueryRequest(
-                _timeProvider.GetLocalNow(),
-                new ListTaskSelection(
-                    Projection: new SelectedTaskFieldsProjection(
-                        new HashSet<TaskQueryField>
-                        {
-                            TaskQueryField.Title,
-                            TaskQueryField.Status,
-                            TaskQueryField.ParentId,
-                            TaskQueryField.Created,
-                            TaskQueryField.Description,
-                            TaskQueryField.Notes,
-                            TaskQueryField.Subtasks,
-                            TaskQueryField.Tags,
-                            TaskQueryField.Ready,
-                            TaskQueryField.UrgencyScore,
-                            TaskQueryField.BacklinkCount,
-                        }))));
-            var tasksById = querySnapshot.Tasks.ToDictionary(task => task.Id, StringComparer.Ordinal);
-            var documents = querySnapshot.Tasks
+            var projection = new SelectedTaskFieldsProjection(
+                new HashSet<TaskQueryField>
+                {
+                    TaskQueryField.Title,
+                    TaskQueryField.Status,
+                    TaskQueryField.CancelledAt,
+                    TaskQueryField.CancellationReason,
+                    TaskQueryField.ParentId,
+                    TaskQueryField.Created,
+                    TaskQueryField.Description,
+                    TaskQueryField.Notes,
+                    TaskQueryField.Subtasks,
+                    TaskQueryField.Tags,
+                    TaskQueryField.Ready,
+                    TaskQueryField.UrgencyScore,
+                    TaskQueryField.BacklinkCount,
+                });
+            var queryTime = _timeProvider.GetLocalNow();
+            var queryStatuses = new HashSet<TaskQueryStatus>();
+            foreach (var value in status ?? [])
+            {
+                if (!TryMapToTaskQueryStatus(value, out var mapped, out var statusError))
+                {
+                    scope?.SetResult("error");
+                    return JsonSerializer.Serialize(new ErrorResult("invalid_status", statusError!));
+                }
+                queryStatuses.Add(mapped);
+            }
+            var queryTasks = queryStatuses.Count > 0
+                ? queryStatuses
+                    .SelectMany(mapped => _taskQuery.Execute(new TaskQueryRequest(
+                        queryTime,
+                        new ListTaskSelection(Status: mapped, Projection: projection))).Tasks)
+                    .DistinctBy(task => task.Id, StringComparer.Ordinal)
+                    .ToArray()
+                : _taskQuery.Execute(new TaskQueryRequest(
+                    queryTime,
+                    new ListTaskSelection(Projection: projection))).Tasks;
+            var tasksById = queryTasks.ToDictionary(task => task.Id, StringComparer.Ordinal);
+            var documents = queryTasks
                 .Select(task => new TaskSearchDocument(
                     task.Id,
                     task.Title,
@@ -755,7 +788,9 @@ public sealed class GlassworkTools
                         Ready: task.Ready,
                         UrgencyScore: task.UrgencyScore,
                         BacklinkCount: task.BacklinkCount,
-                        ResourceRevision: task.ResourceRevision!);
+                        ResourceRevision: task.ResourceRevision!,
+                        CancelledAt: task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+                        CancellationReason: task.CancellationReason);
                 })
                 .ToList();
             scope?.SetCount("task_count", hits.Count);
@@ -894,6 +929,8 @@ public sealed class GlassworkTools
                 Notes: task.Notes,
                 Artifacts: artifacts,
                 ResourceRevision: ResourceRevision(task.Id),
+                CancelledAt: task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+                CancellationReason: task.CancellationReason,
                 BlockedReason: task.BlockedReason,
                 BlockedAt: task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
                 BlockedFromStatus: task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus),
@@ -1259,6 +1296,73 @@ public sealed class GlassworkTools
             scope?.SetResult("error");
             throw;
         }
+    }
+
+    [McpServerTool(Name = "cancel_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Cancel a non-terminal Task without deleting it. Clears my_day while preserving Task content, dates, Links, Artifacts, and relationships.")]
+    public string CancelTask(
+        [Description("Task ID to cancel.")] string task_id,
+        [Description("Client-generated idempotency key.")] string? mutation_id,
+        [Description("Resource Revision observed before the update.")] string? if_revision,
+        [Description("Why the Task was cancelled. Defaults to 'Cancelled by agent'.")] string? reason = null)
+    {
+        using var scope = _logger?.BeginCall("cancel_task");
+        if (string.IsNullOrWhiteSpace(mutation_id) || string.IsNullOrWhiteSpace(if_revision))
+            return SerializePreconditionRequired(scope);
+
+        var safeId = SanitizeId(task_id);
+        if (safeId is null || !_vault.Exists(safeId))
+        {
+            scope?.SetResult("not_found");
+            return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+        }
+
+        var mutation = _mutations.CancelTask(
+            mutation_id,
+            safeId,
+            if_revision,
+            string.IsNullOrWhiteSpace(reason) ? "Cancelled by agent" : reason);
+        if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
+            return SerializeMutationOutcome(mutation);
+
+        scope?.SetResult("success");
+        return JsonSerializer.Serialize(new TaskLifecycleResult(
+            safeId,
+            "cancelled",
+            mutation.Task?.ResourceRevision,
+            mutation.Task?.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+            mutation.Task?.CancellationReason));
+    }
+
+    [McpServerTool(Name = "restore_task")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Restore a cancelled Task to todo, clearing cancelled_at and cancellation_reason.")]
+    public string RestoreTask(
+        [Description("Task ID to restore.")] string task_id,
+        [Description("Client-generated idempotency key.")] string? mutation_id,
+        [Description("Resource Revision observed before the update.")] string? if_revision)
+    {
+        using var scope = _logger?.BeginCall("restore_task");
+        if (string.IsNullOrWhiteSpace(mutation_id) || string.IsNullOrWhiteSpace(if_revision))
+            return SerializePreconditionRequired(scope);
+
+        var safeId = SanitizeId(task_id);
+        if (safeId is null || !_vault.Exists(safeId))
+        {
+            scope?.SetResult("not_found");
+            return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
+        }
+
+        var mutation = _mutations.RestoreTask(mutation_id, safeId, if_revision);
+        if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
+            return SerializeMutationOutcome(mutation);
+
+        scope?.SetResult("success");
+        return JsonSerializer.Serialize(new TaskLifecycleResult(
+            safeId,
+            "todo",
+            mutation.Task?.ResourceRevision));
     }
 
     public string UpdateTask(string task_id, JsonElement fields)
@@ -2250,6 +2354,8 @@ public sealed class GlassworkTools
         Description: task.Description,
         Notes: task.Notes,
         ResourceRevision: ResourceRevision(task.Id),
+        CancelledAt: task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+        CancellationReason: task.CancellationReason,
         BlockedReason: task.BlockedReason,
         BlockedAt: task.BlockedAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
         BlockedFromStatus: task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus),
@@ -2346,11 +2452,11 @@ public sealed class GlassworkTools
             foreach (var raw in status)
             {
                 var s = (raw ?? string.Empty).Trim().ToLowerInvariant();
-                if (s is not ("todo" or "doing" or "blocked" or "done"))
+                if (s is not ("todo" or "doing" or "blocked" or "done" or "cancelled"))
                 {
                     error = new ErrorResult(
                         "invalid_status",
-                        $"Invalid status '{raw}'. Valid values: todo, doing, blocked, done.");
+                        $"Invalid status '{raw}'. Valid values: todo, doing, blocked, done, cancelled.");
                     return false;
                 }
             }
@@ -2377,6 +2483,8 @@ public sealed class GlassworkTools
                 "start" => TaskQueryField.Start,
                 "my_day" => TaskQueryField.MyDay,
                 "defer_until" => TaskQueryField.DeferUntil,
+                "cancelled_at" => TaskQueryField.CancelledAt,
+                "cancellation_reason" => TaskQueryField.CancellationReason,
                 "ready" => TaskQueryField.Ready,
                 "urgency_score" => TaskQueryField.UrgencyScore,
                 "backlink_count" => TaskQueryField.BacklinkCount,
@@ -2425,6 +2533,8 @@ public sealed class GlassworkTools
         if (task.Includes(TaskQueryField.Start)) dict["start"] = task.Start?.ToString("yyyy-MM-dd");
         if (task.Includes(TaskQueryField.MyDay)) dict["my_day"] = task.MyDay?.ToString("yyyy-MM-dd");
         if (task.Includes(TaskQueryField.DeferUntil)) dict["defer_until"] = task.DeferUntil?.ToString("yyyy-MM-dd");
+        if (task.Includes(TaskQueryField.CancelledAt)) dict["cancelled_at"] = task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        if (task.Includes(TaskQueryField.CancellationReason)) dict["cancellation_reason"] = task.CancellationReason;
         if (task.Includes(TaskQueryField.Ready)) dict["ready"] = task.Ready;
         if (task.Includes(TaskQueryField.UrgencyScore)) dict["urgency_score"] = task.UrgencyScore;
         if (task.Includes(TaskQueryField.BacklinkCount)) dict["backlink_count"] = task.BacklinkCount;
@@ -2457,7 +2567,7 @@ public sealed class GlassworkTools
 
     private static Dictionary<string, object?> QueryTaskSnapshot(TaskQueryItem task)
     {
-        return new Dictionary<string, object?>
+        var snapshot = new Dictionary<string, object?>
         {
             ["id"] = task.Id,
             ["title"] = task.Title,
@@ -2470,6 +2580,11 @@ public sealed class GlassworkTools
             ["notes"] = task.Notes,
             ["resource_revision"] = task.ResourceRevision,
         };
+        if (task.CancelledAt.HasValue)
+            snapshot["cancelled_at"] = task.CancelledAt.Value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        if (task.CancellationReason is not null)
+            snapshot["cancellation_reason"] = task.CancellationReason;
+        return snapshot;
     }
 
     private static string SerializeTaskQueryDiagnostics(
@@ -2519,7 +2634,15 @@ public sealed class GlassworkTools
         out TaskQueryStatus queryStatus,
         out string? error)
     {
-        if (!TryMapToInternalStatus(status, out var internalStatus, out error))
+        var normalizedStatus = status?.Trim().ToLowerInvariant();
+        if (normalizedStatus == "cancelled")
+        {
+            queryStatus = TaskQueryStatus.Cancelled;
+            error = null;
+            return true;
+        }
+
+        if (!TryMapToInternalStatus(normalizedStatus, out var internalStatus, out error))
         {
             queryStatus = default;
             return false;
@@ -2610,6 +2733,8 @@ public sealed class GlassworkTools
             tags = task.Tags,
             blocked_by = task.BlockedBy,
             completed_at = task.CompletedAt?.ToString("yyyy-MM-dd"),
+            cancelled_at = task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+            cancellation_reason = task.CancellationReason,
             blocked_reason = task.BlockedReason,
             resource_revision = task.ResourceRevision
         };
@@ -2641,6 +2766,7 @@ public sealed class GlassworkTools
         TaskQueryStatus.InProgress => "doing",
         TaskQueryStatus.Blocked => "blocked",
         TaskQueryStatus.Done => "done",
+        TaskQueryStatus.Cancelled => "cancelled",
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, null),
     };
 
@@ -2677,7 +2803,9 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("ready")] bool Ready,
         [property: JsonPropertyName("urgency_score")] double UrgencyScore,
         [property: JsonPropertyName("backlink_count")] int BacklinkCount,
-        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision,
+        [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,
+        [property: JsonPropertyName("cancellation_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancellationReason = null);
 
     private sealed record ListTasksResult(
         [property: JsonPropertyName("tasks")] List<TaskSummary> Tasks);
@@ -2695,7 +2823,9 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("ready")] bool Ready,
         [property: JsonPropertyName("urgency_score")] double UrgencyScore,
         [property: JsonPropertyName("backlink_count")] int BacklinkCount,
-        [property: JsonPropertyName("resource_revision")] string ResourceRevision);
+        [property: JsonPropertyName("resource_revision")] string ResourceRevision,
+        [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,
+        [property: JsonPropertyName("cancellation_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancellationReason = null);
 
     private sealed record SearchTasksResult(
         [property: JsonPropertyName("tasks")] List<TaskSearchSummary> Tasks);
@@ -2720,6 +2850,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("notes")] string Notes,
         [property: JsonPropertyName("artifacts")] List<ArtifactInfo> Artifacts,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision,
+        [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,
+        [property: JsonPropertyName("cancellation_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancellationReason = null,
         [property: JsonPropertyName("blocked_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedReason = null,
         [property: JsonPropertyName("blocked_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedAt = null,
         [property: JsonPropertyName("blocked_from_status"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedFromStatus = null,
@@ -2753,6 +2885,13 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("updated_at")] string UpdatedAt,
         [property: JsonPropertyName("resource_revision")] string? ResourceRevision = null);
 
+    private sealed record TaskLifecycleResult(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("resource_revision")] string? ResourceRevision,
+        [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,
+        [property: JsonPropertyName("cancellation_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancellationReason = null);
+
     private sealed record UpdateTaskResult(
         [property: JsonPropertyName("task_id")] string TaskId,
         [property: JsonPropertyName("updated_fields")] string[] UpdatedFields,
@@ -2777,6 +2916,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("description")] string Description,
         [property: JsonPropertyName("notes")] string Notes,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision,
+        [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,
+        [property: JsonPropertyName("cancellation_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancellationReason = null,
         [property: JsonPropertyName("blocked_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedReason = null,
         [property: JsonPropertyName("blocked_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedAt = null,
         [property: JsonPropertyName("blocked_from_status"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedFromStatus = null,
@@ -3051,7 +3192,7 @@ public sealed class GlassworkTools
 
     [McpServerTool(Name = "list_overdue")]
     [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
-    [Description("Find tasks past their due date for morning review. Returns tasks where due_date < today and status != done.")]
+    [Description("Find active tasks past their due date for morning review. Excludes done and cancelled tasks.")]
     public string ListOverdue(
         [Description("Include only tasks in My Day. Default false.")] bool include_my_day_only = false,
         [Description("Maximum number of tasks to return. Default 50.")] int limit = 50)
@@ -3063,7 +3204,7 @@ public sealed class GlassworkTools
             var today = DateTime.Today;
 
             var overdueTasks = all
-                .Where(t => t.Due.HasValue && t.Due.Value.Date < today && t.Status != GlassworkTask.Statuses.Done)
+                .Where(t => t.Due.HasValue && t.Due.Value.Date < today && !t.IsTerminal)
                 .Where(t => !include_my_day_only || t.IsMyDay)
                 .OrderBy(t => t.Due)
                 .Take(limit)

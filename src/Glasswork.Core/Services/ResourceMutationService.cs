@@ -38,6 +38,8 @@ public sealed record ResourceMutationTaskSnapshot(
     IReadOnlyList<string> Tags,
     IReadOnlyList<string> BlockedBy,
     DateTime? CompletedAt,
+    DateTimeOffset? CancelledAt,
+    string? CancellationReason,
     string? BlockedReason,
     string ResourceRevision);
 
@@ -402,7 +404,14 @@ public sealed partial class ResourceMutationService
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
                 notifications.UnionWith(RecoverUnsafe());
-                result = TransactSingleTaskUnsafe(mutationId, taskId, ifRevision, fields, notifications);
+                result = TransactSingleTaskUnsafe(
+                    mutationId,
+                    taskId,
+                    ifRevision,
+                    "set_task_fields",
+                    fields,
+                    task => ApplyFields(task, fields),
+                    notifications);
             }
         }
         catch
@@ -428,16 +437,124 @@ public sealed partial class ResourceMutationService
         return result!;
     }
 
+    public ResourceMutationOutcome CancelTask(
+        string? mutationId,
+        string? taskId,
+        string? ifRevision,
+        string? reason)
+    {
+        var payload = JsonSerializer.SerializeToElement(new { reason });
+        return TransactTaskLifecycle(
+            mutationId,
+            taskId,
+            ifRevision,
+            "cancel_task",
+            payload,
+            task =>
+            {
+                try
+                {
+                    TaskService.ApplyCancel(task, reason ?? string.Empty, _clock);
+                    return null;
+                }
+                catch (ArgumentException ex)
+                {
+                    return ex.Message;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return ex.Message;
+                }
+            });
+    }
+
+    public ResourceMutationOutcome RestoreTask(
+        string? mutationId,
+        string? taskId,
+        string? ifRevision,
+        string restoreStatus = GlassworkTask.Statuses.Todo)
+    {
+        var payload = JsonSerializer.SerializeToElement(new { restore_status = restoreStatus });
+        return TransactTaskLifecycle(
+            mutationId,
+            taskId,
+            ifRevision,
+            "restore_task",
+            payload,
+            task =>
+            {
+                try
+                {
+                    TaskService.ApplyRestoreCancelled(task, restoreStatus);
+                    return null;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return ex.Message;
+                }
+            });
+    }
+
+    private ResourceMutationOutcome TransactTaskLifecycle(
+        string? mutationId,
+        string? taskId,
+        string? ifRevision,
+        string operation,
+        JsonElement payload,
+        Func<GlassworkTask, string?> apply)
+    {
+        var notifications = new HashSet<string>(StringComparer.Ordinal);
+        ResourceMutationOutcome? result = null;
+
+        try
+        {
+            using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+            {
+                notifications.UnionWith(RecoverUnsafe());
+                result = TransactSingleTaskUnsafe(
+                    mutationId,
+                    taskId,
+                    ifRevision,
+                    operation,
+                    payload,
+                    apply,
+                    notifications);
+            }
+        }
+        catch
+        {
+            try
+            {
+                using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+                    notifications.UnionWith(RecoverUnsafe());
+            }
+            catch
+            {
+                // Preserve the original failure; the next managed access retries recovery.
+            }
+            throw;
+        }
+        finally
+        {
+            foreach (var taskIdToNotify in notifications)
+                _vault.NotifyTaskWritten(taskIdToNotify);
+        }
+
+        return result!;
+    }
+
     private ResourceMutationOutcome TransactSingleTaskUnsafe(
         string? mutationId,
         string? taskId,
         string? ifRevision,
-        JsonElement fields,
+        string operation,
+        JsonElement payload,
+        Func<GlassworkTask, string?> apply,
         ISet<string> notifications)
     {
         var state = ReadState();
         Prune(state);
-        var requestHash = HashRequest(mutationId, "set_task_fields", taskId, ifRevision, fields);
+        var requestHash = HashRequest(mutationId, operation, taskId, ifRevision, payload);
 
         if (string.IsNullOrWhiteSpace(mutationId))
             return new ResourceMutationOutcome(
@@ -465,7 +582,7 @@ public sealed partial class ResourceMutationService
                     mutationId, "validation_error", false, ifRevision, null, null,
                     "task_id is required."));
 
-        if (fields.ValueKind != JsonValueKind.Object)
+        if (payload.ValueKind != JsonValueKind.Object)
             return Record(state, mutationId, requestHash,
                 new ResourceMutationOutcome(
                     mutationId, "validation_error", false, ifRevision, null, null,
@@ -491,7 +608,7 @@ public sealed partial class ResourceMutationService
         string? error;
         try
         {
-            error = ApplyFields(staged, fields);
+            error = apply(staged);
         }
         catch (FormatException ex)
         {
@@ -1494,7 +1611,7 @@ public sealed partial class ResourceMutationService
         new(task.Id, task.Title, task.Status == GlassworkTask.Statuses.InProgress ? "doing" : task.Status,
             task.Priority, task.Type, task.Created, task.Due, task.Start, task.MyDay, task.DeferUntil,
             task.Parent, task.Description, task.Notes, task.Tags, task.BlockedBy, task.CompletedAt,
-            task.BlockedReason, revision);
+            task.CancelledAt, task.CancellationReason, task.BlockedReason, revision);
 
     public static string Revision(byte[] bytes) =>
         $"rr1-{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";

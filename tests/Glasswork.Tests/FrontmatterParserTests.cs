@@ -219,6 +219,29 @@ public class FrontmatterParserTests
     }
 
     [TestMethod]
+    public void Serialize_ThenParse_CancelledTask_RoundTripsCancellationMetadata()
+    {
+        var cancelledAt = DateTimeOffset.Parse("2026-08-14T22:15:30Z", CultureInfo.InvariantCulture);
+        var original = new GlassworkTask
+        {
+            Id = "cancelled-round-trip",
+            Title = "Cancelled round trip",
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = cancelledAt,
+            CancellationReason = "No longer needed",
+        };
+
+        var markdown = _parser.Serialize(original);
+        var parsed = _parser.Parse(markdown);
+
+        Assert.AreEqual(GlassworkTask.Statuses.Cancelled, parsed.Status);
+        Assert.AreEqual(cancelledAt, parsed.CancelledAt);
+        Assert.AreEqual("No longer needed", parsed.CancellationReason);
+        StringAssert.Contains(markdown, "cancelled_at: 2026-08-14T22:15:30.0000000Z");
+        StringAssert.Contains(markdown, "cancellation_reason: No longer needed");
+    }
+
+    [TestMethod]
     public void Parse_BlockedTaskMissingMetadata_FlagsNeedsBlockerDetails()
     {
         var markdown = """

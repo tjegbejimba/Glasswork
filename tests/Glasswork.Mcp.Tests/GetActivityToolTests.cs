@@ -133,8 +133,10 @@ public class GetActivityToolTests
         Assert.AreEqual(yesterday.AddDays(1).AddTicks(-1), to);
     }
 
-    [TestMethod]
-    public void GetActivity_TaskWithCompletedAtButNotDoneStatus_IsNotIncluded()
+    [DataTestMethod]
+    [DataRow(GlassworkTask.Statuses.Todo)]
+    [DataRow(GlassworkTask.Statuses.Cancelled)]
+    public void GetActivity_TaskWithCompletedAtButNotDoneStatus_IsNotIncluded(string status)
     {
         // Arrange - create task with completed_at but status != done (stale/manual edit scenario)
         _tools.AddTask("Stale task");
@@ -144,7 +146,12 @@ public class GetActivityToolTests
         
         // Simulate stale state: has completed_at but status is still "todo"
         task.CompletedAt = DateTime.Today.AddHours(10);
-        task.Status = "todo"; // Not done!
+        task.Status = status;
+        if (status == GlassworkTask.Statuses.Cancelled)
+        {
+            task.CancelledAt = DateTimeOffset.UtcNow;
+            task.CancellationReason = "Superseded";
+        }
         vault.Save(task);
         
         // Act

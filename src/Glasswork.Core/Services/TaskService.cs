@@ -108,6 +108,20 @@ public class TaskService
         _vault.Save(task);
     }
 
+    public void Cancel(GlassworkTask task, string reason)
+    {
+        ApplyCancel(task, reason, _utcNow);
+        _vault.Save(task);
+    }
+
+    public void RestoreCancelled(
+        GlassworkTask task,
+        string restoreStatus = GlassworkTask.Statuses.Todo)
+    {
+        ApplyRestoreCancelled(task, restoreStatus);
+        _vault.Save(task);
+    }
+
     /// <summary>
     /// Get incomplete tasks that were on My Day for a previous date (carryover candidates).
     /// </summary>
@@ -164,6 +178,8 @@ public class TaskService
 
     public static void EnsureCanMutate(GlassworkTask task)
     {
+        if (task.IsCancelled)
+            throw new InvalidOperationException("Cancelled tasks must be restored before they can be changed.");
         if (task.IsBlocked && task.NeedsBlockerDetails)
             throw new InvalidOperationException("Blocked task needs blocker details before it can be changed.");
     }
@@ -172,6 +188,8 @@ public class TaskService
     {
         if (newStatus == GlassworkTask.Statuses.Blocked)
             throw new InvalidOperationException("Use MarkBlocked to move a task to blocked.");
+        if (newStatus == GlassworkTask.Statuses.Cancelled)
+            throw new InvalidOperationException("Use Cancel to move a task to cancelled.");
         EnsureCanMutate(task);
         var wasDone = task.Status == GlassworkTask.Statuses.Done;
         task.Status = newStatus;
@@ -193,6 +211,8 @@ public class TaskService
     {
         if (newStatus == GlassworkTask.Statuses.Blocked)
             throw new InvalidOperationException("Use MarkBlocked to move a task to blocked.");
+        if (newStatus == GlassworkTask.Statuses.Cancelled)
+            throw new InvalidOperationException("Use Cancel to move a task to cancelled.");
         EnsureCanMutate(task);
         task.Status = newStatus;
         if (newStatus != GlassworkTask.Statuses.Blocked)
@@ -252,6 +272,53 @@ public class TaskService
         task.BlockedFromStatus = NormalizeResumeStatus(blockedFromStatus);
         task.BlockedAt ??= utcNow().ToUniversalTime();
         task.BlockedMetadataState = BlockedMetadataState.Valid;
+    }
+
+    public static void ApplyCancel(
+        GlassworkTask task,
+        string reason,
+        Func<DateTimeOffset> utcNow)
+    {
+        if (task.Status is not (
+            GlassworkTask.Statuses.Todo
+            or GlassworkTask.Statuses.InProgress
+            or GlassworkTask.Statuses.Blocked))
+        {
+            throw new InvalidOperationException(
+                "Only todo, in-progress, or blocked tasks can be cancelled.");
+        }
+
+        var trimmedReason = reason?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedReason))
+            throw new ArgumentException("Cancellation reason is required.", nameof(reason));
+
+        task.Status = GlassworkTask.Statuses.Cancelled;
+        task.CancelledAt = utcNow().ToUniversalTime();
+        task.CancellationReason = trimmedReason;
+        task.MyDay = null;
+        task.CompletedAt = null;
+        ClearBlockedState(task);
+    }
+
+    public static void ApplyRestoreCancelled(
+        GlassworkTask task,
+        string restoreStatus = GlassworkTask.Statuses.Todo)
+    {
+        if (!task.IsCancelled)
+            throw new InvalidOperationException("Only cancelled tasks can be restored.");
+        if (restoreStatus is not (
+            GlassworkTask.Statuses.Todo
+            or GlassworkTask.Statuses.InProgress))
+        {
+            throw new InvalidOperationException(
+                "Cancelled tasks can only be restored to todo or in-progress.");
+        }
+
+        task.Status = restoreStatus;
+        task.CancelledAt = null;
+        task.CancellationReason = null;
+        task.CompletedAt = null;
+        ClearBlockedState(task);
     }
 
     private static string ValidateBlockedReason(string reason)

@@ -74,6 +74,32 @@ public class ListSubtasksTests
     }
 
     [TestMethod]
+    public void ListSubtasks_CancelledChildRequiresExplicitStatusFilter()
+    {
+        var parent = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement;
+        var parentId = parent.GetProperty("task_id").GetString()!;
+        var child = JsonDocument.Parse(
+            _tools.AddTask("Cancelled child", parent_task_id: parentId)).RootElement;
+        var childId = child.GetProperty("task_id").GetString()!;
+        _tools.CancelTask(
+            childId,
+            "cancel-child",
+            child.GetProperty("resource_revision").GetString(),
+            "Superseded");
+
+        using var defaultResult = JsonDocument.Parse(_tools.ListSubtasks(parentId));
+        Assert.AreEqual(
+            0,
+            defaultResult.RootElement.GetProperty("subtasks").GetArrayLength());
+
+        using var archivedResult = JsonDocument.Parse(
+            _tools.ListSubtasks(parentId, status_filter: "cancelled"));
+        var archived = archivedResult.RootElement.GetProperty("subtasks");
+        Assert.AreEqual(1, archived.GetArrayLength());
+        Assert.AreEqual(childId, archived[0].GetProperty("id").GetString());
+    }
+
+    [TestMethod]
     public void ListSubtasks_CompletionRate_CalculatedCorrectly()
     {
         // Arrange: parent with 2 done out of 4 children = 50%

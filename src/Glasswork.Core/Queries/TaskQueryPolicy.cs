@@ -14,6 +14,8 @@ internal static class TaskQueryPolicy
             TaskQueryField.ResourceRevision,
             TaskQueryField.Title,
             TaskQueryField.Status,
+            TaskQueryField.CancelledAt,
+            TaskQueryField.CancellationReason,
             TaskQueryField.ParentId,
             TaskQueryField.Path,
             TaskQueryField.Ready,
@@ -26,6 +28,8 @@ internal static class TaskQueryPolicy
             TaskQueryField.ResourceRevision,
             TaskQueryField.Title,
             TaskQueryField.Status,
+            TaskQueryField.CancelledAt,
+            TaskQueryField.CancellationReason,
             TaskQueryField.Type,
             TaskQueryField.ParentId,
             TaskQueryField.Tags,
@@ -147,7 +151,9 @@ internal static class TaskQueryPolicy
         };
 
         var tasks = snapshot.Tasks
-            .Where(task => status is null || task.Status == status)
+            .Where(task => status is null
+                ? task.Status != GlassworkTask.Statuses.Cancelled
+                : task.Status == status)
             .Where(task => parentId is null || string.Equals(task.Parent, parentId, StringComparison.Ordinal))
             .OrderBy(task => task.Created)
             .ThenBy(task => task.Id, StringComparer.Ordinal)
@@ -186,6 +192,7 @@ internal static class TaskQueryPolicy
             .ToArray();
 
         var scoped = snapshot.Tasks
+            .Where(task => statuses.Count > 0 || task.Status != GlassworkTask.Statuses.Cancelled)
             .Where(task => parentId is null || string.Equals(task.Parent, parentId, StringComparison.Ordinal))
             .Where(task => statuses.Count == 0 || statuses.Contains(task.Status))
             .Where(task => type is null || GlassworkTask.Types.Normalize(task.Type) == type)
@@ -265,6 +272,7 @@ internal static class TaskQueryPolicy
         ArgumentNullException.ThrowIfNull(selection.DismissedTaskIds);
         var today = DateOnly.FromDateTime(queryTime.Date);
         var selected = snapshot.Tasks
+            .Where(task => task.Status != GlassworkTask.Statuses.Cancelled)
             .Where(task =>
                 MyDayPromotionPolicy.IsTaskInMyDayToday(
                     task,
@@ -299,6 +307,8 @@ internal static class TaskQueryPolicy
             .Select(TaskQueryValueMapper.Status)
             .ToHashSet(StringComparer.Ordinal);
         var selected = snapshot.Tasks
+            .Where(task => statuses is { Count: > 0 }
+                || task.Status != GlassworkTask.Statuses.Cancelled)
             .Where(task => statuses is { Count: > 0 }
                 ? statuses.Contains(task.Status)
                 : !excludeDoneWhenUnfiltered || task.Status != GlassworkTask.Statuses.Done)

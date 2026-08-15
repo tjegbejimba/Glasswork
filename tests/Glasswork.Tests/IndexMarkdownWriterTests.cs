@@ -139,6 +139,29 @@ public class IndexMarkdownWriterTests
     }
 
     [TestMethod]
+    public void WriteCurrent_CancelledTaskAppearsInNeitherGeneratedSurface()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "cancelled",
+            Title = "Archived task",
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = DateTimeOffset.UtcNow,
+            CancellationReason = "Superseded",
+        });
+        _index.EnsureLoaded();
+
+        IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
+
+        Assert.IsFalse(
+            File.ReadAllText(Path.Combine(_tempDir, "_index.md"))
+                .Contains("Archived task", StringComparison.Ordinal));
+        Assert.IsFalse(
+            File.ReadAllText(Path.Combine(_tempDir, "_today.md"))
+                .Contains("Archived task", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void Dispose_UnsubscribesFromChanged()
     {
         var writer = new IndexMarkdownWriter(_index, _tempDir);
