@@ -23,11 +23,16 @@ Owns the on-disk truth. Reads and writes `.md` files in the vault folder,
 parses YAML frontmatter, watches for external changes (Obsidian editing,
 agent edits, git pulls), and serializes back without losing user content.
 
-- **Source of truth for**: every `GlassworkTask`, every subtask, every note.
+- **Source of truth for**: every `GlassworkTask`, every subtask, every note,
+  every Research Topic opt-in, and every Research Change Log.
 - **Key services**: `VaultService`, `FileWatcherService`, `SelfWriteCoordinator`.
 - **Speaks to**: Task Model (parses files into models), Presentation (raises
   `TaskFileChangedExternally` events).
 - **Does not own**: anything ephemeral, anything UI.
+- **Research write boundary** *(future)*: Glasswork may mutate only the
+  namespaced `glasswork.research` metadata on eligible Wiki Pages and files
+  under `wiki/research-logs/`. Topic synthesis prose remains LLM-maintained
+  under the Wiki's governance, not app-edited.
 
 ### 2. Task Model
 
@@ -123,7 +128,29 @@ initiators. See ADR 0010 and issue #184.
 - **Does not own**: the tasks themselves (Vault Sync owns disk truth), nor
   any UI state.
 
-### 4. UI State *(new — this slice)*
+### 4. Research *(future)*
+
+The durable knowledge-return model over schema-governed Wiki Pages. A Wiki Page
+becomes a Research Topic only through explicit Vault metadata; the original page
+remains the source of truth and is never copied into a Research-owned document.
+
+- **Owns**: Research Topic eligibility and opt-in, bounded Research context,
+  Research freshness, Research Change Logs, and Research handoff semantics.
+- **Research context**: the Topic plus one direct hop of outgoing Wiki links,
+  provenance references, and Backlinks, adjusted by durable include/exclude
+  overrides. It never expands transitively or includes Research Change Logs.
+- **Agent boundary**: a Research Session starts with visibly selected Research
+  context, may discover new cited primary evidence, and writes durable learning
+  through the Wiki's existing governance. Chat history is not domain state.
+- **Work boundary**: Tasks and Wayfinder maps/tickets remain Related Work with
+  their own lifecycle. Research may hand off to them explicitly but is never
+  converted into work or completed by it.
+- **Speaks to**: Vault Sync (current Wiki Pages, opt-in metadata, Change Logs),
+  Index (related Tasks), and Presentation (Research Page).
+- **Does not own**: Wiki synthesis prose, Task workflow state, Wayfinder state,
+  Copilot session history, or general Vault browsing.
+
+### 5. UI State *(new — this slice)*
 
 Non-task user preferences that should persist across app restarts but
 **must not pollute the vault**. Examples: which task cards the user has
@@ -134,12 +161,14 @@ manually collapsed, sidebar pane width, last-selected page.
 - **Speaks to**: Presentation (read/write key-value).
 - **Does not own**: anything in the vault, anything in the task model.
 - **Boundary rule**: if the data describes a *task*, it lives in the vault.
-  If it describes the *user's view of tasks*, it lives here. When in doubt,
-  vault wins.
+  If it describes the *user's view of tasks*, it lives here. A Wiki Page's
+  explicit opt-in as a **Research Topic** describes that durable knowledge
+  page, not one machine's view of it, so the opt-in lives in the vault. When
+  in doubt, vault wins.
 - **Lifecycle**: GC stale entries on app launch (drop entries whose taskId
   no longer exists in vault).
 
-### 5. Presentation
+### 6. Presentation
 
 WinUI 3 pages, controls, and view-state. Lives in `Glasswork.App`. Holds
 no domain logic — composes the other contexts into screens.
@@ -152,11 +181,13 @@ no domain logic — composes the other contexts into screens.
   resume target, or complete directly.
 - **Speaks to**: every other context (consumes services).
 - **Default landing**: `MyDayPage` (Home Dashboard is a future concept).
-- **Wiki view**: out of scope for now. Vault is also the user's personal
-  wiki, but Glasswork only renders task `.md` files. A future Home Dashboard
-  may surface non-task wiki notes — that's a deliberate extension point.
+- **Research Page** *(future)*: a focused, two-pane reading library over
+  explicitly opted-in **Research Topics**. It surfaces schema-governed Wiki
+  knowledge, Research freshness, bounded Research context, Related Work, and
+  explicit Research Session actions. It is not a general Wiki browser or a
+  revival of the deleted Home Dashboard.
 
-### 6. App Update
+### 7. App Update
 
 Keeps the installed app current with its GitHub releases. Owns nothing in the
 vault and nothing in the task model — it is a self-contained capability that
@@ -187,7 +218,7 @@ See ADR 0020 (supersedes ADR 0011's apply mechanism).
   must never leave the user without a working app — failed verification or
   installation preserves and relaunches the Installed version. See ADR 0020.
 
-### 7. Release publication
+### 8. Release publication
 
 Turns an intentionally chosen commit on `main` into the GitHub Release tag that
 App Update consumes as the **Available version**.
@@ -232,8 +263,9 @@ App Update consumes as the **Available version**.
 - **Debouncing** — `Debouncer` class (500ms) is the standard for batching
   writes. Reused for both index regen and UI state writes.
 - **Self-write tracking** — `SelfWriteCoordinator` suppresses watcher echoes
-  from our own writes. Any new code that writes the vault must register
-  with it, or watcher events will fire spuriously.
+  from our own writes. Any new code that writes the vault—including the future
+  narrow Research writer outside `wiki/todo/`—must register with it, or watcher
+  events will fire spuriously.
 - **Virtual My Day promotion** — a task can be "in My Day today" without
   `task.MyDay` being set. Sources: task due-date, flagged subtask, or
   subtask due-date. Computed by `MyDayViewModel`; the vault is never
@@ -246,5 +278,6 @@ App Update consumes as the **Available version**.
 - **Home Dashboard** — future surface that may aggregate tasks + wiki notes.
   `HomePage` is being deleted as part of this slice; a true dashboard would
   be a fresh design when revisited.
-- **Wiki rendering** — Glasswork remains task-only for now.
+- **General Wiki browsing** — the future Research Page is limited to explicitly
+  opted-in, schema-governed Wiki Pages rather than exposing every Vault file.
 - **Multi-vault / multi-user** — single-user, single-vault assumption holds.
