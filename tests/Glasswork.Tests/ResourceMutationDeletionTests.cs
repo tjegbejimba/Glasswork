@@ -73,6 +73,173 @@ public sealed class ResourceMutationDeletionTests
     }
 
     [TestMethod]
+    public void PreflightTaskDeletion_IgnoresAnUnrelatedFilenameAndFrontmatterIdMismatch()
+    {
+        _vault.Save(new GlassworkTask { Id = "root", Title = "Root" });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "unrelated-task",
+            Title = "Unrelated malformed Task",
+            Parent = "somewhere-else",
+        });
+        File.Move(
+            Path.Combine(_todoPath, "unrelated-task.md"),
+            Path.Combine(_todoPath, "wrong-file.md"));
+
+        var result = _mutations.PreflightTaskDeletion("root");
+
+        Assert.AreEqual("ready", result.Outcome);
+        Assert.AreEqual("root", result.Preflight!.Task.Id);
+        Assert.IsEmpty(result.Preflight.Descendants);
+        Assert.IsTrue(File.Exists(Path.Combine(_todoPath, "wrong-file.md")));
+    }
+
+    [TestMethod]
+    public void PreflightTaskDeletion_FailsClosedWhenAMismatchedFileClaimsParentageInTheSubtree()
+    {
+        _vault.Save(new GlassworkTask { Id = "root", Title = "Root" });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "malformed-child",
+            Title = "Malformed child",
+            Parent = "root",
+        });
+        File.Move(
+            Path.Combine(_todoPath, "malformed-child.md"),
+            Path.Combine(_todoPath, "wrong-child.md"));
+
+        var error = Assert.ThrowsExactly<InvalidDataException>(() =>
+            _mutations.PreflightTaskDeletion("root"));
+
+        StringAssert.Contains(error.Message, "wrong-child.md");
+        StringAssert.Contains(error.Message, "root");
+        StringAssert.Contains(error.Message, "Repair");
+        Assert.IsTrue(_vault.Exists("root"));
+        Assert.IsTrue(File.Exists(Path.Combine(_todoPath, "wrong-child.md")));
+    }
+
+    [TestMethod]
+    public void PreflightTaskDeletion_FailsClosedWhenAMismatchedFileClaimsADescendantIdentity()
+    {
+        _vault.Save(new GlassworkTask { Id = "root", Title = "Root" });
+        _vault.Save(new GlassworkTask { Id = "child", Title = "Child", Parent = "root" });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "shadow-child",
+            Title = "Shadow child",
+            Parent = "somewhere-else",
+        });
+        var shadowPath = Path.Combine(_todoPath, "shadow-child.md");
+        File.WriteAllText(
+            shadowPath,
+            File.ReadAllText(shadowPath).Replace(
+                "id: shadow-child",
+                "id: child",
+                StringComparison.Ordinal));
+
+        var error = Assert.ThrowsExactly<InvalidDataException>(() =>
+            _mutations.PreflightTaskDeletion("root"));
+
+        StringAssert.Contains(error.Message, "shadow-child.md");
+        StringAssert.Contains(error.Message, "child");
+        StringAssert.Contains(error.Message, "Repair");
+        Assert.IsTrue(_vault.Exists("root"));
+        Assert.IsTrue(_vault.Exists("child"));
+        Assert.IsTrue(File.Exists(shadowPath));
+    }
+
+    [TestMethod]
+    public void PreflightTaskDeletion_FailsClosedWhenAMismatchedTaskRequiresBacklinkRepair()
+    {
+        _vault.Save(new GlassworkTask { Id = "root", Title = "Root" });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "unrelated-task",
+            Title = "Unrelated malformed Task",
+            Parent = "somewhere-else",
+            Description = "Keep context for [[root]].",
+        });
+        File.Move(
+            Path.Combine(_todoPath, "unrelated-task.md"),
+            Path.Combine(_todoPath, "wrong-file.md"));
+
+        var error = Assert.ThrowsExactly<InvalidDataException>(() =>
+            _mutations.PreflightTaskDeletion("root"));
+
+        StringAssert.Contains(error.Message, "wrong-file.md");
+        StringAssert.Contains(error.Message, "inbound Wiki link");
+        StringAssert.Contains(error.Message, "Repair");
+        Assert.IsTrue(_vault.Exists("root"));
+        Assert.IsTrue(File.Exists(Path.Combine(_todoPath, "wrong-file.md")));
+    }
+
+    [TestMethod]
+    public void PreflightTaskDeletion_FailsClosedWhenAMismatchedPbiMakesAdoParentIdentityAmbiguous()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "root-pbi",
+            Title = "Root PBI",
+            Type = GlassworkTask.Types.Pbi,
+            Links = [new TaskLink { Type = TaskLink.Types.Ado, Value = "42" }],
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "child",
+            Title = "Child",
+            Parent = "https://dev.azure.com/org/project/_workitems/edit/42",
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "shadow-pbi",
+            Title = "Shadow PBI",
+            Type = GlassworkTask.Types.Pbi,
+            Parent = "somewhere-else",
+            Links = [new TaskLink { Type = TaskLink.Types.Ado, Value = "42" }],
+        });
+        File.Move(
+            Path.Combine(_todoPath, "shadow-pbi.md"),
+            Path.Combine(_todoPath, "wrong-pbi.md"));
+
+        var error = Assert.ThrowsExactly<InvalidDataException>(() =>
+            _mutations.PreflightTaskDeletion("root-pbi"));
+
+        StringAssert.Contains(error.Message, "wrong-pbi.md");
+        StringAssert.Contains(error.Message, "ADO parent identity '42'");
+        StringAssert.Contains(error.Message, "Repair");
+        Assert.IsTrue(_vault.Exists("root-pbi"));
+        Assert.IsTrue(_vault.Exists("child"));
+        Assert.IsTrue(File.Exists(Path.Combine(_todoPath, "wrong-pbi.md")));
+    }
+
+    [TestMethod]
+    public void PreflightTaskDeletion_FailsClosedWhenAMismatchedTaskShadowsAnAdoParentToken()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "root-pbi",
+            Title = "Root PBI",
+            Type = GlassworkTask.Types.Pbi,
+            Links = [new TaskLink { Type = TaskLink.Types.Ado, Value = "42" }],
+        });
+        _vault.Save(new GlassworkTask { Id = "child", Title = "Child", Parent = "42" });
+        _vault.Save(new GlassworkTask { Id = "42", Title = "Shadow Task" });
+        File.Move(
+            Path.Combine(_todoPath, "42.md"),
+            Path.Combine(_todoPath, "wrong-file.md"));
+
+        var error = Assert.ThrowsExactly<InvalidDataException>(() =>
+            _mutations.PreflightTaskDeletion("root-pbi"));
+
+        StringAssert.Contains(error.Message, "wrong-file.md");
+        StringAssert.Contains(error.Message, "shadows parent '42'");
+        StringAssert.Contains(error.Message, "Repair");
+        Assert.IsTrue(_vault.Exists("root-pbi"));
+        Assert.IsTrue(_vault.Exists("child"));
+        Assert.IsTrue(File.Exists(Path.Combine(_todoPath, "wrong-file.md")));
+    }
+
+    [TestMethod]
     public void PreflightTaskDeletion_ResolvesPbiChildrenByAdoParentIdentity()
     {
         _vault.Save(new GlassworkTask
