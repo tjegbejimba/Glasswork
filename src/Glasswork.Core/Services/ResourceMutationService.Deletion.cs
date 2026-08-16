@@ -357,7 +357,9 @@ public sealed partial class ResourceMutationService
 
     private DeletionPlan? BuildDeletionPlanUnsafe(string taskId)
     {
-        var taskFiles = ReadTaskFilesUnsafe();
+        var inventory = ReadTaskFilesUnsafe();
+        ThrowIfRequestedTaskHasIdentityMismatch(taskId, inventory.IdentityMismatches);
+        var taskFiles = inventory.Tasks;
         if (!taskFiles.TryGetValue(taskId, out var root))
             return null;
 
@@ -365,13 +367,21 @@ public sealed partial class ResourceMutationService
         var deletedTasks = descendants
             .Prepend(root)
             .ToArray();
+        ThrowIfIdentityMismatchAffectsSubtree(
+            taskId,
+            deletedTasks,
+            taskFiles,
+            inventory.IdentityMismatches);
         var artifactDirectories = FindArtifactDirectories(
             deletedTasks.Select(source => source.Task.Id));
         var artifacts = artifactDirectories
             .SelectMany(directory => directory.Artifacts)
             .OrderBy(artifact => artifact.VaultRelativePath, StringComparer.Ordinal)
             .ToArray();
-        var rewrites = FindBacklinkRewrites(deletedTasks, taskFiles);
+        var rewrites = FindBacklinkRewrites(
+            deletedTasks,
+            taskFiles,
+            inventory.IdentityMismatches);
         var preflight = new TaskDeletionPreflight(
             ToDeletionTask(root),
             descendants.Select(ToDeletionTask).ToArray(),
@@ -460,9 +470,10 @@ public sealed partial class ResourceMutationService
             .ToLowerInvariant();
     }
 
-    private Dictionary<string, DeletionTaskSource> ReadTaskFilesUnsafe()
+    private DeletionTaskInventory ReadTaskFilesUnsafe()
     {
         var tasks = new Dictionary<string, DeletionTaskSource>(StringComparer.Ordinal);
+        var identityMismatches = new List<DeletionTaskIdentityMismatch>();
         foreach (var path in Directory.EnumerateFiles(_vaultPath, "*.md", SearchOption.TopDirectoryOnly)
                      .Where(path => !Path.GetFileName(path).StartsWith('_')))
         {
@@ -471,17 +482,136 @@ public sealed partial class ResourceMutationService
                 throw new InvalidDataException($"Task file '{Path.GetFileName(path)}' has an unsafe filename.");
             var bytes = File.ReadAllBytes(path);
             var task = _parser.Parse(Encoding.UTF8.GetString(bytes));
+            var source = new DeletionTaskSource(task, bytes, path);
             if (!string.Equals(task.Id, fileTaskId, StringComparison.Ordinal))
             {
-                throw new InvalidDataException(
-                    $"Task file '{Path.GetFileName(path)}' contains mismatched id '{task.Id}'.");
+                identityMismatches.Add(new DeletionTaskIdentityMismatch(fileTaskId, source));
+                continue;
             }
-            if (!tasks.TryAdd(task.Id, new DeletionTaskSource(task, bytes, path)))
+            if (!tasks.TryAdd(task.Id, source))
                 throw new InvalidDataException($"Duplicate Task id '{task.Id}' was found.");
         }
 
-        return tasks;
+        return new DeletionTaskInventory(tasks, identityMismatches);
     }
+
+    private static void ThrowIfRequestedTaskHasIdentityMismatch(
+        string requestedTaskId,
+        IEnumerable<DeletionTaskIdentityMismatch> identityMismatches)
+    {
+        var mismatch = identityMismatches
+            .Where(candidate =>
+                string.Equals(candidate.FileTaskId, requestedTaskId, StringComparison.Ordinal)
+                || string.Equals(candidate.Source.Task.Id, requestedTaskId, StringComparison.Ordinal))
+            .OrderBy(candidate => candidate.Source.Path, PathComparer)
+            .FirstOrDefault();
+        if (mismatch is null)
+            return;
+
+        throw IdentityMismatchError(
+            mismatch,
+            $"It conflicts with requested Task '{requestedTaskId}'.");
+    }
+
+    private static void ThrowIfIdentityMismatchAffectsSubtree(
+        string rootTaskId,
+        IReadOnlyList<DeletionTaskSource> deletedTasks,
+        IReadOnlyDictionary<string, DeletionTaskSource> tasks,
+        IEnumerable<DeletionTaskIdentityMismatch> identityMismatches)
+    {
+        var subtreeIds = deletedTasks
+            .Select(source => source.Task.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var pbiIdByAdoId = BuildPbiAdoIdLookup(tasks);
+        foreach (var mismatch in identityMismatches
+                     .OrderBy(candidate => candidate.Source.Path, PathComparer))
+        {
+            var conflictingTaskId = subtreeIds.Contains(mismatch.FileTaskId)
+                ? mismatch.FileTaskId
+                : subtreeIds.Contains(mismatch.Source.Task.Id)
+                    ? mismatch.Source.Task.Id
+                    : null;
+            if (conflictingTaskId is not null)
+            {
+                throw IdentityMismatchError(
+                    mismatch,
+                    $"It conflicts with Task '{conflictingTaskId}' in the Hard-deletion subtree "
+                    + $"rooted at '{rootTaskId}'.");
+            }
+
+            foreach (var candidate in deletedTasks.Skip(1))
+            {
+                var parent = candidate.Task.Parent?.Trim();
+                if (string.IsNullOrEmpty(parent)
+                    || (!string.Equals(parent, mismatch.FileTaskId, StringComparison.Ordinal)
+                        && !string.Equals(
+                            parent,
+                            mismatch.Source.Task.Id,
+                            StringComparison.Ordinal))
+                    || tasks.ContainsKey(parent))
+                {
+                    continue;
+                }
+
+                var parentAdoId = AdoParentIdExtractor.TryExtractId(parent);
+                if (!parentAdoId.HasValue
+                    || !pbiIdByAdoId.TryGetValue(parentAdoId.Value, out var resolvedAdoParentId)
+                    || !subtreeIds.Contains(resolvedAdoParentId))
+                {
+                    continue;
+                }
+
+                throw IdentityMismatchError(
+                    mismatch,
+                    $"Its Task identity shadows parent '{parent}' on Task '{candidate.Task.Id}', "
+                    + $"which resolves as PBI ADO parent identity '{parentAdoId.Value}' to Task "
+                    + $"'{resolvedAdoParentId}' in the Hard-deletion subtree rooted at '{rootTaskId}'.");
+            }
+
+            if (mismatch.Source.Task.Type == GlassworkTask.Types.Pbi
+                && mismatch.Source.Task.AdoLink is int mismatchAdoId
+                && pbiIdByAdoId.TryGetValue(mismatchAdoId, out var resolvedPbiId))
+            {
+                var conflictingChild = deletedTasks
+                    .Skip(1)
+                    .FirstOrDefault(candidate =>
+                    {
+                        var parent = candidate.Task.Parent?.Trim();
+                        if (string.IsNullOrEmpty(parent) || tasks.ContainsKey(parent))
+                            return false;
+                        return AdoParentIdExtractor.TryExtractId(parent) == mismatchAdoId;
+                    });
+                if (conflictingChild is not null)
+                {
+                    throw IdentityMismatchError(
+                        mismatch,
+                        $"It conflicts with PBI ADO parent identity '{mismatchAdoId}' used to "
+                        + $"relate Task '{conflictingChild.Task.Id}' to Task '{resolvedPbiId}' in "
+                        + $"the Hard-deletion subtree rooted at '{rootTaskId}'.");
+                }
+            }
+
+            var resolvedParent = ResolveParentTaskId(
+                mismatch.Source.Task.Parent,
+                tasks,
+                pbiIdByAdoId);
+            if (resolvedParent is null || !subtreeIds.Contains(resolvedParent))
+                continue;
+
+            throw IdentityMismatchError(
+                mismatch,
+                $"Its parent '{mismatch.Source.Task.Parent?.Trim()}' resolves inside the Hard-deletion "
+                + $"subtree rooted at '{rootTaskId}'.");
+        }
+    }
+
+    private static InvalidDataException IdentityMismatchError(
+        DeletionTaskIdentityMismatch mismatch,
+        string impact) =>
+        new(
+            $"Task file '{Path.GetFileName(mismatch.Source.Path)}' contains mismatched id "
+            + $"'{mismatch.Source.Task.Id}'; the filename requires id '{mismatch.FileTaskId}'. "
+            + $"{impact} Repair the filename or frontmatter id before Hard deletion.");
 
     private static IReadOnlyList<DeletionTaskSource> FindDescendants(
         string rootId,
@@ -590,12 +720,17 @@ public sealed partial class ResourceMutationService
 
     private IReadOnlyList<BacklinkRewrite> FindBacklinkRewrites(
         IReadOnlyList<DeletionTaskSource> deletedTasks,
-        IReadOnlyDictionary<string, DeletionTaskSource> allTasks)
+        IReadOnlyDictionary<string, DeletionTaskSource> allTasks,
+        IEnumerable<DeletionTaskIdentityMismatch> identityMismatches)
     {
         var vaultRoot = VaultPathResolver.Resolve(_vaultPath).VaultRoot;
         var deletedPaths = deletedTasks
             .Select(source => Path.GetFullPath(source.Path))
             .ToHashSet(PathComparer);
+        var identityMismatchesByPath = identityMismatches.ToDictionary(
+            mismatch => Path.GetFullPath(mismatch.Source.Path),
+            mismatch => mismatch,
+            PathComparer);
         var deletedArtifactPrefixes = deletedTasks
             .Select(source => NormalizeDirectoryPrefix(
                 Path.Combine(_vaultPath, $"{source.Task.Id}.artifacts")))
@@ -635,6 +770,13 @@ public sealed partial class ResourceMutationService
             var updated = RewriteWikiLinks(content.Text, titles, out var replacementCount);
             if (replacementCount == 0)
                 continue;
+            if (identityMismatchesByPath.TryGetValue(fullPath, out var identityMismatch))
+            {
+                throw IdentityMismatchError(
+                    identityMismatch,
+                    "It contains an inbound Wiki link targeted by this Hard deletion and cannot "
+                    + "be rewritten while its Task identity is malformed.");
+            }
 
             var updatedBytes = content.Encode(updated);
             rewrites.Add(new BacklinkRewrite(
@@ -1710,6 +1852,12 @@ public sealed partial class ResourceMutationService
             or '-');
 
     private sealed record DeletionTaskSource(GlassworkTask Task, byte[] Bytes, string Path);
+    private sealed record DeletionTaskIdentityMismatch(
+        string FileTaskId,
+        DeletionTaskSource Source);
+    private sealed record DeletionTaskInventory(
+        IReadOnlyDictionary<string, DeletionTaskSource> Tasks,
+        IReadOnlyList<DeletionTaskIdentityMismatch> IdentityMismatches);
     private sealed record ArtifactDirectoryPlan(
         string TaskId,
         string Path,
