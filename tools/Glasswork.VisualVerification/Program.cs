@@ -80,6 +80,12 @@ internal static partial class VisualVerificationRunner
         Directory.CreateDirectory(todoPath);
 
         MaterializeVault(scenario, vaultRoot, todoPath);
+        File.WriteAllText(
+            uiStatePath,
+            JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["app.theme"] = scenario.Theme,
+            }));
 
         var instanceKey = "visual-" + Guid.NewGuid().ToString("N");
         using var process = LaunchApp(appExe, scenario.StartUri, vaultRoot, uiStatePath, instanceKey);
@@ -170,7 +176,46 @@ internal static partial class VisualVerificationRunner
                 }
             }
         }
+
+        var wikiRoot = Path.Combine(vaultRoot, "wiki");
+        foreach (var page in scenario.WikiPages)
+        {
+            var relativePath = page.RelativePath.Replace('/', Path.DirectorySeparatorChar);
+            var fullPath = Path.GetFullPath(Path.Combine(wikiRoot, relativePath));
+            if (!fullPath.StartsWith(
+                    wikiRoot + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new FormatException(
+                    $"Wiki Page path '{page.RelativePath}' escapes the scenario Vault.");
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            var lines = new List<string>
+            {
+                "---",
+                $"id: {YamlScalar(page.Id)}",
+                $"title: {YamlScalar(page.Title)}",
+                $"type: {YamlScalar(page.Type)}",
+            };
+            if (!string.IsNullOrWhiteSpace(page.Confidence))
+                lines.Add($"confidence: {YamlScalar(page.Confidence)}");
+            if (!string.IsNullOrWhiteSpace(page.Updated))
+                lines.Add($"updated: {YamlScalar(page.Updated)}");
+            if (!string.IsNullOrWhiteSpace(page.Expires))
+                lines.Add($"expires: {YamlScalar(page.Expires)}");
+            if (page.OptedIn)
+            {
+                lines.Add("glasswork:");
+                lines.Add("  research: {}");
+            }
+            lines.Add("---");
+            lines.Add(page.Markdown);
+            File.WriteAllText(fullPath, string.Join(Environment.NewLine, lines));
+        }
     }
+
+    private static string YamlScalar(string value) => JsonSerializer.Serialize(value);
 
     private static Process LaunchApp(string appExe, string? startUri, string vaultPath, string uiStatePath, string instanceKey)
     {
@@ -225,6 +270,12 @@ internal static partial class VisualVerificationRunner
                 return;
             case "select":
                 SelectElement(WaitForElement(hwnd, action));
+                return;
+            case "focus":
+                FocusElement(WaitForElement(hwnd, action));
+                return;
+            case "assert-single-selection":
+                AssertSingleSelection(WaitForElement(hwnd, action));
                 return;
             case "expand":
                 ExpandElement(WaitForElement(hwnd, action));
@@ -533,6 +584,32 @@ internal static partial class VisualVerificationRunner
         }
 
         InvokeElement(element);
+    }
+
+    private static void FocusElement(AutomationElement element)
+    {
+        element.SetFocus();
+        Thread.Sleep(100);
+        if (!element.Current.HasKeyboardFocus)
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' did not receive keyboard focus.");
+    }
+
+    private static void AssertSingleSelection(AutomationElement element)
+    {
+        if (!element.TryGetCurrentPattern(SelectionPattern.Pattern, out var pattern)
+            || pattern is not SelectionPattern selection)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' does not expose accessible selection.");
+        }
+
+        if (selection.Current.CanSelectMultiple)
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' allows multiple accessible selections.");
+        if (selection.Current.GetSelection().Length != 1)
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' must expose exactly one selected item.");
     }
 
     private static void ExpandElement(AutomationElement element)

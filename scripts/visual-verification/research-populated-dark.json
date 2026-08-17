@@ -1,0 +1,75 @@
+{
+  "name": "Research populated dark",
+  "theme": "dark",
+  "startUri": "glasswork://research/async-callbacks",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/async-callbacks.md",
+      "id": "async-callbacks",
+      "title": "Async callbacks",
+      "type": "concept",
+      "confidence": "medium",
+      "updated": "2026-08-10",
+      "expires": "2026-08-01",
+      "markdown": "# Async callbacks\n\nAsync callbacks coordinate deferred work without turning knowledge into workflow status.\n\n## Tradeoffs\n\nThe caller retains control while completion arrives through a bounded callback."
+    },
+    {
+      "relativePath": "systems/research-catalog-with-an-intentionally-long-title.md",
+      "id": "research-catalog-long-title",
+      "title": "Very long Research Topic title that must truncate visually while remaining fully available to accessibility tools and its tooltip",
+      "type": "system",
+      "confidence": "high",
+      "updated": "2026-08-15",
+      "expires": "2027-01-31",
+      "markdown": "# Long-title topic\n\nThis second Topic proves the catalog remains compact as titles grow."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchTopicList",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchTopicTitle",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Async callbacks coordinate deferred work without turning knowledge into workflow status.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Very long Research Topic title that must truncate visually while remaining fully available to accessibility tools and its tooltip",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "ResearchTopicRow",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchTopicRow",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-single-selection",
+      "automationId": "ResearchTopicList",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-populated-dark",
+      "waitMilliseconds": 300
+    }
+  ]
+}

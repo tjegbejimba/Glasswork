@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using Glasswork.Core.Diagnostics;
 using Glasswork.Core.Models;
 using Glasswork.Core.Queries;
+using Glasswork.Core.Research;
 using Glasswork.Core.Services;
 using Glasswork.Core.VisualVerification;
 using Glasswork.Services;
@@ -43,6 +44,7 @@ public partial class App : Application
     public static TaskService Tasks { get; private set; } = null!;
     public static IndexService Index { get; private set; } = null!;
     public static ITaskQuery TaskQuery { get; private set; } = null!;
+    public static IResearchCatalog Research { get; private set; } = null!;
     public static IndexMarkdownWriter? IndexMarkdownWriter { get; private set; }
     public static IArtifactStore Artifacts { get; private set; } = null!;
     public static FileWatcherService? Watcher { get; private set; }
@@ -355,6 +357,7 @@ public partial class App : Application
 
         SelfWrites = new SelfWriteCoordinator(vaultPath);
         Vault = new VaultService(vaultPath, SelfWrites);
+        Research = new FileSystemResearchCatalog(VaultRoot);
 
         Artifacts = new FileSystemArtifactStore(VaultRoot);
         ObsidianLauncher = new ObsidianLauncher(VaultRoot);

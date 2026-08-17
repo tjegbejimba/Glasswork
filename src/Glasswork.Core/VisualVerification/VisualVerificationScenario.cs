@@ -21,7 +21,9 @@ public sealed partial class VisualVerificationScenario
     public string? StartUri { get; init; }
     public int LaunchTimeoutSeconds { get; init; } = 20;
     public int InitialWaitMilliseconds { get; init; } = 800;
+    public string Theme { get; init; } = "system";
     public List<VisualVerificationTask> Tasks { get; init; } = [];
+    public List<VisualVerificationWikiPage> WikiPages { get; init; } = [];
     public List<VisualVerificationAction> Actions { get; init; } = [];
     public List<VisualVerificationCapture> Captures { get; init; } = [];
 
@@ -47,6 +49,8 @@ public sealed partial class VisualVerificationScenario
             throw new FormatException("launchTimeoutSeconds must be greater than zero.");
         if (InitialWaitMilliseconds < 0)
             throw new FormatException("initialWaitMilliseconds must not be negative.");
+        if (Theme is not ("system" or "light" or "dark"))
+            throw new FormatException("theme must be system, light, or dark.");
 
         foreach (var task in Tasks)
         {
@@ -61,6 +65,19 @@ public sealed partial class VisualVerificationScenario
                 if (string.IsNullOrWhiteSpace(subtask.Text))
                     throw new FormatException($"Scenario task '{task.Id}' contains a subtask without text.");
             }
+        }
+
+        foreach (var page in WikiPages)
+        {
+            if (string.IsNullOrWhiteSpace(page.Id) || !IsSafeTaskId(page.Id))
+                throw new FormatException("Every scenario Wiki Page requires a safe id.");
+            if (string.IsNullOrWhiteSpace(page.Title))
+                throw new FormatException($"Scenario Wiki Page '{page.Id}' requires a non-empty title.");
+            if (string.IsNullOrWhiteSpace(page.Type))
+                throw new FormatException($"Scenario Wiki Page '{page.Id}' requires a non-empty type.");
+            if (!IsSafeWikiPagePath(page.RelativePath))
+                throw new FormatException(
+                    $"Scenario Wiki Page '{page.Id}' requires a safe .md path relative to wiki/.");
         }
 
         foreach (var action in Actions)
@@ -93,8 +110,26 @@ public sealed partial class VisualVerificationScenario
             && SafeTaskIdRegex().IsMatch(trimmed);
     }
 
+    private static bool IsSafeWikiPagePath(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)
+            || Path.IsPathRooted(relativePath)
+            || !relativePath.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var normalized = relativePath.Replace('\\', '/');
+        return normalized.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .All(segment => segment is not "." and not "..")
+            && SafeWikiPagePathRegex().IsMatch(normalized);
+    }
+
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._-]*$")]
     private static partial Regex SafeTaskIdRegex();
+
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._/-]*\.md$")]
+    private static partial Regex SafeWikiPagePathRegex();
 }
 
 public sealed class VisualVerificationTask
@@ -223,6 +258,19 @@ public sealed class VisualVerificationArtifact
     /// ignored.
     /// </summary>
     public string? Base64 { get; init; }
+}
+
+public sealed class VisualVerificationWikiPage
+{
+    public string RelativePath { get; init; } = string.Empty;
+    public string Id { get; init; } = string.Empty;
+    public string Title { get; init; } = string.Empty;
+    public string Type { get; init; } = string.Empty;
+    public string? Confidence { get; init; }
+    public string? Updated { get; init; }
+    public string? Expires { get; init; }
+    public bool OptedIn { get; init; } = true;
+    public string Markdown { get; init; } = string.Empty;
 }
 
 public sealed class VisualVerificationAction

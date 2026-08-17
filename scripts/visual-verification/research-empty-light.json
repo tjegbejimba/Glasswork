@@ -1,0 +1,23 @@
+{
+  "name": "Research empty light",
+  "theme": "light",
+  "startUri": "glasswork://research",
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "No Research Topics yet",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-empty-light",
+      "waitMilliseconds": 300
+    }
+  ]
+}

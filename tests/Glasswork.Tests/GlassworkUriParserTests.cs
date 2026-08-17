@@ -62,6 +62,18 @@ public class GlassworkUriParserTests
         Assert.IsInstanceOfType<GlassworkUri.Backlog>(result);
     }
 
+    [TestMethod]
+    public void Parse_ResearchUris_ReturnLibraryOrTopic()
+    {
+        var library = GlassworkUriParser.Parse("glasswork://research");
+        var topic = GlassworkUriParser.Parse("glasswork://research/async%2Dcallbacks");
+
+        Assert.IsInstanceOfType<GlassworkUri.ResearchLibrary>(library);
+        Assert.AreEqual(
+            "async-callbacks",
+            Assert.IsInstanceOfType<GlassworkUri.ResearchTopic>(topic).TopicId);
+    }
+
     // ── Parse: invalid / unknown ─────────────────────────────────────────────
 
     [TestMethod]
@@ -120,6 +132,17 @@ public class GlassworkUriParserTests
     {
         var uri = GlassworkUriParser.Build(new GlassworkUri.Backlog());
         Assert.AreEqual("glasswork://backlog", uri);
+    }
+
+    [TestMethod]
+    public void Build_ResearchTargets_ProducesExpectedUris()
+    {
+        Assert.AreEqual(
+            "glasswork://research",
+            GlassworkUriParser.Build(new GlassworkUri.ResearchLibrary()));
+        Assert.AreEqual(
+            "glasswork://research/async%20callbacks",
+            GlassworkUriParser.Build(new GlassworkUri.ResearchTopic("async callbacks")));
     }
 
     // ── Round-trips ───────────────────────────────────────────────────────────
