@@ -129,6 +129,48 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Capture_RefreshesAliasesAndTagsWhenOnlySearchMetadataChanges()
+    {
+        const string path = "wiki/concepts/topic.md";
+        WritePage(
+            path,
+            """
+            ---
+            id: topic
+            title: Topic
+            aliases: [old-alias]
+            tags: [old-tag]
+            type: concept
+            glasswork:
+              research: {}
+            ---
+            Stable synthesis.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        _ = catalog.Capture();
+
+        WritePage(
+            path,
+            """
+            ---
+            id: topic
+            title: Topic
+            aliases: [new-alias]
+            tags: [new-tag]
+            type: concept
+            glasswork:
+              research: {}
+            ---
+            Stable synthesis.
+            """);
+
+        var topic = catalog.Capture().Topics.Single();
+
+        CollectionAssert.AreEqual(new[] { "new-alias" }, topic.Aliases.ToArray());
+        CollectionAssert.AreEqual(new[] { "new-tag" }, topic.Tags.ToArray());
+    }
+
+    [TestMethod]
     public void OptIn_PreservesUnrelatedYamlProseAndUnicodeAndReturnsVisibleTopic()
     {
         const string relativePath = "wiki/concepts/cafe-research.md";

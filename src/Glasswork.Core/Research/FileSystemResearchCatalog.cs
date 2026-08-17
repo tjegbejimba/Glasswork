@@ -1251,7 +1251,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         left.Id == right.Id
         && left.Title == right.Title
         && left.Summary == right.Summary
+        && left.Aliases.SequenceEqual(right.Aliases, StringComparer.Ordinal)
         && left.WikiType == right.WikiType
+        && left.Tags.SequenceEqual(right.Tags, StringComparer.Ordinal)
         && left.Confidence == right.Confidence
         && left.Updated == right.Updated
         && left.Expires == right.Expires

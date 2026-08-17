@@ -462,10 +462,13 @@ public sealed partial class ResearchPage : Page
 
         if (_selectedTopic is null)
         {
+            Control focusTarget = EmptyStateView.Visibility == Visibility.Visible
+                ? ResearchEmptyAddTopicButton
+                : CatalogSearchBox;
             ClosePreviewDrawer(
                 restoreFocus: true,
                 restoreReadingPosition: false,
-                focusTarget: ResearchEmptyAddTopicButton);
+                focusTarget: focusTarget);
             return;
         }
 
