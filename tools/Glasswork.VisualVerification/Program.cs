@@ -321,8 +321,8 @@ internal static partial class VisualVerificationRunner
             case "assert-enabled":
                 AssertEnabled(WaitForElement(hwnd, action));
                 return;
-            case "assert-has-enabled-button-within":
-                AssertHasEnabledButton(WaitForElement(hwnd, action));
+            case "assert-invoke-blocked":
+                AssertInvokeBlocked(WaitForElement(hwnd, action));
                 return;
             case "invoke":
                 ForegroundWindowBestEffort(hwnd);
@@ -679,32 +679,35 @@ internal static partial class VisualVerificationRunner
         }
     }
 
-    private static void AssertHasEnabledButton(AutomationElement ancestor)
+    private static void AssertInvokeBlocked(AutomationElement element)
     {
-        var walker = TreeWalker.ControlViewWalker;
-        var enabledButtons = 0;
-
-        void Visit(AutomationElement element)
+        if (element.Current.IsEnabled)
         {
-            AutomationElement? child;
-            try { child = walker.GetFirstChild(element); }
-            catch { return; }
-            while (child is not null)
-            {
-                if (child.Current.ControlType == ControlType.Button
-                    && child.Current.IsEnabled)
-                {
-                    enabledButtons++;
-                }
-                Visit(child);
-                try { child = walker.GetNextSibling(child); }
-                catch { break; }
-            }
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' remained enabled.");
         }
 
-        Visit(ancestor);
-        if (enabledButtons == 0)
-            throw new InvalidOperationException("No enabled button remained within the target.");
+        if (!element.TryGetCurrentPattern(InvokePattern.Pattern, out var pattern)
+            || pattern is not InvokePattern invoke)
+        {
+            return;
+        }
+
+        try
+        {
+            invoke.Invoke();
+        }
+        catch (ElementNotEnabledException)
+        {
+            return;
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Element '{element.Current.Name}' accepted Invoke while disabled.");
     }
 
     private static AutomationElement? ManualFind(AutomationElement root, VisualVerificationAction action)

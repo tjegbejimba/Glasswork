@@ -85,7 +85,12 @@
       "timeoutMilliseconds": 10000
     },
     {
-      "type": "invoke",
+      "type": "assert-invoke-blocked",
+      "automationId": "ResearchRelatedPage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-not-present",
       "automationId": "PART_PaneToggleButton",
       "timeoutMilliseconds": 10000
     },
@@ -119,13 +124,18 @@
       "timeoutMilliseconds": 10000
     },
     {
-      "type": "assert-has-enabled-button-within",
-      "automationId": "ShellTitleBar",
+      "type": "wait-for",
+      "automationId": "PART_PaneToggleButton",
       "timeoutMilliseconds": 10000
     },
     {
       "type": "assert-enabled",
       "automationId": "ShellNavigation",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-enabled",
+      "automationId": "ResearchRelatedPage",
       "timeoutMilliseconds": 10000
     },
     {
@@ -164,13 +174,18 @@
       "timeoutMilliseconds": 10000
     },
     {
-      "type": "assert-has-enabled-button-within",
-      "automationId": "ShellTitleBar",
+      "type": "wait-for",
+      "automationId": "PART_PaneToggleButton",
       "timeoutMilliseconds": 10000
     },
     {
       "type": "assert-enabled",
       "automationId": "ShellNavigation",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-enabled",
+      "automationId": "ResearchRelatedPage",
       "timeoutMilliseconds": 10000
     }
   ],

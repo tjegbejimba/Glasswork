@@ -26,8 +26,12 @@ public sealed partial class MainWindow : Window
     private bool _suppressSelectionNavigation;
     private EventHandler<object>? _firstFrameHandler;
     private Control? _modalFocusTarget;
+    private bool _shellContentWasEnabled;
     private bool _shellContentWasHitTestVisible;
     private bool _navViewWasEnabled;
+    private bool _titleBarWasHitTestVisible;
+    private bool _titleBarPaneToggleWasVisible;
+    private bool _titleBarBackWasVisible;
     private AccessibilityView _shellContentAccessibilityView;
 
     public MainWindow()
@@ -121,15 +125,23 @@ public sealed partial class MainWindow : Window
         if (ModalOverlayHost.Content is not null)
             throw new InvalidOperationException("A shell modal overlay is already open.");
 
+        _shellContentWasEnabled = ShellContent.IsEnabled;
         _shellContentWasHitTestVisible = ShellContent.IsHitTestVisible;
         _navViewWasEnabled = NavView.IsEnabled;
+        _titleBarWasHitTestVisible = AppTitleBar.IsHitTestVisible;
+        _titleBarPaneToggleWasVisible = AppTitleBar.IsPaneToggleButtonVisible;
+        _titleBarBackWasVisible = AppTitleBar.IsBackButtonVisible;
         _shellContentAccessibilityView =
             AutomationProperties.GetAccessibilityView(ShellContent);
         ModalOverlayHost.Content = content;
         ModalOverlayHost.Visibility = Visibility.Visible;
         _modalFocusTarget = focusTarget;
+        ShellContent.IsEnabled = false;
         ShellContent.IsHitTestVisible = false;
         NavView.IsEnabled = false;
+        AppTitleBar.IsHitTestVisible = false;
+        AppTitleBar.IsPaneToggleButtonVisible = false;
+        AppTitleBar.IsBackButtonVisible = false;
         AutomationProperties.SetAccessibilityView(ShellContent, AccessibilityView.Raw);
     }
 
@@ -140,8 +152,12 @@ public sealed partial class MainWindow : Window
 
         ModalOverlayHost.Visibility = Visibility.Collapsed;
         ModalOverlayHost.Content = null;
+        ShellContent.IsEnabled = _shellContentWasEnabled;
         ShellContent.IsHitTestVisible = _shellContentWasHitTestVisible;
         NavView.IsEnabled = _navViewWasEnabled;
+        AppTitleBar.IsHitTestVisible = _titleBarWasHitTestVisible;
+        AppTitleBar.IsPaneToggleButtonVisible = _titleBarPaneToggleWasVisible;
+        AppTitleBar.IsBackButtonVisible = _titleBarBackWasVisible;
         AutomationProperties.SetAccessibilityView(
             ShellContent,
             _shellContentAccessibilityView);

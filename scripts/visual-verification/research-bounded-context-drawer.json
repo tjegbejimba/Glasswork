@@ -123,7 +123,12 @@
       "timeoutMilliseconds": 10000
     },
     {
-      "type": "invoke",
+      "type": "assert-invoke-blocked",
+      "automationId": "ResearchRelatedPage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-not-present",
       "automationId": "PART_PaneToggleButton",
       "timeoutMilliseconds": 10000
     },
