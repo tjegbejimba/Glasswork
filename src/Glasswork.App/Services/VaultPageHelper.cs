@@ -67,7 +67,7 @@ internal static class VaultPageHelper
         try
         {
             var rel = Path.GetRelativePath(vaultRoot, todoDir).Replace(Path.DirectorySeparatorChar, '/');
-            return new WikiLinkResolver(vaultRoot, rel);
+            return new FileSystemWikiLinkResolver(vaultRoot, rel);
         }
         catch { return null; }
     }

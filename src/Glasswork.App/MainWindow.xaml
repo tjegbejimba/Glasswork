@@ -12,15 +12,13 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="48" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
-
+    <Grid
+        x:Name="ShellRoot"
+        RowDefinitions="48,*"
+        GettingFocus="ShellRoot_GettingFocus">
         <TitleBar
             x:Name="AppTitleBar"
+            AutomationProperties.AutomationId="ShellTitleBar"
             Title="Glasswork"
             BackRequested="TitleBar_BackRequested"
             IsBackButtonVisible="{x:Bind NavFrame.CanGoBack, Mode=OneWay}"
@@ -31,9 +29,17 @@
             </TitleBar.IconSource>
         </TitleBar>
 
+        <ContentControl
+            x:Name="ShellContent"
+            Grid.Row="1"
+            AutomationProperties.AutomationId="ShellContent"
+            HorizontalContentAlignment="Stretch"
+            VerticalContentAlignment="Stretch">
+        <Grid RowDefinitions="*,Auto">
+
         <NavigationView
             x:Name="NavView"
-            Grid.Row="1"
+            Grid.Row="0"
             AutomationProperties.AutomationId="ShellNavigation"
             IsBackButtonVisible="Collapsed"
             IsPaneToggleButtonVisible="False"
@@ -95,7 +101,7 @@
         </NavigationView>
 
         <!-- Footer status bar: vault path, task count, watcher state, last reload -->
-        <Border Grid.Row="2"
+        <Border Grid.Row="1"
                 Background="{ThemeResource LayerFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
                 BorderThickness="0,1,0,0"
@@ -126,5 +132,17 @@
                            VerticalAlignment="Center" />
             </Grid>
         </Border>
+        </Grid>
+        </ContentControl>
+
+        <ContentControl
+            x:Name="ModalOverlayHost"
+            Grid.RowSpan="2"
+            AutomationProperties.AutomationId="ShellModalOverlay"
+            HorizontalContentAlignment="Stretch"
+            IsTabStop="False"
+            TabFocusNavigation="Cycle"
+            VerticalContentAlignment="Stretch"
+            Visibility="Collapsed" />
     </Grid>
 </Window>

@@ -27,7 +27,54 @@ public sealed record ResearchTopic(
     IReadOnlyList<string> Sources,
     ResearchFreshness Freshness,
     string VaultRelativePath,
-    string Markdown);
+    string Markdown)
+{
+    public ResearchContext Context { get; init; } = ResearchContext.Empty;
+}
+
+public sealed record ResearchContext(
+    IReadOnlyList<ResearchContextPage> RelatedPages,
+    IReadOnlyList<ResearchContextWarning> Warnings)
+{
+    public static ResearchContext Empty { get; } =
+        new(Array.Empty<ResearchContextPage>(), Array.Empty<ResearchContextWarning>());
+}
+
+public sealed record ResearchContextPage(
+    string Id,
+    string Title,
+    string WikiType,
+    string? Confidence,
+    DateOnly? Updated,
+    DateOnly? Expires,
+    ResearchFreshness Freshness,
+    string VaultRelativePath,
+    string Markdown,
+    ResearchContextRelation Relations);
+
+[Flags]
+public enum ResearchContextRelation
+{
+    None = 0,
+    OutgoingWikiLink = 1,
+    Provenance = 2,
+    Backlink = 4,
+    IncludeOverride = 8,
+}
+
+public sealed record ResearchContextWarning(
+    string Reference,
+    ResearchContextRelation Relation,
+    ResearchContextWarningCode Code,
+    string Message);
+
+public enum ResearchContextWarningCode
+{
+    MissingPage,
+    MalformedPage,
+    AmbiguousTarget,
+    ConflictingOverride,
+}
 
 public enum ResearchFreshness
 {

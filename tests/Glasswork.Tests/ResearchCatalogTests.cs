@@ -70,6 +70,305 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Capture_ResearchContextAppliesDurableIncludeAndExcludeOverrides()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            glasswork:
+              research:
+                include: [included-page, conflicting-page]
+                exclude: [linked-page, conflicting-page]
+            ---
+            Topic synthesis links to [[wiki/systems/linked]].
+            """);
+        WritePage(
+            "wiki/sources/included.md",
+            "---\nid: included-page\ntitle: Included page\ntype: source\n---\nIncluded.");
+        WritePage(
+            "wiki/systems/linked.md",
+            "---\nid: linked-page\ntitle: Linked page\ntype: system\n---\nLinked.");
+        WritePage(
+            "wiki/decisions/conflicting.md",
+            "---\nid: conflicting-page\ntitle: Conflicting page\ntype: decision\n---\nConflicting.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        CollectionAssert.AreEqual(
+            new[] { "included-page" },
+            context.RelatedPages.Select(page => page.Id).ToArray());
+        Assert.HasCount(1, context.Warnings);
+        Assert.AreEqual("conflicting-page", context.Warnings.Single().Reference);
+        StringAssert.Contains(
+            context.Warnings.Single().Message,
+            "include and exclude",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [TestMethod]
+    public void Capture_ExcludedContextPageStaysSuppressedWhenItBecomesUnavailable()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            glasswork:
+              research:
+                exclude: [excluded-page]
+            ---
+            [[wiki/sources/excluded]]
+            """);
+        WritePage(
+            "wiki/sources/excluded.md",
+            "---\nid: excluded-page\ntitle: Excluded page\ntype: source\n---\nEvidence.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        var validContext = catalog.Capture().Topics.Single().Context;
+
+        WritePage(
+            "wiki/sources/excluded.md",
+            "---\nid: excluded-page\ntitle: [unterminated\ntype: source\n---\nBroken.");
+        var malformedContext = catalog.Capture().Topics.Single().Context;
+
+        File.Delete(Path.Combine(_vaultRoot, "wiki", "sources", "excluded.md"));
+        var missingContext = catalog.Capture().Topics.Single().Context;
+
+        Assert.IsEmpty(validContext.RelatedPages);
+        Assert.IsEmpty(validContext.Warnings);
+        Assert.IsEmpty(malformedContext.RelatedPages);
+        Assert.IsEmpty(malformedContext.Warnings);
+        Assert.IsEmpty(missingContext.RelatedPages);
+        Assert.IsEmpty(missingContext.Warnings);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextUsesCanonicalPathsForWikiLinksAndBacklinks()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic-id
+            title: Topic
+            type: concept
+            glasswork:
+              research: {}
+            ---
+            [[outgoing-id-only]] [[wiki/systems/outgoing-by-path]]
+            """);
+        WritePage(
+            "wiki/concepts/id-only-target.md",
+            "---\nid: outgoing-id-only\ntitle: ID-only target\ntype: concept\n---\nKnowledge.");
+        WritePage(
+            "wiki/systems/outgoing-by-path.md",
+            "---\nid: outgoing-path-id\ntitle: Path target\ntype: system\n---\nKnowledge.");
+        WritePage(
+            "wiki/decisions/id-only-backlink.md",
+            "---\nid: id-only-backlink\ntitle: ID-only backlink\ntype: decision\n---\n[[topic-id]]");
+        WritePage(
+            "wiki/sources/path-backlink.md",
+            "---\nid: path-backlink\ntitle: Path backlink\ntype: source\n---\n[[wiki/concepts/topic]]");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        CollectionAssert.AreEqual(
+            new[] { "path-backlink", "outgoing-path-id" },
+            context.RelatedPages.Select(page => page.Id).ToArray());
+        Assert.AreEqual(
+            ResearchContextRelation.OutgoingWikiLink,
+            context.RelatedPages.Single(page => page.Id == "outgoing-path-id").Relations);
+        Assert.AreEqual(
+            ResearchContextRelation.Backlink,
+            context.RelatedPages.Single(page => page.Id == "path-backlink").Relations);
+        Assert.HasCount(1, context.Warnings);
+        Assert.AreEqual("outgoing-id-only", context.Warnings.Single().Reference);
+        Assert.AreEqual(
+            ResearchContextWarningCode.MissingPage,
+            context.Warnings.Single().Code);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextStopsAfterOneOutgoingWikiLinkHop()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            glasswork:
+              research: {}
+            ---
+            Topic synthesis links to [[wiki/systems/direct]].
+            """);
+        WritePage(
+            "wiki/systems/direct.md",
+            """
+            ---
+            id: direct-page
+            title: Direct page
+            type: system
+            ---
+            Direct context links onward to [[wiki/sources/second-hop]].
+            """);
+        WritePage(
+            "wiki/sources/second-hop.md",
+            """
+            ---
+            id: second-hop
+            title: Second hop
+            type: source
+            ---
+            This page must not enter the Topic context.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var topic = catalog.Capture().Topics.Single();
+
+        Assert.HasCount(1, topic.Context.RelatedPages);
+        var related = topic.Context.RelatedPages.Single();
+        Assert.AreEqual("direct-page", related.Id);
+        Assert.AreEqual(
+            ResearchContextRelation.OutgoingWikiLink,
+            related.Relations);
+        Assert.IsEmpty(topic.Context.Warnings);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextCombinesProvenanceAndBacklinksByStableId()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            sources:
+              - "[[shared-page]]"
+              - "[[provenance-only]]"
+            glasswork:
+              research: {}
+            ---
+            Topic synthesis links to [[wiki/systems/shared]].
+            """);
+        WritePage(
+            "wiki/systems/shared.md",
+            "---\nid: shared-page\ntitle: Shared page\ntype: system\n---\nShared context.");
+        WritePage(
+            "wiki/sources/provenance.md",
+            "---\nid: provenance-only\ntitle: Primary evidence\ntype: source\n---\nEvidence.");
+        WritePage(
+            "wiki/decisions/incoming.md",
+            "---\nid: incoming-page\ntitle: Incoming page\ntype: decision\n---\nReferences [[wiki/concepts/topic]].");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var related = catalog.Capture().Topics.Single().Context.RelatedPages;
+
+        Assert.HasCount(3, related);
+        Assert.AreEqual(
+            ResearchContextRelation.OutgoingWikiLink | ResearchContextRelation.Provenance,
+            related.Single(page => page.Id == "shared-page").Relations);
+        Assert.AreEqual(
+            ResearchContextRelation.Provenance,
+            related.Single(page => page.Id == "provenance-only").Relations);
+        Assert.AreEqual(
+            ResearchContextRelation.Backlink,
+            related.Single(page => page.Id == "incoming-page").Relations);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextExcludesNonWikiKnowledgeAndWarnsForUnavailablePages()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            glasswork:
+              research: {}
+            ---
+            [[wiki/systems/eligible]] [[task]] [[wiki/research-logs/log]] [[wiki/notes/arbitrary-page]]
+            [[wiki/concepts/missing-page]] [[wiki/sources/broken-page]]
+            """);
+        WritePage(
+            "wiki/systems/eligible.md",
+            "---\nid: eligible-page\ntitle: Eligible page\ntype: system\n---\nEligible.");
+        WritePage(
+            "wiki/todo/task.md",
+            "---\nid: task-page\ntitle: Task page\ntype: task\nstatus: todo\n---\nTask.");
+        WritePage(
+            "wiki/research-logs/log.md",
+            "---\nid: research-log\ntitle: Research log\ntype: source\n---\nLog.");
+        WritePage("wiki/notes/arbitrary-page.md", "# Arbitrary Markdown");
+        WritePage(
+            "wiki/sources/broken-page.md",
+            "---\nid: broken-page\ntitle: [unterminated\ntype: source\n---\nBroken.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        CollectionAssert.AreEqual(
+            new[] { "eligible-page" },
+            context.RelatedPages.Select(page => page.Id).ToArray());
+        Assert.HasCount(2, context.Warnings);
+        Assert.AreEqual(
+            ResearchContextWarningCode.MissingPage,
+            context.Warnings.Single(warning =>
+                warning.Reference == "wiki/concepts/missing-page").Code);
+        Assert.AreEqual(
+            ResearchContextWarningCode.MalformedPage,
+            context.Warnings.Single(warning =>
+                warning.Reference == "wiki/sources/broken-page").Code);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextPreservesLastValidRelatedPageAndWarnsWhenItBecomesMalformed()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            glasswork:
+              research: {}
+            ---
+            [[wiki/sources/related]]
+            """);
+        WritePage(
+            "wiki/sources/related.md",
+            "---\nid: related-page\ntitle: Related page\ntype: source\n---\nValid evidence.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        _ = catalog.Capture();
+
+        WritePage(
+            "wiki/sources/related.md",
+            "---\nid: related-page\ntitle: [unterminated\ntype: source\n---\nBroken.");
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.HasCount(1, context.RelatedPages);
+        Assert.AreEqual("related-page", context.RelatedPages.Single().Id);
+        Assert.HasCount(1, context.Warnings);
+        Assert.AreEqual(
+            ResearchContextWarningCode.MalformedPage,
+            context.Warnings.Single().Code);
+    }
+
+    [TestMethod]
     public void Capture_IncludesOnlyEligibleWikiPages()
     {
         var eligibleTypes = new[]

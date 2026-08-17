@@ -5,7 +5,11 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Glasswork.Core.Feedback;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
@@ -21,6 +25,14 @@ public sealed partial class MainWindow : Window
     // Guards selection-driven navigation while code synchronizes top-level chrome.
     private bool _suppressSelectionNavigation;
     private EventHandler<object>? _firstFrameHandler;
+    private Control? _modalFocusTarget;
+    private bool _shellContentWasEnabled;
+    private bool _shellContentWasHitTestVisible;
+    private bool _navViewWasEnabled;
+    private bool _titleBarWasHitTestVisible;
+    private bool _titleBarPaneToggleWasVisible;
+    private bool _titleBarBackWasVisible;
+    private AccessibilityView _shellContentAccessibilityView;
 
     public MainWindow()
     {
@@ -87,6 +99,12 @@ public sealed partial class MainWindow : Window
 
     private void Root_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        if (_modalFocusTarget is not null)
+        {
+            e.Handled = true;
+            return;
+        }
+
         var props = e.GetCurrentPoint(null).Properties;
         if (props.IsXButton1Pressed && NavFrame.CanGoBack)
         {
@@ -98,6 +116,77 @@ public sealed partial class MainWindow : Window
             NavFrame.GoForward();
             e.Handled = true;
         }
+    }
+
+    internal void ShowModalOverlay(UIElement content, Control focusTarget)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentNullException.ThrowIfNull(focusTarget);
+        if (ModalOverlayHost.Content is not null)
+            throw new InvalidOperationException("A shell modal overlay is already open.");
+
+        _shellContentWasEnabled = ShellContent.IsEnabled;
+        _shellContentWasHitTestVisible = ShellContent.IsHitTestVisible;
+        _navViewWasEnabled = NavView.IsEnabled;
+        _titleBarWasHitTestVisible = AppTitleBar.IsHitTestVisible;
+        _titleBarPaneToggleWasVisible = AppTitleBar.IsPaneToggleButtonVisible;
+        _titleBarBackWasVisible = AppTitleBar.IsBackButtonVisible;
+        _shellContentAccessibilityView =
+            AutomationProperties.GetAccessibilityView(ShellContent);
+        ModalOverlayHost.Content = content;
+        ModalOverlayHost.Visibility = Visibility.Visible;
+        _modalFocusTarget = focusTarget;
+        ShellContent.IsEnabled = false;
+        ShellContent.IsHitTestVisible = false;
+        NavView.IsEnabled = false;
+        AppTitleBar.IsHitTestVisible = false;
+        AppTitleBar.IsPaneToggleButtonVisible = false;
+        AppTitleBar.IsBackButtonVisible = false;
+        AutomationProperties.SetAccessibilityView(ShellContent, AccessibilityView.Raw);
+    }
+
+    internal void HideModalOverlay(UIElement content)
+    {
+        if (!ReferenceEquals(ModalOverlayHost.Content, content))
+            return;
+
+        ModalOverlayHost.Visibility = Visibility.Collapsed;
+        ModalOverlayHost.Content = null;
+        ShellContent.IsEnabled = _shellContentWasEnabled;
+        ShellContent.IsHitTestVisible = _shellContentWasHitTestVisible;
+        NavView.IsEnabled = _navViewWasEnabled;
+        AppTitleBar.IsHitTestVisible = _titleBarWasHitTestVisible;
+        AppTitleBar.IsPaneToggleButtonVisible = _titleBarPaneToggleWasVisible;
+        AppTitleBar.IsBackButtonVisible = _titleBarBackWasVisible;
+        AutomationProperties.SetAccessibilityView(
+            ShellContent,
+            _shellContentAccessibilityView);
+        _modalFocusTarget = null;
+    }
+
+    private void ShellRoot_GettingFocus(UIElement sender, GettingFocusEventArgs e)
+    {
+        if (_modalFocusTarget is null
+            || e.NewFocusedElement is not DependencyObject next
+            || IsDescendantOf(next, ModalOverlayHost))
+        {
+            return;
+        }
+
+        e.TrySetNewFocusedElement(_modalFocusTarget);
+    }
+
+    private static bool IsDescendantOf(
+        DependencyObject element,
+        DependencyObject ancestor)
+    {
+        for (var current = element; current is not null;)
+        {
+            if (ReferenceEquals(current, ancestor))
+                return true;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return false;
     }
 
     private void InitStatusBar()
@@ -154,11 +243,15 @@ public sealed partial class MainWindow : Window
 
     private void TitleBar_PaneToggleRequested(TitleBar sender, object args)
     {
+        if (_modalFocusTarget is not null)
+            return;
         NavView.IsPaneOpen = !NavView.IsPaneOpen;
     }
 
     private void TitleBar_BackRequested(TitleBar sender, object args)
     {
+        if (_modalFocusTarget is not null)
+            return;
         NavFrame.GoBack();
     }
 

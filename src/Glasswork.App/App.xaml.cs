@@ -11,14 +11,20 @@ using Glasswork.Core.Services;
 using Glasswork.Core.VisualVerification;
 using Glasswork.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.Windows.AppLifecycle;
 using Windows.ApplicationModel.Activation;
+using Windows.Graphics.Imaging;
+using Windows.Storage;
+using Windows.Storage.Streams;
 
 namespace Glasswork;
 
 public partial class App : Application
 {
     private Window? _window;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _visualCaptureTimer;
+    private bool _visualCaptureInProgress;
     private static AppInstance? _mainAppInstance;
     private readonly long _managedStartupTimestamp;
     private static readonly string CrashReportDirectory = Path.Combine(
@@ -314,11 +320,88 @@ public partial class App : Application
         _window = new MainWindow();
         ApplyTheme(_window);
         _window.Activate();
+        StartVisualCaptureBridge(launchOptions);
 
         // Navigate to the target if the app was cold-started via a glasswork:// URI.
         var pendingUri = ExtractUri(activationArgs);
         if (pendingUri is not null && _window is MainWindow mw)
             mw.NavigateTo(pendingUri);
+    }
+
+    private void StartVisualCaptureBridge(VerificationLaunchOptions launchOptions)
+    {
+        var requestPath = Environment.GetEnvironmentVariable(
+            VerificationLaunchOptions.CaptureRequestPathVariable);
+        var outputPath = Environment.GetEnvironmentVariable(
+            VerificationLaunchOptions.CaptureOutputPathVariable);
+        if (!launchOptions.IsVerificationRun
+            || string.IsNullOrWhiteSpace(requestPath)
+            || string.IsNullOrWhiteSpace(outputPath)
+            || _window?.Content is not UIElement root)
+        {
+            return;
+        }
+
+        _visualCaptureTimer = root.DispatcherQueue.CreateTimer();
+        _visualCaptureTimer.Interval = TimeSpan.FromMilliseconds(100);
+        _visualCaptureTimer.IsRepeating = true;
+        _visualCaptureTimer.Tick += async (_, _) =>
+        {
+            if (_visualCaptureInProgress || !File.Exists(requestPath))
+                return;
+            _visualCaptureInProgress = true;
+            try
+            {
+                File.Delete(requestPath);
+                await CaptureVisualVerificationFrame(root, outputPath);
+            }
+            catch (Exception ex)
+            {
+                File.WriteAllText(outputPath + ".error", ex.ToString());
+            }
+            finally
+            {
+                _visualCaptureInProgress = false;
+            }
+        };
+        _visualCaptureTimer.Start();
+    }
+
+    private static async System.Threading.Tasks.Task CaptureVisualVerificationFrame(
+        UIElement root,
+        string outputPath)
+    {
+        var bitmap = new RenderTargetBitmap();
+        await bitmap.RenderAsync(root);
+        if (bitmap.PixelWidth <= 0 || bitmap.PixelHeight <= 0)
+            throw new InvalidOperationException("The visual root has no rendered pixels.");
+
+        var buffer = await bitmap.GetPixelsAsync();
+        var pixels = new byte[buffer.Length];
+        using (var reader = DataReader.FromBuffer(buffer))
+            reader.ReadBytes(pixels);
+
+        var temporaryPath = outputPath + ".tmp";
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        File.WriteAllBytes(temporaryPath, []);
+        var file = await StorageFile.GetFileFromPathAsync(temporaryPath);
+        using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
+        {
+            var encoder = await BitmapEncoder.CreateAsync(
+                BitmapEncoder.PngEncoderId,
+                stream);
+            encoder.SetPixelData(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Premultiplied,
+                (uint)bitmap.PixelWidth,
+                (uint)bitmap.PixelHeight,
+                96,
+                96,
+                pixels);
+            await encoder.FlushAsync();
+        }
+
+        File.Move(temporaryPath, outputPath, overwrite: true);
     }
 
     /// <summary>
