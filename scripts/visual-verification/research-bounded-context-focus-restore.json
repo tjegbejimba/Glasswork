@@ -159,6 +159,12 @@
       "timeoutMilliseconds": 1200
     },
     {
+      "type": "assert-name",
+      "automationId": "ResearchPreviewTitle",
+      "value": "A refreshed related concept with an intentionally long title that still restores focus",
+      "timeoutMilliseconds": 10000
+    },
+    {
       "type": "invoke",
       "automationId": "ResearchPreviewClose",
       "timeoutMilliseconds": 10000
@@ -217,11 +223,6 @@
     {
       "type": "delay",
       "timeoutMilliseconds": 1200
-    },
-    {
-      "type": "invoke",
-      "automationId": "ResearchPreviewClose",
-      "timeoutMilliseconds": 10000
     },
     {
       "type": "assert-hidden",
