@@ -8,6 +8,7 @@ using Glasswork.Controls;
 using Glasswork.Core.Markdown;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
+using Glasswork.ViewModels;
 using Glasswork.Services;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
@@ -26,6 +27,8 @@ public sealed partial class TaskDetailPage : Page
     public GlassworkTask Task { get; private set; } = new();
 
     private bool _isLoading;
+    private bool _isNavigated;
+    private bool _isDeletingTask;
     private bool _suppressNextNotesSave;
     private NotesEditController _notesEdit = new(string.Empty);
     private readonly TaskEditSaveController _saveController;
@@ -54,6 +57,7 @@ public sealed partial class TaskDetailPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _isNavigated = true;
         App.ObsidianLauncher.NotInstalled += OnObsidianNotInstalled;
         if (e.Parameter is TaskDetailNavigation nav)
         {
@@ -96,7 +100,7 @@ public sealed partial class TaskDetailPage : Page
         // Set combo boxes to match task state
         SetComboByTag(StatusBox, task.Status);
         SetComboByTag(PriorityBox, task.Priority);
-        StatusBox.IsEnabled = !task.IsBlocked;
+        StatusBox.IsEnabled = !task.IsBlocked && !task.IsCancelled;
         BlockedStatusText.Visibility = task.IsBlocked ? Visibility.Visible : Visibility.Collapsed;
         BlockedStatusText.Text = task.IsBlocked
             ? (task.NeedsBlockerDetails ? "Needs blocker details" : $"Blocked: {task.BlockedReason}")
@@ -106,6 +110,28 @@ public sealed partial class TaskDetailPage : Page
         RepairBlockedButton.Visibility = task.IsBlocked && task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
         ResumeBlockedButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
         MarkBlockedDoneButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
+        CancelTaskButton.Visibility = task.Status is (
+            GlassworkTask.Statuses.Todo
+            or GlassworkTask.Statuses.InProgress
+            or GlassworkTask.Statuses.Blocked)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        var isReadOnly = task.IsCancelled;
+        TitleBox.IsReadOnly = isReadOnly;
+        PriorityBox.IsEnabled = !isReadOnly;
+        DueDatePicker.IsEnabled = !isReadOnly;
+        EditAdoButton.IsEnabled = !isReadOnly;
+        EditParentButton.IsEnabled = !isReadOnly;
+        ActiveSubtaskList.IsEnabled = !isReadOnly;
+        CompletedSubtaskList.IsEnabled = !isReadOnly;
+        AddSubtaskBox.IsEnabled = !isReadOnly;
+        AddSubtaskButton.IsEnabled = !isReadOnly;
+        DescriptionBox.IsReadOnly = isReadOnly;
+        NotesEditButton.IsEnabled = !isReadOnly;
+        AddLinkButton.IsEnabled = !isReadOnly;
+        LifecycleActions.Visibility = isReadOnly
+            ? Visibility.Collapsed
+            : Visibility.Visible;
 
         DueDatePicker.Date = task.Due.HasValue
             ? new DateTimeOffset(task.Due.Value)
@@ -121,6 +147,9 @@ public sealed partial class TaskDetailPage : Page
         CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
         CompletedText.Text = task.Status == GlassworkTask.Statuses.Done && task.CompletedAt.HasValue
             ? $"Completed: {task.CompletedAt.Value:yyyy-MM-dd HH:mm}"
+            : "";
+        CancelledText.Text = task.IsCancelled
+            ? $"Cancelled: {task.CancelledAt?.ToLocalTime():yyyy-MM-dd HH:mm} - {task.CancellationReason}"
             : "";
         IdText.Text = $"ID: {task.Id}";
 
@@ -192,7 +221,7 @@ public sealed partial class TaskDetailPage : Page
 
     private async Task ToggleNotesMode()
     {
-        if (_isLoading) return;
+        if (_isLoading || Task.IsCancelled) return;
         if (_notesEdit.Mode == NotesEditMode.Read)
         {
             _notesEdit.EnterEdit();
@@ -468,6 +497,7 @@ public sealed partial class TaskDetailPage : Page
 
     private async void AddLink_Click(object sender, RoutedEventArgs e)
     {
+        if (Task.IsCancelled) return;
         var typeBox = new ComboBox
         {
             Header = "Type",
@@ -600,6 +630,7 @@ public sealed partial class TaskDetailPage : Page
 
     private void LinkMore_Click(object sender, RoutedEventArgs e)
     {
+        if (Task.IsCancelled) return;
         if (sender is not FrameworkElement fe || fe.DataContext is not LinkRow row) return;
 
         var menu = new MenuFlyout();
@@ -650,6 +681,7 @@ public sealed partial class TaskDetailPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _isNavigated = false;
         base.OnNavigatedFrom(e);
         if (App.Watcher is not null)
         {
@@ -687,7 +719,30 @@ public sealed partial class TaskDetailPage : Page
         // Slightly inefficient (refreshes on all changes) but simple and safe.
         var id = Task?.Id;
         if (string.IsNullOrEmpty(id)) return;
-        DispatcherQueue.TryEnqueue(() => BindChildren(id));
+        var currentFileName = $"{id}.md";
+        var affectsCurrentTask = string.Equals(
+                change.NewFileName,
+                currentFileName,
+                StringComparison.OrdinalIgnoreCase)
+            || string.Equals(
+                change.OldFileName,
+                currentFileName,
+                StringComparison.OrdinalIgnoreCase);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (affectsCurrentTask)
+            {
+                var fresh = App.Vault.Load(id);
+                if (fresh?.IsCancelled == true)
+                {
+                    ReloadBanner.IsOpen = false;
+                    NotesConflictBanner.IsOpen = false;
+                    ApplyTask(fresh);
+                    return;
+                }
+            }
+            BindChildren(id);
+        });
     }
 
     private void HandleExternalFileChange()
@@ -704,6 +759,13 @@ public sealed partial class TaskDetailPage : Page
         {
             // File may have been deleted; fall back to the legacy banner.
             ReloadBanner.IsOpen = true;
+            return;
+        }
+        if (fresh.IsCancelled)
+        {
+            ReloadBanner.IsOpen = false;
+            NotesConflictBanner.IsOpen = false;
+            ApplyTask(fresh);
             return;
         }
 
@@ -992,12 +1054,6 @@ public sealed partial class TaskDetailPage : Page
 
     }
 
-    private void Delete_Click(object sender, RoutedEventArgs e)
-    {
-        App.Vault.Delete(Task.Id);
-        if (Frame.CanGoBack) Frame.GoBack();
-    }
-
     private async void OpenObsidian_Click(object sender, RoutedEventArgs e)
         => await OpenCurrentTaskInObsidianAsync();
 
@@ -1149,6 +1205,7 @@ public sealed partial class TaskDetailPage : Page
 
     private async void EditAdoLink_Click(object sender, RoutedEventArgs e)
     {
+        if (Task.IsCancelled) return;
         var idBox = new TextBox
         {
             Header = "ADO work item ID (leave blank to clear)",
@@ -1265,6 +1322,7 @@ public sealed partial class TaskDetailPage : Page
 
     private async void EditParent_Click(object sender, RoutedEventArgs e)
     {
+        if (Task.IsCancelled) return;
         var box = new TextBox
         {
             Header = "Parent (ADO ID, full URL, or free text — leave blank to clear)",
@@ -1313,6 +1371,14 @@ public sealed partial class TaskDetailPage : Page
 
     private async Task<bool> SaveAsync(bool overwrite = false)
     {
+        if (Task.IsCancelled)
+        {
+            await ShowOperationErrorAsync(
+                "Unable to save Task",
+                "Restore the Cancelled Task before editing it.");
+            return false;
+        }
+
         try
         {
             var result = overwrite
@@ -1330,6 +1396,11 @@ public sealed partial class TaskDetailPage : Page
                     await ShowOperationErrorAsync(
                         "Unable to save task",
                         "The task file no longer exists in the active task folder.");
+                    return false;
+                case TaskEditSaveResult.ReadOnly:
+                    await ShowOperationErrorAsync(
+                        "Unable to save Task",
+                        "Restore the Cancelled Task before editing it.");
                     return false;
                 default:
                     throw new InvalidOperationException($"Unknown task save result: {result}");
@@ -1520,6 +1591,208 @@ public sealed partial class TaskDetailPage : Page
         catch (Exception ex)
         {
             await ShowOperationErrorAsync("Unable to complete blocked task", ex.Message);
+        }
+    }
+
+    private async void CancelTask_Click(object sender, RoutedEventArgs e)
+    {
+        var reasonBox = new TextBox
+        {
+            Header = "Reason (optional)",
+            PlaceholderText = "Why are you cancelling this task?",
+            MinWidth = 360,
+        };
+        AutomationProperties.SetAutomationId(reasonBox, "CancelTaskReasonBox");
+
+        var dialog = new ContentDialog
+        {
+            Title = "Cancel task?",
+            Content = reasonBox,
+            PrimaryButtonText = "Cancel task",
+            CloseButtonText = "Keep task",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot,
+        };
+        AutomationProperties.SetAutomationId(dialog, "CancelTaskDialog");
+        dialog.WithAppTheme(this);
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            return;
+
+        try
+        {
+            var reason = string.IsNullOrWhiteSpace(reasonBox.Text)
+                ? "Cancelled by user"
+                : reasonBox.Text.Trim();
+            var taskToCancel = Task.Clone();
+            App.Tasks.Cancel(taskToCancel, reason);
+            if (Frame.CanGoBack)
+                Frame.GoBack();
+            else
+                Frame.Navigate(typeof(BacklogPage));
+        }
+        catch (Exception ex)
+        {
+            await ShowOperationErrorAsync("Unable to cancel task", ex.Message);
+        }
+    }
+
+    private async void DeleteTask_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isDeletingTask) return;
+        _isDeletingTask = true;
+        DeleteTaskButton.IsEnabled = false;
+        var taskId = Task.Id;
+        var mutations = App.Mutations;
+        var vaultPath = App.Vault.VaultPath;
+        try
+        {
+            var preflightResult = await System.Threading.Tasks.Task.Run(
+                () => mutations.PreflightTaskDeletion(taskId));
+            if (!_isNavigated
+                || XamlRoot is null
+                || !ReferenceEquals(mutations, App.Mutations)
+                || !string.Equals(vaultPath, App.Vault.VaultPath, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(Task.Id, taskId, StringComparison.Ordinal))
+            {
+                return;
+            }
+            if (preflightResult.Outcome != "ready" || preflightResult.Preflight is null)
+            {
+                await ShowOperationErrorAsync(
+                    "Unable to prepare Task deletion",
+                    preflightResult.Error ?? "The Task deletion preflight failed.");
+                return;
+            }
+
+            var viewModel = new TaskDeletionDialogViewModel(preflightResult.Preflight);
+            var impact = new TextBlock
+            {
+                Text = viewModel.ImpactSummary,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            AutomationProperties.SetAutomationId(impact, "DeleteTaskImpactSummary");
+
+            var content = new StackPanel { Spacing = 12, MinWidth = 420 };
+            content.Children.Add(new TextBlock
+            {
+                Text = "This cannot be undone. Inbound wiki links will be replaced without changing surrounding prose.",
+                TextWrapping = TextWrapping.Wrap,
+            });
+            content.Children.Add(impact);
+
+            CheckBox? cascadeCheckBox = null;
+            if (viewModel.RequiresCascade)
+            {
+                content.Children.Add(new TextBlock
+                {
+                    Text = $"Descendants: {viewModel.DescendantIds}",
+                    TextWrapping = TextWrapping.Wrap,
+                    Opacity = 0.75,
+                });
+                cascadeCheckBox = new CheckBox
+                {
+                    Content = $"I understand: also permanently delete all "
+                        + $"{viewModel.Preflight.Descendants.Count} "
+                        + (viewModel.Preflight.Descendants.Count == 1
+                            ? "descendant"
+                            : "descendants"),
+                    IsChecked = false,
+                };
+                AutomationProperties.SetAutomationId(cascadeCheckBox, "DeleteCascadeCheckBox");
+                content.Children.Add(cascadeCheckBox);
+            }
+
+            var confirmationBox = new TextBox
+            {
+                Header = $"Type \"{viewModel.Preflight.Task.Title}\" to confirm",
+                MinWidth = 400,
+            };
+            AutomationProperties.SetAutomationId(
+                confirmationBox,
+                "DeleteTaskConfirmTitleBox");
+            content.Children.Add(confirmationBox);
+
+            var dialog = new ContentDialog
+            {
+                Title = "Permanently delete Task?",
+                Content = content,
+                PrimaryButtonText = "Delete permanently",
+                CloseButtonText = "Keep Task",
+                DefaultButton = ContentDialogButton.Close,
+                IsPrimaryButtonEnabled = false,
+                XamlRoot = XamlRoot,
+            };
+            AutomationProperties.SetAutomationId(dialog, "DeleteTaskDialog");
+            dialog.WithAppTheme(this);
+
+            void UpdateDeleteEnabled()
+            {
+                viewModel.ConfirmationTitle = confirmationBox.Text ?? string.Empty;
+                viewModel.CascadeChildren = cascadeCheckBox?.IsChecked == true;
+                dialog.IsPrimaryButtonEnabled = viewModel.CanDelete;
+            }
+
+            confirmationBox.TextChanged += (_, _) => UpdateDeleteEnabled();
+            if (cascadeCheckBox is not null)
+            {
+                cascadeCheckBox.Checked += (_, _) => UpdateDeleteEnabled();
+                cascadeCheckBox.Unchecked += (_, _) => UpdateDeleteEnabled();
+            }
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                return;
+            if (!_isNavigated
+                || XamlRoot is null
+                || !ReferenceEquals(mutations, App.Mutations)
+                || !string.Equals(vaultPath, App.Vault.VaultPath, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(Task.Id, taskId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var outcome = await System.Threading.Tasks.Task.Run(() =>
+                mutations.DeleteTask(
+                    $"app-delete-{Guid.NewGuid():N}",
+                    viewModel.Preflight.Task.Id,
+                    viewModel.Preflight.Task.ResourceRevision,
+                    viewModel.ConfirmationTitle,
+                    viewModel.CascadeChildren,
+                    viewModel.Preflight.PreflightRevision));
+            if (!_isNavigated || XamlRoot is null)
+                return;
+            if (outcome.Outcome != "applied")
+            {
+                await ShowOperationErrorAsync(
+                    "Unable to delete Task",
+                    outcome.Error ?? $"Task deletion failed: {outcome.Outcome}.");
+                return;
+            }
+
+            if (Frame.CanGoBack)
+                Frame.GoBack();
+            else
+                Frame.Navigate(typeof(BacklogPage));
+        }
+        catch (Exception ex)
+        {
+            if (_isNavigated && XamlRoot is not null)
+            {
+                try
+                {
+                    await ShowOperationErrorAsync("Unable to delete Task", ex.Message);
+                }
+                catch (Exception dialogException)
+                {
+                    Debug.WriteLine($"Unable to show Task deletion error: {dialogException}");
+                }
+            }
+        }
+        finally
+        {
+            _isDeletingTask = false;
+            if (_isNavigated)
+                DeleteTaskButton.IsEnabled = true;
         }
     }
 

@@ -43,7 +43,8 @@ builder.Services
         options.ServerInfo = new Implementation
         {
             Name = "glasswork-mcp",
-            Version = "0.9.0",
+            Version = typeof(Glasswork.Mcp.Tools.GlassworkTools)
+                .Assembly.GetName().Version?.ToString(3) ?? "unknown",
         };
     })
     .WithStdioServerTransport()

@@ -5,6 +5,20 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.10.0] — Unreleased
+
+### Added
+
+- **Authoritative ADO reconciliation**: `reconcile_ado_task` validates the
+  matching imported ADO identity and applies only exact `Removed` Cancellation
+  or exact resumed-active restoration directly to `doing`. The named
+  `authoritative_ado_reconciliation` capability lets clients fail closed when
+  this unreleased contract is not installed. Resource Revisions, idempotency,
+  journal recovery, Self-write registration, and done-wins remain enforced by
+  the Core mutation module.
+
+---
+
 ## [0.9.0] — 2026-07-31
 
 ### Breaking

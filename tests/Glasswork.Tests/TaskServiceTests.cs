@@ -147,6 +147,93 @@ public class TaskServiceTests
     }
 
     [TestMethod]
+    public void Cancel_BlockedTask_ArchivesWithoutDiscardingTaskData()
+    {
+        var due = DateTime.Today.AddDays(3);
+        var task = new GlassworkTask
+        {
+            Id = "cancel-blocked",
+            Title = "Cancel blocked",
+            Status = GlassworkTask.Statuses.Blocked,
+            BlockedReason = "Waiting on approval",
+            BlockedAt = _blockedNow.AddDays(-1),
+            BlockedFromStatus = GlassworkTask.Statuses.InProgress,
+            BlockedMetadataState = BlockedMetadataState.Valid,
+            MyDay = DateTime.Today,
+            Due = due,
+            Description = "Keep this context.",
+        };
+        _vault.Save(task);
+
+        _taskService.Cancel(task, "  Work superseded  ");
+
+        Assert.AreEqual(GlassworkTask.Statuses.Cancelled, task.Status);
+        Assert.AreEqual(_blockedNow, task.CancelledAt);
+        Assert.AreEqual("Work superseded", task.CancellationReason);
+        Assert.IsNull(task.MyDay);
+        Assert.IsNull(task.CompletedAt);
+        Assert.IsNull(task.BlockedReason);
+        Assert.IsNull(task.BlockedAt);
+        Assert.IsNull(task.BlockedFromStatus);
+        Assert.AreEqual(due, task.Due);
+        Assert.AreEqual("Keep this context.", task.Description);
+
+        var persisted = _vault.Load(task.Id)!;
+        Assert.AreEqual(GlassworkTask.Statuses.Cancelled, persisted.Status);
+        Assert.AreEqual(_blockedNow, persisted.CancelledAt);
+        Assert.AreEqual("Work superseded", persisted.CancellationReason);
+    }
+
+    [TestMethod]
+    public void Cancel_DoneTask_RejectsReclassification()
+    {
+        var completedAt = DateTime.Today.AddDays(-1);
+        var task = new GlassworkTask
+        {
+            Id = "already-done",
+            Title = "Already done",
+            Status = GlassworkTask.Statuses.Done,
+            CompletedAt = completedAt,
+        };
+        _vault.Save(task);
+
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => _taskService.Cancel(task, "No longer needed"));
+
+        var persisted = _vault.Load(task.Id)!;
+        Assert.AreEqual(GlassworkTask.Statuses.Done, persisted.Status);
+        Assert.AreEqual(completedAt, persisted.CompletedAt);
+        Assert.IsNull(persisted.CancelledAt);
+    }
+
+    [TestMethod]
+    public void RestoreCancelled_DefaultsToTodoAndClearsCancellationMetadata()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "restore-cancelled",
+            Title = "Restore cancelled",
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = _blockedNow.AddDays(-1),
+            CancellationReason = "Superseded",
+            Due = DateTime.Today.AddDays(2),
+        };
+        _vault.Save(task);
+
+        _taskService.RestoreCancelled(task);
+
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, task.Status);
+        Assert.IsNull(task.CancelledAt);
+        Assert.IsNull(task.CancellationReason);
+        Assert.AreEqual(DateTime.Today.AddDays(2), task.Due);
+
+        var persisted = _vault.Load(task.Id)!;
+        Assert.AreEqual(GlassworkTask.Statuses.Todo, persisted.Status);
+        Assert.IsNull(persisted.CancelledAt);
+        Assert.IsNull(persisted.CancellationReason);
+    }
+
+    [TestMethod]
     public void ResumeBlocked_OverrideStatus_UsesChosenStatus()
     {
         var task = new GlassworkTask

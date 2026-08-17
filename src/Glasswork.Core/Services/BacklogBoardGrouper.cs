@@ -16,7 +16,7 @@ public static class BacklogBoardGrouper
     /// </summary>
     public static List<BoardColumn> GroupByStatus(IEnumerable<GlassworkTask> tasks)
     {
-        var filtered = tasks.Where(t => t.Status != GlassworkTask.Statuses.Done).ToList();
+        var filtered = tasks.Where(t => !t.IsTerminal).ToList();
 
         var blockedTasks = filtered
             .Where(t => t.Status == GlassworkTask.Statuses.Blocked)

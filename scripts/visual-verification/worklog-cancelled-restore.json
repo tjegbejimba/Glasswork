@@ -1,0 +1,60 @@
+{
+  "name": "Work Log restore cancelled task",
+  "tasks": [
+    {
+      "id": "vv-restore-cancelled",
+      "title": "Restore archived research task",
+      "status": "cancelled",
+      "cancelledAt": "2026-08-14T18:30:00Z",
+      "cancellationReason": "Cancelled during planning review"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavWorkLog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "WorkLogHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "WorkLogCancelledTab",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Restore archived research task",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "RestoreCancelledTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "No cancelled tasks.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Restore archived research task",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "worklog-cancelled-restored",
+      "waitMilliseconds": 1200
+    }
+  ]
+}

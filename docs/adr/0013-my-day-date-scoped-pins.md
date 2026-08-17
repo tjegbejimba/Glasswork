@@ -48,26 +48,19 @@ Dismiss-for-today still overrides all four and remains necessary for the
 **virtual** promotions (due-date / subtask), where there is no pin date to clear.
 `RemoveFromMyDay` continues to durably clear `my_day` for a direct pin.
 
-### One-time migration (no eviction on ship)
+### Past pins expire naturally
 
-Switching to date-scoped semantics would, on first run, drop all ~16 existing
-past-dated pins out of today. To avoid a jarring mass-eviction, a **one-time,
-idempotency-guarded migration** runs at startup:
+Past-dated pins are not rewritten at startup. They simply stop promoting under
+the date-scoped rule and remain in frontmatter as history until a user or agent
+sets or clears them.
 
-- For every task whose `my_day` is a date **strictly before today**, rewrite
-  `my_day` to **today's date**. Tasks with `my_day == today` or a future date are
-  left untouched.
-- The migration is **guarded by a version flag** in ui-state
-  (e.g. `migration.myDayDateScoped` / `IUiStateService`) and runs **exactly
-  once**. It must **not** re-run on subsequent launches — otherwise yesterday's
-  pins would be rewritten to each new "today" and we would silently recreate
-  pin-forever.
-- The migration writes to the vault and therefore **must register with
-  `SelfWriteCoordinator`** (cross-cutting rule 5) so `FileWatcherService` does not
-  fire spurious external-change events.
-
-Net effect: every currently-pinned task appears today exactly as before, then
-expires naturally tomorrow under the new rule.
+The original implementation attempted a one-time startup roll-forward guarded
+by a UI-state key derived from `vault.VaultPath.GetHashCode()`. .NET string
+hashes are randomized per process, so the key was not stable across launches.
+The migration could therefore run again on a later day and silently recreate
+pin-forever by rolling old pins forward repeatedly. The migration and its
+startup runner are retired rather than replaced: My Day membership is a read
+policy and must not mutate Task dates during startup.
 
 ## Considered alternatives
 
@@ -88,9 +81,8 @@ expires naturally tomorrow under the new rule.
 - `MyDayPromotionPolicy.IsTaskInMyDayToday` clause 1 becomes a date equality
   check; existing tests that assert "any non-null `my_day` promotes" must be
   updated to the date-scoped expectation.
-- A new one-time, flag-guarded startup migration is added (Core-testable: given a
-  set of tasks + a fake clock + fake ui-state, past-dated pins are rewritten to
-  today, today/future pins are untouched, and a second run is a no-op).
+- Startup performs no `my_day` migration. Past pins expire naturally and no
+  process-local migration flag can affect Task dates.
 - Future-dated `my_day` becomes a *scheduled* pin (promotes on its day). This is a
   new, intentional capability; document it in `UBIQUITOUS_LANGUAGE.md` alongside
   the refined definition of "pin."
@@ -102,8 +94,7 @@ expires naturally tomorrow under the new rule.
 
 ## Why this ADR exists
 
-It is hard to reverse (the migration rewrites user vault data once and changes
-what "pinned" means), surprising without context (a contributor would ask why a
-set `my_day` no longer always shows), and a real trade-off (Option 1 is the
-intuitive "pin" model we are explicitly choosing against in favor of the daily
-My Day model the app's name and Suggestions section already imply).
+The interpretation change is surprising without context (a contributor would
+ask why a set `my_day` no longer always shows), and it is a real trade-off
+(Option 1 is the intuitive "pin" model we are explicitly choosing against in
+favor of the daily My Day model the app's name and Suggestions section imply).

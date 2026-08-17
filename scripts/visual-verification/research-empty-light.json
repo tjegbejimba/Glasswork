@@ -12,11 +12,6 @@
       "type": "wait-for",
       "name": "No Research Topics yet",
       "timeoutMilliseconds": 10000
-    },
-    {
-      "type": "focus",
-      "automationId": "NavResearch",
-      "timeoutMilliseconds": 10000
     }
   ],
   "captures": [

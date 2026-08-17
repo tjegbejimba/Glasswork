@@ -101,6 +101,11 @@ public partial class App : Application
     public const string BacklogViewModeKey = "backlog.viewMode";
 
     /// <summary>
+    /// UI state key for the Work Log page's selected tab ("completed" | "cancelled").
+    /// </summary>
+    public const string WorkLogSelectedTabKey = "worklog.selectedTab";
+
+    /// <summary>
     /// Key prefix for per-parent-group collapse state on the Backlog page.
     /// Suffix is the lowercased+trimmed parent string.
     /// </summary>
@@ -352,7 +357,6 @@ public partial class App : Application
 
         SelfWrites = new SelfWriteCoordinator(vaultPath);
         Vault = new VaultService(vaultPath, SelfWrites);
-        Mutations = new ResourceMutationService(vaultPath, Vault);
         Research = new FileSystemResearchCatalog(VaultRoot);
 
         Artifacts = new FileSystemArtifactStore(VaultRoot);
@@ -371,6 +375,12 @@ public partial class App : Application
             }
         }
         BacklinkIndex = backlinkIndex;
+        Mutations = new ResourceMutationService(
+            vaultPath,
+            Vault,
+            backlinkIndex: BacklinkIndex);
+        Mutations.BacklinksChanged += (s, e) =>
+            BacklinksChangedExternally?.Invoke(s, e);
 
         // One-shot V1 → V2 migration of any pre-existing files. Idempotent: V2 files
         // are skipped, so re-running on every launch is cheap.
@@ -383,19 +393,6 @@ public partial class App : Application
             {
                 trace.SetOutcome("error");
                 System.Diagnostics.Debug.WriteLine($"V2 migration failed: {ex.Message}");
-            }
-        }
-
-        // One-shot my_day date-scoped migration (ADR 0013, issue #260). Rolls forward
-        // any past-dated my_day pins to today so they aren't mass-evicted on upgrade.
-        // Flag-guarded: runs exactly once, then never again.
-        using (var trace = Performance.BeginSpan("vault.my_day_pin_migration"))
-        {
-            try { MyDayPinMigrationRunner.ApplyMigration(Vault, uiStateImpl, DateOnly.FromDateTime(DateTime.Today)); }
-            catch (Exception ex)
-            {
-                trace.SetOutcome("error");
-                System.Diagnostics.Debug.WriteLine($"My Day migration failed: {ex.Message}");
             }
         }
 
@@ -516,7 +513,11 @@ public partial class App : Application
         ArtifactsWatcher.ArtifactChanged += (s, e) => ArtifactChangedExternally?.Invoke(s, e);
         ArtifactsWatcher.Start();
 
-        BacklinksWatcher = new BacklinksWatcher(VaultRoot, BacklinkIndex);
+        BacklinksWatcher = new BacklinksWatcher(
+            VaultRoot,
+            BacklinkIndex,
+            SelfWrites,
+            TimeSpan.FromMilliseconds(250));
         BacklinksWatcher.BacklinksChanged += (s, e) => BacklinksChangedExternally?.Invoke(s, e);
         BacklinksWatcher.Start();
 

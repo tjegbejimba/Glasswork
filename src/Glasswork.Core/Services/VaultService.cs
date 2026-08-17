@@ -726,7 +726,15 @@ public class VaultService
 
     private void CommitManagedBytes(string taskId, byte[] content, byte[]? expectedOriginal = null)
     {
-        EnsureMutations().CommitBytes(taskId, content, expectedOriginal);
+        var guardedOriginal = expectedOriginal ?? TryReadBytes(taskId);
+        if (guardedOriginal is not null
+            && _parser.Parse(Encoding.UTF8.GetString(guardedOriginal)).IsCancelled)
+        {
+            throw new InvalidOperationException(
+                "Cancelled Tasks are read-only. Restore the Task before editing it.");
+        }
+
+        EnsureMutations().CommitBytes(taskId, content, guardedOriginal);
     }
 
     /// <summary>
@@ -738,6 +746,7 @@ public class VaultService
     {
         var task = Load(taskId);
         if (task is null) return;
+        EnsureTaskIsMutable(task);
         task.Links = links.ToList();
         Save(task);
     }
@@ -753,6 +762,7 @@ public class VaultService
         if (fromIndex == toIndex) return;
         var task = Load(taskId);
         if (task is null) return;
+        EnsureTaskIsMutable(task);
         if (fromIndex < 0 || fromIndex >= task.Subtasks.Count) return;
         if (toIndex < 0 || toIndex >= task.Subtasks.Count) return;
 
@@ -760,6 +770,15 @@ public class VaultService
         task.Subtasks.RemoveAt(fromIndex);
         task.Subtasks.Insert(toIndex, item);
         Save(task);
+    }
+
+    private static void EnsureTaskIsMutable(GlassworkTask task)
+    {
+        if (task.IsCancelled)
+        {
+            throw new InvalidOperationException(
+                "Cancelled Tasks are read-only. Restore the Task before editing it.");
+        }
     }
 
     /// <summary>
@@ -817,9 +836,12 @@ public class VaultService
     }
 
     /// <summary>
-    /// Delete a task file by ID.
+    /// Low-level single-file deletion retained for Core maintenance and tests.
+    /// Product adapters must use <see cref="ResourceMutationService.DeleteTask"/>
+    /// so destructive guards, backlink repair, Artifacts, cascade, and recovery
+    /// remain one transaction.
     /// </summary>
-    public bool Delete(string taskId)
+    internal bool Delete(string taskId)
     {
         return EnsureMutations().CommitDelete(taskId);
     }
@@ -855,6 +877,9 @@ public class VaultService
 
     internal void ForgetManagedBytes(string taskId) =>
         _lastReadBytes.TryRemove(taskId, out _);
+
+    internal void RegisterSelfWrite(string path) =>
+        _selfWrites?.RegisterWrite(path);
 
     internal bool ReplaceOwnedFileUnsafe(string path, byte[] bytes, bool overwrite)
     {

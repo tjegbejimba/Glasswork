@@ -26,6 +26,37 @@ public sealed class TaskSearchServiceTests
     }
 
     [TestMethod]
+    public void Search_ExcludesCancelledByDefaultAndIncludesExplicitFilter()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "active",
+            Title = "Shared keyword",
+            Status = GlassworkTask.Statuses.Todo,
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "cancelled",
+            Title = "Shared keyword",
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = DateTimeOffset.UtcNow,
+            CancellationReason = "Superseded",
+        });
+
+        var defaults = _search.Search("keyword");
+        var cancelled = _search.Search(
+            "keyword",
+            statuses: [GlassworkTask.Statuses.Cancelled]);
+
+        CollectionAssert.AreEqual(
+            new[] { "active" },
+            defaults.Select(hit => hit.Id).ToArray());
+        CollectionAssert.AreEqual(
+            new[] { "cancelled" },
+            cancelled.Select(hit => hit.Id).ToArray());
+    }
+
+    [TestMethod]
     public void Search_MatchesDescriptionAndNotes()
     {
         _vault.Save(new GlassworkTask

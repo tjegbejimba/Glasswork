@@ -163,9 +163,9 @@ public sealed class IndexMarkdownWriter : IDisposable
 
     private static void WriteToday(List<GlassworkTask> tasks, string vaultPath)
     {
-        var parentMyDay = tasks.Where(t => t.IsMyDay && !t.IsBlocked).ToList();
+        var parentMyDay = tasks.Where(t => t.IsMyDay && !t.IsBlocked && !t.IsCancelled).ToList();
         var subtaskMyDay = tasks
-            .Where(t => !t.IsMyDay && !t.IsBlocked && t.Subtasks.Any(s => s.IsMyDay))
+            .Where(t => !t.IsMyDay && !t.IsBlocked && !t.IsCancelled && t.Subtasks.Any(s => s.IsMyDay))
             .ToList();
 
         var sb = new StringBuilder();

@@ -50,20 +50,21 @@ public class BacklogBoardGrouperTests
     }
 
     [TestMethod]
-    public void GroupByStatus_ExcludesDoneTasks()
+    public void GroupByStatus_ExcludesTerminalTasks()
     {
         var tasks = new[]
         {
             TestTask("t1", status: GlassworkTask.Statuses.Todo),
             TestTask("t2", status: GlassworkTask.Statuses.Done),
-            TestTask("t3", status: GlassworkTask.Statuses.InProgress)
+            TestTask("t3", status: GlassworkTask.Statuses.InProgress),
+            TestTask("t4", status: GlassworkTask.Statuses.Cancelled),
         };
 
         var grouped = BacklogBoardGrouper.GroupByStatus(tasks);
 
         var allTasks = grouped.SelectMany(c => c.Tasks).ToList();
-        Assert.AreEqual(2, allTasks.Count, "done tasks should not appear in board columns");
-        Assert.IsFalse(allTasks.Any(t => t.Status == GlassworkTask.Statuses.Done));
+        Assert.AreEqual(2, allTasks.Count, "terminal tasks should not appear in board columns");
+        Assert.IsFalse(allTasks.Any(t => t.IsTerminal));
     }
 
     [TestMethod]

@@ -16,7 +16,7 @@
     {
       "relativePath": "systems/research-catalog-with-an-intentionally-long-title.md",
       "id": "research-catalog-long-title",
-      "title": "A deliberately long Research Topic title that must truncate visually while remaining fully available to accessibility tools and its tooltip",
+      "title": "Very long Research Topic title that must truncate visually while remaining fully available to accessibility tools and its tooltip",
       "type": "system",
       "confidence": "high",
       "updated": "2026-08-15",
@@ -47,7 +47,7 @@
     },
     {
       "type": "wait-for",
-      "name": "A deliberately long Research Topic title that must truncate visually while remaining fully available to accessibility tools and its tooltip",
+      "name": "Very long Research Topic title that must truncate visually while remaining fully available to accessibility tools and its tooltip",
       "timeoutMilliseconds": 10000
     },
     {

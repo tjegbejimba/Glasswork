@@ -1,0 +1,80 @@
+{
+  "name": "Task Detail hard deletion success",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "vv-delete-success",
+      "title": "Delete obsolete deployment draft",
+      "description": "This Task will be permanently removed after typed confirmation.",
+      "status": "cancelled",
+      "cancelledAt": "2026-08-14T18:30:00Z",
+      "cancellationReason": "Superseded",
+      "artifacts": [
+        {
+          "name": "draft.md",
+          "markdown": "# Obsolete deployment draft"
+        }
+      ]
+    },
+    {
+      "id": "vv-delete-success-linker",
+      "title": "Keep deployment context",
+      "description": "Historical context points to [[vv-delete-success]].",
+      "status": "todo"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavWorkLog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "WorkLogCancelledTab",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "OpenCancelledTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "DeleteTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "DeleteTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "DeleteTaskConfirmTitleBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "DeleteTaskConfirmTitleBox",
+      "value": "Delete obsolete deployment draft",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "PrimaryButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "No cancelled tasks.",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-detail-delete-success",
+      "waitMilliseconds": 1200
+    }
+  ]
+}

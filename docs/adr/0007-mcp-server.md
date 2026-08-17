@@ -187,12 +187,38 @@ landed. Current surface, grouped by verb:
 - **`type` on create/update** — the model carries `type` (`task` / `pbi` / `bug`,
   ADR 0016) and `get_my_day` surfaces it, but `add_task` / `update_task` can't set it,
   so agents can't create a PBI or convert task↔PBI.
-- **Task deletion** — no delete-a-task tool exists. The soft-vs-hard decision is
-  ADR 0018 (resolving #207); `delete_subtask` (in-file, low-risk) ships independently.
-
 The boundaries in §9 (stdio-only, vault-only writes, path-traversal guard, Resource
 Revision preconditions, self-write marker) continue to govern **every** tool added
 above and every tool still to come.
+
+### Amendment — guarded Hard deletion
+
+`preflight_delete_task` returns the complete impact plus an opaque
+`preflight_revision`. `delete_task` requires `mutation_id`, the latest
+`if_revision`, exact `confirm_title`, explicit `cascade_children: true` when
+descendants exist, and that reviewed preflight revision for cascade. It delegates
+preflight, descendant resolution, Artifact ownership, exact inbound Wiki-link
+repair, staged backups, rollback, startup recovery, and replay to the Core
+Resource Mutation Module. MCP only serializes the structured preflight, complete
+mutation report, and stable error codes. Capability discovery advertises
+`guarded_hard_deletion`.
+
+### Amendment — Authoritative ADO reconciliation
+
+`reconcile_ado_task` is the dedicated transport interface for the bounded
+Azure DevOps lifecycle state machine recorded in ADR 0018. The
+`authoritative_ado_reconciliation` capability names the complete guarantee:
+matching ADO identity validation, exact-state allowlists, direct
+Cancelled-to-`in-progress` restoration with no intermediate `todo`, done-wins,
+Resource Revision and idempotency guards, journal recovery, and Self-write
+registration. The operation may cancel but can never Hard-delete.
+
+Clients must capability-discover before relying on this workflow. A missing
+capability or tool is not a downgrade path: the client reports pending
+transitions and requires the independently distributed `glasswork-mcp` 0.10.0
+or later rather than writing Cancellation YAML or composing `restore_task` with
+generic status mutation. The app Release package does not install the MCP tool;
+the repository's `scripts/install-mcp.ps1` owns that deployment.
 
 ### Amendment — blocked task contract
 

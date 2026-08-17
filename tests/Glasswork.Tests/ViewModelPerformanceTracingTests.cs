@@ -55,6 +55,25 @@ public class ViewModelPerformanceTracingTests
     }
 
     [TestMethod]
+    public void MyDayRefresh_ExcludesCancelledTaskFromSuggestions()
+    {
+        var task = _taskService.CreateTask("Cancelled suggestion");
+        task.Priority = Glasswork.Core.Models.GlassworkTask.Priorities.Urgent;
+        _vault.Save(task);
+        _taskService.Cancel(task, "Superseded");
+        var viewModel = new MyDayViewModel(
+            _vault,
+            _taskService,
+            _index,
+            uiState: null,
+            taskQuery: null);
+
+        viewModel.Refresh();
+
+        Assert.IsFalse(viewModel.Suggestions.Any(candidate => candidate.Id == task.Id));
+    }
+
+    [TestMethod]
     public void BacklogRefresh_EmitsDataPreparationShape()
     {
         _taskService.CreateTask("Backlog");

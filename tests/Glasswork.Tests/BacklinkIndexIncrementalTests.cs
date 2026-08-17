@@ -277,6 +277,59 @@ public class BacklinksWatcherTests
     }
 
     [TestMethod]
+    public void SameProcessSelfWrite_IsLeftToTheMutationModulesExplicitIndexRefresh()
+    {
+        SeedTask("TASK-SELF");
+        var pagePath = SeedWikiPage("concepts", "self.md", "[[TASK-SELF]]");
+        var index = new BacklinkIndex();
+        index.Build(_vault);
+        var selfWrites = new SelfWriteCoordinator(_todoDir, TimeSpan.FromSeconds(2));
+        using var watcher = new BacklinksWatcher(
+            _vault,
+            index,
+            selfWrites,
+            TimeSpan.FromMilliseconds(50));
+        var signal = new ManualResetEventSlim(false);
+        watcher.BacklinksChanged += (_, _) => signal.Set();
+        watcher.Start();
+
+        selfWrites.RegisterWrite(pagePath);
+        File.WriteAllText(pagePath, "Rewritten without the Task link.");
+
+        Assert.IsFalse(
+            signal.Wait(TimeSpan.FromMilliseconds(500)),
+            "Same-process mutation writes are refreshed explicitly and must not echo through the watcher.");
+        Assert.AreEqual(1, index.GetBacklinks("TASK-SELF").Count);
+    }
+
+    [TestMethod]
+    public void CrossProcessSelfWrite_StillRefreshesTheDesktopBacklinkIndex()
+    {
+        SeedTask("TASK-MCP");
+        var pagePath = SeedWikiPage("concepts", "mcp.md", "[[TASK-MCP]]");
+        var index = new BacklinkIndex();
+        index.Build(_vault);
+        var desktopWrites = new SelfWriteCoordinator(_todoDir, TimeSpan.FromSeconds(2));
+        var externalWrites = new SelfWriteCoordinator(_todoDir, TimeSpan.FromSeconds(2));
+        using var watcher = new BacklinksWatcher(
+            _vault,
+            index,
+            desktopWrites,
+            TimeSpan.FromMilliseconds(50));
+        var signal = new ManualResetEventSlim(false);
+        watcher.BacklinksChanged += (_, _) => signal.Set();
+        watcher.Start();
+
+        externalWrites.RegisterWrite(pagePath);
+        File.WriteAllText(pagePath, "Rewritten without the Task link.");
+
+        Assert.IsTrue(
+            signal.Wait(TimeSpan.FromSeconds(5)),
+            "Cross-process mutation writes must refresh the desktop backlink index.");
+        Assert.AreEqual(0, index.GetBacklinks("TASK-MCP").Count);
+    }
+
+    [TestMethod]
     public void DeletingPage_RemovesBacklinksAndFiresEvent()
     {
         SeedTask("TASK-D");

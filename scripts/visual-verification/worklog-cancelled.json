@@ -1,0 +1,76 @@
+{
+  "name": "Work Log cancelled archive",
+  "tasks": [
+    {
+      "id": "vv-cancelled-task",
+      "title": "Retire superseded launch checklist",
+      "status": "cancelled",
+      "cancelledAt": "2026-08-14T18:30:00Z",
+      "cancellationReason": "Superseded by the final launch plan"
+    },
+    {
+      "id": "vv-completed-task",
+      "title": "Publish launch notes",
+      "status": "done",
+      "completedAt": "today"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavWorkLog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "WorkLogHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "WorkLogCancelledTab",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Retire superseded launch checklist",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "CancelledTaskTimestamp",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "CancelledTaskReason",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "NavWorkLog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Retire superseded launch checklist",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "CancelledTaskReason",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "worklog-cancelled",
+      "waitMilliseconds": 1200
+    }
+  ]
+}

@@ -913,6 +913,29 @@ public class GlassworkToolsTests
         Assert.AreEqual("doing", tasks[0].GetProperty("status").GetString());
     }
 
+    [DataTestMethod]
+    [DataRow("todo", "todo")]
+    [DataRow("Done", "done")]
+    [DataRow(" done ", "done")]
+    [DataRow("DOING", "doing")]
+    [DataRow("Blocked", "blocked")]
+    public void SearchTasks_StatusFilter_NormalizesAcceptedValues(
+        string statusFilter,
+        string canonicalStatus)
+    {
+        _tools.AddTask(
+            $"Batch {canonicalStatus} task",
+            status: canonicalStatus,
+            blocked_reason: canonicalStatus == "blocked" ? "Waiting on dependency" : null);
+
+        using var result = JsonDocument.Parse(
+            _tools.SearchTasks("batch", status: [statusFilter]));
+        var tasks = result.RootElement.GetProperty("tasks");
+
+        Assert.AreEqual(1, tasks.GetArrayLength());
+        Assert.AreEqual(canonicalStatus, tasks[0].GetProperty("status").GetString());
+    }
+
     [TestMethod]
     public void SearchTasks_InvalidInField_ReturnsStructuredError()
     {

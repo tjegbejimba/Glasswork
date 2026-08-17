@@ -38,6 +38,8 @@ public sealed record ResourceMutationTaskSnapshot(
     IReadOnlyList<string> Tags,
     IReadOnlyList<string> BlockedBy,
     DateTime? CompletedAt,
+    DateTimeOffset? CancelledAt,
+    string? CancellationReason,
     string? BlockedReason,
     string ResourceRevision);
 
@@ -50,7 +52,9 @@ public sealed record ResourceMutationOutcome(
     ResourceMutationTaskSnapshot? Task,
     string? Error = null,
     IReadOnlyList<ResourceMutationTaskSnapshot>? Tasks = null,
-    IReadOnlyList<ResourceMutationDiagnostic>? Diagnostics = null);
+    IReadOnlyList<ResourceMutationDiagnostic>? Diagnostics = null,
+    TaskDeletionPreflight? DeletionPreflight = null,
+    TaskDeletionReport? DeletionReport = null);
 
 public sealed record ResourceMutationDiagnostic(
     string Code,
@@ -77,12 +81,14 @@ public sealed partial class ResourceMutationService
         string vaultPath,
         VaultService? vault = null,
         Func<DateTimeOffset>? clock = null,
-        IResourceMutationFaultInjector? faults = null)
+        IResourceMutationFaultInjector? faults = null,
+        IBacklinkIndex? backlinkIndex = null)
     {
         _vaultPath = vaultPath;
         _vault = vault ?? new VaultService(vaultPath);
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _faults = faults;
+        _backlinkIndex = backlinkIndex;
         _statePath = Path.Combine(vaultPath, ".glasswork", "resource-mutations.json");
         _vault.RegisterManagedRecovery(RecoverWithExclusiveLease);
         _vault.RegisterManagedDeleteRecovery(DrainRecoveredDeletes);
@@ -402,7 +408,14 @@ public sealed partial class ResourceMutationService
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
                 notifications.UnionWith(RecoverUnsafe());
-                result = TransactSingleTaskUnsafe(mutationId, taskId, ifRevision, fields, notifications);
+                result = TransactSingleTaskUnsafe(
+                    mutationId,
+                    taskId,
+                    ifRevision,
+                    "set_task_fields",
+                    fields,
+                    task => ApplyFields(task, fields),
+                    notifications);
             }
         }
         catch
@@ -428,16 +441,191 @@ public sealed partial class ResourceMutationService
         return result!;
     }
 
+    public ResourceMutationOutcome CancelTask(
+        string? mutationId,
+        string? taskId,
+        string? ifRevision,
+        string? reason)
+    {
+        var payload = JsonSerializer.SerializeToElement(new { reason });
+        return TransactTaskLifecycle(
+            mutationId,
+            taskId,
+            ifRevision,
+            "cancel_task",
+            payload,
+            task =>
+            {
+                try
+                {
+                    TaskService.ApplyCancel(task, reason ?? string.Empty, _clock);
+                    return null;
+                }
+                catch (ArgumentException ex)
+                {
+                    return ex.Message;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return ex.Message;
+                }
+            });
+    }
+
+    public ResourceMutationOutcome RestoreTask(
+        string? mutationId,
+        string? taskId,
+        string? ifRevision,
+        string restoreStatus = GlassworkTask.Statuses.Todo)
+    {
+        var payload = JsonSerializer.SerializeToElement(new { restore_status = restoreStatus });
+        return TransactTaskLifecycle(
+            mutationId,
+            taskId,
+            ifRevision,
+            "restore_task",
+            payload,
+            task =>
+            {
+                try
+                {
+                    TaskService.ApplyRestoreCancelled(task, restoreStatus);
+                    return null;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return ex.Message;
+                }
+            });
+    }
+
+    public ResourceMutationOutcome ReconcileAdoTask(
+        string? mutationId,
+        string? taskId,
+        string? ifRevision,
+        int? adoWorkItemId,
+        string? authoritativeState)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            ado_work_item_id = adoWorkItemId,
+            authoritative_state = authoritativeState,
+        });
+        return TransactTaskLifecycle(
+            mutationId,
+            taskId,
+            ifRevision,
+            "reconcile_ado_task",
+            payload,
+            task =>
+            {
+                if (adoWorkItemId is null or <= 0)
+                    return "ado_work_item_id must be a positive integer.";
+                if (string.IsNullOrWhiteSpace(authoritativeState))
+                    return "authoritative_state is required.";
+
+                if (!RepresentsAdoWorkItem(task, adoWorkItemId.Value))
+                    return $"Task does not resolve to ADO work item {adoWorkItemId}.";
+
+                if (string.Equals(authoritativeState, "Removed", StringComparison.Ordinal)
+                    && task.Status is (
+                        GlassworkTask.Statuses.Todo
+                        or GlassworkTask.Statuses.InProgress
+                        or GlassworkTask.Statuses.Blocked))
+                {
+                    TaskService.ApplyCancel(task, "ADO work item removed", _clock);
+                }
+                else if (authoritativeState is "Active" or "In Progress" or "In Review"
+                         && task.IsCancelled)
+                {
+                    TaskService.ApplyRestoreCancelled(
+                        task,
+                        GlassworkTask.Statuses.InProgress);
+                }
+
+                return null;
+            });
+    }
+
+    private bool RepresentsAdoWorkItem(GlassworkTask task, int adoWorkItemId)
+    {
+        var adoLinks = task.Links
+            .Where(link => string.Equals(link.Type, TaskLink.Types.Ado, StringComparison.Ordinal))
+            .ToList();
+        if (adoLinks.Count > 0)
+        {
+            var resolved = adoLinks
+                .Select(link => AdoParentIdExtractor.TryExtractId(link.Value))
+                .ToList();
+            return resolved.All(id => id.HasValue)
+                   && resolved.Distinct().Count() == 1
+                   && resolved[0] == adoWorkItemId;
+        }
+
+        var ado = TaskTypeBackfillService.ResolveAdoId(_parser.Serialize(task));
+        return ado.Status == AdoIdStatus.Resolved && ado.Id == adoWorkItemId;
+    }
+
+    private ResourceMutationOutcome TransactTaskLifecycle(
+        string? mutationId,
+        string? taskId,
+        string? ifRevision,
+        string operation,
+        JsonElement payload,
+        Func<GlassworkTask, string?> apply)
+    {
+        var notifications = new HashSet<string>(StringComparer.Ordinal);
+        ResourceMutationOutcome? result = null;
+
+        try
+        {
+            using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+            {
+                notifications.UnionWith(RecoverUnsafe());
+                result = TransactSingleTaskUnsafe(
+                    mutationId,
+                    taskId,
+                    ifRevision,
+                    operation,
+                    payload,
+                    apply,
+                    notifications);
+            }
+        }
+        catch
+        {
+            try
+            {
+                using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+                    notifications.UnionWith(RecoverUnsafe());
+            }
+            catch
+            {
+                // Preserve the original failure; the next managed access retries recovery.
+            }
+            throw;
+        }
+        finally
+        {
+            foreach (var taskIdToNotify in notifications)
+                _vault.NotifyTaskWritten(taskIdToNotify);
+        }
+
+        return result!;
+    }
+
     private ResourceMutationOutcome TransactSingleTaskUnsafe(
         string? mutationId,
         string? taskId,
         string? ifRevision,
-        JsonElement fields,
+        string operation,
+        JsonElement payload,
+        Func<GlassworkTask, string?> apply,
         ISet<string> notifications)
     {
         var state = ReadState();
         Prune(state);
-        var requestHash = HashRequest(mutationId, "set_task_fields", taskId, ifRevision, fields);
+        var requestHash = HashRequest(mutationId, operation, taskId, ifRevision, payload);
 
         if (string.IsNullOrWhiteSpace(mutationId))
             return new ResourceMutationOutcome(
@@ -465,7 +653,7 @@ public sealed partial class ResourceMutationService
                     mutationId, "validation_error", false, ifRevision, null, null,
                     "task_id is required."));
 
-        if (fields.ValueKind != JsonValueKind.Object)
+        if (payload.ValueKind != JsonValueKind.Object)
             return Record(state, mutationId, requestHash,
                 new ResourceMutationOutcome(
                     mutationId, "validation_error", false, ifRevision, null, null,
@@ -491,7 +679,7 @@ public sealed partial class ResourceMutationService
         string? error;
         try
         {
-            error = ApplyFields(staged, fields);
+            error = apply(staged);
         }
         catch (FormatException ex)
         {
@@ -1494,7 +1682,7 @@ public sealed partial class ResourceMutationService
         new(task.Id, task.Title, task.Status == GlassworkTask.Statuses.InProgress ? "doing" : task.Status,
             task.Priority, task.Type, task.Created, task.Due, task.Start, task.MyDay, task.DeferUntil,
             task.Parent, task.Description, task.Notes, task.Tags, task.BlockedBy, task.CompletedAt,
-            task.BlockedReason, revision);
+            task.CancelledAt, task.CancellationReason, task.BlockedReason, revision);
 
     public static string Revision(byte[] bytes) =>
         $"rr1-{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}";
@@ -1621,11 +1809,22 @@ public sealed partial class ResourceMutationService
 
     private IReadOnlyList<string> RecoverUnsafe()
     {
-        if (!File.Exists(JournalPath)) return Array.Empty<string>();
+        if (!File.Exists(JournalPath))
+        {
+            CleanupOrphanDeletionOperations();
+            return Array.Empty<string>();
+        }
 
+        var isTaskDeletionJournal = false;
         try
         {
             using var document = JsonDocument.Parse(File.ReadAllText(JournalPath));
+            if (document.RootElement.TryGetProperty("Kind", out var kind)
+                && string.Equals(kind.GetString(), TaskDeletionJournalKind, StringComparison.Ordinal))
+            {
+                isTaskDeletionJournal = true;
+                return RecoverTaskDeletionUnsafe(document.RootElement);
+            }
             if (document.RootElement.TryGetProperty("Entries", out _)
                 || document.RootElement.TryGetProperty("entries", out _))
                 return RecoverGraphUnsafe(document.RootElement);
@@ -1696,6 +1895,24 @@ public sealed partial class ResourceMutationService
 
             DeleteJournal();
             return entry.Committed && !entry.Deleted ? [entry.TaskId] : Array.Empty<string>();
+        }
+        catch (JsonException ex) when (HasPendingDeletionOperations())
+        {
+            throw new InvalidDataException(
+                "Task deletion recovery is blocked because its journal could not be parsed safely.",
+                ex);
+        }
+        catch (FormatException ex) when (isTaskDeletionJournal || HasPendingDeletionOperations())
+        {
+            throw new InvalidDataException(
+                "Task deletion recovery is blocked because its journal content is invalid.",
+                ex);
+        }
+        catch (InvalidDataException ex) when (isTaskDeletionJournal || HasPendingDeletionOperations())
+        {
+            throw new InvalidDataException(
+                "Task deletion recovery could not safely validate its journal.",
+                ex);
         }
         catch (JsonException)
         {
