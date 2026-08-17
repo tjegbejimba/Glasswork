@@ -16,6 +16,8 @@ public sealed record VerificationLaunchOptions(
     public const string InstanceKeyVariable = "GLASSWORK_VERIFY_INSTANCE_KEY";
     public const string SkipProtocolRegistrationVariable = "GLASSWORK_SKIP_PROTOCOL_REGISTRATION";
     public const string SkipUpdateCheckVariable = "GLASSWORK_SKIP_UPDATE_CHECK";
+    public const string CaptureRequestPathVariable = "GLASSWORK_VERIFY_CAPTURE_REQUEST";
+    public const string CaptureOutputPathVariable = "GLASSWORK_VERIFY_CAPTURE_OUTPUT";
 
     public bool IsVerificationRun =>
         !string.IsNullOrWhiteSpace(VaultPath) ||

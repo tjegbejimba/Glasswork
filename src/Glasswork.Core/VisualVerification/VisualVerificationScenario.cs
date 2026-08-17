@@ -109,6 +109,9 @@ public sealed partial class VisualVerificationScenario
             if (action.Type.Equals("scroll-percent", StringComparison.OrdinalIgnoreCase)
                 || action.Type.Equals(
                     "assert-vertical-scroll-at-least",
+                    StringComparison.OrdinalIgnoreCase)
+                || action.Type.Equals(
+                    "assert-vertical-scroll-at-most",
                     StringComparison.OrdinalIgnoreCase))
             {
                 if (!double.TryParse(
@@ -126,6 +129,16 @@ public sealed partial class VisualVerificationScenario
                 && string.IsNullOrWhiteSpace(action.Name))
             {
                 throw new FormatException("assert-selected requires name.");
+            }
+            if (action.Type.Equals("assert-name", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(action.Value))
+            {
+                throw new FormatException("assert-name requires value.");
+            }
+            if (action.Type.Equals("press-key", StringComparison.OrdinalIgnoreCase)
+                && action.Value is not ("Escape" or "Tab"))
+            {
+                throw new FormatException("press-key requires value Escape or Tab.");
             }
         }
 
