@@ -15,4 +15,10 @@ public abstract record GlassworkUri
 
     /// <summary>Navigate to Backlog.</summary>
     public sealed record Backlog : GlassworkUri;
+
+    /// <summary>Navigate to the Research Topic library.</summary>
+    public sealed record ResearchLibrary : GlassworkUri;
+
+    /// <summary>Navigate to a selected Research Topic by stable Wiki Page id.</summary>
+    public sealed record ResearchTopic(string TopicId) : GlassworkUri;
 }

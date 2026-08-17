@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
@@ -17,9 +18,8 @@ namespace Glasswork;
 
 public sealed partial class MainWindow : Window
 {
-    // Guards NavView_SelectionChanged from performing a parameter-less navigation while
-    // NavigateToSettingsUpdates() syncs the Settings chrome selection (issue #241).
-    private bool _suppressSettingsNav;
+    // Guards selection-driven navigation while code synchronizes top-level chrome.
+    private bool _suppressSelectionNavigation;
     private EventHandler<object>? _firstFrameHandler;
 
     public MainWindow()
@@ -167,7 +167,7 @@ public sealed partial class MainWindow : Window
         // Suppress the selection-driven navigation while NavigateToSettingsUpdates() is
         // syncing chrome — it navigates directly with a parameter and must not be clobbered
         // by a second, parameter-less navigation from this handler.
-        if (_suppressSettingsNav) return;
+        if (_suppressSelectionNavigation) return;
 
         // Selection-driven nav still handles the "click a different section" case where
         // SelectedItem actually changed. The ItemInvoked handler covers re-clicking the
@@ -223,6 +223,9 @@ public sealed partial class MainWindow : Window
             case "worklog":
                 NavigateToTopLevel(typeof(WorkLogPage));
                 break;
+            case "research":
+                NavigateToTopLevel(typeof(ResearchPage));
+                break;
             case "feedback":
                 ShowFeedbackDialog();
                 sender.SelectedItem = null;
@@ -240,6 +243,8 @@ public sealed partial class MainWindow : Window
         // MenuItems in MainWindow.xaml, so we must not dereference it before init
         // completes. See "XAML init-order bug audit" (May 2026).
         if (NavFrame is null) return;
+        if (DeepLinkErrorBar is not null)
+            DeepLinkErrorBar.IsOpen = false;
         // Top-level nav represents an explicit user choice of section; flush the
         // back stack so "back" doesn't keep cycling through old detail pages.
         NavFrame.Navigate(pageType);
@@ -257,7 +262,7 @@ public sealed partial class MainWindow : Window
     /// Navigate to the Settings page and surface its "Updates" section. Used by the
     /// update-available announce surfaces' "Go to Settings" routes (issue #241).
     /// Navigates directly (with the parameter) and syncs the NavView chrome selection
-    /// behind <see cref="_suppressSettingsNav"/> so the selection change doesn't trigger
+    /// behind <see cref="_suppressSelectionNavigation"/> so the selection change doesn't trigger
     /// a second, parameter-less navigation.
     /// </summary>
     public void NavigateToSettingsUpdates()
@@ -266,9 +271,9 @@ public sealed partial class MainWindow : Window
 
         if (NavView?.SettingsItem is NavigationViewItem settingsItem)
         {
-            _suppressSettingsNav = true;
+            _suppressSelectionNavigation = true;
             try { NavView.SelectedItem = settingsItem; }
-            finally { _suppressSettingsNav = false; }
+            finally { _suppressSelectionNavigation = false; }
         }
 
         NavigateToSettings(SettingsPage.UpdatesSectionParameter);
@@ -346,7 +351,41 @@ public sealed partial class MainWindow : Window
                 DeepLinkErrorBar.IsOpen = false;
                 NavigateToTopLevel(typeof(BacklogPage));
                 break;
+
+            case GlassworkUri.ResearchLibrary:
+                DeepLinkErrorBar.IsOpen = false;
+                SelectNavigationItem(NavResearch);
+                NavigateToTopLevel(typeof(ResearchPage));
+                break;
+
+            case GlassworkUri.ResearchTopic research:
+                var snapshot = App.Research.Capture();
+                var topic = snapshot.Topics.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Id, research.TopicId, StringComparison.OrdinalIgnoreCase));
+                if (topic is null)
+                {
+                    DeepLinkErrorBar.Title = "Research Topic not found";
+                    DeepLinkErrorBar.Message =
+                        $"No opted-in Research Topic with id \"{research.TopicId}\" was found in the vault.";
+                    DeepLinkErrorBar.IsOpen = true;
+                    return;
+                }
+
+                DeepLinkErrorBar.IsOpen = false;
+                SelectNavigationItem(NavResearch);
+                NavFrame.Navigate(
+                    typeof(ResearchPage),
+                    new ResearchPageNavigation(snapshot, topic.Id));
+                NavFrame.BackStack.Clear();
+                break;
         }
+    }
+
+    private void SelectNavigationItem(NavigationViewItem item)
+    {
+        _suppressSelectionNavigation = true;
+        try { NavView.SelectedItem = item; }
+        finally { _suppressSelectionNavigation = false; }
     }
 
     private async void ShowFeedbackDialog()

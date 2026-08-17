@@ -46,6 +46,39 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void FromJson_LoadsWikiPagesAndTheme()
+    {
+        const string json = """
+        {
+          "name": "research populated",
+          "theme": "dark",
+          "wikiPages": [
+            {
+              "relativePath": "concepts/async-callbacks.md",
+              "id": "async-callbacks",
+              "title": "Async callbacks",
+              "type": "concept",
+              "confidence": "high",
+              "updated": "2026-08-10",
+              "expires": "2026-12-31",
+              "markdown": "# Async callbacks\n\nSynthesis."
+            }
+          ],
+          "captures": [
+            { "name": "research-dark" }
+          ]
+        }
+        """;
+
+        var scenario = VisualVerificationScenario.FromJson(json);
+
+        Assert.AreEqual("dark", scenario.Theme);
+        Assert.HasCount(1, scenario.WikiPages);
+        Assert.AreEqual("async-callbacks", scenario.WikiPages[0].Id);
+        Assert.AreEqual("# Async callbacks\n\nSynthesis.", scenario.WikiPages[0].Markdown);
+    }
+
+    [TestMethod]
     public void FromJson_TaskWithoutId_Throws()
     {
         const string json = """

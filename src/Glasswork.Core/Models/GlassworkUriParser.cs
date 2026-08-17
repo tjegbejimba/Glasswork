@@ -10,6 +10,8 @@ namespace Glasswork.Core.Models;
 ///   <item><description><c>glasswork://task/&lt;id&gt;</c> — open the task detail view.</description></item>
 ///   <item><description><c>glasswork://my-day</c> — open My Day.</description></item>
 ///   <item><description><c>glasswork://backlog</c> — open Backlog.</description></item>
+///   <item><description><c>glasswork://research</c> — open the Research library.</description></item>
+///   <item><description><c>glasswork://research/&lt;id&gt;</c> — open a Research Topic.</description></item>
 /// </list>
 /// </summary>
 public static class GlassworkUriParser
@@ -45,6 +47,13 @@ public static class GlassworkUriParser
             case "backlog":
                 return new GlassworkUri.Backlog();
 
+            case "research":
+                if (string.IsNullOrEmpty(path))
+                    return new GlassworkUri.ResearchLibrary();
+                var topicId = Uri.UnescapeDataString(path);
+                if (string.IsNullOrWhiteSpace(topicId)) return null;
+                return new GlassworkUri.ResearchTopic(topicId);
+
             default:
                 return null;
         }
@@ -58,6 +67,9 @@ public static class GlassworkUriParser
         GlassworkUri.Task t   => $"{Scheme}://task/{Uri.EscapeDataString(t.TaskId)}",
         GlassworkUri.MyDay    => $"{Scheme}://my-day",
         GlassworkUri.Backlog  => $"{Scheme}://backlog",
+        GlassworkUri.ResearchLibrary => $"{Scheme}://research",
+        GlassworkUri.ResearchTopic topic =>
+            $"{Scheme}://research/{Uri.EscapeDataString(topic.TopicId)}",
         _ => throw new ArgumentOutOfRangeException(nameof(uri), $"Unhandled GlassworkUri type: {uri.GetType().Name}")
     };
 }

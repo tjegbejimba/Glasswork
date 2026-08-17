@@ -64,12 +64,19 @@ commas allowed.
 {
   "name": "Backlog smoke",            // required, non-empty
   "startUri": "glasswork://backlog",  // optional deep link passed as argv[0]
+  "theme": "dark",                    // optional: system (default), light, dark
   "launchTimeoutSeconds": 20,
   "initialWaitMilliseconds": 800,
   "tasks": [                          // seeded into the isolated Vault
     { "id": "safe-slug", "title": "...", "status": "todo", "priority": "high",
       "subtasks": [ { "text": "...", "status": "in_progress" } ],
       "artifacts": [ { "name": "plan.md", "markdown": "# ..." } ] }
+  ],
+  "wikiPages": [                      // seeded under Vault/wiki/
+    { "relativePath": "concepts/example.md", "id": "example",
+      "title": "Example", "type": "concept", "confidence": "high",
+      "updated": "2026-08-15", "expires": "2027-01-01",
+      "markdown": "# Example\n\nSynthesis." }
   ],
   "actions": [                        // UI Automation driven, in order
     { "type": "select",     "automationId": "NavBacklog", "timeoutMilliseconds": 10000 },
@@ -82,7 +89,10 @@ commas allowed.
 ```
 
 Action types: `wait-for` (asserts an element appears), `select`
-(SelectionItem/Invoke), `invoke` (InvokePattern), `set-value` (ValuePattern).
+(SelectionItem/Invoke), `invoke` (InvokePattern), `set-value` (ValuePattern),
+`focus` (sets and verifies keyboard focus), and `assert-single-selection`
+(verifies the target exposes exactly one accessible selection and disallows
+multiple selection).
 Target by `automationId` (preferred — stable) or `name`.
 
 ---

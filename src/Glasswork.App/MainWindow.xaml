@@ -59,6 +59,15 @@
                         <FontIcon Glyph="&#xE9D5;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem
+                    x:Name="NavResearch"
+                    AutomationProperties.AutomationId="NavResearch"
+                    Content="Research"
+                    Tag="research">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE82D;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>
                 <NavigationViewItem AutomationProperties.AutomationId="NavFeedback" Content="Feedback" Tag="feedback">
@@ -70,6 +79,7 @@
             <Grid RowDefinitions="Auto,*">
                 <InfoBar x:Name="DeepLinkErrorBar"
                          Grid.Row="0"
+                         AutomationProperties.AutomationId="DeepLinkErrorBar"
                          IsOpen="False"
                          IsClosable="True"
                          Severity="Warning"

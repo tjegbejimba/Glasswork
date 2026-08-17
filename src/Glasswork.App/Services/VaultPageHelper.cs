@@ -115,6 +115,10 @@ internal static class VaultPageHelper
             case GlassworkUri.Backlog:
                 frame.Navigate(typeof(BacklogPage));
                 break;
+            case GlassworkUri.ResearchLibrary:
+            case GlassworkUri.ResearchTopic:
+                (App.MainWindow as MainWindow)?.NavigateTo(gwUri);
+                break;
         }
         // All other URL links (http/https/obsidian) were already opened by Hyperlink.NavigateUri.
     }
