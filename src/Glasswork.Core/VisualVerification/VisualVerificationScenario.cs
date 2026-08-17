@@ -93,6 +93,40 @@ public sealed partial class VisualVerificationScenario
                 if (action.Value is null)
                     throw new FormatException("replace-task-text requires value.");
             }
+            if (action.Type.Equals("replace-wiki-page-text", StringComparison.OrdinalIgnoreCase))
+            {
+                if (action.WikiPagePath is null
+                    || !IsSafeWikiPagePath(action.WikiPagePath))
+                {
+                    throw new FormatException(
+                        "replace-wiki-page-text requires a safe wikiPagePath relative to wiki/.");
+                }
+                if (string.IsNullOrEmpty(action.OldValue))
+                    throw new FormatException("replace-wiki-page-text requires a non-empty oldValue.");
+                if (action.Value is null)
+                    throw new FormatException("replace-wiki-page-text requires value.");
+            }
+            if (action.Type.Equals("scroll-percent", StringComparison.OrdinalIgnoreCase)
+                || action.Type.Equals(
+                    "assert-vertical-scroll-at-least",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (!double.TryParse(
+                        action.Value,
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out var percent)
+                    || percent is < 0 or > 100)
+                {
+                    throw new FormatException(
+                        $"{action.Type} requires value between 0 and 100.");
+                }
+            }
+            if (action.Type.Equals("assert-selected", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(action.Name))
+            {
+                throw new FormatException("assert-selected requires name.");
+            }
         }
 
         foreach (var capture in Captures)
@@ -269,6 +303,7 @@ public sealed class VisualVerificationWikiPage
     public string? Confidence { get; init; }
     public string? Updated { get; init; }
     public string? Expires { get; init; }
+    public List<string> Sources { get; init; } = [];
     public bool OptedIn { get; init; } = true;
     public string Markdown { get; init; } = string.Empty;
 }
@@ -279,6 +314,7 @@ public sealed class VisualVerificationAction
     public string? AutomationId { get; init; }
     public string? Name { get; init; }
     public string? TaskId { get; init; }
+    public string? WikiPagePath { get; init; }
     public string? OldValue { get; init; }
     public string? Value { get; init; }
     public int TimeoutMilliseconds { get; init; } = 5000;

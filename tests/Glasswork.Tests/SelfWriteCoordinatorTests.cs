@@ -221,4 +221,32 @@ public class SelfWriteCoordinatorTests
         var coord = new SelfWriteCoordinator(TimeSpan.FromMilliseconds(500));
         Assert.IsFalse(coord.IsOwnProcessWrite(@"C:\vault\other.md"));
     }
+
+    [TestMethod]
+    public void TryConsumeOwnProcessWrite_ConsumesOnceWithoutHidingFromOtherWatchers()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromMilliseconds(500));
+        const string path = @"C:\vault\task.md";
+        coord.RegisterWrite(path);
+
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Assert.IsFalse(coord.TryConsumeOwnProcessWrite(path));
+        Assert.IsTrue(
+            coord.IsOwnProcessWrite(path),
+            "Consuming the Research watcher token must not remove the shared same-process registration.");
+    }
+
+    [TestMethod]
+    public void TryConsumeOwnProcessWrite_NewRegistrationCreatesNewToken()
+    {
+        var coord = new SelfWriteCoordinator(TimeSpan.FromMilliseconds(500));
+        const string path = @"C:\vault\task.md";
+        coord.RegisterWrite(path);
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Thread.Sleep(10);
+
+        coord.RegisterWrite(path);
+
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+    }
 }
