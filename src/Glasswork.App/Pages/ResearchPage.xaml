@@ -95,16 +95,35 @@
                 </Grid>
             </Border>
 
-            <ScrollViewer
+            <Grid
                 Grid.Column="1"
-                AutomationProperties.AutomationId="ResearchTopicDetail"
-                HorizontalScrollMode="Disabled"
-                HorizontalScrollBarVisibility="Disabled"
-                VerticalScrollBarVisibility="Auto">
-                <StackPanel
-                    HorizontalAlignment="Left"
-                    MaxWidth="780"
-                    Spacing="14">
+                RowDefinitions="Auto,*"
+                RowSpacing="12">
+                <InfoBar
+                    x:Name="TopicWarning"
+                    AutomationProperties.AutomationId="ResearchMalformedWarning"
+                    IsClosable="False"
+                    IsOpen="False"
+                    Severity="Warning"
+                    Title="Latest refresh could not be read">
+                    <InfoBar.ActionButton>
+                        <Button
+                            AutomationProperties.AutomationId="ResearchRepairInObsidian"
+                            Click="OpenInObsidianButton_Click"
+                            Content="Open in Obsidian" />
+                    </InfoBar.ActionButton>
+                </InfoBar>
+                <ScrollViewer
+                    x:Name="TopicDetailScroll"
+                    Grid.Row="1"
+                    AutomationProperties.AutomationId="ResearchTopicDetail"
+                    HorizontalScrollMode="Disabled"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+                    <StackPanel
+                        HorizontalAlignment="Left"
+                        MaxWidth="780"
+                        Spacing="14">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                         <TextBlock
                             x:Name="TopicTitle"
@@ -135,12 +154,20 @@
                             AutomationProperties.AutomationId="ResearchFreshness"
                             FontWeight="SemiBold" />
                     </Border>
+                    <Button
+                        x:Name="PrimaryKnowledgeAction"
+                        AutomationProperties.AutomationId="ResearchPrimaryAction"
+                        HorizontalAlignment="Left"
+                        IsEnabled="False"
+                        Style="{StaticResource AccentButtonStyle}"
+                        ToolTipService.ToolTip="Research Sessions are delivered by a successor slice." />
                     <controls:VaultMarkdownView
                         x:Name="TopicMarkdown"
                         AutomationProperties.AutomationId="ResearchTopicMarkdown"
                         LinkClicked="TopicMarkdown_LinkClicked" />
-                </StackPanel>
-            </ScrollViewer>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
         </Grid>
 
         <controls:EmptyState

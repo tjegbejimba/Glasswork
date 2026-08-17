@@ -350,6 +350,7 @@ public partial class App : Application
         Watcher?.Stop();
         ArtifactsWatcher?.Stop();
         BacklinksWatcher?.Stop();
+        Research?.Dispose();
 
         var resolvedPaths = VaultPathResolver.Resolve(configuredVaultPath);
         var vaultPath = resolvedPaths.TaskDirectory;
@@ -357,7 +358,11 @@ public partial class App : Application
 
         SelfWrites = new SelfWriteCoordinator(vaultPath);
         Vault = new VaultService(vaultPath, SelfWrites);
-        Research = new FileSystemResearchCatalog(VaultRoot);
+        Research = new FileSystemResearchCatalog(
+            VaultRoot,
+            selfWrites: SelfWrites);
+        Research.Start();
+        _ = Research.Capture(DateOnly.FromDateTime(DateTime.Today));
 
         Artifacts = new FileSystemArtifactStore(VaultRoot);
         ObsidianLauncher = new ObsidianLauncher(VaultRoot);

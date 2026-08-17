@@ -359,7 +359,8 @@ public sealed partial class MainWindow : Window
                 break;
 
             case GlassworkUri.ResearchTopic research:
-                var snapshot = App.Research.Capture();
+                var snapshot = App.Research.Capture(
+                    DateOnly.FromDateTime(DateTime.Today));
                 var topic = snapshot.Topics.FirstOrDefault(candidate =>
                     string.Equals(candidate.Id, research.TopicId, StringComparison.OrdinalIgnoreCase));
                 if (topic is null)

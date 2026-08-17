@@ -1,9 +1,10 @@
 # ADR 0005: Backlinks index and watcher pipeline
 
 **Status**: Accepted
-**Amended**: 2026-08-14 — guarded Hard deletion now performs precise writes
-outside `wiki/todo/`; the historical disjoint-write assumption below is
-superseded by the same-process/cross-process rule in this amendment.
+**Amended**: 2026-08-16 — guarded Hard deletion and the live Research Catalog
+now observe precise writes outside `wiki/todo/`; the historical disjoint-write
+assumption below is superseded by the same-process/cross-process rules in these
+amendments.
 **Context slice**: Backlinks feature (PRD #54, slices #55–#58); wiki PRD `wiki/decisions/glasswork-backlinks-prd.md`
 
 ## Context
@@ -55,6 +56,23 @@ This prevents duplicate same-process updates without hiding MCP changes. The
 task watcher remains scoped to top-level Task files, and Artifact watching
 remains independent.
 
+### Live Research Catalog watcher
+
+The Research Catalog adds another independent vault-wide watcher because its
+unit of refresh is a schema-governed Wiki Page, not a Task or Backlink entry.
+It hydrates once, batches only the changed paths after a quiet period, and emits
+stable Research Topic IDs for the resulting add, replace, rename, move, or
+delete delta. A rename expressed by the file system as delete-plus-create is
+applied as one batch so the stable Wiki Page ID remains continuous.
+
+The watcher consumes only same-process registrations from
+`SelfWriteCoordinator`; marker-only cross-process writes from agents or MCP
+remain visible. Same-process event bursts are bounded to the watcher quiet
+period so a later Obsidian or agent write to the same path is not hidden for the
+coordinator's full TTL. Malformed or unreadable refreshes preserve the last
+valid Topic snapshot and attach a dated diagnostic until a valid replacement
+arrives.
+
 ### Why refresh-section-only, never reload the task model
 
 A backlinking edit happens on a wiki page that is **not** the open task. Reloading the task model in response would clobber any unsaved Notes the user is typing on the open task. The artifact pipeline made the same call (ADR pattern, not yet a numbered ADR); backlinks reuses it. The contract: a backlink change refreshes the Backlinks section in place; everything else on the page is untouched.
@@ -92,7 +110,9 @@ Rejected — would make every task-open touch the entire vault, pushing latency 
 ### Bad / accepted trade-offs
 
 - Cold-start does pay the full scan cost. **Mitigation**: scan is wrapped in try/catch and runs synchronously during `App.OnLaunched`; failures degrade to "no backlinks shown" rather than blocking startup.
-- Three watchers means three `FileSystemWatcher` handles open against the vault. On Windows this is cheap; on a constrained system it is something to be aware of.
+- Independent Task, Artifact, Backlink, and Research pipelines mean four
+  `FileSystemWatcher` handles open against the vault. On Windows this is cheap;
+  on a constrained system it is something to be aware of.
 
 ### Reversible?
 

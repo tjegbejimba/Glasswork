@@ -23,6 +23,8 @@
   <ItemGroup>
     <Compile Include="..\TestInfrastructure\UnreadableDirectoryScope.cs"
              Link="TestInfrastructure\UnreadableDirectoryScope.cs" />
+    <Compile Include="..\..\src\Glasswork.App\Pages\ResearchPageRefreshPolicy.cs"
+             Link="ResearchPageRefreshPolicy.cs" />
   </ItemGroup>
 
 </Project>

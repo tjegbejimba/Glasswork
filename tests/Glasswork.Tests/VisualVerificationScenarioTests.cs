@@ -61,6 +61,7 @@ public class VisualVerificationScenarioTests
               "confidence": "high",
               "updated": "2026-08-10",
               "expires": "2026-12-31",
+              "sources": ["https://example.test/source"],
               "markdown": "# Async callbacks\n\nSynthesis."
             }
           ],
@@ -75,7 +76,52 @@ public class VisualVerificationScenarioTests
         Assert.AreEqual("dark", scenario.Theme);
         Assert.HasCount(1, scenario.WikiPages);
         Assert.AreEqual("async-callbacks", scenario.WikiPages[0].Id);
+        CollectionAssert.AreEqual(
+            new[] { "https://example.test/source" },
+            scenario.WikiPages[0].Sources);
         Assert.AreEqual("# Async callbacks\n\nSynthesis.", scenario.WikiPages[0].Markdown);
+    }
+
+    [TestMethod]
+    public void FromJson_LoadsSafeWikiMutationAndScrollAssertions()
+    {
+        const string json = """
+        {
+          "name": "research live refresh",
+          "actions": [
+            {
+              "type": "replace-wiki-page-text",
+              "wikiPagePath": "concepts/live.md",
+              "oldValue": "title: Live",
+              "value": "title: [unterminated"
+            },
+            {
+              "type": "scroll-percent",
+              "automationId": "ResearchTopicDetail",
+              "value": "60"
+            },
+            {
+              "type": "assert-selected",
+              "name": "Live"
+            },
+            {
+              "type": "assert-vertical-scroll-at-least",
+              "automationId": "ResearchTopicDetail",
+              "value": "40"
+            }
+          ],
+          "captures": [
+            { "name": "research-live" }
+          ]
+        }
+        """;
+
+        var actions = VisualVerificationScenario.FromJson(json).Actions;
+
+        Assert.AreEqual("concepts/live.md", actions[0].WikiPagePath);
+        Assert.AreEqual("60", actions[1].Value);
+        Assert.AreEqual("assert-selected", actions[2].Type);
+        Assert.AreEqual("40", actions[3].Value);
     }
 
     [TestMethod]

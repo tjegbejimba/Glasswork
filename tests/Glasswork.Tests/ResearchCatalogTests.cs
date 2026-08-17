@@ -36,6 +36,8 @@ public sealed class ResearchCatalogTests
             confidence: high
             updated: 2026-08-10
             expires: 2026-12-31
+            sources:
+              - https://example.test/async-callbacks
             glasswork:
               research: {}
             ---
@@ -295,10 +297,10 @@ public sealed class ResearchCatalogTests
     {
         WritePage(
             "wiki/concepts/alpha.md",
-            "---\nid: alpha\ntitle: Alpha\ntype: concept\nexpires: 2026-08-16\nglasswork:\n  research: {}\n---\nAlpha");
+            "---\nid: alpha\ntitle: Alpha\ntype: concept\nconfidence: high\nupdated: 2026-08-15\nexpires: 2026-08-16\nsources:\n  - https://example.test/alpha\nglasswork:\n  research: {}\n---\nAlpha");
         WritePage(
             "wiki/concepts/beta.md",
-            "---\nid: beta\ntitle: Beta\ntype: concept\nexpires: 2026-08-16\nglasswork:\n  research: {}\n---\nBeta");
+            "---\nid: beta\ntitle: Beta\ntype: concept\nconfidence: high\nupdated: 2026-08-15\nexpires: 2026-08-16\nsources:\n  - https://example.test/beta\nglasswork:\n  research: {}\n---\nBeta");
         var clockReads = 0;
         IResearchCatalog catalog = new FileSystemResearchCatalog(
             _vaultRoot,
@@ -313,6 +315,271 @@ public sealed class ResearchCatalogTests
         Assert.AreEqual(1, clockReads);
         Assert.IsTrue(snapshot.Topics.All(
             topic => topic.Freshness == ResearchFreshness.Current));
+    }
+
+    [TestMethod]
+    public void Capture_UsesExplicitQueryDateToDeriveAllFreshnessSignals()
+    {
+        WritePage(
+            "wiki/concepts/healthy.md",
+            "---\nid: healthy\ntitle: Healthy\ntype: concept\nconfidence: high\nupdated: 2026-08-10\nexpires: 2026-08-20\nsources:\n  - https://example.test/healthy\nglasswork:\n  research: {}\n---\nHealthy");
+        WritePage(
+            "wiki/concepts/low.md",
+            "---\nid: low\ntitle: Low\ntype: concept\nconfidence: low\nupdated: 2026-08-10\nexpires: 2026-08-20\nsources:\n  - https://example.test/low\nglasswork:\n  research: {}\n---\nLow");
+        WritePage(
+            "wiki/concepts/expired.md",
+            "---\nid: expired\ntitle: Expired\ntype: concept\nconfidence: high\nupdated: 2026-08-10\nexpires: 2026-08-15\nsources:\n  - https://example.test/expired\nglasswork:\n  research: {}\n---\nExpired");
+        WritePage(
+            "wiki/concepts/incomplete.md",
+            "---\nid: incomplete\ntitle: Incomplete\ntype: concept\nconfidence: high\nupdated: 2026-08-10\nglasswork:\n  research: {}\n---\nIncomplete");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var snapshot = catalog.Capture(new DateOnly(2026, 8, 16));
+
+        Assert.AreEqual(
+            ResearchFreshness.Healthy,
+            snapshot.Topics.Single(topic => topic.Id == "healthy").Freshness);
+        Assert.AreEqual(
+            ResearchFreshness.LowConfidence,
+            snapshot.Topics.Single(topic => topic.Id == "low").Freshness);
+        Assert.AreEqual(
+            ResearchFreshness.Expired,
+            snapshot.Topics.Single(topic => topic.Id == "expired").Freshness);
+        Assert.AreEqual(
+            ResearchFreshness.Incomplete,
+            snapshot.Topics.Single(topic => topic.Id == "incomplete").Freshness);
+    }
+
+    [TestMethod]
+    public void ExternalEdit_EmitsTargetedDeltaAndKeepsUnchangedTopicSnapshot()
+    {
+        const string changedPath = "wiki/concepts/changed.md";
+        WriteOptedInPage(changedPath, "changed", "concept");
+        WriteOptedInPage("wiki/concepts/untouched.md", "untouched", "concept");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: TimeSpan.FromMilliseconds(50));
+        var initial = catalog.Capture(new DateOnly(2026, 8, 16));
+        var untouched = initial.Topics.Single(topic => topic.Id == "untouched");
+        using var signal = new ManualResetEventSlim(false);
+        ResearchTopicsChangedEventArgs? observed = null;
+        catalog.TopicsChanged += (_, args) =>
+        {
+            observed = args;
+            signal.Set();
+        };
+        catalog.Start();
+
+        WritePage(
+            changedPath,
+            "---\nid: changed\ntitle: Changed title\ntype: concept\nglasswork:\n  research: {}\n---\nUpdated synthesis.");
+
+        Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "Targeted Research delta should arrive.");
+        Assert.IsNotNull(observed);
+        CollectionAssert.AreEquivalent(new[] { "changed" }, observed.AffectedTopicIds.ToArray());
+        Assert.AreEqual(
+            "Changed title",
+            observed.Snapshot.Topics.Single(topic => topic.Id == "changed").Title);
+        Assert.AreSame(
+            untouched,
+            observed.Snapshot.Topics.Single(topic => topic.Id == "untouched"));
+    }
+
+    [TestMethod]
+    public void MalformedExternalWrite_PreservesDatedSnapshotUntilValidReplacement()
+    {
+        const string relativePath = "wiki/concepts/resilient-live.md";
+        WriteOptedInPage(relativePath, "resilient-live", "concept");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: TimeSpan.FromMilliseconds(50));
+        _ = catalog.Capture(new DateOnly(2026, 8, 15));
+        using var signal = new AutoResetEvent(false);
+        ResearchTopicsChangedEventArgs? observed = null;
+        catalog.TopicsChanged += (_, args) =>
+        {
+            observed = args;
+            signal.Set();
+        };
+        catalog.Start();
+
+        WritePage(
+            relativePath,
+            "---\nid: resilient-live\ntitle: [unterminated\ntype: concept\nglasswork:\n  research: {}\n---\nPartial");
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
+        Assert.IsNotNull(observed);
+        Assert.AreEqual("resilient-live", observed.Snapshot.Topics.Single().Title);
+        var warning = observed.Snapshot.Diagnostics.Single();
+        Assert.AreEqual(ResearchCatalogDiagnosticCode.MalformedFrontmatter, warning.Code);
+        Assert.AreEqual(new DateOnly(2026, 8, 16), warning.DetectedOn);
+        Assert.AreEqual(new DateOnly(2026, 8, 15), warning.LastValidOn);
+
+        WritePage(
+            relativePath,
+            "---\nid: resilient-live\ntitle: Repaired\ntype: concept\nglasswork:\n  research: {}\n---\nReplacement");
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
+        Assert.IsNotNull(observed);
+        Assert.AreEqual("Repaired", observed.Snapshot.Topics.Single().Title);
+        Assert.IsEmpty(observed.Snapshot.Diagnostics);
+    }
+
+    [TestMethod]
+    public void RenameThenDelete_PreservesStableIdentityBeforeDurableRemoval()
+    {
+        const string oldRelativePath = "wiki/concepts/before.md";
+        const string newRelativePath = "wiki/systems/after.md";
+        WriteOptedInPage(oldRelativePath, "stable-topic", "concept");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: TimeSpan.FromMilliseconds(50));
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        using var signal = new AutoResetEvent(false);
+        ResearchTopicsChangedEventArgs? observed = null;
+        catalog.TopicsChanged += (_, args) =>
+        {
+            observed = args;
+            signal.Set();
+        };
+        catalog.Start();
+        var oldPath = FullPath(oldRelativePath);
+        var newPath = FullPath(newRelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+
+        File.Move(oldPath, newPath);
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
+        Assert.IsNotNull(observed);
+        CollectionAssert.AreEquivalent(new[] { "stable-topic" }, observed.AffectedTopicIds.ToArray());
+        Assert.AreEqual(
+            newRelativePath,
+            observed.Snapshot.Topics.Single().VaultRelativePath);
+
+        File.Delete(newPath);
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
+        Assert.IsNotNull(observed);
+        CollectionAssert.AreEquivalent(new[] { "stable-topic" }, observed.AffectedTopicIds.ToArray());
+        Assert.IsEmpty(observed.Snapshot.Topics);
+    }
+
+    [TestMethod]
+    public void MovingTopicOutsideWiki_RemovesItFromCatalog()
+    {
+        const string relativePath = "wiki/concepts/moved-out.md";
+        WriteOptedInPage(relativePath, "moved-out", "concept");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: TimeSpan.FromMilliseconds(50));
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        using var signal = new AutoResetEvent(false);
+        ResearchTopicsChangedEventArgs? observed = null;
+        catalog.TopicsChanged += (_, args) =>
+        {
+            observed = args;
+            signal.Set();
+        };
+        catalog.Start();
+
+        File.Move(
+            FullPath(relativePath),
+            Path.Combine(_vaultRoot, "moved-out.md"));
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
+        Assert.IsNotNull(observed);
+        CollectionAssert.AreEquivalent(new[] { "moved-out" }, observed.AffectedTopicIds.ToArray());
+        Assert.IsEmpty(observed.Snapshot.Topics);
+    }
+
+    [TestMethod]
+    public void SameProcessWrite_IsDistinguishedWithoutHidingLaterExternalEdit()
+    {
+        const string relativePath = "wiki/concepts/self-write.md";
+        WriteOptedInPage(relativePath, "self-write", "concept");
+        var selfWrites = new Glasswork.Core.Services.SelfWriteCoordinator(
+            _vaultRoot,
+            TimeSpan.FromSeconds(10));
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            selfWrites,
+            TimeSpan.FromMilliseconds(50));
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        using var signal = new AutoResetEvent(false);
+        ResearchTopicsChangedEventArgs? observed = null;
+        catalog.TopicsChanged += (_, args) =>
+        {
+            observed = args;
+            signal.Set();
+        };
+        catalog.Start();
+        var fullPath = FullPath(relativePath);
+
+        selfWrites.RegisterWrite(fullPath);
+        WritePage(
+            relativePath,
+            "---\nid: self-write\ntitle: Same process\ntype: concept\nglasswork:\n  research: {}\n---\nSame process");
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
+        Assert.IsNotNull(observed);
+        Assert.AreEqual(ResearchCatalogChangeOrigin.SelfWrite, observed.Origin);
+        Assert.AreEqual("Same process", observed.Snapshot.Topics.Single().Title);
+        Thread.Sleep(75);
+
+        WritePage(
+            relativePath,
+            "---\nid: self-write\ntitle: External edit\ntype: concept\nglasswork:\n  research: {}\n---\nExternal");
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
+        Assert.IsNotNull(observed);
+        Assert.AreEqual(ResearchCatalogChangeOrigin.External, observed.Origin);
+        Assert.AreEqual("External edit", observed.Snapshot.Topics.Single().Title);
+    }
+
+    [TestMethod]
+    public void ConcurrentExternalEdits_EmitIndependentTargetedDeltas()
+    {
+        const string alphaPath = "wiki/concepts/alpha-live.md";
+        const string betaPath = "wiki/concepts/beta-live.md";
+        WriteOptedInPage(alphaPath, "alpha-live", "concept");
+        WriteOptedInPage(betaPath, "beta-live", "concept");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: TimeSpan.FromMilliseconds(50));
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        var observedIds = new System.Collections.Concurrent.ConcurrentBag<string>();
+        using var signal = new ManualResetEventSlim(false);
+        catalog.TopicsChanged += (_, args) =>
+        {
+            foreach (var id in args.AffectedTopicIds)
+                observedIds.Add(id);
+            if (observedIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() == 2)
+                signal.Set();
+        };
+        catalog.Start();
+
+        Parallel.Invoke(
+            () => WritePage(
+                alphaPath,
+                "---\nid: alpha-live\ntitle: Alpha updated\ntype: concept\nglasswork:\n  research: {}\n---\nAlpha"),
+            () => WritePage(
+                betaPath,
+                "---\nid: beta-live\ntitle: Beta updated\ntype: concept\nglasswork:\n  research: {}\n---\nBeta"));
+
+        Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)));
+        CollectionAssert.AreEquivalent(
+            new[] { "alpha-live", "beta-live" },
+            observedIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+        var snapshot = catalog.Capture(new DateOnly(2026, 8, 16));
+        CollectionAssert.AreEquivalent(
+            new[] { "Alpha updated", "Beta updated" },
+            snapshot.Topics.Select(topic => topic.Title).ToArray());
     }
 
     private void WriteOptedInPage(string relativePath, string id, string type)
@@ -330,4 +597,9 @@ public sealed class ResearchCatalogTests
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, content.ReplaceLineEndings());
     }
+
+    private string FullPath(string relativePath) =>
+        Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
 }

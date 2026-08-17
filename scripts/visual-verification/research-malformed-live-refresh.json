@@ -1,0 +1,80 @@
+{
+  "name": "Research malformed live refresh",
+  "theme": "dark",
+  "startUri": "glasswork://research/preserved-topic",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/preserved-topic.md",
+      "id": "preserved-topic",
+      "title": "Preserved Topic",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-15",
+      "expires": "2027-01-01",
+      "sources": ["https://example.test/preserved"],
+      "markdown": "# Preserved Topic\n\nThe last valid synthesis remains readable while an external write is malformed.\n\n## Context\n\nThis first section establishes enough content to make the detail pane scroll.\n\n## Evidence one\n\nPrimary evidence remains attached to the stable Wiki Page identity. The Research Catalog refreshes only the changed path and does not rebuild unrelated Topics.\n\n## Evidence two\n\nA malformed save preserves this valid prose. The warning identifies when the bad refresh was detected and offers an Obsidian repair action.\n\n## Evidence three\n\nSelection follows the stable Wiki Page ID rather than its path. Renames and moves therefore leave the user on the same Topic.\n\n## Evidence four\n\nThe detail reader keeps its vertical offset while the warning appears. Reading does not jump back to the top during a transient write.\n\n## Evidence five\n\nA later valid save clears the warning and replaces the preserved snapshot without requiring navigation or a full Catalog scan.\n\n## Evidence six\n\nExpired and low-confidence knowledge stays readable. Freshness changes the primary knowledge action rather than creating workflow state.\n\n## Evidence seven\n\nResearch remains a live lens over schema-governed Wiki Pages. Glasswork never copies the synthesis into a second source of truth.\n\n## Evidence eight\n\nConcurrent edits are serialized behind the Catalog seam and emitted as targeted stable-ID deltas.\n\n## Evidence nine\n\nSame-process watcher echoes are consumed precisely, while a later Obsidian or agent edit to the same path still refreshes the desktop Catalog.\n\n## Evidence ten\n\nDurable deletion removes the Topic only after the watcher quiet period confirms that the Wiki Page did not return as part of an atomic save.\n\n## Evidence eleven\n\nThe warning is part of the selected Topic detail rather than a global reload banner. Unrelated Topics remain readable and retain their own metadata.\n\n## Evidence twelve\n\nThe Catalog stores the last valid parsed candidate and derives freshness again at the explicit query date. Cached prose does not freeze the trust signal.\n\n## Evidence thirteen\n\nMissing confidence, updated, expires, or sources metadata produces an incomplete signal. It does not hide the Topic or invent a workflow status.\n\n## Evidence fourteen\n\nLow confidence takes precedence over incomplete metadata, and expiration takes precedence over low confidence, so the most actionable trust problem remains visible.\n\n## Evidence fifteen\n\nThe compact list keeps a three-line density while the detail pane remains dominant. This follows the Balanced Library production decision.\n\n## Evidence sixteen\n\nOpen in Obsidian remains the repair path for malformed Wiki metadata. Glasswork does not edit synthesis prose or create a second renderer.\n\n## Evidence seventeen\n\nThe watcher applies existing paths before missing paths in one quiet-period batch, allowing delete-plus-create rename sequences to converge atomically.\n\n## Evidence eighteen\n\nStable-ID deltas let the page replace only changed rows. The selected Topic and its reader remain intact when an unrelated page changes.\n\n## Evidence nineteen\n\nA real external edit after a same-process write still reaches the Catalog. Suppression covers only the watcher burst associated with the registered write.\n\n## Evidence twenty\n\nThis final section provides enough rendered content for the visual scenario to establish and verify a nonzero reading position."
+    },
+    {
+      "relativePath": "systems/another-topic.md",
+      "id": "another-topic",
+      "title": "Another Topic",
+      "type": "system",
+      "confidence": "high",
+      "updated": "2026-08-15",
+      "expires": "2027-01-01",
+      "sources": ["https://example.test/another"],
+      "markdown": "# Another Topic\n\nAn unrelated Topic remains untouched."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchTopicTitle",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "ResearchTopicDetail",
+      "value": "60",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-selected",
+      "name": "Preserved Topic",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "concepts/preserved-topic.md",
+      "oldValue": "title: \"Preserved Topic\"",
+      "value": "title: [unterminated"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchMalformedWarning",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-selected",
+      "name": "Preserved Topic",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-vertical-scroll-at-least",
+      "automationId": "ResearchTopicDetail",
+      "value": "40",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Continue research",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-malformed-live-refresh",
+      "waitMilliseconds": 300
+    }
+  ]
+}

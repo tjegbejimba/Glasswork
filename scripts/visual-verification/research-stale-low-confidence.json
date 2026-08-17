@@ -1,0 +1,57 @@
+{
+  "name": "Research stale and low confidence",
+  "theme": "light",
+  "startUri": "glasswork://research/low-confidence-topic",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/low-confidence-topic.md",
+      "id": "low-confidence-topic",
+      "title": "Low-confidence topic",
+      "type": "concept",
+      "confidence": "low",
+      "updated": "2026-08-10",
+      "expires": "2027-01-01",
+      "sources": ["https://example.test/low-confidence"],
+      "markdown": "# Low-confidence topic\n\nThis synthesis remains readable while its claims need a scoped refresh."
+    },
+    {
+      "relativePath": "systems/expired-topic.md",
+      "id": "expired-topic",
+      "title": "Expired topic",
+      "type": "system",
+      "confidence": "high",
+      "updated": "2026-07-01",
+      "expires": "2026-08-01",
+      "sources": ["https://example.test/expired"],
+      "markdown": "# Expired topic\n\nThis Topic proves expired knowledge stays in the Research Catalog."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchTopicTitle",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Research freshness: low confidence",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Refresh stale claims",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-selected",
+      "name": "Low-confidence topic",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-stale-low-confidence",
+      "waitMilliseconds": 300
+    }
+  ]
+}

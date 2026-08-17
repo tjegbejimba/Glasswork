@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -98,7 +99,7 @@ internal static partial class VisualVerificationRunner
 
             foreach (var action in scenario.Actions)
             {
-                PerformAction(hwnd, todoPath, action);
+                PerformAction(hwnd, vaultRoot, todoPath, action);
             }
 
             var inspection = options.Inspect
@@ -204,6 +205,11 @@ internal static partial class VisualVerificationRunner
                 lines.Add($"updated: {YamlScalar(page.Updated)}");
             if (!string.IsNullOrWhiteSpace(page.Expires))
                 lines.Add($"expires: {YamlScalar(page.Expires)}");
+            if (page.Sources.Count > 0)
+            {
+                lines.Add("sources:");
+                lines.AddRange(page.Sources.Select(source => $"  - {YamlScalar(source)}"));
+            }
             if (page.OptedIn)
             {
                 lines.Add("glasswork:");
@@ -255,7 +261,11 @@ internal static partial class VisualVerificationRunner
         throw new TimeoutException($"Glasswork did not show a window within {timeout.TotalSeconds:0}s.");
     }
 
-    private static void PerformAction(IntPtr hwnd, string todoPath, VisualVerificationAction action)
+    private static void PerformAction(
+        IntPtr hwnd,
+        string vaultRoot,
+        string todoPath,
+        VisualVerificationAction action)
     {
         switch (action.Type.Trim().ToLowerInvariant())
         {
@@ -277,6 +287,15 @@ internal static partial class VisualVerificationRunner
             case "assert-single-selection":
                 AssertSingleSelection(WaitForElement(hwnd, action));
                 return;
+            case "assert-selected":
+                AssertSelected(hwnd, action);
+                return;
+            case "scroll-percent":
+                ScrollToPercent(WaitForElement(hwnd, action), action);
+                return;
+            case "assert-vertical-scroll-at-least":
+                AssertVerticalScrollAtLeast(WaitForElement(hwnd, action), action);
+                return;
             case "expand":
                 ExpandElement(WaitForElement(hwnd, action));
                 return;
@@ -285,6 +304,9 @@ internal static partial class VisualVerificationRunner
                 return;
             case "replace-task-text":
                 ReplaceTaskText(todoPath, action);
+                return;
+            case "replace-wiki-page-text":
+                ReplaceWikiPageText(vaultRoot, action);
                 return;
             default:
                 throw new FormatException($"Unsupported visual verification action type '{action.Type}'.");
@@ -299,6 +321,35 @@ internal static partial class VisualVerificationRunner
         if (updated == original)
             throw new InvalidOperationException(
                 $"replace-task-text did not find '{action.OldValue}' in task '{action.TaskId}'.");
+        File.WriteAllText(path, updated);
+    }
+
+    private static void ReplaceWikiPageText(
+        string vaultRoot,
+        VisualVerificationAction action)
+    {
+        var wikiRoot = Path.Combine(vaultRoot, "wiki");
+        var path = Path.GetFullPath(Path.Combine(
+            wikiRoot,
+            action.WikiPagePath!.Replace('/', Path.DirectorySeparatorChar)));
+        if (!path.StartsWith(
+                wikiRoot + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Wiki Page path '{action.WikiPagePath}' escapes the scenario Vault.");
+        }
+
+        var original = File.ReadAllText(path);
+        var updated = original.Replace(
+            action.OldValue!,
+            action.Value!,
+            StringComparison.Ordinal);
+        if (updated == original)
+        {
+            throw new InvalidOperationException(
+                $"replace-wiki-page-text did not find '{action.OldValue}' in '{action.WikiPagePath}'.");
+        }
         File.WriteAllText(path, updated);
     }
 
@@ -610,6 +661,106 @@ internal static partial class VisualVerificationRunner
         if (selection.Current.GetSelection().Length != 1)
             throw new InvalidOperationException(
                 $"Element '{element.Current.Name}' must expose exactly one selected item.");
+    }
+
+    private static void AssertSelected(
+        IntPtr hwnd,
+        VisualVerificationAction action)
+    {
+        var timeout = TimeSpan.FromMilliseconds(
+            action.TimeoutMilliseconds <= 0 ? 5000 : action.TimeoutMilliseconds);
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < timeout)
+        {
+            var root = AutomationElement.FromHandle(hwnd);
+            var matches = root.FindAll(
+                TreeScope.Descendants,
+                new PropertyCondition(
+                    AutomationElement.NameProperty,
+                    action.Name));
+            foreach (AutomationElement match in matches)
+            {
+                if (match.TryGetCurrentPattern(
+                        SelectionItemPattern.Pattern,
+                        out var pattern)
+                    && pattern is SelectionItemPattern selection
+                    && selection.Current.IsSelected)
+                {
+                    return;
+                }
+            }
+
+            Thread.Sleep(200);
+        }
+
+        throw new InvalidOperationException(
+            $"No selected accessible item named '{action.Name}' was found.");
+    }
+
+    private static void ScrollToPercent(
+        AutomationElement element,
+        VisualVerificationAction action)
+    {
+        var percent = double.Parse(
+            action.Value!,
+            CultureInfo.InvariantCulture);
+        var scroll = FindScrollPattern(element);
+        if (scroll is null
+            || !scroll.Current.VerticallyScrollable)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' does not expose vertical scrolling.");
+        }
+
+        scroll.SetScrollPercent(ScrollPattern.NoScroll, percent);
+        Thread.Sleep(200);
+    }
+
+    private static void AssertVerticalScrollAtLeast(
+        AutomationElement element,
+        VisualVerificationAction action)
+    {
+        var minimum = double.Parse(
+            action.Value!,
+            CultureInfo.InvariantCulture);
+        var scroll = FindScrollPattern(element);
+        if (scroll is null)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' does not expose scrolling.");
+        }
+
+        var actual = scroll.Current.VerticalScrollPercent;
+        if (actual < minimum)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' vertical scroll was {actual:0.##}%, expected at least {minimum:0.##}%.");
+        }
+    }
+
+    private static ScrollPattern? FindScrollPattern(AutomationElement element)
+    {
+        if (element.TryGetCurrentPattern(ScrollPattern.Pattern, out var direct)
+            && direct is ScrollPattern directScroll)
+        {
+            return directScroll;
+        }
+
+        var descendants = element.FindAll(
+            TreeScope.Descendants,
+            Condition.TrueCondition);
+        foreach (AutomationElement descendant in descendants)
+        {
+            if (descendant.TryGetCurrentPattern(
+                    ScrollPattern.Pattern,
+                    out var nested)
+                && nested is ScrollPattern nestedScroll)
+            {
+                return nestedScroll;
+            }
+        }
+
+        return null;
     }
 
     private static void ExpandElement(AutomationElement element)

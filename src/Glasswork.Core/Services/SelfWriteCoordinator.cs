@@ -28,6 +28,11 @@ public class SelfWriteCoordinator
     private readonly string? _markerFilePath;
     private readonly ConcurrentDictionary<string, DateTime> _recentWrites =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, long> _writeGenerations =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, long> _consumedWriteGenerations =
+        new(StringComparer.OrdinalIgnoreCase);
+    private long _nextWriteGeneration;
     private readonly object _fileLock = new();
 
     public SelfWriteCoordinator() : this(TimeSpan.FromMilliseconds(1500)) { }
@@ -52,6 +57,7 @@ public class SelfWriteCoordinator
         if (string.IsNullOrEmpty(fullPath)) return;
         var now = DateTime.UtcNow;
         _recentWrites[fullPath] = now;
+        _writeGenerations[fullPath] = Interlocked.Increment(ref _nextWriteGeneration);
         if (_markerFilePath != null)
             WriteMarkerFile(fullPath, now);
     }
@@ -88,9 +94,39 @@ public class SelfWriteCoordinator
             if (DateTime.UtcNow - when <= _ttl) return true;
             // Expired — drop it so the dictionary doesn't grow unbounded.
             _recentWrites.TryRemove(fullPath, out _);
+            _writeGenerations.TryRemove(fullPath, out _);
+            _consumedWriteGenerations.TryRemove(fullPath, out _);
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Consumes one same-process watcher echo. A later change to the same path,
+    /// even inside the TTL, is treated as a genuine external edit.
+    /// </summary>
+    public bool TryConsumeOwnProcessWrite(string fullPath)
+    {
+        if (string.IsNullOrEmpty(fullPath)) return false;
+        if (!_recentWrites.TryGetValue(fullPath, out var when)) return false;
+        if (DateTime.UtcNow - when > _ttl)
+        {
+            _recentWrites.TryRemove(fullPath, out _);
+            _writeGenerations.TryRemove(fullPath, out _);
+            _consumedWriteGenerations.TryRemove(fullPath, out _);
+            return false;
+        }
+
+        if (!_writeGenerations.TryGetValue(fullPath, out var generation))
+            return false;
+        if (_consumedWriteGenerations.TryGetValue(fullPath, out var consumed)
+            && consumed == generation)
+        {
+            return false;
+        }
+
+        _consumedWriteGenerations[fullPath] = generation;
+        return true;
     }
 
     // --- marker file helpers -------------------------------------------------
