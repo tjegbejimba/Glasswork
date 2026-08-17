@@ -26,6 +26,7 @@ public sealed partial class ResearchPage : Page
     private double _previewSynthesisVerticalOffset;
     private string? _previewInvokerPageId;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _focusRestoreTimer;
+    private int _focusRestoreGeneration;
     private ResearchCatalogSnapshot _snapshot =
         new(Array.Empty<ResearchTopic>(), Array.Empty<ResearchCatalogDiagnostic>());
     private bool _isReconciling;
@@ -87,6 +88,7 @@ public sealed partial class ResearchPage : Page
         {
             _selectedTopic = null;
             TopicList.SelectedItem = null;
+            ShowRelatedContext(ResearchContext.Empty);
             return;
         }
 
@@ -270,6 +272,7 @@ public sealed partial class ResearchPage : Page
             return;
         }
 
+        _focusRestoreGeneration++;
         _focusRestoreTimer?.Stop();
         _focusRestoreTimer = null;
         _previewPages = _selectedTopic.Context.RelatedPages;
@@ -339,6 +342,9 @@ public sealed partial class ResearchPage : Page
         if (_previewSelectedIndex < 0)
             return;
 
+        var focusRestoreGeneration = ++_focusRestoreGeneration;
+        _focusRestoreTimer?.Stop();
+        _focusRestoreTimer = null;
         var readingPosition = _previewSynthesisVerticalOffset;
         var invokerPageId = _previewInvokerPageId;
         PreviewDrawerOverlay.Visibility = Visibility.Collapsed;
@@ -357,8 +363,13 @@ public sealed partial class ResearchPage : Page
         if (restoreFocus)
         {
             var invoker = FindCurrentPreviewInvoker(invokerPageId)
-                ?? TopicList;
-            RestorePreviewInvokerFocus(invoker, attempts: 0);
+                ?? (EmptyStateView.Visibility == Visibility.Visible
+                    ? EmptyStateView
+                    : TopicList);
+            RestorePreviewInvokerFocus(
+                invoker,
+                attempts: 0,
+                generation: focusRestoreGeneration);
         }
     }
 
@@ -392,8 +403,14 @@ public sealed partial class ResearchPage : Page
         }
     }
 
-    private void RestorePreviewInvokerFocus(Control invoker, int attempts)
+    private void RestorePreviewInvokerFocus(
+        Control invoker,
+        int attempts,
+        int generation)
     {
+        if (generation != _focusRestoreGeneration)
+            return;
+
         _focusRestoreTimer?.Stop();
         var timer = DispatcherQueue.CreateTimer();
         _focusRestoreTimer = timer;
@@ -410,16 +427,23 @@ public sealed partial class ResearchPage : Page
                     FocusState.Programmatic);
             }
 
+            if (generation != _focusRestoreGeneration)
+                return;
+
             var focusedElement = FocusManager.GetFocusedElement(XamlRoot);
             var restored = ReferenceEquals(focusedElement, invoker);
             if (!restored
                 && attempts < 5)
             {
-                RestorePreviewInvokerFocus(invoker, attempts + 1);
+                RestorePreviewInvokerFocus(
+                    invoker,
+                    attempts + 1,
+                    generation);
                 return;
             }
 
-            _focusRestoreTimer = null;
+            if (ReferenceEquals(_focusRestoreTimer, timer))
+                _focusRestoreTimer = null;
         };
         timer.Start();
     }

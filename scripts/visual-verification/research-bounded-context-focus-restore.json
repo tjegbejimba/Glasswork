@@ -197,6 +197,56 @@
       "type": "assert-enabled",
       "automationId": "ResearchRelatedPage",
       "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "A refreshed related concept with an intentionally long title that still restores focus",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchPreviewClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "concepts/bounded-topic.md",
+      "oldValue": "  research: {}",
+      "value": "  research_removed: {}"
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 1200
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPreviewClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "ResearchPreviewClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchEmptyState",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchEmptyState",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-not-present",
+      "automationId": "ResearchRelatedPage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "PART_PaneToggleButton",
+      "timeoutMilliseconds": 10000
     }
   ],
   "captures": [

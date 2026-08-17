@@ -278,9 +278,11 @@
             x:Name="EmptyStateView"
             Grid.Row="1"
             AutomationProperties.AutomationId="ResearchEmptyState"
+            AutomationProperties.Name="Research library is empty"
             Body="Opt in an existing schema-governed Wiki Page with glasswork.research. The page stays in the Vault and is never copied into Glasswork."
             Glyph="&#xE82D;"
             Headline="No Research Topics yet"
+            IsTabStop="True"
             Visibility="Collapsed" />
     </Grid>
 
