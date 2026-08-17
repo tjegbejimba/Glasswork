@@ -84,7 +84,7 @@ public sealed class ResearchCatalogTests
                 include: [included-page, conflicting-page]
                 exclude: [linked-page, conflicting-page]
             ---
-            Topic synthesis links to [[linked-page]].
+            Topic synthesis links to [[wiki/systems/linked]].
             """);
         WritePage(
             "wiki/sources/included.md",
@@ -111,6 +111,91 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Capture_ExcludedContextPageStaysSuppressedWhenItBecomesUnavailable()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            glasswork:
+              research:
+                exclude: [excluded-page]
+            ---
+            [[wiki/sources/excluded]]
+            """);
+        WritePage(
+            "wiki/sources/excluded.md",
+            "---\nid: excluded-page\ntitle: Excluded page\ntype: source\n---\nEvidence.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        var validContext = catalog.Capture().Topics.Single().Context;
+
+        WritePage(
+            "wiki/sources/excluded.md",
+            "---\nid: excluded-page\ntitle: [unterminated\ntype: source\n---\nBroken.");
+        var malformedContext = catalog.Capture().Topics.Single().Context;
+
+        File.Delete(Path.Combine(_vaultRoot, "wiki", "sources", "excluded.md"));
+        var missingContext = catalog.Capture().Topics.Single().Context;
+
+        Assert.IsEmpty(validContext.RelatedPages);
+        Assert.IsEmpty(validContext.Warnings);
+        Assert.IsEmpty(malformedContext.RelatedPages);
+        Assert.IsEmpty(malformedContext.Warnings);
+        Assert.IsEmpty(missingContext.RelatedPages);
+        Assert.IsEmpty(missingContext.Warnings);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextUsesCanonicalPathsForWikiLinksAndBacklinks()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic-id
+            title: Topic
+            type: concept
+            glasswork:
+              research: {}
+            ---
+            [[outgoing-id-only]] [[wiki/systems/outgoing-by-path]]
+            """);
+        WritePage(
+            "wiki/concepts/id-only-target.md",
+            "---\nid: outgoing-id-only\ntitle: ID-only target\ntype: concept\n---\nKnowledge.");
+        WritePage(
+            "wiki/systems/outgoing-by-path.md",
+            "---\nid: outgoing-path-id\ntitle: Path target\ntype: system\n---\nKnowledge.");
+        WritePage(
+            "wiki/decisions/id-only-backlink.md",
+            "---\nid: id-only-backlink\ntitle: ID-only backlink\ntype: decision\n---\n[[topic-id]]");
+        WritePage(
+            "wiki/sources/path-backlink.md",
+            "---\nid: path-backlink\ntitle: Path backlink\ntype: source\n---\n[[wiki/concepts/topic]]");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        CollectionAssert.AreEqual(
+            new[] { "path-backlink", "outgoing-path-id" },
+            context.RelatedPages.Select(page => page.Id).ToArray());
+        Assert.AreEqual(
+            ResearchContextRelation.OutgoingWikiLink,
+            context.RelatedPages.Single(page => page.Id == "outgoing-path-id").Relations);
+        Assert.AreEqual(
+            ResearchContextRelation.Backlink,
+            context.RelatedPages.Single(page => page.Id == "path-backlink").Relations);
+        Assert.HasCount(1, context.Warnings);
+        Assert.AreEqual("outgoing-id-only", context.Warnings.Single().Reference);
+        Assert.AreEqual(
+            ResearchContextWarningCode.MissingPage,
+            context.Warnings.Single().Code);
+    }
+
+    [TestMethod]
     public void Capture_ResearchContextStopsAfterOneOutgoingWikiLinkHop()
     {
         WritePage(
@@ -123,7 +208,7 @@ public sealed class ResearchCatalogTests
             glasswork:
               research: {}
             ---
-            Topic synthesis links to [[direct-page]].
+            Topic synthesis links to [[wiki/systems/direct]].
             """);
         WritePage(
             "wiki/systems/direct.md",
@@ -133,7 +218,7 @@ public sealed class ResearchCatalogTests
             title: Direct page
             type: system
             ---
-            Direct context links onward to [[second-hop]].
+            Direct context links onward to [[wiki/sources/second-hop]].
             """);
         WritePage(
             "wiki/sources/second-hop.md",
@@ -174,7 +259,7 @@ public sealed class ResearchCatalogTests
             glasswork:
               research: {}
             ---
-            Topic synthesis links to [[shared-page]].
+            Topic synthesis links to [[wiki/systems/shared]].
             """);
         WritePage(
             "wiki/systems/shared.md",
@@ -184,7 +269,7 @@ public sealed class ResearchCatalogTests
             "---\nid: provenance-only\ntitle: Primary evidence\ntype: source\n---\nEvidence.");
         WritePage(
             "wiki/decisions/incoming.md",
-            "---\nid: incoming-page\ntitle: Incoming page\ntype: decision\n---\nReferences [[topic]].");
+            "---\nid: incoming-page\ntitle: Incoming page\ntype: decision\n---\nReferences [[wiki/concepts/topic]].");
         IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
 
         var related = catalog.Capture().Topics.Single().Context.RelatedPages;
@@ -214,8 +299,8 @@ public sealed class ResearchCatalogTests
             glasswork:
               research: {}
             ---
-            [[eligible-page]] [[task-page]] [[research-log]] [[arbitrary-page]]
-            [[missing-page]] [[broken-page]]
+            [[wiki/systems/eligible]] [[task]] [[wiki/research-logs/log]] [[wiki/notes/arbitrary-page]]
+            [[wiki/concepts/missing-page]] [[wiki/sources/broken-page]]
             """);
         WritePage(
             "wiki/systems/eligible.md",
@@ -240,10 +325,12 @@ public sealed class ResearchCatalogTests
         Assert.HasCount(2, context.Warnings);
         Assert.AreEqual(
             ResearchContextWarningCode.MissingPage,
-            context.Warnings.Single(warning => warning.Reference == "missing-page").Code);
+            context.Warnings.Single(warning =>
+                warning.Reference == "wiki/concepts/missing-page").Code);
         Assert.AreEqual(
             ResearchContextWarningCode.MalformedPage,
-            context.Warnings.Single(warning => warning.Reference == "broken-page").Code);
+            context.Warnings.Single(warning =>
+                warning.Reference == "wiki/sources/broken-page").Code);
     }
 
     [TestMethod]
@@ -259,7 +346,7 @@ public sealed class ResearchCatalogTests
             glasswork:
               research: {}
             ---
-            [[related-page]]
+            [[wiki/sources/related]]
             """);
         WritePage(
             "wiki/sources/related.md",

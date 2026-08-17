@@ -29,6 +29,7 @@
 
         <TitleBar
             x:Name="AppTitleBar"
+            AutomationProperties.AutomationId="ShellTitleBar"
             Title="Glasswork"
             BackRequested="TitleBar_BackRequested"
             IsBackButtonVisible="{x:Bind NavFrame.CanGoBack, Mode=OneWay}"

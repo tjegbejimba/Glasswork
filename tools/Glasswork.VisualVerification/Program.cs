@@ -318,6 +318,12 @@ internal static partial class VisualVerificationRunner
             case "assert-disabled":
                 AssertDisabled(WaitForElement(hwnd, action));
                 return;
+            case "assert-enabled":
+                AssertEnabled(WaitForElement(hwnd, action));
+                return;
+            case "assert-has-enabled-button-within":
+                AssertHasEnabledButton(WaitForElement(hwnd, action));
+                return;
             case "invoke":
                 ForegroundWindowBestEffort(hwnd);
                 InvokeElement(WaitForElement(hwnd, action));
@@ -662,6 +668,43 @@ internal static partial class VisualVerificationRunner
             throw new InvalidOperationException(
                 $"Element '{element.Current.Name}' remained enabled.");
         }
+    }
+
+    private static void AssertEnabled(AutomationElement element)
+    {
+        if (!element.Current.IsEnabled)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' remained disabled.");
+        }
+    }
+
+    private static void AssertHasEnabledButton(AutomationElement ancestor)
+    {
+        var walker = TreeWalker.ControlViewWalker;
+        var enabledButtons = 0;
+
+        void Visit(AutomationElement element)
+        {
+            AutomationElement? child;
+            try { child = walker.GetFirstChild(element); }
+            catch { return; }
+            while (child is not null)
+            {
+                if (child.Current.ControlType == ControlType.Button
+                    && child.Current.IsEnabled)
+                {
+                    enabledButtons++;
+                }
+                Visit(child);
+                try { child = walker.GetNextSibling(child); }
+                catch { break; }
+            }
+        }
+
+        Visit(ancestor);
+        if (enabledButtons == 0)
+            throw new InvalidOperationException("No enabled button remained within the target.");
     }
 
     private static AutomationElement? ManualFind(AutomationElement root, VisualVerificationAction action)

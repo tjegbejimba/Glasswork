@@ -29,6 +29,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         .Build();
 
     private readonly string _vaultRoot;
+    private readonly IWikiLinkResolver _wikiLinkResolver;
     private readonly Func<DateOnly> _today;
     private readonly SelfWriteCoordinator? _selfWrites;
     private readonly TimeSpan _quietPeriod;
@@ -60,6 +61,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(vaultRoot);
         _vaultRoot = Path.GetFullPath(vaultRoot);
+        _wikiLinkResolver = new FileSystemWikiLinkResolver(_vaultRoot, "wiki/todo");
         Directory.CreateDirectory(_vaultRoot);
         _today = today ?? (() => DateOnly.FromDateTime(DateTime.Today));
         _selfWrites = selfWrites;
@@ -186,7 +188,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                      .Where(path => !seenPaths.Contains(path))
                      .ToArray())
         {
-            nextReferences.Remove(removedPath);
+            MarkReferenceMissing(nextReferences, removedPath);
         }
 
         if (coherent)
@@ -336,7 +338,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     foreach (var missingPath in missingPaths)
                     {
                         _pagesByPath.Remove(missingPath);
-                        _referencesByPath.Remove(missingPath);
+                        MarkReferenceMissing(_referencesByPath, missingPath);
                         _diagnosticsByPath.Remove(missingPath);
                     }
 
@@ -355,7 +357,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     {
         var relativePath = ToRelativePath(fullPath);
         _pagesByPath.Remove(relativePath);
-        _referencesByPath.Remove(relativePath);
+        MarkReferenceMissing(_referencesByPath, relativePath);
         _diagnosticsByPath.Remove(relativePath);
     }
 
@@ -480,9 +482,6 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         string relativePath,
         WikiReferenceDescriptor? previous = null)
     {
-        var keys = BuildReferenceKeys(id: null, relativePath);
-        if (previous is not null)
-            keys.UnionWith(previous.Keys);
         string content;
         try
         {
@@ -492,14 +491,14 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         {
             return new WikiReferenceDescriptor(
                 relativePath,
-                keys,
+                previous?.StableId,
                 WikiReferenceStatus.Unreadable);
         }
         catch (UnauthorizedAccessException)
         {
             return new WikiReferenceDescriptor(
                 relativePath,
-                keys,
+                previous?.StableId,
                 WikiReferenceStatus.Unreadable);
         }
 
@@ -510,7 +509,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 || content.TrimStart().StartsWith("---", StringComparison.Ordinal)
                     ? WikiReferenceStatus.Malformed
                     : WikiReferenceStatus.Excluded;
-            return new WikiReferenceDescriptor(relativePath, keys, status);
+            return new WikiReferenceDescriptor(
+                relativePath,
+                status == WikiReferenceStatus.Malformed ? previous?.StableId : null,
+                status);
         }
 
         WikiPageFrontmatter? frontmatter;
@@ -523,19 +525,19 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         {
             return new WikiReferenceDescriptor(
                 relativePath,
-                keys,
+                previous?.StableId,
                 WikiReferenceStatus.Malformed);
         }
 
-        keys = BuildReferenceKeys(frontmatter?.Id, relativePath);
+        var stableId = NullIfWhiteSpace(frontmatter?.Id);
         var isEligible = frontmatter is not null
-            && !string.IsNullOrWhiteSpace(frontmatter.Id)
+            && stableId is not null
             && !string.IsNullOrWhiteSpace(frontmatter.Type)
             && EligibleTypes.Contains(frontmatter.Type)
             && IsEligibleLocation(relativePath);
         return new WikiReferenceDescriptor(
             relativePath,
-            keys,
+            stableId,
             isEligible ? WikiReferenceStatus.Eligible : WikiReferenceStatus.Excluded);
     }
 
@@ -664,7 +666,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             Array.AsReadOnly(diagnostics));
     }
 
-    private static ResearchContext BuildContext(
+    private ResearchContext BuildContext(
         WikiPageCandidate topic,
         IReadOnlyCollection<WikiPageCandidate> pages,
         IReadOnlySet<string> duplicateIds,
@@ -707,7 +709,39 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 message);
         }
 
-        void AddReference(string reference, ResearchContextRelation relation)
+        void AddTarget(
+            WikiPageCandidate target,
+            string reference,
+            ResearchContextRelation relation)
+        {
+            if (duplicateIds.Contains(target.Id))
+            {
+                AddWarning(
+                    reference,
+                    relation,
+                    ResearchContextWarningCode.AmbiguousTarget,
+                    $"Wiki Page '{reference}' does not have a globally unique stable ID.");
+                return;
+            }
+            if (string.Equals(target.Id, topic.Id, StringComparison.OrdinalIgnoreCase)
+                || excludedIds.Contains(NormalizeReference(target.Id)))
+            {
+                return;
+            }
+
+            if (related.TryGetValue(target.Id, out var existing))
+            {
+                related[target.Id] = existing with
+                {
+                    Relations = existing.Relations | relation,
+                };
+                return;
+            }
+
+            related[target.Id] = ToContextPage(target, queryDate, relation);
+        }
+
+        void AddIdentityReference(string reference, ResearchContextRelation relation)
         {
             var normalized = NormalizeReference(reference);
             if (normalized.Length == 0)
@@ -716,7 +750,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 return;
 
             var descriptors = referenceDescriptors
-                .Where(descriptor => descriptor.Keys.Contains(normalized))
+                .Where(descriptor => string.Equals(
+                    descriptor.StableId,
+                    normalized,
+                    StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             var hasUnavailableDescriptor = descriptors.Any(descriptor =>
                 descriptor.Status is WikiReferenceStatus.Malformed
@@ -732,11 +769,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
             var targets = pages
                 .Where(page => !duplicateIds.Contains(page.Id))
-                .Where(page => BuildReferenceKeys(page.Id, page.VaultRelativePath)
-                    .Contains(normalized))
-                .Where(page => !string.Equals(
+                .Where(page => string.Equals(
                     page.Id,
-                    topic.Id,
+                    normalized,
                     StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             if (targets.Length > 1)
@@ -776,21 +811,79 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 return;
             }
 
-            var target = targets[0];
-            if (related.TryGetValue(target.Id, out var existing))
+            AddTarget(targets[0], reference, relation);
+        }
+
+        void AddWikiLinkReference(string reference, ResearchContextRelation relation)
+        {
+            var normalized = NormalizeReference(reference);
+            var pathDescriptors = referenceDescriptors
+                .Where(descriptor => string.Equals(
+                    NormalizeReference(descriptor.VaultRelativePath),
+                    normalized,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (pathDescriptors.Any(descriptor =>
+                    descriptor.StableId is not null
+                    && excludedIds.Contains(NormalizeReference(descriptor.StableId))))
             {
-                related[target.Id] = existing with
-                {
-                    Relations = existing.Relations | relation,
-                };
                 return;
             }
 
-            related[target.Id] = ToContextPage(target, queryDate, relation);
+            var resolution = _wikiLinkResolver.Resolve(reference);
+            if (resolution is WikiLinkResolution.Task)
+                return;
+
+            if (resolution is not WikiLinkResolution.VaultPage resolved)
+            {
+                AddWarning(
+                    reference,
+                    relation,
+                    ResearchContextWarningCode.MissingPage,
+                    $"Related Wiki Page '{reference}' is missing.");
+                return;
+            }
+
+            var descriptor = pathDescriptors.FirstOrDefault(candidate =>
+                string.Equals(
+                    candidate.VaultRelativePath,
+                    resolved.VaultRelativePath,
+                    StringComparison.OrdinalIgnoreCase));
+            if (descriptor?.Status is WikiReferenceStatus.Malformed
+                or WikiReferenceStatus.Unreadable)
+            {
+                AddWarning(
+                    reference,
+                    relation,
+                    ResearchContextWarningCode.MalformedPage,
+                    $"Related Wiki Page '{reference}' is malformed or unreadable.");
+            }
+
+            var target = pages.FirstOrDefault(page => string.Equals(
+                page.VaultRelativePath,
+                resolved.VaultRelativePath,
+                StringComparison.OrdinalIgnoreCase));
+            if (target is not null)
+            {
+                AddTarget(target, reference, relation);
+                return;
+            }
+            if (descriptor?.Status == WikiReferenceStatus.Excluded
+                || descriptor?.Status is WikiReferenceStatus.Malformed
+                    or WikiReferenceStatus.Unreadable)
+            {
+                return;
+            }
+
+            AddWarning(
+                reference,
+                relation,
+                ResearchContextWarningCode.MissingPage,
+                $"Related Wiki Page '{reference}' is missing.");
         }
 
         foreach (var link in WikiLinkParser.Find(topic.Markdown))
-            AddReference(link.Stem, ResearchContextRelation.OutgoingWikiLink);
+            AddWikiLinkReference(link.Stem, ResearchContextRelation.OutgoingWikiLink);
 
         foreach (var source in topic.Sources)
         {
@@ -798,11 +891,11 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             if (links.Count > 0)
             {
                 foreach (var link in links)
-                    AddReference(link.Stem, ResearchContextRelation.Provenance);
+                    AddIdentityReference(link.Stem, ResearchContextRelation.Provenance);
             }
             else if (!Uri.TryCreate(source, UriKind.Absolute, out _))
             {
-                AddReference(source, ResearchContextRelation.Provenance);
+                AddIdentityReference(source, ResearchContextRelation.Provenance);
             }
         }
 
@@ -810,11 +903,15 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         {
             if (string.Equals(page.Id, topic.Id, StringComparison.OrdinalIgnoreCase))
                 continue;
-            var topicKeys = BuildReferenceKeys(topic.Id, topic.VaultRelativePath);
             if (WikiLinkParser.Find(page.Markdown).Any(link =>
-                    topicKeys.Contains(NormalizeReference(link.Stem))))
+                    _wikiLinkResolver.Resolve(link.Stem)
+                        is WikiLinkResolution.VaultPage resolved
+                    && string.Equals(
+                        resolved.VaultRelativePath,
+                        topic.VaultRelativePath,
+                        StringComparison.OrdinalIgnoreCase)))
             {
-                AddReference(page.Id, ResearchContextRelation.Backlink);
+                AddTarget(page, page.VaultRelativePath, ResearchContextRelation.Backlink);
             }
         }
 
@@ -829,7 +926,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     $"Wiki Page '{includedId}' appears in both include and exclude overrides; exclude wins.");
                 continue;
             }
-            AddReference(includedId, ResearchContextRelation.IncludeOverride);
+            AddIdentityReference(includedId, ResearchContextRelation.IncludeOverride);
         }
 
         foreach (var excludedId in excludedIds)
@@ -861,24 +958,6 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         && left.Context.RelatedPages.SequenceEqual(right.Context.RelatedPages)
         && left.Context.Warnings.SequenceEqual(right.Context.Warnings);
 
-    private static HashSet<string> BuildReferenceKeys(
-        string? id,
-        string vaultRelativePath)
-    {
-        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(id))
-            keys.Add(NormalizeReference(id));
-
-        var normalizedPath = NormalizeReference(vaultRelativePath);
-        keys.Add(normalizedPath);
-        if (normalizedPath.StartsWith("wiki/", StringComparison.OrdinalIgnoreCase))
-            keys.Add(normalizedPath["wiki/".Length..]);
-        var fileName = normalizedPath.Split('/').LastOrDefault();
-        if (!string.IsNullOrWhiteSpace(fileName))
-            keys.Add(fileName);
-        return keys;
-    }
-
     private static string NormalizeReference(string reference)
     {
         var normalized = reference.Trim().Replace('\\', '/');
@@ -891,6 +970,23 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         if (normalized.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
             normalized = normalized[..^3];
         return normalized.Trim('/');
+    }
+
+    private static void MarkReferenceMissing(
+        IDictionary<string, WikiReferenceDescriptor> descriptors,
+        string relativePath)
+    {
+        if (descriptors.TryGetValue(relativePath, out var descriptor)
+            && descriptor.StableId is not null)
+        {
+            descriptors[relativePath] = descriptor with
+            {
+                Status = WikiReferenceStatus.Missing,
+            };
+            return;
+        }
+
+        descriptors.Remove(relativePath);
     }
 
     private static ResearchContextPage ToContextPage(
@@ -1156,7 +1252,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
     private sealed record WikiReferenceDescriptor(
         string VaultRelativePath,
-        IReadOnlySet<string> Keys,
+        string? StableId,
         WikiReferenceStatus Status);
 
     private enum WikiReferenceStatus
@@ -1165,6 +1261,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         Excluded,
         Malformed,
         Unreadable,
+        Missing,
     }
 
     private enum PageReadKind
