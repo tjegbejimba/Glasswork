@@ -1,0 +1,181 @@
+{
+  "name": "Research bounded context drawer",
+  "theme": "dark",
+  "startUri": "glasswork://research/bounded-topic",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/bounded-topic.md",
+      "id": "bounded-topic",
+      "title": "Bounded Research context",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-16",
+      "expires": "2027-08-16",
+      "sources": ["[[primary-evidence]]"],
+      "markdown": "# Bounded Research context\n\nThe synthesis remains the primary reading surface while related knowledge is previewed beside it.\n\n[[a-related-concept]] links directly from the Topic. [[related-system]] is another direct hop. [[missing-context-page]] remains explicit.\n\n## Reading position\n\nParagraph 1 keeps the synthesis long enough to establish a real reading position.\n\nParagraph 2 explains why previews must not replace the Topic.\n\nParagraph 3 records the one-hop traversal boundary.\n\nParagraph 4 records stable-ID deduplication.\n\nParagraph 5 records provenance alongside outgoing links.\n\nParagraph 6 records incoming Backlinks.\n\nParagraph 7 records eligible Wiki Page types.\n\nParagraph 8 excludes Tasks and Research Change Logs.\n\nParagraph 9 excludes arbitrary Markdown.\n\nParagraph 10 keeps malformed pages visible as warnings.\n\nParagraph 11 preserves title and freshness metadata.\n\nParagraph 12 keeps context grouped by Wiki type.\n\nParagraph 13 keeps the synthesis mounted under the drawer.\n\nParagraph 14 preserves the synthesis scroll offset.\n\nParagraph 15 contains focus inside the preview drawer.\n\nParagraph 16 makes the background inert while previewing.\n\nParagraph 17 restores focus to the related-page invoker.\n\nParagraph 18 supports Escape and an explicit close action.\n\nParagraph 19 supports rapid previous and next navigation.\n\nParagraph 20 renders preview Markdown through VaultMarkdownView.\n\nParagraph 21 keeps safe Wiki-link routing unchanged.\n\nParagraph 22 keeps Open in Obsidian available.\n\nParagraph 23 avoids Research Session behavior from successor work.\n\nParagraph 24 avoids Add or Remove Topic behavior.\n\nParagraph 25 keeps the Wiki Page as durable synthesis.\n\nParagraph 26 makes the bounded context inspectable.\n\nParagraph 27 keeps warnings visible without broadening context.\n\nParagraph 28 demonstrates a broad Topic.\n\nParagraph 29 demonstrates a long reading surface.\n\nParagraph 30 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 31 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 32 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 33 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 34 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 35 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 36 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 37 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 38 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 39 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 40 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 41 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 42 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 43 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 44 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 45 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 46 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 47 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 48 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 49 continues the synthesis with enough detail to wrap across several lines at the normal reading width while the related context remains visible in its secondary column.\n\nParagraph 50 marks the end of the synthesis after establishing a substantial reading position."
+    },
+    {
+      "relativePath": "concepts/related-concept.md",
+      "id": "a-related-concept",
+      "title": "A related concept with an intentionally long title that wraps without hiding its identity",
+      "type": "concept",
+      "confidence": "medium",
+      "updated": "2026-08-14",
+      "expires": "2027-02-01",
+      "optedIn": false,
+      "markdown": "# Related concept\n\nThis direct context page is the first preview and links onward to [[second-hop-page]], which must not enter the Topic context."
+    },
+    {
+      "relativePath": "sources/primary-evidence.md",
+      "id": "primary-evidence",
+      "title": "Primary evidence",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-15",
+      "expires": "2027-08-01",
+      "sources": ["https://example.test/primary"],
+      "optedIn": false,
+      "markdown": "# Primary evidence\n\nA provenance reference contributes one direct context hop."
+    },
+    {
+      "relativePath": "systems/related-system.md",
+      "id": "related-system",
+      "title": "Related system",
+      "type": "system",
+      "confidence": "low",
+      "updated": "2026-07-01",
+      "expires": "2026-09-01",
+      "optedIn": false,
+      "markdown": "# Related system\n\nThis page is linked by the Topic and also links back to [[bounded-topic]], exercising stable-ID deduplication and Backlink provenance."
+    },
+    {
+      "relativePath": "decisions/incoming-decision.md",
+      "id": "incoming-decision",
+      "title": "Incoming decision",
+      "type": "decision",
+      "confidence": "high",
+      "updated": "2026-08-12",
+      "expires": "2027-01-01",
+      "optedIn": false,
+      "markdown": "# Incoming decision\n\nThe decision links back to [[bounded-topic]] and therefore enters context as an incoming Backlink."
+    },
+    {
+      "relativePath": "sources/second-hop.md",
+      "id": "second-hop-page",
+      "title": "Second hop that must remain excluded",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-15",
+      "expires": "2027-08-01",
+      "optedIn": false,
+      "markdown": "# Second hop\n\nThis page is reachable only through a related page."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchTopicTitle",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "A related concept with an intentionally long title that wraps without hiding its identity",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Missing related page: missing-context-page",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "ResearchTopicDetail",
+      "value": "55"
+    },
+    {
+      "type": "assert-vertical-scroll-at-least",
+      "automationId": "ResearchTopicDetail",
+      "value": "40"
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchRelatedPage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRelatedPage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchPreviewClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchPreviewClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-disabled",
+      "automationId": "ShellNavigation",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchPreviewClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPreviewNext",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPreviewNext",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchPreviewTitle",
+      "value": "Primary evidence",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPreviewPrevious",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPreviewPrevious",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchPreviewTitle",
+      "value": "A related concept with an intentionally long title that wraps without hiding its identity",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-bounded-context-drawer",
+      "waitMilliseconds": 400
+    }
+  ]
+}

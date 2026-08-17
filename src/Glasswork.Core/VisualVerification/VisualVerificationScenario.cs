@@ -127,6 +127,16 @@ public sealed partial class VisualVerificationScenario
             {
                 throw new FormatException("assert-selected requires name.");
             }
+            if (action.Type.Equals("assert-name", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(action.Value))
+            {
+                throw new FormatException("assert-name requires value.");
+            }
+            if (action.Type.Equals("press-key", StringComparison.OrdinalIgnoreCase)
+                && action.Value is not ("Escape" or "Tab"))
+            {
+                throw new FormatException("press-key requires value Escape or Tab.");
+            }
         }
 
         foreach (var capture in Captures)

@@ -5,7 +5,11 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Glasswork.Core.Feedback;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
@@ -21,6 +25,7 @@ public sealed partial class MainWindow : Window
     // Guards selection-driven navigation while code synchronizes top-level chrome.
     private bool _suppressSelectionNavigation;
     private EventHandler<object>? _firstFrameHandler;
+    private Control? _modalFocusTarget;
 
     public MainWindow()
     {
@@ -98,6 +103,59 @@ public sealed partial class MainWindow : Window
             NavFrame.GoForward();
             e.Handled = true;
         }
+    }
+
+    internal void ShowModalOverlay(UIElement content, Control focusTarget)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentNullException.ThrowIfNull(focusTarget);
+        if (ModalOverlayHost.Content is not null)
+            throw new InvalidOperationException("A shell modal overlay is already open.");
+
+        ModalOverlayHost.Content = content;
+        ModalOverlayHost.Visibility = Visibility.Visible;
+        _modalFocusTarget = focusTarget;
+        ShellContent.IsHitTestVisible = false;
+        NavView.IsEnabled = false;
+        AutomationProperties.SetAccessibilityView(ShellContent, AccessibilityView.Raw);
+    }
+
+    internal void HideModalOverlay(UIElement content)
+    {
+        if (!ReferenceEquals(ModalOverlayHost.Content, content))
+            return;
+
+        ModalOverlayHost.Visibility = Visibility.Collapsed;
+        ModalOverlayHost.Content = null;
+        ShellContent.IsHitTestVisible = true;
+        NavView.IsEnabled = true;
+        AutomationProperties.SetAccessibilityView(ShellContent, AccessibilityView.Content);
+        _modalFocusTarget = null;
+    }
+
+    private void ShellRoot_GettingFocus(UIElement sender, GettingFocusEventArgs e)
+    {
+        if (_modalFocusTarget is null
+            || e.NewFocusedElement is not DependencyObject next
+            || IsDescendantOf(next, ModalOverlayHost))
+        {
+            return;
+        }
+
+        e.TrySetNewFocusedElement(_modalFocusTarget);
+    }
+
+    private static bool IsDescendantOf(
+        DependencyObject element,
+        DependencyObject ancestor)
+    {
+        for (var current = element; current is not null;)
+        {
+            if (ReferenceEquals(current, ancestor))
+                return true;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return false;
     }
 
     private void InitStatusBar()

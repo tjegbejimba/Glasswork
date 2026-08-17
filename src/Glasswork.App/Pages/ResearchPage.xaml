@@ -8,7 +8,11 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid Padding="28" RowDefinitions="Auto,*">
+    <Grid x:Name="RootGrid">
+    <Grid
+        x:Name="BackgroundContent"
+        Padding="28"
+        RowDefinitions="Auto,*">
         <StackPanel Spacing="4">
             <TextBlock
                 AutomationProperties.AutomationId="ResearchHeader"
@@ -113,9 +117,12 @@
                             Content="Open in Obsidian" />
                     </InfoBar.ActionButton>
                 </InfoBar>
+                <Grid
+                    Grid.Row="1"
+                    ColumnDefinitions="*,280"
+                    ColumnSpacing="24">
                 <ScrollViewer
                     x:Name="TopicDetailScroll"
-                    Grid.Row="1"
                     AutomationProperties.AutomationId="ResearchTopicDetail"
                     HorizontalScrollMode="Disabled"
                     HorizontalScrollBarVisibility="Disabled"
@@ -167,6 +174,103 @@
                         LinkClicked="TopicMarkdown_LinkClicked" />
                     </StackPanel>
                 </ScrollViewer>
+                <ScrollViewer
+                    Grid.Column="1"
+                    HorizontalScrollMode="Disabled"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+                        <Border
+                            x:Name="RelatedContextPanel"
+                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                            CornerRadius="8"
+                            Padding="14"
+                            VerticalAlignment="Top">
+                            <StackPanel Spacing="14">
+                                <StackPanel Spacing="3">
+                                    <TextBlock
+                                        FontSize="16"
+                                        FontWeight="SemiBold"
+                                        Text="Related knowledge" />
+                                    <TextBlock
+                                        Opacity="0.68"
+                                        Text="One direct hop from this Topic."
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ItemsControl x:Name="RelatedGroupsList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,0,0,12" Spacing="6">
+                                                <TextBlock
+                                                    FontSize="12"
+                                                    FontWeight="SemiBold"
+                                                    Opacity="0.72"
+                                                    Text="{Binding TypeLabel}" />
+                                                <ItemsControl ItemsSource="{Binding Pages}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Button
+                                                                Margin="0,0,0,6"
+                                                                Padding="10,8"
+                                                                HorizontalAlignment="Stretch"
+                                                                HorizontalContentAlignment="Stretch"
+                                                                AutomationProperties.AutomationId="ResearchRelatedPage"
+                                                                AutomationProperties.Name="{Binding Title}"
+                                                                Click="RelatedPageButton_Click"
+                                                                Tag="{Binding}">
+                                                                <StackPanel Spacing="4">
+                                                                    <TextBlock
+                                                                        FontWeight="SemiBold"
+                                                                        MaxLines="2"
+                                                                        Text="{Binding Title}"
+                                                                        TextTrimming="CharacterEllipsis"
+                                                                        TextWrapping="Wrap"
+                                                                        ToolTipService.ToolTip="{Binding Title}" />
+                                                                    <TextBlock
+                                                                        FontSize="11"
+                                                                        Opacity="0.68"
+                                                                        Text="{Binding MetadataLine}"
+                                                                        TextWrapping="Wrap" />
+                                                                    <TextBlock
+                                                                        FontSize="11"
+                                                                        Opacity="0.68"
+                                                                        Text="{Binding RelationLabel}"
+                                                                        TextWrapping="Wrap" />
+                                                                </StackPanel>
+                                                            </Button>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <ItemsControl x:Name="ContextWarningsList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border
+                                                Margin="0,0,0,6"
+                                                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                                CornerRadius="6"
+                                                Padding="10,8">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock
+                                                        FontWeight="SemiBold"
+                                                        Text="{Binding Title}"
+                                                        TextWrapping="Wrap" />
+                                                    <TextBlock
+                                                        FontSize="11"
+                                                        Opacity="0.78"
+                                                        Text="{Binding Message}"
+                                                        TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                </ScrollViewer>
+                </Grid>
             </Grid>
         </Grid>
 
@@ -178,5 +282,91 @@
             Glyph="&#xE82D;"
             Headline="No Research Topics yet"
             Visibility="Collapsed" />
+    </Grid>
+
+    <ContentControl
+        x:Name="PreviewDrawerOverlay"
+        AutomationProperties.AutomationId="ResearchPreviewDrawer"
+        Background="#66000000"
+        HorizontalContentAlignment="Stretch"
+        VerticalContentAlignment="Stretch"
+        Visibility="Collapsed">
+        <ContentControl.KeyboardAccelerators>
+            <KeyboardAccelerator
+                Invoked="PreviewEscape_Invoked"
+                Key="Escape" />
+        </ContentControl.KeyboardAccelerators>
+        <Border
+            x:Name="PreviewDrawerPanel"
+            Width="520"
+            Padding="24"
+            HorizontalAlignment="Right"
+            Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1,0,0,0"
+            TabFocusNavigation="Cycle">
+            <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                    <StackPanel Spacing="4">
+                        <TextBlock
+                            Opacity="0.68"
+                            Text="Related Wiki Page" />
+                        <TextBlock
+                            x:Name="PreviewTitle"
+                            AutomationProperties.AutomationId="ResearchPreviewTitle"
+                            FontSize="24"
+                            FontWeight="SemiBold"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button
+                        x:Name="PreviewCloseButton"
+                        Grid.Column="1"
+                        AutomationProperties.AutomationId="ResearchPreviewClose"
+                        AutomationProperties.Name="Close related page preview"
+                        Click="PreviewCloseButton_Click"
+                        Content="&#xE711;"
+                        FontFamily="Segoe Fluent Icons"
+                        VerticalAlignment="Top" />
+                </Grid>
+
+                <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
+                    <Button
+                        x:Name="PreviewPreviousButton"
+                        AutomationProperties.AutomationId="ResearchPreviewPrevious"
+                        Click="PreviewPreviousButton_Click"
+                        Content="Previous" />
+                    <Button
+                        x:Name="PreviewNextButton"
+                        Grid.Column="1"
+                        AutomationProperties.AutomationId="ResearchPreviewNext"
+                        Click="PreviewNextButton_Click"
+                        Content="Next" />
+                    <TextBlock
+                        x:Name="PreviewMetadata"
+                        Grid.Column="2"
+                        VerticalAlignment="Center"
+                        Opacity="0.72"
+                        TextWrapping="Wrap" />
+                    <Button
+                        Grid.Column="3"
+                        AutomationProperties.AutomationId="ResearchPreviewOpenInObsidian"
+                        Click="PreviewOpenInObsidianButton_Click"
+                        Content="Open in Obsidian" />
+                </Grid>
+
+                <ScrollViewer
+                    Grid.Row="2"
+                    AutomationProperties.AutomationId="ResearchPreviewMarkdownScroll"
+                    HorizontalScrollMode="Disabled"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+                    <controls:VaultMarkdownView
+                        x:Name="PreviewMarkdown"
+                        AutomationProperties.AutomationId="ResearchPreviewMarkdown"
+                        LinkClicked="PreviewMarkdown_LinkClicked" />
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </ContentControl>
     </Grid>
 </Page>

@@ -78,6 +78,8 @@ internal static partial class VisualVerificationRunner
         var vaultRoot = Path.Combine(workDir, "Vault");
         var todoPath = Path.Combine(vaultRoot, "wiki", "todo");
         var uiStatePath = Path.Combine(workDir, "ui-state.json");
+        var captureRequestPath = Path.Combine(workDir, "capture.request");
+        var captureOutputPath = Path.Combine(workDir, "capture.png");
         Directory.CreateDirectory(todoPath);
 
         MaterializeVault(scenario, vaultRoot, todoPath);
@@ -89,7 +91,14 @@ internal static partial class VisualVerificationRunner
             }));
 
         var instanceKey = "visual-" + Guid.NewGuid().ToString("N");
-        using var process = LaunchApp(appExe, scenario.StartUri, vaultRoot, uiStatePath, instanceKey);
+        using var process = LaunchApp(
+            appExe,
+            scenario.StartUri,
+            vaultRoot,
+            uiStatePath,
+            instanceKey,
+            captureRequestPath,
+            captureOutputPath);
 
         try
         {
@@ -99,11 +108,26 @@ internal static partial class VisualVerificationRunner
 
             foreach (var action in scenario.Actions)
             {
-                PerformAction(hwnd, vaultRoot, todoPath, action);
+                try
+                {
+                    PerformAction(hwnd, vaultRoot, todoPath, action);
+                }
+                catch (Exception ex)
+                {
+                    var selector = action.AutomationId ?? action.Name ?? action.Value ?? "(none)";
+                    throw new InvalidOperationException(
+                        $"Action '{action.Type}' for '{selector}' failed: {ex.Message}",
+                        ex);
+                }
             }
 
             var inspection = options.Inspect
-                ? EmitInspection(hwnd, scenario, options.OutDir)
+                ? EmitInspection(
+                    hwnd,
+                    scenario,
+                    options.OutDir,
+                    captureRequestPath,
+                    captureOutputPath)
                 : null;
 
             var captures = new List<CaptureResult>();
@@ -113,7 +137,11 @@ internal static partial class VisualVerificationRunner
                     await Task.Delay(capture.WaitMilliseconds);
 
                 var path = Path.Combine(options.OutDir, SanitizeFileName(capture.Name) + ".png");
-                CaptureWindow(hwnd, path);
+                CaptureThroughApp(
+                    captureRequestPath,
+                    captureOutputPath,
+                    path,
+                    TimeSpan.FromSeconds(10));
                 var imageStats = AnalyzeImage(path);
                 if (imageStats.UniqueSampledColors <= 1)
                     throw new InvalidOperationException($"Capture '{capture.Name}' appears blank or uniform: {path}");
@@ -223,7 +251,14 @@ internal static partial class VisualVerificationRunner
 
     private static string YamlScalar(string value) => JsonSerializer.Serialize(value);
 
-    private static Process LaunchApp(string appExe, string? startUri, string vaultPath, string uiStatePath, string instanceKey)
+    private static Process LaunchApp(
+        string appExe,
+        string? startUri,
+        string vaultPath,
+        string uiStatePath,
+        string instanceKey,
+        string captureRequestPath,
+        string captureOutputPath)
     {
         var psi = new ProcessStartInfo(appExe)
         {
@@ -239,6 +274,8 @@ internal static partial class VisualVerificationRunner
         psi.Environment[VerificationLaunchOptions.InstanceKeyVariable] = instanceKey;
         psi.Environment[VerificationLaunchOptions.SkipProtocolRegistrationVariable] = "1";
         psi.Environment[VerificationLaunchOptions.SkipUpdateCheckVariable] = "1";
+        psi.Environment[VerificationLaunchOptions.CaptureRequestPathVariable] = captureRequestPath;
+        psi.Environment[VerificationLaunchOptions.CaptureOutputPathVariable] = captureOutputPath;
 
         return Process.Start(psi) ?? throw new InvalidOperationException("Failed to launch Glasswork.");
     }
@@ -272,7 +309,17 @@ internal static partial class VisualVerificationRunner
             case "wait-for":
                 _ = WaitForElement(hwnd, action);
                 return;
+            case "assert-not-present":
+                AssertNotPresent(hwnd, action);
+                return;
+            case "assert-hidden":
+                AssertHidden(hwnd, action);
+                return;
+            case "assert-disabled":
+                AssertDisabled(WaitForElement(hwnd, action));
+                return;
             case "invoke":
+                ForegroundWindowBestEffort(hwnd);
                 InvokeElement(WaitForElement(hwnd, action));
                 return;
             case "set-value":
@@ -283,6 +330,19 @@ internal static partial class VisualVerificationRunner
                 return;
             case "focus":
                 FocusElement(WaitForElement(hwnd, action));
+                return;
+            case "assert-focused":
+                AssertFocused(hwnd, WaitForElement(hwnd, action), action);
+                return;
+            case "assert-name":
+                AssertName(WaitForElement(hwnd, action), action.Value!);
+                return;
+            case "assert-focus-within":
+                ForegroundWindowBestEffort(hwnd);
+                AssertFocusWithin(WaitForElement(hwnd, action));
+                return;
+            case "press-key":
+                PressKey(hwnd, action.Value!);
                 return;
             case "assert-single-selection":
                 AssertSingleSelection(WaitForElement(hwnd, action));
@@ -353,12 +413,21 @@ internal static partial class VisualVerificationRunner
         File.WriteAllText(path, updated);
     }
 
-    private static InspectionPaths EmitInspection(IntPtr hwnd, VisualVerificationScenario scenario, string outDir)
+    private static InspectionPaths EmitInspection(
+        IntPtr hwnd,
+        VisualVerificationScenario scenario,
+        string outDir,
+        string captureRequestPath,
+        string captureOutputPath)
     {
         // Capture the paired screenshot and walk the tree back-to-back so the
         // catalog and the PNG describe the same UI state.
         const string screenshotFile = "inspection.png";
-        CaptureWindow(hwnd, Path.Combine(outDir, screenshotFile));
+        CaptureThroughApp(
+            captureRequestPath,
+            captureOutputPath,
+            Path.Combine(outDir, screenshotFile),
+            TimeSpan.FromSeconds(10));
 
         var (rawElements, warnings) = WalkUiaTree(hwnd);
 
@@ -544,6 +613,57 @@ internal static partial class VisualVerificationRunner
         return ManualFind(root, action);
     }
 
+    private static void AssertNotPresent(
+        IntPtr hwnd,
+        VisualVerificationAction action)
+    {
+        var timeout = TimeSpan.FromMilliseconds(
+            action.TimeoutMilliseconds <= 0 ? 5000 : action.TimeoutMilliseconds);
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < timeout)
+        {
+            var root = AutomationElement.FromHandle(hwnd);
+            if (FindElement(root, action) is null)
+                return;
+            Thread.Sleep(100);
+        }
+
+        var selector = action.AutomationId is not null
+            ? $"AutomationId='{action.AutomationId}'"
+            : $"Name='{action.Name}'";
+        throw new InvalidOperationException(
+            $"UI element with {selector} remained present.");
+    }
+
+    private static void AssertHidden(
+        IntPtr hwnd,
+        VisualVerificationAction action)
+    {
+        var timeout = TimeSpan.FromMilliseconds(
+            action.TimeoutMilliseconds <= 0 ? 5000 : action.TimeoutMilliseconds);
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < timeout)
+        {
+            var element = FindElement(AutomationElement.FromHandle(hwnd), action);
+            if (element is null)
+                return;
+            if (element.Current.IsOffscreen)
+                return;
+            Thread.Sleep(100);
+        }
+
+        throw new InvalidOperationException("The target UI element remained visible.");
+    }
+
+    private static void AssertDisabled(AutomationElement element)
+    {
+        if (element.Current.IsEnabled)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' remained enabled.");
+        }
+    }
+
     private static AutomationElement? ManualFind(AutomationElement root, VisualVerificationAction action)
     {
         const int maxDepth = 40;
@@ -644,6 +764,92 @@ internal static partial class VisualVerificationRunner
         if (!element.Current.HasKeyboardFocus)
             throw new InvalidOperationException(
                 $"Element '{element.Current.Name}' did not receive keyboard focus.");
+    }
+
+    private static void AssertFocused(
+        IntPtr hwnd,
+        AutomationElement element,
+        VisualVerificationAction action)
+    {
+        ForegroundWindowBestEffort(hwnd);
+        var timeout = TimeSpan.FromMilliseconds(
+            action.TimeoutMilliseconds <= 0 ? 5000 : action.TimeoutMilliseconds);
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < timeout)
+        {
+            if (element.Current.HasKeyboardFocus)
+                return;
+            Thread.Sleep(100);
+        }
+
+        var focused = AutomationElement.FocusedElement;
+        var focusedDescription = focused is null
+            ? "No element"
+            : $"'{focused.Current.Name}' ({focused.Current.AutomationId})";
+        throw new InvalidOperationException(
+            $"Element '{element.Current.Name}' does not have keyboard focus. " +
+            $"{focusedDescription} is focused.");
+    }
+
+    private static void AssertName(AutomationElement element, string expectedName)
+    {
+        var actualName = element.Current.Name;
+        if (!string.Equals(actualName, expectedName, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.AutomationId}' has name '{actualName}', " +
+                $"expected '{expectedName}'.");
+        }
+    }
+
+    private static void AssertFocusWithin(AutomationElement ancestor)
+    {
+        Thread.Sleep(100);
+        var focused = AutomationElement.FocusedElement
+            ?? throw new InvalidOperationException("No element has keyboard focus.");
+        var walker = TreeWalker.ControlViewWalker;
+        for (var current = focused; current is not null;)
+        {
+            if (current.Equals(ancestor))
+                return;
+            try { current = walker.GetParent(current); }
+            catch { break; }
+        }
+
+        throw new InvalidOperationException(
+            $"Keyboard focus escaped '{ancestor.Current.Name}'.");
+    }
+
+    private static void PressKey(IntPtr hwnd, string key)
+    {
+        var virtualKey = key switch
+        {
+            "Escape" => (byte)0x1B,
+            "Tab" => (byte)0x09,
+            _ => throw new FormatException($"Unsupported key '{key}'."),
+        };
+        ForegroundWindowBestEffort(hwnd);
+        Thread.Sleep(100);
+        var scanCode = (byte)MapVirtualKey(virtualKey, MapVirtualKeyToScanCode);
+        var downState = new IntPtr(1 | (scanCode << 16));
+        var upState = new IntPtr(
+            1 | (scanCode << 16) | (1 << 30) | unchecked((int)0x80000000));
+        var inputWindow = GetFocusedInputWindow(hwnd);
+        SendMessage(inputWindow, WindowMessageKeyDown, new IntPtr(virtualKey), downState);
+        SendMessage(inputWindow, WindowMessageKeyUp, new IntPtr(virtualKey), upState);
+        Thread.Sleep(150);
+    }
+
+    private static IntPtr GetFocusedInputWindow(IntPtr hwnd)
+    {
+        var threadId = GetWindowThreadProcessId(hwnd, out _);
+        var info = new GuiThreadInfo
+        {
+            Size = Marshal.SizeOf<GuiThreadInfo>(),
+        };
+        return GetGUIThreadInfo(threadId, ref info) && info.Focus != IntPtr.Zero
+            ? info.Focus
+            : hwnd;
     }
 
     private static void AssertSingleSelection(AutomationElement element)
@@ -791,6 +997,37 @@ internal static partial class VisualVerificationRunner
         await process.WaitForExitAsync();
         if (process.ExitCode != 0)
             throw new InvalidOperationException($"{fileName} exited with {process.ExitCode}.\n{stdout}\n{stderr}");
+    }
+
+    private static void CaptureThroughApp(
+        string requestPath,
+        string outputPath,
+        string destinationPath,
+        TimeSpan timeout)
+    {
+        var errorPath = outputPath + ".error";
+        File.Delete(requestPath);
+        File.Delete(outputPath);
+        File.Delete(errorPath);
+        File.WriteAllText(requestPath, Guid.NewGuid().ToString("N"));
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < timeout)
+        {
+            if (File.Exists(errorPath))
+            {
+                throw new InvalidOperationException(
+                    $"App-render capture failed: {File.ReadAllText(errorPath)}");
+            }
+            if (File.Exists(outputPath)
+                && new FileInfo(outputPath).Length > 0)
+            {
+                File.Copy(outputPath, destinationPath, overwrite: true);
+                return;
+            }
+            Thread.Sleep(100);
+        }
+
+        throw new TimeoutException("Timed out waiting for the app-render capture.");
     }
 
     private static void CaptureWindow(IntPtr hwnd, string path)
@@ -950,6 +1187,27 @@ internal static partial class VisualVerificationRunner
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    private static extern uint MapVirtualKey(uint code, uint mapType);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessage(
+        IntPtr hwnd,
+        uint message,
+        IntPtr wParam,
+        IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(
+        IntPtr hwnd,
+        out uint processId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetGUIThreadInfo(
+        uint threadId,
+        ref GuiThreadInfo info);
+
+    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool BringWindowToTop(IntPtr hWnd);
 
@@ -983,6 +1241,23 @@ internal static partial class VisualVerificationRunner
     private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
 
     private const uint PrintWindowRenderFullContent = 2;
+    private const uint MapVirtualKeyToScanCode = 0;
+    private const uint WindowMessageKeyDown = 0x0100;
+    private const uint WindowMessageKeyUp = 0x0101;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GuiThreadInfo
+    {
+        public int Size;
+        public uint Flags;
+        public IntPtr Active;
+        public IntPtr Focus;
+        public IntPtr Capture;
+        public IntPtr MenuOwner;
+        public IntPtr MoveSize;
+        public IntPtr Caret;
+        public Rect CaretRect;
+    }
     private const int DwmWindowAttributeExtendedFrameBounds = 9;
 
     private const int ShowWindowRestore = 9;
