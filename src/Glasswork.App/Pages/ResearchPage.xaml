@@ -9,16 +9,24 @@
     mc:Ignorable="d">
 
     <Grid Padding="28" RowDefinitions="Auto,*">
-        <StackPanel Spacing="4">
-            <TextBlock
-                AutomationProperties.AutomationId="ResearchHeader"
-                Style="{StaticResource TitleTextBlockStyle}"
-                Text="Research" />
-            <TextBlock
-                Opacity="0.68"
-                Text="A focused library of explicitly opted-in Wiki Pages."
-                TextWrapping="Wrap" />
-        </StackPanel>
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+            <StackPanel Spacing="4">
+                <TextBlock
+                    AutomationProperties.AutomationId="ResearchHeader"
+                    Style="{StaticResource TitleTextBlockStyle}"
+                    Text="Research" />
+                <TextBlock
+                    Opacity="0.68"
+                    Text="A focused library of explicitly opted-in Wiki Pages."
+                    TextWrapping="Wrap" />
+            </StackPanel>
+            <Button
+                Grid.Column="1"
+                AutomationProperties.AutomationId="ResearchAddTopicButton"
+                Click="AddTopicButton_Click"
+                Content="Add Topic"
+                VerticalAlignment="Center" />
+        </Grid>
 
         <Grid
             x:Name="PopulatedView"
@@ -33,14 +41,61 @@
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
                 CornerRadius="8">
-                <Grid RowDefinitions="Auto,*">
-                    <TextBlock
-                        Margin="14,12,14,8"
-                        FontWeight="SemiBold"
-                        Text="Topics" />
+                <Grid RowDefinitions="Auto,Auto,*">
+                    <Grid Margin="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                        <TextBox
+                            x:Name="CatalogSearchBox"
+                            AutomationProperties.AutomationId="ResearchCatalogSearchBox"
+                            AutomationProperties.Name="Search Research Topics"
+                            PlaceholderText="Search Topics"
+                            TextChanged="CatalogFilter_Changed" />
+                        <Grid Grid.Row="1" ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                            <ComboBox
+                                x:Name="CatalogTypeFilter"
+                                AutomationProperties.AutomationId="ResearchCatalogTypeFilter"
+                                Header="Type"
+                                SelectedIndex="0"
+                                SelectionChanged="CatalogFilter_Changed">
+                                <ComboBoxItem Content="All" Tag="" />
+                                <ComboBoxItem Content="Concept" Tag="concept" />
+                                <ComboBoxItem Content="Decision" Tag="decision" />
+                                <ComboBoxItem Content="Entity" Tag="entity" />
+                                <ComboBoxItem Content="Project" Tag="project" />
+                                <ComboBoxItem Content="Source" Tag="source" />
+                                <ComboBoxItem Content="System" Tag="system" />
+                                <ComboBoxItem Content="Incident" Tag="incident" />
+                                <ComboBoxItem Content="Accomplishment" Tag="accomplishment" />
+                            </ComboBox>
+                            <ComboBox
+                                x:Name="CatalogConfidenceFilter"
+                                Grid.Column="1"
+                                AutomationProperties.AutomationId="ResearchCatalogConfidenceFilter"
+                                Header="Confidence"
+                                SelectedIndex="0"
+                                SelectionChanged="CatalogFilter_Changed">
+                                <ComboBoxItem Content="All" Tag="" />
+                                <ComboBoxItem Content="High" Tag="high" />
+                                <ComboBoxItem Content="Medium" Tag="medium" />
+                                <ComboBoxItem Content="Low" Tag="low" />
+                            </ComboBox>
+                            <ComboBox
+                                x:Name="CatalogFreshnessFilter"
+                                Grid.Column="2"
+                                AutomationProperties.AutomationId="ResearchCatalogFreshnessFilter"
+                                Header="Freshness"
+                                SelectedIndex="0"
+                                SelectionChanged="CatalogFilter_Changed">
+                                <ComboBoxItem Content="All" Tag="" />
+                                <ComboBoxItem Content="Healthy" Tag="healthy" />
+                                <ComboBoxItem Content="Low confidence" Tag="low" />
+                                <ComboBoxItem Content="Expired" Tag="expired" />
+                                <ComboBoxItem Content="Incomplete" Tag="incomplete" />
+                            </ComboBox>
+                        </Grid>
+                    </Grid>
                     <ListView
                         x:Name="TopicList"
-                        Grid.Row="1"
+                        Grid.Row="2"
                         AutomationProperties.AutomationId="ResearchTopicList"
                         IsItemClickEnabled="True"
                         SelectionChanged="TopicList_SelectionChanged"
@@ -96,6 +151,7 @@
             </Border>
 
             <Grid
+                x:Name="TopicDetailView"
                 Grid.Column="1"
                 RowDefinitions="Auto,*"
                 RowSpacing="12">
@@ -168,15 +224,63 @@
                     </StackPanel>
                 </ScrollViewer>
             </Grid>
+            <StackPanel
+                x:Name="NoResultsView"
+                Grid.Column="1"
+                AutomationProperties.AutomationId="ResearchNoResults"
+                HorizontalAlignment="Center"
+                MaxWidth="420"
+                Spacing="10"
+                VerticalAlignment="Center"
+                Visibility="Collapsed">
+                <TextBlock
+                    FontSize="20"
+                    FontWeight="SemiBold"
+                    HorizontalAlignment="Center"
+                    Text="No Topics match your filters" />
+                <TextBlock
+                    Opacity="0.68"
+                    Text="Try another search or clear the catalog filters."
+                    TextAlignment="Center"
+                    TextWrapping="Wrap" />
+                <Button
+                    AutomationProperties.AutomationId="ResearchClearFiltersButton"
+                    Click="ClearCatalogFilters_Click"
+                    Content="Clear filters"
+                    HorizontalAlignment="Center" />
+            </StackPanel>
         </Grid>
 
-        <controls:EmptyState
+        <StackPanel
             x:Name="EmptyStateView"
             Grid.Row="1"
             AutomationProperties.AutomationId="ResearchEmptyState"
-            Body="Opt in an existing schema-governed Wiki Page with glasswork.research. The page stays in the Vault and is never copied into Glasswork."
-            Glyph="&#xE82D;"
-            Headline="No Research Topics yet"
-            Visibility="Collapsed" />
+            HorizontalAlignment="Center"
+            MaxWidth="480"
+            Spacing="12"
+            VerticalAlignment="Center"
+            Visibility="Collapsed">
+            <FontIcon
+                FontSize="42"
+                Glyph="&#xE82D;"
+                HorizontalAlignment="Center" />
+            <TextBlock
+                AutomationProperties.Name="No Research Topics yet"
+                FontSize="22"
+                FontWeight="SemiBold"
+                HorizontalAlignment="Center"
+                Text="No Research Topics yet" />
+            <TextBlock
+                HorizontalAlignment="Center"
+                Opacity="0.72"
+                Text="Add Topic opts an existing schema-governed Wiki Page into this library. Glasswork does not create, move, or copy your knowledge."
+                TextAlignment="Center"
+                TextWrapping="Wrap" />
+            <Button
+                AutomationProperties.AutomationId="ResearchEmptyAddTopicButton"
+                Click="AddTopicButton_Click"
+                Content="Add Topic"
+                HorizontalAlignment="Center" />
+        </StackPanel>
     </Grid>
 </Page>

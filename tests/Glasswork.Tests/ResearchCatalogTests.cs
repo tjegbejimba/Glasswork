@@ -1,4 +1,6 @@
 using Glasswork.Core.Research;
+using Glasswork.Core.Services;
+using System.Text;
 
 namespace Glasswork.Tests;
 
@@ -67,6 +69,543 @@ public sealed class ResearchCatalogTests
         Assert.AreEqual("wiki/concepts/async-callbacks.md", topic.VaultRelativePath);
         StringAssert.StartsWith(topic.Markdown, "# Async callbacks");
         Assert.IsEmpty(snapshot.Diagnostics);
+    }
+
+    [TestMethod]
+    public void Search_FindsTopicsAcrossWikiMetadataAndAppliesFilters()
+    {
+        WritePage(
+            "wiki/concepts/async-callbacks.md",
+            """
+            ---
+            id: async-callbacks
+            title: Asynchronous callbacks
+            aliases:
+              - Completion handlers
+            type: concept
+            tags:
+              - dotnet
+              - concurrency
+            confidence: low
+            updated: 2026-08-10
+            glasswork:
+              research: {}
+            ---
+            Callback synthesis.
+            """);
+        WritePage(
+            "wiki/systems/worker-runtime.md",
+            """
+            ---
+            id: worker-runtime
+            title: Worker runtime
+            type: system
+            tags: [dotnet]
+            confidence: high
+            updated: 2026-08-15
+            glasswork:
+              research: {}
+            ---
+            Runtime synthesis.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16));
+
+        var result = catalog.Search(new ResearchCatalogQuery(
+            Text: "completion",
+            WikiType: "concept",
+            Confidence: "low",
+            Freshness: ResearchFreshness.LowConfidence));
+
+        Assert.HasCount(1, result.Topics);
+        Assert.AreEqual("async-callbacks", result.Topics[0].Id);
+        CollectionAssert.AreEqual(
+            new[] { "Completion handlers" },
+            result.Topics[0].Aliases.ToArray());
+        CollectionAssert.AreEqual(
+            new[] { "dotnet", "concurrency" },
+            result.Topics[0].Tags.ToArray());
+    }
+
+    [TestMethod]
+    public void OptIn_PreservesUnrelatedYamlProseAndUnicodeAndReturnsVisibleTopic()
+    {
+        const string relativePath = "wiki/concepts/cafe-research.md";
+        const string original =
+            "---\n" +
+            "id: cafe-research\n" +
+            "title: \"Café research ☕\"\n" +
+            "aliases: [\"Kaffee\", \"研究\"]\n" +
+            "type: concept\n" +
+            "tags: [\"unicode\", \"nested-yaml\"]\n" +
+            "custom:\n" +
+            "  nested:\n" +
+            "    answer: 42\n" +
+            "glasswork:\n" +
+            "  presentation:\n" +
+            "    accent: \"blå\"\n" +
+            "---\n" +
+            "# Café research ☕\n\n" +
+            "Prose stays byte-for-byte unchanged: naïve, 研究, 🚀.\n";
+        WritePage(relativePath, original);
+        var selfWrites = new SelfWriteCoordinator(_vaultRoot);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            selfWrites);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.IsNotNull(result.Topic);
+        Assert.AreEqual("cafe-research", result.Topic.Id);
+        Assert.AreEqual("Café research ☕", result.Topic.Title);
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.IsTrue(selfWrites.IsOwnProcessWrite(fullPath));
+        Assert.AreEqual(
+            original.Replace(
+                "    accent: \"blå\"\n---",
+                "    accent: \"blå\"\n  research: {}\n---",
+                StringComparison.Ordinal),
+            File.ReadAllText(fullPath).ReplaceLineEndings("\n"));
+        Assert.AreEqual(
+            "cafe-research",
+            catalog.Capture().Topics.Single().Id);
+    }
+
+    [TestMethod]
+    public void OptIn_PreservesAnchoredFlowStyleGlassworkMetadata()
+    {
+        const string relativePath = "wiki/concepts/anchored.md";
+        const string original =
+            "---\n" +
+            "id: anchored\n" +
+            "title: Anchored metadata\n" +
+            "type: concept\n" +
+            "glasswork: &settings { presentation: { accent: \"blå\" } }\n" +
+            "---\n" +
+            "Anchored prose remains unchanged.\n";
+        WritePage(relativePath, original);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(relativePath);
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.IsTrue(
+            result.Succeeded,
+            result.Message + Environment.NewLine + File.ReadAllText(fullPath));
+        Assert.AreEqual(
+            original.Replace(
+                "accent: \"blå\" } }",
+                "accent: \"blå\" }, research: {} }",
+                StringComparison.Ordinal),
+            File.ReadAllText(fullPath).ReplaceLineEndings("\n"));
+    }
+
+    [TestMethod]
+    public void OptIn_PreservesMultilineFlowStyleGlassworkMetadata()
+    {
+        const string relativePath = "wiki/concepts/multiline-flow.md";
+        const string original =
+            "---\n" +
+            "id: multiline-flow\n" +
+            "title: Multiline flow\n" +
+            "type: concept\n" +
+            "glasswork: {\n" +
+            "  presentation: {\n" +
+            "    accent: \"blå\"\n" +
+            "  }\n" +
+            "}\n" +
+            "---\n" +
+            "Multiline flow prose.\n";
+        WritePage(relativePath, original);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.AreEqual(
+            original.Replace(
+                "  }\n}\n---",
+                "  }, research: {}\n}\n---",
+                StringComparison.Ordinal),
+            File.ReadAllText(fullPath).ReplaceLineEndings("\n"));
+    }
+
+    [TestMethod]
+    public void OptIn_PreservesExistingFourSpaceGlassworkIndentation()
+    {
+        const string relativePath = "wiki/concepts/four-space.md";
+        const string original =
+            "---\n" +
+            "id: four-space\n" +
+            "title: Four-space metadata\n" +
+            "type: concept\n" +
+            "glasswork:\n" +
+            "    presentation: {}\n" +
+            "---\n" +
+            "Four-space prose.\n";
+        WritePage(relativePath, original);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.AreEqual(
+            original.Replace(
+                "    presentation: {}\n---",
+                "    presentation: {}\n    research: {}\n---",
+                StringComparison.Ordinal),
+            File.ReadAllText(fullPath).ReplaceLineEndings("\n"));
+    }
+
+    [TestMethod]
+    public void OptIn_PreservesQuotedGlassworkKey()
+    {
+        const string relativePath = "wiki/concepts/quoted-key.md";
+        const string original =
+            "---\n" +
+            "id: quoted-key\n" +
+            "title: Quoted key\n" +
+            "type: concept\n" +
+            "\"glasswork\":\n" +
+            "  presentation: {}\n" +
+            "---\n" +
+            "Quoted-key prose.\n";
+        WritePage(relativePath, original);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.AreEqual(
+            original.Replace(
+                "  presentation: {}\n---",
+                "  presentation: {}\n  research: {}\n---",
+                StringComparison.Ordinal),
+            File.ReadAllText(fullPath).ReplaceLineEndings("\n"));
+    }
+
+    [TestMethod]
+    public void Search_EligiblePagesIdentifiesAlreadyOptedInState()
+    {
+        WriteOptedInPage("wiki/concepts/current.md", "current", "concept");
+        WritePage(
+            "wiki/sources/available.md",
+            "---\nid: available\ntitle: Available source\ntype: source\n---\nBody");
+        WritePage(
+            "wiki/todo/not-eligible.md",
+            "---\nid: not-eligible\ntitle: Task-shaped page\ntype: concept\n---\nBody");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Search(new ResearchCatalogQuery(Text: "e"));
+
+        Assert.HasCount(2, result.EligiblePages);
+        Assert.IsTrue(result.EligiblePages.Single(page => page.Id == "current").IsOptedIn);
+        Assert.IsFalse(result.EligiblePages.Single(page => page.Id == "available").IsOptedIn);
+    }
+
+    [TestMethod]
+    public void Search_NoMatchesRetainsUnfilteredTopicCount()
+    {
+        WriteOptedInPage("wiki/concepts/alpha.md", "alpha", "concept");
+        WriteOptedInPage("wiki/sources/beta.md", "beta", "source");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Search(new ResearchCatalogQuery(Text: "no-match"));
+
+        Assert.IsEmpty(result.Topics);
+        Assert.AreEqual(2, result.TotalTopicCount);
+    }
+
+    [TestMethod]
+    public void Search_MatchesDisplayedLowConfidenceFreshnessLabel()
+    {
+        WritePage(
+            "wiki/concepts/uncertain.md",
+            "---\nid: uncertain\ntitle: Uncertain\ntype: concept\nconfidence: low\nglasswork:\n  research: {}\n---\nBody");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Search(new ResearchCatalogQuery(Text: "low confidence"));
+
+        Assert.HasCount(1, result.Topics);
+        Assert.AreEqual("uncertain", result.Topics[0].Id);
+    }
+
+    [TestMethod]
+    public void OptIn_AlreadyOptedInPageReturnsPreciseFailureWithoutChangingFile()
+    {
+        const string relativePath = "wiki/concepts/current.md";
+        WriteOptedInPage(relativePath, "current", "concept");
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var original = File.ReadAllBytes(fullPath);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.AlreadyOptedIn, result.ErrorCode);
+        StringAssert.Contains(result.Message, "already a Research Topic");
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(fullPath));
+    }
+
+    [TestMethod]
+    public void OptIn_MissingPageReturnsPreciseFailure()
+    {
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn("wiki/concepts/missing.md");
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.PageNotFound, result.ErrorCode);
+        StringAssert.Contains(result.Message, "no longer exists");
+    }
+
+    [TestMethod]
+    public void OptIn_PageWithoutStableIdReturnsPreciseFailure()
+    {
+        const string relativePath = "wiki/concepts/no-id.md";
+        WritePage(relativePath, "---\ntitle: No ID\ntype: concept\n---\nBody");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.MissingStableId, result.ErrorCode);
+        StringAssert.Contains(result.Message, "no stable 'id'");
+    }
+
+    [TestMethod]
+    public void OptIn_DuplicateStableIdReturnsPreciseFailureWithoutChangingEitherPage()
+    {
+        const string selectedPath = "wiki/concepts/duplicate.md";
+        WritePage(
+            selectedPath,
+            "---\nid: duplicate\ntitle: Duplicate concept\ntype: concept\n---\nBody");
+        WritePage(
+            "wiki/sources/duplicate.md",
+            "---\nid: DUPLICATE\ntitle: Duplicate source\ntype: source\n---\nBody");
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            selectedPath.Replace('/', Path.DirectorySeparatorChar));
+        var original = File.ReadAllBytes(fullPath);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var search = catalog.Search(new ResearchCatalogQuery(Text: "duplicate"));
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.HasCount(2, search.EligiblePages);
+        Assert.IsTrue(search.EligiblePages.All(
+            page => page.Eligibility == ResearchPageEligibility.DuplicateStableId));
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.DuplicateStableId, result.ErrorCode);
+        StringAssert.Contains(result.Message, "duplicated");
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(fullPath));
+    }
+
+    [TestMethod]
+    public void OptIn_RechecksDuplicateIdsAddedAfterCachedSnapshot()
+    {
+        const string selectedPath = "wiki/concepts/cached.md";
+        WritePage(
+            selectedPath,
+            "---\nid: cached\ntitle: Cached concept\ntype: concept\n---\nBody");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        _ = catalog.Capture();
+        WritePage(
+            "wiki/sources/late-duplicate.md",
+            "---\nid: CACHED\ntitle: Late duplicate\ntype: source\n---\nBody");
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.DuplicateStableId, result.ErrorCode);
+        Assert.IsEmpty(catalog.Capture().Topics);
+    }
+
+    [TestMethod]
+    public void OptIn_UnreadableUnrelatedPageReturnsPreciseFailureWithoutChangingSelectedPage()
+    {
+        const string selectedPath = "wiki/concepts/selected.md";
+        WritePage(
+            selectedPath,
+            "---\nid: selected\ntitle: Selected concept\ntype: concept\n---\nBody");
+        const string unrelatedPath = "wiki/sources/unreadable.md";
+        WritePage(
+            unrelatedPath,
+            "---\nid: unreadable\ntitle: Unreadable source\ntype: source\n---\nBody");
+        var selectedFullPath = Path.Combine(
+            _vaultRoot,
+            selectedPath.Replace('/', Path.DirectorySeparatorChar));
+        var selectedBytes = File.ReadAllBytes(selectedFullPath);
+        var unrelatedFullPath = Path.Combine(
+            _vaultRoot,
+            unrelatedPath.Replace('/', Path.DirectorySeparatorChar));
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        using var lockStream = new FileStream(
+            unrelatedFullPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.None);
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.ConcurrentModification, result.ErrorCode);
+        StringAssert.Contains(result.Message, "could not verify unique stable IDs");
+        CollectionAssert.AreEqual(selectedBytes, File.ReadAllBytes(selectedFullPath));
+    }
+
+    [TestMethod]
+    public void OptIn_PreservesUtf16EncodingAndUnicodeContent()
+    {
+        const string relativePath = "wiki/concepts/utf16.md";
+        const string original =
+            "---\r\n" +
+            "id: utf16\r\n" +
+            "title: \"研究 café\"\r\n" +
+            "type: concept\r\n" +
+            "---\r\n" +
+            "Unicode prose: naïve, 研究, 🚀.\r\n";
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, original, Encoding.Unicode);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        var bytes = File.ReadAllBytes(fullPath);
+        Assert.AreEqual(0xFF, bytes[0]);
+        Assert.AreEqual(0xFE, bytes[1]);
+        var updated = File.ReadAllText(fullPath, Encoding.Unicode);
+        StringAssert.Contains(updated, "glasswork:\r\n  research: {}");
+        StringAssert.Contains(updated, "Unicode prose: naïve, 研究, 🚀.");
+    }
+
+    [TestMethod]
+    public void OptIn_UnsupportedEncodingReturnsFailureAndReleasesFileLock()
+    {
+        const string relativePath = "wiki/concepts/invalid-encoding.md";
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllBytes(fullPath, [0xFF, 0xFF, 0xFF]);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.UnsupportedEncoding, result.ErrorCode);
+        using var exclusive = new FileStream(
+            fullPath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None);
+        Assert.AreEqual(3, exclusive.Length);
+    }
+
+    [TestMethod]
+    public void OptIn_RejectsFrontmatterFileOutsideWikiMarkdownScope()
+    {
+        const string relativePath = "assets/research-shaped.md";
+        WritePage(
+            relativePath,
+            "---\nid: research-shaped\ntitle: Research shaped\ntype: concept\n---\nBody");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.IneligiblePage, result.ErrorCode);
+    }
+
+    [TestMethod]
+    public void OptIn_WriteFailureReturnsPreciseFailureAndDoesNotReportSuccess()
+    {
+        const string relativePath = "wiki/concepts/locked.md";
+        WritePage(
+            relativePath,
+            "---\nid: locked\ntitle: Locked\ntype: concept\n---\nBody");
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var original = File.ReadAllBytes(fullPath);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        using var lockStream = new FileStream(
+            fullPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read);
+
+        var result = catalog.OptIn(relativePath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
+        StringAssert.Contains(result.Message, "could not be locked for update");
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(fullPath));
+    }
+
+    [TestMethod]
+    public void SearchAndOptIn_RejectWikiPagesReachedThroughReparsePoint()
+    {
+        var outsideRoot = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-research-outside-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outsideRoot);
+        var outsidePage = Path.Combine(outsideRoot, "outside.md");
+        const string original =
+            "---\nid: outside\ntitle: Outside page\ntype: concept\n---\nOutside body";
+        File.WriteAllText(outsidePage, original);
+        var linkPath = Path.Combine(_vaultRoot, "wiki", "linked");
+        Directory.CreateDirectory(Path.GetDirectoryName(linkPath)!);
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(linkPath, outsideRoot);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                Assert.Inconclusive($"This environment cannot create a reparse point: {ex.Message}");
+                return;
+            }
+
+            IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+            var search = catalog.Search(new ResearchCatalogQuery());
+            var result = catalog.OptIn("wiki/linked/outside.md");
+
+            Assert.IsFalse(search.EligiblePages.Any(page => page.Id == "outside"));
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(ResearchOptInErrorCode.IneligiblePage, result.ErrorCode);
+            Assert.AreEqual(original, File.ReadAllText(outsidePage));
+        }
+        finally
+        {
+            if (Directory.Exists(linkPath))
+                Directory.Delete(linkPath);
+            if (Directory.Exists(outsideRoot))
+                Directory.Delete(outsideRoot, recursive: true);
+        }
     }
 
     [TestMethod]

@@ -1,0 +1,230 @@
+{
+  "name": "Research add Topic",
+  "theme": "light",
+  "startUri": "glasswork://research",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/eligible-concept.md",
+      "id": "eligible-concept",
+      "title": "Eligible concept",
+      "type": "concept",
+      "confidence": "low",
+      "updated": "2026-08-10",
+      "optedIn": false,
+      "markdown": "# Eligible concept\n\nA concept available for Research."
+    },
+    {
+      "relativePath": "sources/eligible-source.md",
+      "id": "eligible-source",
+      "title": "Eligible source",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-15",
+      "expires": "2027-01-01",
+      "sources": ["https://example.test/eligible-source"],
+      "optedIn": false,
+      "markdown": "# Eligible source\n\nThis existing Wiki Page becomes immediately readable without being copied."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "No Research Topics yet",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchEmptyAddTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchEmptyAddTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchPickerSearchBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchPickerSearchBox",
+      "value": "eligible"
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchPickerTypeFilter"
+    },
+    {
+      "type": "select",
+      "name": "Source"
+    },
+    {
+      "type": "wait-for",
+      "name": "Eligible source",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "ResearchEligiblePageRow",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Add selected Topic",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchCatalogSearchBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchCatalogSearchBox",
+      "value": "eligible-source"
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchCatalogTypeFilter"
+    },
+    {
+      "type": "select",
+      "name": "Source"
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchCatalogFreshnessFilter"
+    },
+    {
+      "type": "select",
+      "name": "Healthy"
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchCatalogConfidenceFilter"
+    },
+    {
+      "type": "select",
+      "name": "High"
+    },
+    {
+      "type": "wait-for",
+      "name": "This existing Wiki Page becomes immediately readable without being copied.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchCatalogSearchBox",
+      "value": "no-match"
+    },
+    {
+      "type": "wait-for",
+      "name": "No Topics match your filters",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchClearFiltersButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchAddTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchPickerSearchBox",
+      "value": "eligible-source"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchAlreadyAddedBadge",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "ResearchEligiblePageRow",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "'Eligible source' is already a Research Topic.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Cancel"
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchCatalogTypeFilter"
+    },
+    {
+      "type": "select",
+      "name": "Source"
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchCatalogConfidenceFilter"
+    },
+    {
+      "type": "select",
+      "name": "High"
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchCatalogFreshnessFilter"
+    },
+    {
+      "type": "select",
+      "name": "Healthy"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchAddTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchPickerSearchBox",
+      "value": "eligible-concept"
+    },
+    {
+      "type": "select",
+      "automationId": "ResearchEligiblePageRow",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Add selected Topic",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchTopicTitle",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "A concept available for Research.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchCatalogSearchBox"
+    },
+    {
+      "type": "assert-single-selection",
+      "automationId": "ResearchTopicList"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-add-topic",
+      "waitMilliseconds": 500
+    }
+  ]
+}

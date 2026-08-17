@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="Glasswork.Pages.AddResearchTopicDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Add Research Topic"
+    PrimaryButtonText="Add selected Topic"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary"
+    IsPrimaryButtonEnabled="False"
+    PrimaryButtonClick="OnAddTopic">
+
+    <Grid MinWidth="520" RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="12">
+        <TextBlock
+            Text="Choose an existing schema-governed Wiki Page. Glasswork adds Research metadata; it never creates, moves, or copies the page."
+            TextWrapping="Wrap" />
+
+        <TextBox
+            x:Name="PickerSearchBox"
+            Grid.Row="1"
+            AutomationProperties.AutomationId="ResearchPickerSearchBox"
+            AutomationProperties.Name="Search eligible Wiki Pages"
+            PlaceholderText="Search title, ID, aliases, type, tags, confidence, or freshness"
+            TextChanged="PickerFilter_Changed" />
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10">
+            <ComboBox
+                x:Name="PickerTypeFilter"
+                AutomationProperties.AutomationId="ResearchPickerTypeFilter"
+                Header="Wiki type"
+                MinWidth="150"
+                SelectedIndex="0"
+                SelectionChanged="PickerFilter_Changed">
+                <ComboBoxItem Content="All types" Tag="" />
+                <ComboBoxItem Content="Concept" Tag="concept" />
+                <ComboBoxItem Content="Decision" Tag="decision" />
+                <ComboBoxItem Content="Entity" Tag="entity" />
+                <ComboBoxItem Content="Project" Tag="project" />
+                <ComboBoxItem Content="Source" Tag="source" />
+                <ComboBoxItem Content="System" Tag="system" />
+                <ComboBoxItem Content="Incident" Tag="incident" />
+                <ComboBoxItem Content="Accomplishment" Tag="accomplishment" />
+            </ComboBox>
+            <TextBlock
+                x:Name="PickerCount"
+                AutomationProperties.AutomationId="ResearchPickerCount"
+                Opacity="0.68"
+                VerticalAlignment="Bottom" />
+        </StackPanel>
+
+        <ListView
+            x:Name="EligiblePageList"
+            Grid.Row="3"
+            AutomationProperties.AutomationId="ResearchEligiblePageList"
+            Height="300"
+            IsItemClickEnabled="True"
+            SelectionChanged="EligiblePageList_SelectionChanged"
+            SelectionMode="Single"
+            SingleSelectionFollowsFocus="True">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="AutomationProperties.AutomationId" Value="ResearchEligiblePageRow" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="10,8" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel Spacing="3">
+                            <TextBlock
+                                FontWeight="SemiBold"
+                                Text="{Binding Title}"
+                                TextTrimming="CharacterEllipsis"
+                                ToolTipService.ToolTip="{Binding Title}" />
+                            <TextBlock
+                                FontSize="12"
+                                Opacity="0.68"
+                                Text="{Binding MetadataLine}"
+                                TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                        <StackPanel
+                            Grid.Column="1"
+                            Spacing="4">
+                            <Border
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                CornerRadius="4"
+                                Padding="8,3"
+                                Visibility="{Binding OptedInVisibility}">
+                                <TextBlock
+                                    AutomationProperties.AutomationId="ResearchAlreadyAddedBadge"
+                                    FontSize="11"
+                                    Text="Already added" />
+                            </Border>
+                            <Border
+                                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                CornerRadius="4"
+                                Padding="8,3"
+                                Visibility="{Binding DuplicateIdVisibility}">
+                                <TextBlock
+                                    AutomationProperties.AutomationId="ResearchDuplicateIdBadge"
+                                    FontSize="11"
+                                    Text="Duplicate ID" />
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+
+        <InfoBar
+            x:Name="PickerStatus"
+            Grid.Row="4"
+            AutomationProperties.AutomationId="ResearchPickerStatus"
+            IsOpen="False" />
+    </Grid>
+</ContentDialog>
