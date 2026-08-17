@@ -1,0 +1,1558 @@
+<!--
+  QUESTION ANSWERED: How should the winning capacity-first Planner behave across
+  interaction, accessibility, responsive, and Calendar Context recovery states?
+  THROWAWAY PROTOTYPE ONLY - this is a primary-source design artifact, not production code.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Glasswork Planner interaction states prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f3ee;
+      --surface: #ffffff;
+      --surface-soft: #f3f3f3;
+      --border: #d7d7d7;
+      --border-strong: #8a8a8a;
+      --text: #242424;
+      --muted: #616161;
+      --accent: #a4264c;
+      --accent-soft: #f7e8ed;
+      --good: #237b4b;
+      --warn: #8a4b08;
+      --danger: #b42318;
+      --info: #005a9e;
+      --shadow: 0 14px 36px rgba(0, 0, 0, .13);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #302e2c;
+        --surface: #242424;
+        --surface-soft: #2e2e2e;
+        --border: #4c4c4c;
+        --border-strong: #858585;
+        --text: #f2f2f2;
+        --muted: #b8b8b8;
+        --accent: #ff9aad;
+        --accent-soft: #4c2932;
+        --good: #72d69c;
+        --warn: #ffc46b;
+        --danger: #ff9b8e;
+        --info: #75bfff;
+        --shadow: 0 14px 36px rgba(0, 0, 0, .38);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+    }
+    button, select { font: inherit; }
+    button:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 3px;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 28px; line-height: 1.15; }
+    h2 { font-size: 18px; }
+    h3 { font-size: 15px; }
+    .muted { color: var(--muted); }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .throwaway {
+      position: fixed;
+      z-index: 30;
+      top: 10px;
+      right: 14px;
+      padding: 4px 8px;
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr);
+    }
+    .nav-shell {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      padding: 62px 10px 16px;
+      border-right: 1px solid var(--border);
+      background: var(--surface-soft);
+    }
+    .nav-mark {
+      position: absolute;
+      top: 18px;
+      left: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .nav-mark span:first-child {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border-strong);
+      border-radius: 7px;
+      color: var(--accent);
+    }
+    .nav-item {
+      min-height: 40px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+    }
+    .nav-item.active {
+      box-shadow: inset 0 0 0 1px var(--accent);
+      background: var(--accent-soft);
+      font-weight: 700;
+    }
+    .nav-spacer { flex: 1; }
+
+    .workspace {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+    }
+    .page-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 28px 30px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .page-head p { margin-top: 5px; color: var(--muted); }
+    .lab-toggle {
+      min-height: 38px;
+      padding: 7px 12px;
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .question {
+      padding: 12px 30px;
+      border-bottom: 1px solid var(--border);
+      background: var(--accent-soft);
+    }
+    .question strong { color: var(--accent); }
+
+    .planner {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(480px, 1fr) minmax(330px, 420px);
+      gap: 18px;
+      padding: 18px 24px 28px;
+    }
+    .region {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
+    }
+    .scope-region {
+      max-height: calc(100vh - 180px);
+      overflow: auto;
+    }
+    .scope-sticky {
+      position: sticky;
+      z-index: 5;
+      top: 0;
+      padding: 18px;
+      border-bottom: 1px solid var(--border);
+      border-radius: 12px 12px 0 0;
+      background: color-mix(in srgb, var(--surface) 96%, transparent);
+      backdrop-filter: blur(8px);
+    }
+    .region-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .region-title small { color: var(--muted); }
+    .fit-line {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .fit-status { font-size: 20px; font-weight: 750; }
+    .fit-status.good { color: var(--good); }
+    .fit-status.warn { color: var(--warn); }
+    .fit-status.danger { color: var(--danger); }
+    .fit-status.muted { color: var(--muted); }
+    .capacity-meter {
+      height: 10px;
+      margin-top: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-soft);
+    }
+    .capacity-fill { height: 100%; background: var(--good); }
+    .capacity-fill.over { background: var(--danger); }
+    .capacity-fill.uncertain {
+      background: repeating-linear-gradient(
+        135deg,
+        var(--warn) 0 8px,
+        var(--surface) 8px 13px
+      );
+    }
+    .capacity-detail {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status-panel {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      margin-top: 14px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-soft);
+    }
+    .status-panel::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--info);
+    }
+    .status-panel.warning::before { background: var(--warn); }
+    .status-panel.error::before { background: var(--danger); }
+    .status-panel strong { display: block; }
+    .status-panel p { margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .status-action {
+      flex: 0 0 auto;
+      min-height: 34px;
+      padding: 5px 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .undo-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+      padding: 9px 12px;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      background: var(--accent-soft);
+    }
+    .undo-bar button, .tray button {
+      min-height: 34px;
+      padding: 5px 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .tray {
+      margin: 14px 18px 0;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface-soft);
+    }
+    .tray summary {
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 650;
+    }
+    .tray-list {
+      display: grid;
+      gap: 8px;
+      padding: 0 12px 12px;
+    }
+    .tray-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .scope-list { padding: 12px 18px 18px; }
+    .work-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 70px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .work-row:last-child { border-bottom: 0; }
+    .work-row[data-selected="true"] {
+      border-radius: 8px;
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+      background: var(--accent-soft);
+    }
+    .work-title {
+      width: 100%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font-weight: 700;
+      text-align: left;
+      cursor: pointer;
+    }
+    .work-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 5px;
+    }
+    .chip {
+      display: inline-flex;
+      min-height: 24px;
+      align-items: center;
+      padding: 2px 7px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .chip.uncertain {
+      border-color: var(--warn);
+      color: var(--warn);
+      font-weight: 700;
+    }
+    .not-today {
+      min-height: 38px;
+      padding: 6px 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .not-today:hover { border-color: var(--accent); color: var(--accent); }
+    .empty-state {
+      padding: 34px 24px;
+      text-align: center;
+    }
+    .empty-state h3 { font-size: 20px; }
+    .empty-state p { max-width: 430px; margin: 8px auto 0; color: var(--muted); }
+
+    .day-region {
+      max-height: calc(100vh - 180px);
+      overflow: auto;
+      padding: 18px;
+    }
+    .day-disclosure > summary {
+      list-style: none;
+      cursor: default;
+    }
+    .day-disclosure > summary::-webkit-details-marker { display: none; }
+    .day-copy { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .timeline {
+      position: relative;
+      height: 560px;
+      margin-top: 14px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          transparent 0 69px,
+          var(--border) 69px 70px
+        );
+    }
+    .time-label {
+      position: absolute;
+      left: 8px;
+      color: var(--muted);
+      font-size: 10px;
+      transform: translateY(-50%);
+    }
+    .time-block {
+      position: absolute;
+      left: 52px;
+      right: 10px;
+      overflow: hidden;
+      padding: 6px 8px;
+      border: 1px solid var(--border-strong);
+      border-radius: 7px;
+      background: var(--surface-soft);
+      font-size: 11px;
+    }
+    .time-block.busy { border-color: var(--info); }
+    .time-block.tentative {
+      border-color: var(--warn);
+      background: repeating-linear-gradient(
+        135deg,
+        var(--surface) 0 8px,
+        var(--surface-soft) 8px 14px
+      );
+    }
+    .time-block.open { border-color: var(--good); color: var(--good); }
+    .calendar-placeholder {
+      display: grid;
+      min-height: 360px;
+      place-items: center;
+      margin-top: 14px;
+      padding: 30px;
+      border: 1px dashed var(--border-strong);
+      border-radius: 9px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .lab {
+      position: fixed;
+      z-index: 20;
+      right: 18px;
+      bottom: 18px;
+      width: min(680px, calc(100vw - 36px));
+      max-height: calc(100vh - 36px);
+      overflow: auto;
+      padding: 16px;
+      border: 1px solid var(--border-strong);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .lab[hidden] { display: none; }
+    .lab-head {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .lab-close {
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .lab-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .lab-section {
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface-soft);
+    }
+    .lab-section h3 { margin-bottom: 8px; }
+    .lab-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .lab-actions button, .scenario-step, .scenario-tab {
+      min-height: 34px;
+      padding: 5px 9px;
+      border: 1px solid var(--border-strong);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .scenario-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 14px;
+    }
+    .scenario-tab[aria-selected="true"] {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .scenario-panel {
+      margin-top: 10px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+    }
+    .scenario-panel p { color: var(--muted); }
+    .scenario-steps { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+    .scenario-step.done { opacity: .55; text-decoration: line-through; }
+    .scenario-step.current { border-color: var(--accent); color: var(--accent); }
+    .state-readout {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .state-field {
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+    }
+    .state-field dt { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+    .state-field dd { margin: 3px 0 0; font-weight: 700; }
+
+    body.simulate-narrow .app-shell {
+      max-width: 620px;
+      margin: 0 auto;
+      grid-template-columns: 54px minmax(0, 1fr);
+      box-shadow: var(--shadow);
+    }
+    body.simulate-narrow .nav-shell { padding-inline: 6px; }
+    body.simulate-narrow .nav-mark { left: 13px; }
+    body.simulate-narrow .nav-mark strong,
+    body.simulate-narrow .nav-item span { display: none; }
+    body.simulate-narrow .nav-item { padding: 0; text-align: center; }
+    body.simulate-narrow .planner {
+      display: block;
+      padding: 12px;
+    }
+    body.simulate-narrow .scope-region,
+    body.simulate-narrow .day-region {
+      max-height: none;
+      overflow: visible;
+    }
+    body.simulate-narrow .day-region { margin-top: 12px; }
+    body.simulate-narrow .day-disclosure > summary {
+      cursor: pointer;
+    }
+    body.simulate-narrow .day-disclosure > summary::after {
+      content: "Expand";
+      float: right;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    body.simulate-narrow .day-disclosure[open] > summary::after { content: "Collapse"; }
+    body.simulate-narrow .state-readout { grid-template-columns: 1fr 1fr; }
+
+    @media (max-width: 760px) {
+      .app-shell { grid-template-columns: 54px minmax(0, 1fr); }
+      .nav-shell { padding-inline: 6px; }
+      .nav-mark { left: 13px; }
+      .nav-mark strong, .nav-item span { display: none; }
+      .nav-item { padding: 0; text-align: center; }
+      .page-head { align-items: start; padding-inline: 18px; }
+      .question { padding-inline: 18px; }
+      .planner { display: block; padding: 12px; }
+      .scope-region, .day-region { max-height: none; overflow: visible; }
+      .day-region { margin-top: 12px; }
+      .day-disclosure > summary { cursor: pointer; }
+      .lab-grid, .state-readout { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="throwaway">Disposable prototype · no data is saved</div>
+  <div class="app-shell">
+    <nav class="nav-shell" id="nav-region" aria-label="Glasswork navigation" tabindex="-1">
+      <div class="nav-mark"><span>G</span><strong>Glasswork</strong></div>
+      <button class="nav-item" aria-label="My Day">☀ <span>My Day</span></button>
+      <button class="nav-item active" aria-current="page" aria-label="Planner">▦ <span>Planner</span></button>
+      <button class="nav-item" aria-label="Backlog">☷ <span>Backlog</span></button>
+      <button class="nav-item" aria-label="Work Log">◷ <span>Work Log</span></button>
+      <div class="nav-spacer"></div>
+      <button class="nav-item" aria-label="Settings">⚙ <span>Settings</span></button>
+    </nav>
+
+    <main class="workspace">
+      <header class="page-head">
+        <div>
+          <h1>Planner</h1>
+          <p>Monday, August 17 · Today only</p>
+        </div>
+        <button class="lab-toggle" id="open-lab" aria-haspopup="dialog">Open state lab</button>
+      </header>
+      <section class="question" aria-label="Prototype question">
+        <strong>Question:</strong> Does the approved Planner state model stay understandable,
+        reversible, keyboard-operable, and useful when Calendar Context degrades?
+      </section>
+
+      <div class="planner">
+        <section
+          class="region scope-region"
+          id="scope-region"
+          aria-labelledby="scope-heading"
+          tabindex="-1">
+          <div class="scope-sticky">
+            <div class="region-title">
+              <h2 id="scope-heading">Scope decisions</h2>
+              <small id="scope-count"></small>
+            </div>
+            <div id="capacity-summary"></div>
+            <div id="calendar-status"></div>
+            <div id="undo-host"></div>
+          </div>
+          <div id="recovery-tray"></div>
+          <div class="scope-list" id="scope-list" role="list" aria-label="Actionable leaves"></div>
+        </section>
+
+        <section
+          class="region day-region"
+          id="day-region"
+          aria-label="Day context"
+          tabindex="-1">
+          <details class="day-disclosure" id="day-disclosure" open>
+            <summary>
+              <div class="region-title">
+                <h2 id="day-heading">Day context</h2>
+                <small>Read-only</small>
+              </div>
+              <p class="day-copy">Meetings, transitions, and Open gaps. Work is not placed on the clock.</p>
+            </summary>
+            <div id="timeline-host"></div>
+          </details>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="visually-hidden" id="live-region" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <aside class="lab" id="state-lab" role="dialog" aria-modal="false" aria-labelledby="lab-heading" hidden>
+    <div class="lab-head">
+      <div>
+        <h2 id="lab-heading">Planner state lab</h2>
+        <p class="muted">Free-play with the model or follow a guided walkthrough.</p>
+      </div>
+      <button class="lab-close" id="close-lab" aria-label="Close state lab">×</button>
+    </div>
+
+    <div class="lab-grid">
+      <section class="lab-section">
+        <h3>Calendar Context</h3>
+        <div class="lab-actions" id="calendar-actions"></div>
+      </section>
+      <section class="lab-section">
+        <h3>Work scope</h3>
+        <div class="lab-actions">
+          <button data-action="PRESET_OVER">Over-capacity preset</button>
+          <button data-action="TOGGLE_UNCERTAIN">Toggle uncertain Size</button>
+          <button data-action="EMPTY_SCOPE">Empty scope</button>
+          <button data-action="RESET">Reset all</button>
+        </div>
+      </section>
+      <section class="lab-section">
+        <h3>Viewport</h3>
+        <div class="lab-actions">
+          <button data-action="TOGGLE_NARROW">Toggle narrow simulation</button>
+        </div>
+      </section>
+      <section class="lab-section">
+        <h3>Keyboard map</h3>
+        <p class="muted">
+          F6/Shift+F6: regions · ↑/↓: leaves · Enter: detail · Tab: named actions ·
+          Alt+U: Undo when available.
+        </p>
+      </section>
+    </div>
+
+    <div class="scenario-tabs" id="scenario-tabs" role="tablist" aria-label="Guided walkthroughs"></div>
+    <div class="scenario-panel" id="scenario-panel"></div>
+    <dl class="state-readout" id="state-readout" aria-label="Full prototype state"></dl>
+  </aside>
+
+  <script>
+    const SIZE_MINUTES = {
+      quick: 15,
+      short: 30,
+      focus: 60,
+      deep: 120,
+      break_down: 120
+    };
+
+    const CALENDAR_STATES = {
+      current: {
+        label: "Current",
+        severity: "",
+        title: "",
+        message: "",
+        action: ""
+      },
+      loading: {
+        label: "Loading",
+        severity: "info",
+        title: "Refreshing Calendar Context",
+        message: "Keep reducing scope while the last complete day context remains visible.",
+        action: ""
+      },
+      auth: {
+        label: "Sign-in required",
+        severity: "error",
+        title: "Sign-in required",
+        message: "Calendar-derived fit and Open gaps are unavailable. Task scope is still editable.",
+        action: "Sign in"
+      },
+      incomplete: {
+        label: "Unknown calendar",
+        severity: "warning",
+        title: "Calendar Context incomplete",
+        message: "No fit claim or Open gaps are shown until every selected calendar succeeds.",
+        action: "Refresh"
+      },
+      stale: {
+        label: "Possibly stale",
+        severity: "warning",
+        title: "Calendar Context may be stale",
+        message: "Showing the latest complete snapshot from 28 minutes ago.",
+        action: "Refresh"
+      },
+      setup: {
+        label: "Setup required",
+        severity: "info",
+        title: "Choose capacity-relevant calendars",
+        message: "Daily capacity and selected work remain visible; calendar-derived fit is unavailable.",
+        action: "Choose calendars"
+      },
+      corrupt: {
+        label: "Recovery required",
+        severity: "error",
+        title: "Calendar Context cannot be read",
+        message: "The protected source is preserved. Preview the exact reset scope before continuing.",
+        action: "Preview reset"
+      }
+    };
+
+    const initialLeaves = [
+      {
+        id: "research",
+        title: "Review Planner research",
+        parent: "Planner specification",
+        size: "focus",
+        explicit: true,
+        note: "Explicit Focus · due today"
+      },
+      {
+        id: "states",
+        title: "Define interaction and recovery states",
+        parent: "Planner specification",
+        size: "deep",
+        explicit: true,
+        note: "Explicit Deep · in progress"
+      },
+      {
+        id: "email",
+        title: "Answer project email",
+        parent: "",
+        size: "short",
+        explicit: false,
+        note: "Assumed Short · no Size written"
+      },
+      {
+        id: "backup",
+        title: "Review NAS backup report",
+        parent: "",
+        size: "quick",
+        explicit: true,
+        note: "Explicit Quick · due today"
+      },
+      {
+        id: "migration",
+        title: "Plan homelab migration",
+        parent: "",
+        size: "deep",
+        explicit: true,
+        note: "Explicit Deep"
+      }
+    ];
+
+    const initialState = () => ({
+      leaves: structuredClone(initialLeaves),
+      removed: [],
+      undo: null,
+      calendar: "current",
+      dailyCapacity: 360,
+      availableCapacity: 360,
+      selectedIndex: 0,
+      narrow: false,
+      lastAnnouncement: "Planner ready. Five Actionable leaves.",
+      lastAction: "Reset to the normal state."
+    });
+
+    function reducer(state, action) {
+      const next = structuredClone(state);
+
+      switch (action.type) {
+        case "RESET":
+          return initialState();
+
+        case "SET_CALENDAR":
+          next.calendar = action.value;
+          next.lastAction = `Calendar Context changed to ${CALENDAR_STATES[action.value].label}.`;
+          next.lastAnnouncement =
+            action.value === "current"
+              ? `Calendar Context current. ${fitSummary(next)}.`
+              : `${CALENDAR_STATES[action.value].title}. ${CALENDAR_STATES[action.value].message}`;
+          return next;
+
+        case "PRESET_OVER":
+          next.leaves = structuredClone(initialLeaves);
+          next.leaves.push({
+            id: "brief",
+            title: "Draft launch brief",
+            parent: "",
+            size: "deep",
+            explicit: true,
+            note: "Explicit Deep · due today"
+          });
+          next.calendar = "current";
+          next.undo = null;
+          next.removed = [];
+          next.selectedIndex = 0;
+          next.lastAction = "Loaded an over-capacity day.";
+          next.lastAnnouncement = `${fitSummary(next)}. Use Not today to reduce scope.`;
+          return next;
+
+        case "TOGGLE_UNCERTAIN": {
+          const leaf = next.leaves.find(item => item.id === "migration");
+          if (leaf) {
+            const becomesUncertain = leaf.size !== "break_down";
+            leaf.size = becomesUncertain ? "break_down" : "deep";
+            leaf.explicit = true;
+            leaf.note = becomesUncertain
+              ? "Break down · at least 2h · needs decomposition"
+              : "Explicit Deep";
+            next.lastAction = becomesUncertain
+              ? "Plan homelab migration now has Break down Size."
+              : "Plan homelab migration returned to Deep Size.";
+            next.lastAnnouncement = `${next.lastAction} ${fitSummary(next)}.`;
+          }
+          return next;
+        }
+
+        case "EMPTY_SCOPE":
+          next.removed.push(...next.leaves);
+          next.leaves = [];
+          next.undo = null;
+          next.selectedIndex = -1;
+          next.lastAction = "Moved every Actionable leaf out of today.";
+          next.lastAnnouncement = emptyAnnouncement(next);
+          return next;
+
+        case "NOT_TODAY": {
+          const index = next.leaves.findIndex(item => item.id === action.id);
+          if (index < 0) return state;
+          const [leaf] = next.leaves.splice(index, 1);
+          next.removed = next.removed.filter(item => item.id !== leaf.id);
+          next.undo = { leaf, index, seconds: 10 };
+          next.selectedIndex = next.leaves.length
+            ? Math.min(index, next.leaves.length - 1)
+            : -1;
+          next.lastAction = `Moved ${leaf.title} out of today.`;
+          next.lastAnnouncement = `${next.lastAction} ${fitSummary(next)}. Undo available.`;
+          return next;
+        }
+
+        case "TICK_UNDO":
+          if (!next.undo) return state;
+          next.undo.seconds -= 1;
+          if (next.undo.seconds <= 0) {
+            next.removed.push(next.undo.leaf);
+            next.lastAction = `${next.undo.leaf.title} is available in the Not today recovery tray.`;
+            next.undo = null;
+          }
+          return next;
+
+        case "UNDO":
+          if (!next.undo) return state;
+          next.leaves.splice(
+            Math.min(next.undo.index, next.leaves.length),
+            0,
+            next.undo.leaf
+          );
+          next.selectedIndex = next.leaves.findIndex(item => item.id === next.undo.leaf.id);
+          next.lastAction = `Restored ${next.undo.leaf.title} to today.`;
+          next.undo = null;
+          next.lastAnnouncement = `${next.lastAction} ${fitSummary(next)}.`;
+          return next;
+
+        case "RESTORE": {
+          const index = next.removed.findIndex(item => item.id === action.id);
+          if (index < 0) return state;
+          const [leaf] = next.removed.splice(index, 1);
+          next.leaves.push(leaf);
+          next.selectedIndex = next.leaves.length - 1;
+          next.lastAction = `Restored ${leaf.title} from the Not today tray.`;
+          next.lastAnnouncement = `${next.lastAction} ${fitSummary(next)}.`;
+          return next;
+        }
+
+        case "SELECT":
+          if (!next.leaves.length) return state;
+          next.selectedIndex = Math.max(0, Math.min(action.index, next.leaves.length - 1));
+          return next;
+
+        case "TOGGLE_NARROW":
+          next.narrow = !next.narrow;
+          next.lastAction = `${next.narrow ? "Entered" : "Exited"} narrow-window simulation.`;
+          next.lastAnnouncement = next.narrow
+            ? "Narrow layout. Summary and scope precede collapsed Day context."
+            : "Wide layout. Scope decisions and Day context are separate panes.";
+          return next;
+
+        case "RECOVERY_ACTION":
+          if (next.calendar === "corrupt") {
+            next.lastAction =
+              "Reset preview: remove protected Calendar Context identity, event snapshot, and auth configuration; keep Planner settings and Vault work.";
+            next.lastAnnouncement = next.lastAction;
+          } else if (next.calendar === "auth") {
+            next.lastAction = "Opened sign-in. Reset was not offered.";
+            next.lastAnnouncement = next.lastAction;
+          } else if (next.calendar === "setup") {
+            next.lastAction = "Opened calendar selection. No calendars are selected automatically.";
+            next.lastAnnouncement = next.lastAction;
+          } else {
+            next.lastAction = "Requested a Calendar Context refresh.";
+            next.lastAnnouncement = next.lastAction;
+          }
+          return next;
+
+        default:
+          return state;
+      }
+    }
+
+    function selectedMinutes(state) {
+      return state.leaves.reduce((total, leaf) => total + SIZE_MINUTES[leaf.size], 0);
+    }
+
+    function uncertainLeaves(state) {
+      return state.leaves.filter(leaf => leaf.size === "break_down" || leaf.size === "unknown");
+    }
+
+    function assumedCount(state) {
+      return state.leaves.filter(leaf => !leaf.explicit).length;
+    }
+
+    function calendarIsComplete(state) {
+      return state.calendar === "current" || state.calendar === "loading" || state.calendar === "stale";
+    }
+
+    function fit(state) {
+      const selected = selectedMinutes(state);
+      const uncertain = uncertainLeaves(state);
+
+      if (!calendarIsComplete(state)) {
+        return {
+          key: "unknown",
+          label: state.calendar === "setup" ? "Setup required" : "Unknown calendar",
+          detail: "No calendar-derived fit claim",
+          difference: null
+        };
+      }
+
+      const difference = state.availableCapacity - selected;
+      if (uncertain.length) {
+        return {
+          key: "uncertain",
+          label: "Uncertain",
+          detail: difference < 0
+            ? `at least ${duration(-difference)} over`
+            : `${duration(difference)} numeric headroom`,
+          difference
+        };
+      }
+      if (difference < 0) {
+        return {
+          key: "over",
+          label: "Over capacity",
+          detail: `${duration(-difference)} over`,
+          difference
+        };
+      }
+      if (difference === 0) {
+        return { key: "at", label: "At capacity", detail: "No headroom", difference };
+      }
+      return {
+        key: "headroom",
+        label: "Headroom",
+        detail: `${duration(difference)} available`,
+        difference
+      };
+    }
+
+    function fitSummary(state) {
+      const result = fit(state);
+      return result.detail ? `${result.label}, ${result.detail}` : result.label;
+    }
+
+    function emptyAnnouncement(state) {
+      if (calendarIsComplete(state)) {
+        return `No Actionable leaves in scope. ${duration(state.availableCapacity)} Available capacity.`;
+      }
+      return "No Actionable leaves in scope. Calendar availability is unknown.";
+    }
+
+    function duration(minutes) {
+      const hours = Math.floor(minutes / 60);
+      const remainder = minutes % 60;
+      if (!hours) return `${remainder}m`;
+      if (!remainder) return `${hours}h`;
+      return `${hours}h ${remainder}m`;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    let state = initialState();
+    let undoTimer = null;
+    let lastRenderedAnnouncement = "";
+    let activeScenario = "scope";
+    let scenarioStep = 0;
+
+    const scenarios = {
+      scope: {
+        name: "Reduce scope + recover",
+        description:
+          "Start over capacity, move one leaf out of today, let the 10-second Undo expire, then restore it from the session tray.",
+        steps: [
+          ["Load over-capacity day", { type: "PRESET_OVER" }],
+          ["Move Draft launch brief out", { type: "NOT_TODAY", id: "brief" }],
+          ["Expire inline Undo", { type: "EXPIRE_UNDO" }],
+          ["Restore from recovery tray", { type: "RESTORE", id: "brief" }]
+        ]
+      },
+      uncertain: {
+        name: "Uncertain + over",
+        description:
+          "Confirm Uncertain remains primary while the numeric minimum overage stays visible and the responsible leaf is named.",
+        steps: [
+          ["Load over-capacity day", { type: "PRESET_OVER" }],
+          ["Mark migration Break down", { type: "TOGGLE_UNCERTAIN" }],
+          ["Move launch brief out", { type: "NOT_TODAY", id: "brief" }]
+        ]
+      },
+      recovery: {
+        name: "Calendar recovery",
+        description:
+          "Walk the narrowest valid recovery actions without disabling task-scope decisions.",
+        steps: [
+          ["Show incomplete Calendar Context", { type: "SET_CALENDAR", value: "incomplete" }],
+          ["Use Refresh", { type: "RECOVERY_ACTION" }],
+          ["Show sign-in failure", { type: "SET_CALENDAR", value: "auth" }],
+          ["Use Sign in", { type: "RECOVERY_ACTION" }],
+          ["Show corrupt protected data", { type: "SET_CALENDAR", value: "corrupt" }],
+          ["Preview scoped reset", { type: "RECOVERY_ACTION" }]
+        ]
+      },
+      empty: {
+        name: "Orthogonal empty states",
+        description:
+          "Compare no work in scope with known availability against no work plus unknown Calendar Context.",
+        steps: [
+          ["Empty scope with current calendar", { type: "EMPTY_SCOPE" }],
+          ["Make calendar unavailable", { type: "SET_CALENDAR", value: "incomplete" }],
+          ["Restore normal state", { type: "RESET" }]
+        ]
+      },
+      narrow: {
+        name: "Narrow + keyboard",
+        description:
+          "Reflow to one reading order, keep Day context collapsed, then traverse the major regions with F6.",
+        steps: [
+          ["Simulate narrow window", { type: "TOGGLE_NARROW" }],
+          ["Move focus to scope region", { type: "FOCUS_SCOPE" }],
+          ["Move focus to Day context", { type: "FOCUS_DAY" }]
+        ]
+      }
+    };
+
+    function dispatch(action, options = {}) {
+      if (action.type === "EXPIRE_UNDO") {
+        if (state.undo) {
+          const next = structuredClone(state);
+          next.removed.push(next.undo.leaf);
+          next.lastAction = `${next.undo.leaf.title} is available in the Not today recovery tray.`;
+          next.undo = null;
+          state = next;
+        }
+      } else if (action.type === "FOCUS_SCOPE") {
+        document.getElementById("scope-region").focus();
+      } else if (action.type === "FOCUS_DAY") {
+        document.getElementById("day-region").focus();
+      } else {
+        state = reducer(state, action);
+      }
+
+      render();
+
+      if (!options.silent && state.lastAnnouncement !== lastRenderedAnnouncement) {
+        lastRenderedAnnouncement = state.lastAnnouncement;
+        const live = document.getElementById("live-region");
+        live.textContent = "";
+        window.setTimeout(() => {
+          live.textContent = state.lastAnnouncement;
+        }, 30);
+      }
+
+      syncUndoTimer();
+    }
+
+    function syncUndoTimer() {
+      if (undoTimer) {
+        window.clearInterval(undoTimer);
+        undoTimer = null;
+      }
+      if (!state.undo) return;
+
+      undoTimer = window.setInterval(() => {
+        state = reducer(state, { type: "TICK_UNDO" });
+        render();
+        if (!state.undo) syncUndoTimer();
+      }, 1000);
+    }
+
+    function render() {
+      document.body.classList.toggle("simulate-narrow", state.narrow);
+      const isNarrow =
+        state.narrow || window.matchMedia("(max-width: 760px)").matches;
+      const disclosure = document.getElementById("day-disclosure");
+      if (isNarrow && !disclosure.dataset.userToggled) {
+        disclosure.open = false;
+      } else if (!isNarrow) {
+        disclosure.open = true;
+      }
+
+      renderCapacity();
+      renderCalendarStatus();
+      renderUndo();
+      renderTray();
+      renderLeaves();
+      renderTimeline();
+      renderLab();
+    }
+
+    function renderCapacity() {
+      const result = fit(state);
+      const selected = selectedMinutes(state);
+      const percent = calendarIsComplete(state)
+        ? Math.min(100, Math.round(selected / state.availableCapacity * 100))
+        : Math.min(100, Math.round(selected / state.dailyCapacity * 100));
+      const statusClass =
+        result.key === "headroom" || result.key === "at"
+          ? "good"
+          : result.key === "over"
+            ? "danger"
+            : result.key === "uncertain"
+              ? "warn"
+              : "muted";
+      const fillClass =
+        result.key === "over" ? "over" : result.key === "uncertain" ? "uncertain" : "";
+      const uncertainty = uncertainLeaves(state);
+      const assumed = assumedCount(state);
+
+      document.getElementById("capacity-summary").innerHTML = `
+        <div class="fit-line">
+          <div class="fit-status ${statusClass}">${escapeHtml(result.label)}</div>
+          <strong>${escapeHtml(result.detail)}</strong>
+        </div>
+        <div
+          class="capacity-meter"
+          role="progressbar"
+          aria-label="Selected work compared with ${calendarIsComplete(state) ? "Available capacity" : "Daily capacity"}"
+          aria-valuemin="0"
+          aria-valuemax="${calendarIsComplete(state) ? state.availableCapacity : state.dailyCapacity}"
+          aria-valuenow="${selected}">
+          <div class="capacity-fill ${fillClass}" style="width:${percent}%"></div>
+        </div>
+        <div class="capacity-detail">
+          <span>${duration(selected)} selected${assumed ? ` · ${assumed} assumed` : ""}</span>
+          <span>${
+            calendarIsComplete(state)
+              ? `${duration(state.availableCapacity)} Available capacity`
+              : `${duration(state.dailyCapacity)} Daily capacity`
+          }</span>
+        </div>
+        ${
+          uncertainty.length
+            ? `<p class="muted" style="margin-top:8px">Uncertain: ${uncertainty.map(item => escapeHtml(item.title)).join(", ")}.</p>`
+            : ""
+        }
+      `;
+    }
+
+    function renderCalendarStatus() {
+      const config = CALENDAR_STATES[state.calendar];
+      const host = document.getElementById("calendar-status");
+
+      if (state.calendar === "current") {
+        host.innerHTML = "";
+        return;
+      }
+
+      host.innerHTML = `
+        <div class="status-panel ${config.severity}" role="region" aria-label="Calendar Context status">
+          <div>
+            <strong>${escapeHtml(config.title)}</strong>
+            <p>${escapeHtml(config.message)}</p>
+          </div>
+          ${
+            config.action
+              ? `<button class="status-action" data-action="RECOVERY_ACTION">${escapeHtml(config.action)}</button>`
+              : ""
+          }
+        </div>
+      `;
+    }
+
+    function renderUndo() {
+      const host = document.getElementById("undo-host");
+      if (!state.undo) {
+        host.innerHTML = "";
+        return;
+      }
+      host.innerHTML = `
+        <div class="undo-bar">
+          <span>${escapeHtml(state.undo.leaf.title)} moved out of today · ${state.undo.seconds}s</span>
+          <button data-action="UNDO" accesskey="u">Undo <span class="muted">(Alt+U)</span></button>
+        </div>
+      `;
+    }
+
+    function renderTray() {
+      const host = document.getElementById("recovery-tray");
+      if (!state.removed.length) {
+        host.innerHTML = "";
+        return;
+      }
+      host.innerHTML = `
+        <details class="tray">
+          <summary>Not today (${state.removed.length})</summary>
+          <div class="tray-list">
+            ${state.removed.map(leaf => `
+              <div class="tray-row">
+                <span>${escapeHtml(leaf.title)}</span>
+                <button data-action="RESTORE" data-id="${escapeHtml(leaf.id)}">
+                  Restore ${escapeHtml(leaf.title)}
+                </button>
+              </div>
+            `).join("")}
+          </div>
+        </details>
+      `;
+    }
+
+    function renderLeaves() {
+      document.getElementById("scope-count").textContent =
+        `${state.leaves.length} Actionable ${state.leaves.length === 1 ? "leaf" : "leaves"}`;
+      const host = document.getElementById("scope-list");
+
+      if (!state.leaves.length) {
+        const known = calendarIsComplete(state);
+        host.innerHTML = `
+          <div class="empty-state">
+            <h3>No work in scope</h3>
+            <p>${
+              known
+                ? `${duration(state.availableCapacity)} Available capacity remains. Add work from My Day or restore something from Not today.`
+                : "Calendar availability is unknown. Add work from My Day or recover Calendar Context independently."
+            }</p>
+          </div>
+        `;
+        return;
+      }
+
+      host.innerHTML = state.leaves.map((leaf, index) => {
+        const uncertain = leaf.size === "break_down" || leaf.size === "unknown";
+        const sizeLabel = leaf.size === "break_down"
+          ? "Break down · at least 2h"
+          : `${leaf.explicit ? "Explicit" : "Assumed"} ${leaf.size.replace("_", " ")}`;
+        return `
+          <div
+            class="work-row"
+            role="listitem"
+            data-selected="${index === state.selectedIndex}"
+            data-row-index="${index}">
+            <div>
+              <button
+                class="work-title"
+                data-action="OPEN_DETAIL"
+                data-id="${escapeHtml(leaf.id)}"
+                aria-label="Open details for ${escapeHtml(leaf.title)}">
+                ${escapeHtml(leaf.title)}
+              </button>
+              <div class="work-meta">
+                ${leaf.parent ? `<span class="chip">${escapeHtml(leaf.parent)}</span>` : ""}
+                <span class="chip ${uncertain ? "uncertain" : ""}">${escapeHtml(sizeLabel)}</span>
+                <span class="chip">${duration(SIZE_MINUTES[leaf.size])}</span>
+              </div>
+            </div>
+            <button
+              class="not-today"
+              data-action="NOT_TODAY"
+              data-id="${escapeHtml(leaf.id)}"
+              aria-label="Move ${escapeHtml(leaf.title)} out of today">
+              Not today
+            </button>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderTimeline() {
+      const host = document.getElementById("timeline-host");
+      if (!calendarIsComplete(state)) {
+        host.innerHTML = `
+          <div class="calendar-placeholder">
+            <div>
+              <strong>No calendar-derived day context</strong>
+              <p>Open gaps and fit remain suppressed. Work-scope decisions stay available.</p>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      host.innerHTML = `
+        <div class="timeline" aria-label="Read-only proportional day timeline">
+          ${["9 AM", "10 AM", "11 AM", "12 PM", "1 PM", "2 PM", "3 PM", "4 PM", "5 PM"]
+            .map((label, index) => `<span class="time-label" style="top:${index * 70}px">${label}</span>`)
+            .join("")}
+          <div class="time-block busy" style="top:18px;height:70px">
+            <strong>Product sync</strong><br>Busy · 9:15–10:00
+          </div>
+          <div class="time-block open" style="top:105px;height:82px">
+            <strong>Open gap</strong><br>1h 10m
+          </div>
+          <div class="time-block tentative" style="top:207px;height:52px">
+            <strong>Design review</strong><br>Tentative · 12:00–12:45
+          </div>
+          <div class="time-block busy" style="top:280px;height:105px">
+            <strong>Customer call + transition</strong><br>1:00–2:30
+          </div>
+          <div class="time-block open" style="top:405px;height:127px">
+            <strong>Open gap</strong><br>1h 45m
+          </div>
+        </div>
+        ${state.calendar === "stale" ? `<p class="muted" style="margin-top:8px">Snapshot age: 28 minutes.</p>` : ""}
+      `;
+    }
+
+    function renderLab() {
+      document.getElementById("calendar-actions").innerHTML =
+        Object.entries(CALENDAR_STATES).map(([key, config]) => `
+          <button data-action="SET_CALENDAR" data-value="${key}" ${state.calendar === key ? 'aria-pressed="true"' : ""}>
+            ${escapeHtml(config.label)}
+          </button>
+        `).join("");
+
+      document.getElementById("scenario-tabs").innerHTML =
+        Object.entries(scenarios).map(([key, scenario]) => `
+          <button
+            class="scenario-tab"
+            role="tab"
+            aria-selected="${activeScenario === key}"
+            data-scenario="${key}">
+            ${escapeHtml(scenario.name)}
+          </button>
+        `).join("");
+
+      const scenario = scenarios[activeScenario];
+      document.getElementById("scenario-panel").innerHTML = `
+        <h3>${escapeHtml(scenario.name)}</h3>
+        <p>${escapeHtml(scenario.description)}</p>
+        <div class="scenario-steps">
+          ${scenario.steps.map(([label], index) => `
+            <button
+              class="scenario-step ${index < scenarioStep ? "done" : ""} ${index === scenarioStep ? "current" : ""}"
+              data-step="${index}">
+              ${index + 1}. ${escapeHtml(label)}
+            </button>
+          `).join("")}
+        </div>
+      `;
+
+      const result = fit(state);
+      document.getElementById("state-readout").innerHTML = `
+        ${stateField("Calendar", CALENDAR_STATES[state.calendar].label)}
+        ${stateField("Fit", fitSummary(state))}
+        ${stateField("Selected work", duration(selectedMinutes(state)))}
+        ${stateField("Available", calendarIsComplete(state) ? duration(state.availableCapacity) : "Suppressed")}
+        ${stateField("Actionable leaves", state.leaves.length)}
+        ${stateField("Assumed Size", assumedCount(state))}
+        ${stateField("Uncertain leaves", uncertainLeaves(state).length)}
+        ${stateField("Recovery tray", state.removed.length)}
+        ${stateField("Inline Undo", state.undo ? `${state.undo.seconds}s` : "None")}
+        ${stateField(
+          "Layout",
+          state.narrow || window.matchMedia("(max-width: 760px)").matches ? "Narrow" : "Wide"
+        )}
+        ${stateField("Primary status", result.label)}
+        ${stateField("Last action", state.lastAction)}
+      `;
+    }
+
+    function stateField(label, value) {
+      return `<div class="state-field"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
+    }
+
+    document.addEventListener("click", event => {
+      const button = event.target.closest("button");
+      if (!button) return;
+
+      if (button.id === "open-lab") {
+        document.getElementById("state-lab").hidden = false;
+        document.getElementById("close-lab").focus();
+        return;
+      }
+      if (button.id === "close-lab") {
+        document.getElementById("state-lab").hidden = true;
+        document.getElementById("open-lab").focus();
+        return;
+      }
+      if (button.dataset.scenario) {
+        activeScenario = button.dataset.scenario;
+        scenarioStep = 0;
+        state = initialState();
+        render();
+        return;
+      }
+      if (button.dataset.step !== undefined) {
+        const index = Number(button.dataset.step);
+        const scenario = scenarios[activeScenario];
+        if (index === 0 && scenarioStep !== 0) state = initialState();
+        dispatch(scenario.steps[index][1]);
+        scenarioStep = index + 1;
+        renderLab();
+        return;
+      }
+
+      const action = button.dataset.action;
+      if (!action) return;
+
+      if (action === "OPEN_DETAIL") {
+        const leaf = state.leaves.find(item => item.id === button.dataset.id);
+        if (leaf) {
+          state.lastAction = `Opened details for ${leaf.title}.`;
+          state.lastAnnouncement = state.lastAction;
+          dispatch({ type: "SELECT", index: state.leaves.indexOf(leaf) });
+        }
+        return;
+      }
+      if (action === "NOT_TODAY") {
+        dispatch({ type: "NOT_TODAY", id: button.dataset.id });
+        window.requestAnimationFrame(() => {
+          const rows = [...document.querySelectorAll(".work-row")];
+          rows[state.selectedIndex]?.querySelector(".work-title")?.focus();
+        });
+        return;
+      }
+      if (action === "RESTORE") {
+        dispatch({ type: "RESTORE", id: button.dataset.id });
+        return;
+      }
+      if (action === "SET_CALENDAR") {
+        dispatch({ type: "SET_CALENDAR", value: button.dataset.value });
+        return;
+      }
+      dispatch({ type: action });
+    });
+
+    document.getElementById("day-disclosure").addEventListener("toggle", event => {
+      if (state.narrow || window.matchMedia("(max-width: 760px)").matches) {
+        event.currentTarget.dataset.userToggled = "true";
+      }
+    });
+
+    window.matchMedia("(max-width: 760px)").addEventListener("change", () => {
+      delete document.getElementById("day-disclosure").dataset.userToggled;
+      render();
+    });
+
+    document.addEventListener("keydown", event => {
+      const lab = document.getElementById("state-lab");
+      if (event.key === "Escape" && !lab.hidden) {
+        lab.hidden = true;
+        document.getElementById("open-lab").focus();
+        return;
+      }
+
+      if (event.key === "F6") {
+        event.preventDefault();
+        const regions = [
+          document.getElementById("nav-region"),
+          document.getElementById("scope-region"),
+          document.getElementById("day-region")
+        ];
+        const current = regions.findIndex(region => region.contains(document.activeElement));
+        const delta = event.shiftKey ? -1 : 1;
+        regions[(current + delta + regions.length) % regions.length].focus();
+        return;
+      }
+
+      const row = event.target.closest(".work-row");
+      if (!row) return;
+
+      const index = Number(row.dataset.rowIndex);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex = (index + delta + state.leaves.length) % state.leaves.length;
+        dispatch({ type: "SELECT", index: nextIndex }, { silent: true });
+        document.querySelector(`[data-row-index="${nextIndex}"] .work-title`)?.focus();
+      } else if (event.key === "Enter" && event.target === row) {
+        event.preventDefault();
+        row.querySelector(".work-title")?.click();
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>
