@@ -341,7 +341,10 @@ public sealed partial class ResearchPage : Page
     private void PreviewCloseButton_Click(object sender, RoutedEventArgs e) =>
         ClosePreviewDrawer(restoreFocus: true);
 
-    private void ClosePreviewDrawer(bool restoreFocus)
+    private void ClosePreviewDrawer(
+        bool restoreFocus,
+        bool restoreReadingPosition = true,
+        Control? focusTarget = null)
     {
         if (_previewSelectedIndex < 0)
             return;
@@ -362,12 +365,15 @@ public sealed partial class ResearchPage : Page
         BackgroundContent.UpdateLayout();
         TopicDetailScroll.ChangeView(
             horizontalOffset: null,
-            verticalOffset: Math.Min(readingPosition, TopicDetailScroll.ScrollableHeight),
+            verticalOffset: restoreReadingPosition
+                ? Math.Min(readingPosition, TopicDetailScroll.ScrollableHeight)
+                : 0,
             zoomFactor: null,
             disableAnimation: true);
         if (restoreFocus)
         {
-            var invoker = FindCurrentPreviewInvoker(invokerPageId)
+            var invoker = focusTarget
+                ?? FindCurrentPreviewInvoker(invokerPageId)
                 ?? (EmptyStateView.Visibility == Visibility.Visible
                     ? EmptyStateView
                     : TopicList);
@@ -383,14 +389,25 @@ public sealed partial class ResearchPage : Page
         if (_previewSelectedIndex < 0)
             return;
 
-        if (_selectedTopic is null
-            || !string.Equals(
+        if (_selectedTopic is null)
+        {
+            ClosePreviewDrawer(
+                restoreFocus: true,
+                restoreReadingPosition: false,
+                focusTarget: EmptyStateView);
+            return;
+        }
+
+        if (!string.Equals(
                 _previewTopicId,
                 _selectedTopic.Id,
                 StringComparison.OrdinalIgnoreCase)
             || _previewPage is null)
         {
-            ClosePreviewDrawer(restoreFocus: true);
+            ClosePreviewDrawer(
+                restoreFocus: true,
+                restoreReadingPosition: false,
+                focusTarget: TopicList);
             return;
         }
 

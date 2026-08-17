@@ -109,6 +109,9 @@ public sealed partial class VisualVerificationScenario
             if (action.Type.Equals("scroll-percent", StringComparison.OrdinalIgnoreCase)
                 || action.Type.Equals(
                     "assert-vertical-scroll-at-least",
+                    StringComparison.OrdinalIgnoreCase)
+                || action.Type.Equals(
+                    "assert-vertical-scroll-at-most",
                     StringComparison.OrdinalIgnoreCase))
             {
                 if (!double.TryParse(

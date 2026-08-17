@@ -362,6 +362,9 @@ internal static partial class VisualVerificationRunner
             case "assert-vertical-scroll-at-least":
                 AssertVerticalScrollAtLeast(WaitForElement(hwnd, action), action);
                 return;
+            case "assert-vertical-scroll-at-most":
+                AssertVerticalScrollAtMost(WaitForElement(hwnd, action), action);
+                return;
             case "expand":
                 ExpandElement(WaitForElement(hwnd, action));
                 return;
@@ -987,6 +990,29 @@ internal static partial class VisualVerificationRunner
         {
             throw new InvalidOperationException(
                 $"Element '{element.Current.Name}' vertical scroll was {actual:0.##}%, expected at least {minimum:0.##}%.");
+        }
+    }
+
+    private static void AssertVerticalScrollAtMost(
+        AutomationElement element,
+        VisualVerificationAction action)
+    {
+        var expected = double.Parse(
+            action.Value!,
+            CultureInfo.InvariantCulture);
+        if (!element.TryGetCurrentPattern(ScrollPattern.Pattern, out var pattern)
+            || pattern is not ScrollPattern scroll
+            || scroll.Current.VerticallyScrollable is false)
+        {
+            return;
+        }
+
+        var actual = scroll.Current.VerticalScrollPercent;
+        if (actual > expected)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' vertical scroll was {actual:0.0}%, " +
+                $"expected at most {expected:0.0}%.");
         }
     }
 
