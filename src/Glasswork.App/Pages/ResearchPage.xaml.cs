@@ -24,7 +24,7 @@ public sealed partial class ResearchPage : Page
     private ResearchContextPage? _previewPage;
     private int _previewSelectedIndex = -1;
     private double _previewSynthesisVerticalOffset;
-    private Control? _previewInvoker;
+    private string? _previewInvokerPageId;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _focusRestoreTimer;
     private ResearchCatalogSnapshot _snapshot =
         new(Array.Empty<ResearchTopic>(), Array.Empty<ResearchCatalogDiagnostic>());
@@ -270,6 +270,8 @@ public sealed partial class ResearchPage : Page
             return;
         }
 
+        _focusRestoreTimer?.Stop();
+        _focusRestoreTimer = null;
         _previewPages = _selectedTopic.Context.RelatedPages;
         _previewSelectedIndex = _previewPages
             .Select((page, index) => (page, index))
@@ -286,7 +288,7 @@ public sealed partial class ResearchPage : Page
             return;
         }
         _previewSynthesisVerticalOffset = TopicDetailScroll.VerticalOffset;
-        _previewInvoker = sender as Control;
+        _previewInvokerPageId = row.Page.Id;
         ShowPreviewPage();
         var window = App.MainWindow as MainWindow
             ?? throw new InvalidOperationException("Research preview requires the app window.");
@@ -338,23 +340,55 @@ public sealed partial class ResearchPage : Page
             return;
 
         var readingPosition = _previewSynthesisVerticalOffset;
-        var invoker = _previewInvoker;
+        var invokerPageId = _previewInvokerPageId;
         PreviewDrawerOverlay.Visibility = Visibility.Collapsed;
         (App.MainWindow as MainWindow)?.HideModalOverlay(PreviewDrawerOverlay);
         _previewSelectedIndex = -1;
         _previewSynthesisVerticalOffset = 0;
         _previewPage = null;
         _previewPages = [];
-        _previewInvoker = null;
+        _previewInvokerPageId = null;
+        BackgroundContent.UpdateLayout();
         TopicDetailScroll.ChangeView(
             horizontalOffset: null,
             verticalOffset: Math.Min(readingPosition, TopicDetailScroll.ScrollableHeight),
             zoomFactor: null,
             disableAnimation: true);
-        if (restoreFocus && invoker is not null)
+        if (restoreFocus)
         {
-            BackgroundContent.UpdateLayout();
+            var invoker = FindCurrentPreviewInvoker(invokerPageId)
+                ?? TopicList;
             RestorePreviewInvokerFocus(invoker, attempts: 0);
+        }
+    }
+
+    private Control? FindCurrentPreviewInvoker(string? pageId)
+    {
+        if (string.IsNullOrWhiteSpace(pageId))
+            return null;
+
+        return FindDescendants<Button>(RelatedGroupsList)
+            .FirstOrDefault(button =>
+                button.Tag is ResearchRelatedPageRow row
+                && string.Equals(
+                    row.Page.Id,
+                    pageId,
+                    StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IEnumerable<T> FindDescendants<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        var childCount = Microsoft.UI.Xaml.Media.VisualTreeHelper
+            .GetChildrenCount(root);
+        for (var index = 0; index < childCount; index++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper
+                .GetChild(root, index);
+            if (child is T match)
+                yield return match;
+            foreach (var descendant in FindDescendants<T>(child))
+                yield return descendant;
         }
     }
 

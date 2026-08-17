@@ -149,6 +149,16 @@
       "timeoutMilliseconds": 10000
     },
     {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "concepts/related-concept.md",
+      "oldValue": "title: \"A related concept with an intentionally long title that wraps without hiding its identity\"",
+      "value": "title: \"A refreshed related concept with an intentionally long title that still restores focus\""
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 1200
+    },
+    {
       "type": "invoke",
       "automationId": "ResearchPreviewClose",
       "timeoutMilliseconds": 10000
@@ -160,7 +170,7 @@
     },
     {
       "type": "assert-focused",
-      "automationId": "ResearchRelatedPage",
+      "name": "A refreshed related concept with an intentionally long title that still restores focus",
       "timeoutMilliseconds": 10000
     },
     {
