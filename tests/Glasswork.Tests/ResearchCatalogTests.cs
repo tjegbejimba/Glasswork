@@ -1389,6 +1389,9 @@ public sealed class ResearchCatalogTests
         WritePage(
             candidatePath,
             "---\nid: candidate\ntitle: Candidate\ntype: task\nstatus: todo\n---\nCandidate.");
+        WritePage(
+            "wiki/systems/candidate-draft.md",
+            "---\nid: candidate\ntitle: Candidate draft\ntype: draft-note\n---\nDraft.");
 
         var retyped = catalog.SetContextPageIncluded("topic", "candidate", included: true);
 
@@ -1400,7 +1403,7 @@ public sealed class ResearchCatalogTests
         var deleted = catalog.SetContextPageIncluded("topic", "candidate", included: true);
 
         Assert.IsFalse(deleted.Succeeded);
-        Assert.AreEqual(ResearchContextUpdateErrorCode.PageNotFound, deleted.ErrorCode);
+        Assert.AreEqual(ResearchContextUpdateErrorCode.IneligiblePage, deleted.ErrorCode);
         Assert.AreEqual(original, File.ReadAllText(FullPath(topicPath)).ReplaceLineEndings("\n"));
 
         WritePage(
@@ -1455,6 +1458,65 @@ public sealed class ResearchCatalogTests
             Directory.GetFiles(
                 Path.GetDirectoryName(FullPath(topicPath))!,
                 "topic.md.research-context-*"));
+    }
+
+    [TestMethod]
+    public void SetContextPageIncluded_RejectsTopicReachedThroughSwappedReparsePoint()
+    {
+        var outsideRoot = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-research-context-outside-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outsideRoot);
+        const string topicPath = "wiki/concepts/topic.md";
+        const string outsideContent =
+            "---\nid: topic\ntitle: Outside Topic\ntype: concept\nglasswork:\n  research: {}\n---\nOutside.";
+        WritePage(
+            topicPath,
+            "---\nid: topic\ntitle: Topic\ntype: concept\nglasswork:\n  research: {}\n---\nInside.");
+        WritePage(
+            "wiki/sources/evidence.md",
+            "---\nid: evidence\ntitle: Evidence\ntype: source\n---\nEvidence.");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            quietPeriod: TimeSpan.FromMinutes(1));
+        _ = catalog.Capture();
+        catalog.Start();
+        var conceptsPath = Path.Combine(_vaultRoot, "wiki", "concepts");
+        var originalPath = Path.Combine(_vaultRoot, "wiki", "concepts-original");
+        Directory.Move(conceptsPath, originalPath);
+        File.WriteAllText(Path.Combine(outsideRoot, "topic.md"), outsideContent);
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(conceptsPath, outsideRoot);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                Assert.Inconclusive($"This environment cannot create a reparse point: {ex.Message}");
+                return;
+            }
+
+            var result = catalog.SetContextPageIncluded(
+                "topic",
+                "evidence",
+                included: true);
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(ResearchContextUpdateErrorCode.IneligiblePage, result.ErrorCode);
+            Assert.AreEqual(
+                outsideContent,
+                File.ReadAllText(Path.Combine(outsideRoot, "topic.md")));
+        }
+        finally
+        {
+            if (Directory.Exists(conceptsPath))
+                Directory.Delete(conceptsPath);
+            if (Directory.Exists(originalPath))
+                Directory.Move(originalPath, conceptsPath);
+            if (Directory.Exists(outsideRoot))
+                Directory.Delete(outsideRoot, recursive: true);
+        }
     }
 
     [TestMethod]

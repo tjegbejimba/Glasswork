@@ -1,0 +1,200 @@
+{
+  "name": "Research durable candidate projection refresh",
+  "theme": "light",
+  "startUri": "glasswork://research/projection-topic",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/projection-topic.md",
+      "id": "projection-topic",
+      "title": "Projection Topic",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "markdown": "# Projection Topic\n\n[[wiki/sources/context-anchor]] keeps Research context visible while durable candidates remain independent from Topic filters."
+    },
+    {
+      "relativePath": "sources/context-anchor.md",
+      "id": "context-anchor",
+      "title": "Context anchor",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": false,
+      "markdown": "# Context anchor"
+    },
+    {
+      "relativePath": "sources/candidate-delete.md",
+      "id": "candidate-delete",
+      "title": "Candidate delete",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Candidate delete"
+    },
+    {
+      "relativePath": "sources/candidate-retype.md",
+      "id": "candidate-retype",
+      "title": "Candidate retype",
+      "type": "source",
+      "confidence": "medium",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Candidate retype"
+    },
+    {
+      "relativePath": "sources/candidate-rename.md",
+      "id": "candidate-rename",
+      "title": "Candidate old title",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-16",
+      "optedIn": false,
+      "markdown": "# Candidate old title"
+    },
+    {
+      "relativePath": "sources/candidate-new.md",
+      "id": "candidate-new",
+      "title": "Candidate newly eligible",
+      "type": "task",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": false,
+      "markdown": "# Candidate newly eligible"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchCatalogSearchBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchTopicTitle",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchCatalogTypeFilter"
+    },
+    {
+      "type": "select",
+      "name": "Concept"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchCurateContext",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "wait-for",
+      "name": "Include Candidate delete in durable Research context"
+    },
+    {
+      "type": "delete-wiki-page",
+      "wikiPagePath": "sources/candidate-delete.md"
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 2200
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "ResearchContextDrawerClose"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "assert-not-present",
+      "name": "Include Candidate delete in durable Research context"
+    },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "sources/candidate-retype.md",
+      "oldValue": "type: \"source\"",
+      "value": "type: \"task\""
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 2200
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "assert-not-present",
+      "name": "Include Candidate retype in durable Research context"
+    },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "sources/candidate-rename.md",
+      "oldValue": "title: \"Candidate old title\"",
+      "value": "title: \"Candidate renamed\""
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 2200
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "wait-for",
+      "name": "Include Candidate renamed in durable Research context"
+    },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "sources/candidate-new.md",
+      "oldValue": "type: \"task\"",
+      "value": "type: \"source\""
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 2200
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "wait-for",
+      "name": "Include Candidate newly eligible in durable Research context"
+    },
+    {
+      "type": "assert-disabled",
+      "automationId": "ShellNavigation"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-durable-context-projection-refresh",
+      "waitMilliseconds": 500
+    }
+  ]
+}

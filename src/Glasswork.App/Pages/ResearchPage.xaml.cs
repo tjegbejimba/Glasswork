@@ -38,6 +38,7 @@ public sealed partial class ResearchPage : Page
     private ResearchDrawerMode _drawerMode;
     private Button? _contextSelectionInvoker;
     private bool _suppressContextDrawerRefreshClose;
+    private IReadOnlyList<ResearchCandidateProjection> _durableCandidateProjection = [];
 
     public ResearchPage()
     {
@@ -72,14 +73,23 @@ public sealed partial class ResearchPage : Page
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            var preserveOpenDrawer = (_drawerMode is ResearchDrawerMode.SessionSelection
-                    or ResearchDrawerMode.DurableCuration)
-                && _selectedTopic is not null
+            var selectedTopicUnchanged = _selectedTopic is not null
                 && e.Snapshot.Topics.FirstOrDefault(topic => string.Equals(
                     topic.Id,
                     _selectedTopic.Id,
                     StringComparison.OrdinalIgnoreCase)) is { } refreshedTopic
                 && ReferenceEquals(refreshedTopic, _selectedTopic);
+            var durableProjectionUnchanged =
+                _drawerMode != ResearchDrawerMode.DurableCuration
+                || _selectedTopic is not null
+                && _durableCandidateProjection.SequenceEqual(
+                    BuildCandidateProjection(
+                       e.Snapshot.EligiblePages,
+                       _selectedTopic.Id));
+            var preserveOpenDrawer = (_drawerMode is ResearchDrawerMode.SessionSelection
+                    or ResearchDrawerMode.DurableCuration)
+                && selectedTopicUnchanged
+                && durableProjectionUnchanged;
             _suppressContextDrawerRefreshClose = preserveOpenDrawer;
             try
             {
@@ -684,15 +694,21 @@ public sealed partial class ResearchPage : Page
         }
         else
         {
-            foreach (var page in _snapshot.EligiblePages
-                         .Where(page =>
-                             page.Eligibility == ResearchPageEligibility.Eligible
-                             && !string.Equals(
-                                 page.Id,
-                                 _selectedTopic.Id,
-                                 StringComparison.OrdinalIgnoreCase))
-                         .OrderBy(page => page.WikiType, StringComparer.OrdinalIgnoreCase)
-                         .ThenBy(page => page.Title, StringComparer.OrdinalIgnoreCase))
+            var durableCandidates = App.Research.Capture().EligiblePages
+                .Where(page =>
+                    page.Eligibility == ResearchPageEligibility.Eligible
+                    && !string.Equals(
+                        page.Id,
+                        _selectedTopic.Id,
+                        StringComparison.OrdinalIgnoreCase))
+                .OrderBy(page => page.WikiType, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(page => page.Title, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(page => page.Id, StringComparer.Ordinal)
+                .ToArray();
+            _durableCandidateProjection = durableCandidates
+                .Select(ResearchCandidateProjection.From)
+                .ToArray();
+            foreach (var page in durableCandidates)
             {
                 ContextSelectionRows.Add(
                     ResearchContextSelectionRow.Candidate(
@@ -816,6 +832,7 @@ public sealed partial class ResearchPage : Page
         (App.MainWindow as MainWindow)?.HideModalOverlay(PreviewDrawerOverlay);
         ContextSelectionDrawerContent.Visibility = Visibility.Collapsed;
         ContextSelectionRows.Clear();
+        _durableCandidateProjection = [];
         _contextSelectionInvoker = null;
         _drawerMode = ResearchDrawerMode.None;
         if (restoreFocus && invoker is not null)
@@ -833,6 +850,22 @@ public sealed partial class ResearchPage : Page
 
         CloseContextSelectionDrawer(restoreFocus: true);
     }
+
+    private static IReadOnlyList<ResearchCandidateProjection> BuildCandidateProjection(
+        IReadOnlyList<ResearchPageCandidate> candidates,
+        string topicId) =>
+        candidates
+            .Where(page =>
+                page.Eligibility == ResearchPageEligibility.Eligible
+                && !string.Equals(
+                    page.Id,
+                    topicId,
+                    StringComparison.OrdinalIgnoreCase))
+            .OrderBy(page => page.WikiType, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(page => page.Title, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(page => page.Id, StringComparer.Ordinal)
+            .Select(ResearchCandidateProjection.From)
+            .ToArray();
 
     private async void PreviewOpenInObsidianButton_Click(
         object sender,
@@ -868,6 +901,30 @@ public sealed partial class ResearchPage : Page
         _selectedTopicId = dialog.AddedTopic.Id;
         ResetCatalogFilters();
         RefreshCatalog(dialog.AddedTopic.Id, preserveCurrentState: false);
+    }
+
+    private sealed record ResearchCandidateProjection(
+        string Id,
+        string Title,
+        string WikiType,
+        string? Confidence,
+        DateOnly? Updated,
+        DateOnly? Expires,
+        ResearchFreshness Freshness,
+        string VaultRelativePath,
+        bool IsOptedIn)
+    {
+        public static ResearchCandidateProjection From(ResearchPageCandidate page) =>
+            new(
+                page.Id,
+                page.Title,
+                page.WikiType,
+                page.Confidence,
+                page.Updated,
+                page.Expires,
+                page.Freshness,
+                page.VaultRelativePath,
+                page.IsOptedIn);
     }
 }
 

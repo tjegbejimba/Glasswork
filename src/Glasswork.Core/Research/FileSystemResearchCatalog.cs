@@ -581,31 +581,63 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
             if (!TryValidateContextCandidateOnDisk(
                     pageId.Trim(),
+                    null,
                     out var authoritativePageId,
                     out var candidateErrorCode,
                     out var candidateMessage))
                 return ResearchContextUpdateResult.Failure(candidateErrorCode, candidateMessage);
 
-            var fullPath = Path.Combine(
+            var relativePath = topic.VaultRelativePath
+                .Replace('\\', '/')
+                .TrimStart('/');
+            var fullPath = Path.GetFullPath(Path.Combine(
                 _vaultRoot,
-                topic.VaultRelativePath.Replace('/', Path.DirectorySeparatorChar));
+                relativePath.Replace('/', Path.DirectorySeparatorChar)));
+            var vaultPrefix = _vaultRoot
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            if (!fullPath.StartsWith(vaultPrefix, StringComparison.OrdinalIgnoreCase)
+                || !IsEligibleLocation(relativePath)
+                || ContainsReparsePoint(relativePath))
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.IneligiblePage,
+                    $"Research Topic '{topic.Title}' no longer resolves to an eligible Wiki Page.");
+            }
             byte[] originalBytes;
             string original;
             TextEncodingInfo encoding;
+            FileStream? openedWriteGuard = null;
             try
             {
-                originalBytes = File.ReadAllBytes(fullPath);
+                openedWriteGuard = new FileStream(
+                    fullPath,
+                    FileMode.Open,
+                    FileAccess.ReadWrite,
+                    FileShare.Read | FileShare.Delete);
+                if (!IsOpenedFileExpected(openedWriteGuard, relativePath))
+                {
+                    openedWriteGuard.Dispose();
+                    return ResearchContextUpdateResult.Failure(
+                        ResearchContextUpdateErrorCode.IneligiblePage,
+                        $"Research Topic '{topic.Title}' no longer resolves inside the Vault.");
+                }
+                originalBytes = new byte[openedWriteGuard.Length];
+                openedWriteGuard.ReadExactly(originalBytes);
                 original = DecodeText(originalBytes, out encoding);
             }
             catch (Exception ex) when (
                 ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
             {
+                openedWriteGuard?.Dispose();
                 return ResearchContextUpdateResult.Failure(
                     ex is DecoderFallbackException
                         ? ResearchContextUpdateErrorCode.UnsupportedEncoding
                         : ResearchContextUpdateErrorCode.WriteFailed,
                     $"Research Topic '{topic.Title}' could not be read for update: {ex.Message}");
             }
+            openedWriteGuard.Dispose();
+            openedWriteGuard = null;
 
             var match = FrontmatterRegex().Match(original);
             if (!match.Success)
@@ -691,6 +723,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
                 if (!TryValidateContextCandidateOnDisk(
                         authoritativePageId,
+                        fullPath,
                         out var revalidatedPageId,
                         out candidateErrorCode,
                         out candidateMessage)
@@ -703,7 +736,29 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                         candidateErrorCode,
                         candidateMessage);
                 }
-                if (!File.ReadAllBytes(fullPath).AsSpan().SequenceEqual(originalBytes))
+                if (ContainsReparsePoint(relativePath))
+                {
+                    return ResearchContextUpdateResult.Failure(
+                        ResearchContextUpdateErrorCode.IneligiblePage,
+                        $"Research Topic '{topic.Title}' no longer resolves to an eligible Wiki Page.");
+                }
+                byte[] currentBytes;
+                using (var currentGuard = new FileStream(
+                           fullPath,
+                           FileMode.Open,
+                           FileAccess.ReadWrite,
+                           FileShare.Read | FileShare.Delete))
+                {
+                    if (!IsOpenedFileExpected(currentGuard, relativePath))
+                    {
+                        return ResearchContextUpdateResult.Failure(
+                            ResearchContextUpdateErrorCode.IneligiblePage,
+                            $"Research Topic '{topic.Title}' no longer resolves inside the Vault.");
+                    }
+                    currentBytes = new byte[currentGuard.Length];
+                    currentGuard.ReadExactly(currentBytes);
+                }
+                if (!currentBytes.AsSpan().SequenceEqual(originalBytes))
                 {
                     return ResearchContextUpdateResult.Failure(
                         ResearchContextUpdateErrorCode.ConcurrentModification,
@@ -1953,13 +2008,37 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var topicId in pathTopicIds)
             affected.Add(topicId);
+        var candidateProjectionChanged = before.EligiblePages.Count != after.EligiblePages.Count
+            || before.EligiblePages
+                .Zip(after.EligiblePages)
+                .Any(pair => !CandidatesEquivalent(pair.First, pair.Second));
+        var diagnosticsChanged = !before.Diagnostics.SequenceEqual(after.Diagnostics);
         return affected.Count == 0
+            && !candidateProjectionChanged
+            && !diagnosticsChanged
             ? null
             : new ResearchTopicsChangedEventArgs(
                 Array.AsReadOnly(affected.Order(StringComparer.OrdinalIgnoreCase).ToArray()),
                 after,
                 origin);
     }
+
+    private static bool CandidatesEquivalent(
+        ResearchPageCandidate left,
+        ResearchPageCandidate right) =>
+        left.Id == right.Id
+        && left.Title == right.Title
+        && left.Summary == right.Summary
+        && left.Aliases.SequenceEqual(right.Aliases, StringComparer.Ordinal)
+        && left.WikiType == right.WikiType
+        && left.Tags.SequenceEqual(right.Tags, StringComparer.Ordinal)
+        && left.Confidence == right.Confidence
+        && left.Updated == right.Updated
+        && left.Expires == right.Expires
+        && left.Freshness == right.Freshness
+        && left.VaultRelativePath == right.VaultRelativePath
+        && left.IsOptedIn == right.IsOptedIn
+        && left.Eligibility == right.Eligibility;
 
     private void RaiseChange(ResearchTopicsChangedEventArgs? change)
     {
@@ -2625,6 +2704,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
     private bool TryValidateContextCandidateOnDisk(
         string stableId,
+        string? excludedFullPath,
         out string authoritativeId,
         out ResearchContextUpdateErrorCode errorCode,
         out string message)
@@ -2652,10 +2732,18 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             return false;
         }
 
-        var matches = new List<(string Id, bool Eligible)>();
-        var foundIneligibleLocationMatch = false;
+        var matches = new List<string>();
+        var foundIneligibleMatch = false;
         foreach (var path in paths)
         {
+            if (excludedFullPath is not null
+                && string.Equals(
+                    Path.GetFullPath(path),
+                    excludedFullPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
             var hasEligibleLocation = TryGetEligibleRelativePath(path, out var relativePath)
                 && IsEligibleLocation(relativePath)
                 && !ContainsReparsePoint(relativePath);
@@ -2694,19 +2782,19 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 continue;
             }
 
-            if (!hasEligibleLocation)
-            {
-                foundIneligibleLocationMatch = true;
-                continue;
-            }
             var hasEligibleType = !string.IsNullOrWhiteSpace(page?.Type)
                 && EligibleTypes.Contains(page.Type);
-            matches.Add((candidateId!, hasEligibleType));
+            if (!hasEligibleLocation || !hasEligibleType)
+            {
+                foundIneligibleMatch = true;
+                continue;
+            }
+            matches.Add(candidateId!);
         }
 
         if (matches.Count == 0)
         {
-            if (foundIneligibleLocationMatch)
+            if (foundIneligibleMatch)
             {
                 errorCode = ResearchContextUpdateErrorCode.IneligiblePage;
                 message = $"Wiki Page '{stableId}' is not an eligible schema-governed Wiki Page.";
@@ -2719,14 +2807,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             message = $"Stable Wiki Page id '{stableId}' is duplicated.";
             return false;
         }
-        if (!matches[0].Eligible)
-        {
-            errorCode = ResearchContextUpdateErrorCode.IneligiblePage;
-            message = $"Wiki Page '{stableId}' is not an eligible schema-governed Wiki Page.";
-            return false;
-        }
-
-        authoritativeId = matches[0].Id;
+        authoritativeId = matches[0];
         return true;
     }
 
