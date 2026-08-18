@@ -44,8 +44,32 @@
       "timeoutMilliseconds": 10000
     },
     {
+      "type": "wait-for",
+      "automationId": "ResearchRemoveDeleteChangeLogMessage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "press-key",
+      "value": "Escape"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchRemoveTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRemoveTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
       "type": "invoke",
       "name": "Keep Topic",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchRemoveTopicButton",
       "timeoutMilliseconds": 10000
     },
     {
@@ -86,6 +110,11 @@
     {
       "type": "assert-single-selection",
       "automationId": "ResearchTopicList"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchTopicRow",
+      "timeoutMilliseconds": 10000
     }
   ],
   "captures": [

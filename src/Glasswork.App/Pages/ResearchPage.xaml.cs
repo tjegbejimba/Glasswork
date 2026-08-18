@@ -33,6 +33,7 @@ public sealed partial class ResearchPage : Page
     private bool _isReconciling;
     private string? _selectedTopicId;
     private string? _pendingRemovalTopicId;
+    private Control? _removeTopicInvoker;
     private bool _suppressCatalogRefresh;
 
     public ResearchPage()
@@ -615,6 +616,7 @@ public sealed partial class ResearchPage : Page
             return;
 
         _pendingRemovalTopicId = topic.Id;
+        _removeTopicInvoker = sender as Control ?? RemoveFromResearchButton;
         RemoveTopicPreserveMessage.Text =
             $"\"{topic.Title}\" will remain as a Wiki Page in your Vault.";
         RemoveTopicOverlay.Visibility = Visibility.Visible;
@@ -628,7 +630,7 @@ public sealed partial class ResearchPage : Page
     }
 
     private void RemoveTopicCancelButton_Click(object sender, RoutedEventArgs e) =>
-        CloseRemoveTopicOverlay();
+        CloseRemoveTopicOverlay(restoreFocus: true);
 
     private void RemoveTopicEscape_Invoked(
         KeyboardAccelerator sender,
@@ -636,13 +638,14 @@ public sealed partial class ResearchPage : Page
     {
         if (RemoveTopicOverlay.Visibility != Visibility.Visible)
             return;
-        CloseRemoveTopicOverlay();
+        CloseRemoveTopicOverlay(restoreFocus: true);
         e.Handled = true;
     }
 
     private async void RemoveTopicConfirmButton_Click(object sender, RoutedEventArgs e)
     {
         var topicId = _pendingRemovalTopicId;
+        var removalInvoker = _removeTopicInvoker;
         CloseRemoveTopicOverlay();
         if (string.IsNullOrWhiteSpace(topicId))
             return;
@@ -659,23 +662,50 @@ public sealed partial class ResearchPage : Page
             };
             error.WithAppTheme(this);
             await error.ShowAsync();
+            if (removalInvoker is not null)
+                RestoreRemovalFocus(removalInvoker);
             return;
         }
 
         RefreshCatalog(requestedTopicId: null, preserveCurrentState: true);
+        RestorePostRemovalFocus();
     }
 
-    private void CloseRemoveTopicOverlay()
+    private void CloseRemoveTopicOverlay(bool restoreFocus = false)
     {
+        var invoker = _removeTopicInvoker;
         if (RemoveTopicOverlay.Visibility != Visibility.Visible)
         {
             _pendingRemovalTopicId = null;
+            _removeTopicInvoker = null;
             return;
         }
 
         RemoveTopicOverlay.Visibility = Visibility.Collapsed;
         (App.MainWindow as MainWindow)?.HideModalOverlay(RemoveTopicOverlay);
         _pendingRemovalTopicId = null;
+        _removeTopicInvoker = null;
+        if (restoreFocus && invoker is not null)
+            RestoreRemovalFocus(invoker);
+    }
+
+    private void RestorePostRemovalFocus()
+    {
+        TopicList.UpdateLayout();
+        var target = EmptyStateView.Visibility == Visibility.Visible
+            ? ResearchEmptyAddTopicButton
+            : TopicList.ContainerFromItem(TopicList.SelectedItem) as Control
+                ?? TopicList;
+        RestoreRemovalFocus(target);
+    }
+
+    private void RestoreRemovalFocus(Control target)
+    {
+        var generation = ++_focusRestoreGeneration;
+        RestorePreviewInvokerFocus(
+            target,
+            attempts: 0,
+            generation: generation);
     }
 
     private async void AddTopicButton_Click(object sender, RoutedEventArgs e)

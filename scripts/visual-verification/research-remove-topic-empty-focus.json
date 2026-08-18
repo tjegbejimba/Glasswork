@@ -1,0 +1,55 @@
+{
+  "name": "Research remove final Topic focus",
+  "theme": "light",
+  "startUri": "glasswork://research",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/final-topic.md",
+      "id": "final-topic",
+      "title": "Final Topic",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": true,
+      "markdown": "# Final Topic\n\nRemoving this Topic reveals the empty state."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "Final Topic",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRemoveTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchRemoveDeleteChangeLogMessage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRemoveConfirmButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "No Research Topics yet",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchEmptyAddTopicButton",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-remove-topic-empty-focus",
+      "waitMilliseconds": 700
+    }
+  ]
+}

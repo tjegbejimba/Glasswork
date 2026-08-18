@@ -331,4 +331,44 @@ public class SelfWriteCoordinatorTests
         Assert.IsTrue(coord.IsOwnProcessWrite(path));
         Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
     }
+
+    [TestMethod]
+    public void BeginWrite_SupersededCancellationUnwindsInactiveCancelledChain()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "superseded-chain.md");
+        var registrationA = coord.BeginWrite(path);
+        var registrationB = coord.BeginWrite(path);
+        registrationA.Dispose();
+        var registrationC = coord.BeginWrite(path);
+        registrationC.Commit();
+
+        registrationB.Dispose();
+        registrationC.Dispose();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
+
+    [TestMethod]
+    public void BeginWrite_SupersededChainPermutationLeavesNoCancelledBookkeeping()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "superseded-permutation.md");
+        var registrationA = coord.BeginWrite(path);
+        var registrationB = coord.BeginWrite(path);
+        var registrationC = coord.BeginWrite(path);
+        registrationB.Dispose();
+        registrationA.Dispose();
+
+        registrationC.Commit();
+        registrationC.Dispose();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
 }

@@ -219,7 +219,20 @@ public class SelfWriteCoordinator
                 || currentGeneration != generation)
             {
                 if (!_activeWriteRegistrations.ContainsKey(currentGeneration))
-                    ForgetRegistrations(new[] { generation });
+                {
+                    var abandoned = new List<long> { generation };
+                    var ancestor = previous;
+                    while (ancestor.Generation is { } predecessor
+                           && _cancelledWriteGenerations.ContainsKey(predecessor)
+                           && _registrationSnapshots.TryGetValue(
+                               predecessor,
+                               out var predecessorSnapshot))
+                    {
+                        abandoned.Add(predecessor);
+                        ancestor = predecessorSnapshot;
+                    }
+                    ForgetRegistrations(abandoned);
+                }
                 return;
             }
 

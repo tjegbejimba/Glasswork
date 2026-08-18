@@ -694,17 +694,49 @@ public sealed partial class FileSystemResearchCatalog
 
     private void ValidateResearchRemovalJournal(ResearchRemovalJournal journal)
     {
-        var resolvedPagePath = ResolveRemovalVaultPath(journal.PageRelativePath);
-        var normalizedPagePath = ToRelativePath(resolvedPagePath);
-        if (!string.Equals(
+        if (string.IsNullOrWhiteSpace(journal.Kind)
+            || string.IsNullOrWhiteSpace(journal.OperationId)
+            || string.IsNullOrWhiteSpace(journal.TopicId)
+            || string.IsNullOrWhiteSpace(journal.PageRelativePath)
+            || string.IsNullOrWhiteSpace(journal.LogRelativePath)
+            || !IsRemovalRevision(journal.OriginalPageRevision)
+            || !IsRemovalRevision(journal.UpdatedPageRevision)
+            || journal.HadLog && !IsRemovalRevision(journal.OriginalLogRevision)
+            || !string.Equals(
                 journal.Kind,
                 ResearchRemovalJournalKind,
                 StringComparison.Ordinal)
             || journal.OperationId.Length != 32
             || journal.OperationId.Any(character => !Uri.IsHexDigit(character))
-            || !TryGetResearchChangeLogPath(journal.TopicId, out var expectedLogPath)
-            || !string.Equals(
-                ResolveRemovalVaultPath(journal.LogRelativePath),
+            || !IsSafeRemovalRelativePath(journal.PageRelativePath)
+            || !IsSafeRemovalRelativePath(journal.LogRelativePath))
+        {
+            throw new InvalidDataException("Research removal journal is invalid.");
+        }
+
+        string resolvedPagePath;
+        string resolvedLogPath;
+        string expectedLogPath;
+        try
+        {
+            resolvedPagePath = ResolveRemovalVaultPath(journal.PageRelativePath);
+            resolvedLogPath = ResolveRemovalVaultPath(journal.LogRelativePath);
+            if (!TryGetResearchChangeLogPath(journal.TopicId, out expectedLogPath))
+                throw new InvalidDataException("Research removal journal is invalid.");
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException
+                or NotSupportedException
+                or PathTooLongException)
+        {
+            throw new InvalidDataException(
+                "Research removal journal contains an invalid path.",
+                ex);
+        }
+
+        var normalizedPagePath = ToRelativePath(resolvedPagePath);
+        if (!string.Equals(
+                resolvedLogPath,
                 expectedLogPath,
                 StringComparison.OrdinalIgnoreCase)
             || !string.Equals(
@@ -716,8 +748,6 @@ public sealed partial class FileSystemResearchCatalog
             throw new InvalidDataException("Research removal journal is invalid.");
         }
 
-        _ = ResolveRemovalVaultPath(journal.PageRelativePath);
-        _ = ResolveRemovalVaultPath(journal.LogRelativePath);
         var operationPath = GetResearchRemovalOperationPath(journal.OperationId);
         if (journal.CleanupPending)
             return;
@@ -753,6 +783,32 @@ public sealed partial class FileSystemResearchCatalog
             throw new InvalidDataException(
                 "Research Change Log recovery data does not match the journal.");
         }
+    }
+
+    private static bool IsRemovalRevision(string? revision) =>
+        revision is { Length: 64 }
+        && revision.All(Uri.IsHexDigit);
+
+    private static bool IsSafeRemovalRelativePath(string path)
+    {
+        try
+        {
+            if (Path.IsPathRooted(path))
+                return false;
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException
+                or NotSupportedException
+                or PathTooLongException)
+        {
+            return false;
+        }
+
+        var segments = path
+            .Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length > 0
+            && segments.All(segment => segment is not "." and not "..");
     }
 
     private string ResolveRemovalVaultPath(string relativePath)

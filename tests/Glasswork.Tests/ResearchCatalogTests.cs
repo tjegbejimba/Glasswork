@@ -942,6 +942,37 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    [DataRow("{}")]
+    [DataRow("""{"Kind":"research_topic_removal","OperationId":"","TopicId":"topic","PageRelativePath":"wiki/concepts/topic.md","LogRelativePath":"wiki/research-logs/topic.md","HadLog":false,"OriginalPageRevision":"x","UpdatedPageRevision":"y"}""")]
+    [DataRow("""{"Kind":"research_topic_removal","OperationId":"0123456789abcdef0123456789abcdef","TopicId":null,"PageRelativePath":"wiki/concepts/topic.md","LogRelativePath":"wiki/research-logs/topic.md","HadLog":false,"OriginalPageRevision":"0000000000000000000000000000000000000000000000000000000000000000","UpdatedPageRevision":"1111111111111111111111111111111111111111111111111111111111111111"}""")]
+    [DataRow("""{"Kind":"research_topic_removal","OperationId":"0123456789abcdef0123456789abcdef","TopicId":"","PageRelativePath":"wiki/concepts/topic.md","LogRelativePath":"wiki/research-logs/topic.md","HadLog":false,"OriginalPageRevision":"0000000000000000000000000000000000000000000000000000000000000000","UpdatedPageRevision":"1111111111111111111111111111111111111111111111111111111111111111"}""")]
+    [DataRow("""{"Kind":"research_topic_removal","OperationId":"0123456789abcdef0123456789abcdef","TopicId":"topic","PageRelativePath":null,"LogRelativePath":"wiki/research-logs/topic.md","HadLog":false,"OriginalPageRevision":"0000000000000000000000000000000000000000000000000000000000000000","UpdatedPageRevision":"1111111111111111111111111111111111111111111111111111111111111111"}""")]
+    [DataRow("""{"Kind":"research_topic_removal","OperationId":"0123456789abcdef0123456789abcdef","TopicId":"topic","PageRelativePath":"wiki/concepts/topic.md","LogRelativePath":null,"HadLog":false,"OriginalPageRevision":"0000000000000000000000000000000000000000000000000000000000000000","UpdatedPageRevision":"1111111111111111111111111111111111111111111111111111111111111111"}""")]
+    [DataRow("""{"Kind":"research_topic_removal","OperationId":"0123456789abcdef0123456789abcdef","TopicId":"topic","PageRelativePath":"C:\\outside.md","LogRelativePath":"wiki/research-logs/topic.md","HadLog":false,"OriginalPageRevision":"0000000000000000000000000000000000000000000000000000000000000000","UpdatedPageRevision":"1111111111111111111111111111111111111111111111111111111111111111"}""")]
+    [DataRow("""{"Kind":"research_topic_removal","OperationId":"0123456789abcdef0123456789abcdef","TopicId":"topic","PageRelativePath":"wiki/../outside.md","LogRelativePath":"wiki/research-logs/topic.md","HadLog":false,"OriginalPageRevision":"0000000000000000000000000000000000000000000000000000000000000000","UpdatedPageRevision":"1111111111111111111111111111111111111111111111111111111111111111"}""")]
+    [DataRow("""{"Kind":"research_topic_removal","OperationId":"0123456789abcdef0123456789abcdef","TopicId":"topic","PageRelativePath":"wiki/concepts/topic.md","LogRelativePath":"../topic.md","HadLog":false,"OriginalPageRevision":"0000000000000000000000000000000000000000000000000000000000000000","UpdatedPageRevision":"1111111111111111111111111111111111111111111111111111111111111111"}""")]
+    public void Startup_MalformedRemovalJournalBecomesStableBlockedRecoveryState(string json)
+    {
+        var journalPath = Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removal-journal.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(journalPath)!);
+        File.WriteAllText(journalPath, json);
+
+        using var firstStartup = new FileSystemResearchCatalog(_vaultRoot);
+        using var secondStartup = new FileSystemResearchCatalog(_vaultRoot);
+
+        Assert.IsNotNull(firstStartup.RemovalRecoveryState);
+        Assert.IsNotNull(secondStartup.RemovalRecoveryState);
+        Assert.IsEmpty(firstStartup.Capture().Topics);
+        Assert.AreEqual(
+            ResearchRemovalErrorCode.RecoveryRequired,
+            firstStartup.Remove("anything").ErrorCode);
+        Assert.IsTrue(File.Exists(journalPath));
+    }
+
+    [TestMethod]
     public void Remove_PreservesUnrelatedFlowStyleGlassworkMetadata()
     {
         const string relativePath = "wiki/concepts/flow-removal.md";
