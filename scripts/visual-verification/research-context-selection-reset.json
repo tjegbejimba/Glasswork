@@ -59,7 +59,7 @@
     {
       "type": "assert-name",
       "automationId": "ResearchContextSummary",
-      "value": "1 of 2 context pages"
+      "value": "2 of 2 context pages"
     },
     {
       "type": "invoke",

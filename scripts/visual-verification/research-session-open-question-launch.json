@@ -1,0 +1,46 @@
+{
+  "name": "Open Question Research Session launch",
+  "theme": "dark",
+  "startUri": "glasswork://research/question-launch",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/question-launch.md",
+      "id": "question-launch",
+      "title": "Question launch",
+      "type": "concept",
+      "confidence": "medium",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "markdown": "# Question launch\n\n## Open Questions\n\n- Why does \"résumé\" ordering\n  change under concurrent callbacks?\n  - Compare FIFO evidence separately."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "Research Open Question: Why does \"résumé\" ordering change under concurrent callbacks?",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchOpenQuestionAction"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchSessionClipboardFeedback"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Start Glasswork Research Session: {\"topicId\":\"question-launch\",\"contextPageIds\":[\"question-launch\"],\"action\":\"open-question\",\"intent\":\"Why does \\\"résumé\\\" ordering change under concurrent callbacks?\",\"wikiGovernance\":\"AGENTS.md\"}"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-session-open-question-launch",
+      "waitMilliseconds": 400
+    }
+  ]
+}

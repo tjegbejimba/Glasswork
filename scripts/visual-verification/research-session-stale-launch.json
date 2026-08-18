@@ -1,0 +1,46 @@
+{
+  "name": "Stale Research Session launch",
+  "theme": "light",
+  "startUri": "glasswork://research/stale-launch",
+  "wikiPages": [
+    {
+      "relativePath": "systems/stale-launch.md",
+      "id": "stale-launch",
+      "title": "Stale launch",
+      "type": "system",
+      "confidence": "high",
+      "updated": "2026-07-01",
+      "expires": "2026-08-01",
+      "markdown": "# Stale launch\n\nClaims need a current primary-source check."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "Refresh stale claims",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPrimaryAction"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchSessionClipboardFeedback"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Start Glasswork Research Session: {\"topicId\":\"stale-launch\",\"contextPageIds\":[\"stale-launch\"],\"action\":\"refresh-stale-claims\",\"wikiGovernance\":\"AGENTS.md\"}"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-session-stale-launch",
+      "waitMilliseconds": 400
+    }
+  ]
+}
