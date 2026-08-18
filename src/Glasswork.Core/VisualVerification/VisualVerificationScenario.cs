@@ -136,9 +136,9 @@ public sealed partial class VisualVerificationScenario
                 throw new FormatException("assert-name requires value.");
             }
             if (action.Type.Equals("press-key", StringComparison.OrdinalIgnoreCase)
-                && action.Value is not ("Escape" or "Tab"))
+                && action.Value is not ("Escape" or "Tab" or "Space"))
             {
-                throw new FormatException("press-key requires value Escape or Tab.");
+                throw new FormatException("press-key requires value Escape, Tab, or Space.");
             }
         }
 
@@ -318,6 +318,8 @@ public sealed class VisualVerificationWikiPage
     public string? Expires { get; init; }
     public List<string> Sources { get; init; } = [];
     public bool OptedIn { get; init; } = true;
+    public List<string> ResearchInclude { get; init; } = [];
+    public List<string> ResearchExclude { get; init; } = [];
     public string Markdown { get; init; } = string.Empty;
 }
 

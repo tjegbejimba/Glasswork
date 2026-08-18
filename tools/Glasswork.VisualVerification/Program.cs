@@ -241,7 +241,24 @@ internal static partial class VisualVerificationRunner
             if (page.OptedIn)
             {
                 lines.Add("glasswork:");
-                lines.Add("  research: {}");
+                if (page.ResearchInclude.Count == 0 && page.ResearchExclude.Count == 0)
+                {
+                    lines.Add("  research: {}");
+                }
+                else
+                {
+                    lines.Add("  research:");
+                    if (page.ResearchInclude.Count > 0)
+                    {
+                        lines.Add(
+                            $"    include: [{string.Join(", ", page.ResearchInclude.Select(YamlScalar))}]");
+                    }
+                    if (page.ResearchExclude.Count > 0)
+                    {
+                        lines.Add(
+                            $"    exclude: [{string.Join(", ", page.ResearchExclude.Select(YamlScalar))}]");
+                    }
+                }
             }
             lines.Add("---");
             lines.Add(page.Markdown);
@@ -875,6 +892,7 @@ internal static partial class VisualVerificationRunner
         {
             "Escape" => (byte)0x1B,
             "Tab" => (byte)0x09,
+            "Space" => (byte)0x20,
             _ => throw new FormatException($"Unsupported key '{key}'."),
         };
         ForegroundWindowBestEffort(hwnd);

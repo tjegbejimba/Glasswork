@@ -62,6 +62,8 @@ public class VisualVerificationScenarioTests
               "updated": "2026-08-10",
               "expires": "2026-12-31",
               "sources": ["https://example.test/source"],
+              "researchInclude": ["included-page"],
+              "researchExclude": ["excluded-page"],
               "markdown": "# Async callbacks\n\nSynthesis."
             }
           ],
@@ -79,6 +81,12 @@ public class VisualVerificationScenarioTests
         CollectionAssert.AreEqual(
             new[] { "https://example.test/source" },
             scenario.WikiPages[0].Sources);
+        CollectionAssert.AreEqual(
+            new[] { "included-page" },
+            scenario.WikiPages[0].ResearchInclude);
+        CollectionAssert.AreEqual(
+            new[] { "excluded-page" },
+            scenario.WikiPages[0].ResearchExclude);
         Assert.AreEqual("# Async callbacks\n\nSynthesis.", scenario.WikiPages[0].Markdown);
     }
 
