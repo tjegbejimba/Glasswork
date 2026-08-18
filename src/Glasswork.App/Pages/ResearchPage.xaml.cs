@@ -1,6 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using Glasswork.Controls;
@@ -36,8 +37,7 @@ public sealed partial class ResearchPage : Page
     private bool _suppressCatalogRefresh;
     private ResearchDrawerMode _drawerMode;
     private Button? _contextSelectionInvoker;
-    private ResearchSessionContext? _preparedSessionContext;
-    private string? _preparedSessionTopicId;
+    private bool _suppressContextDrawerRefreshClose;
 
     public ResearchPage()
     {
@@ -71,7 +71,20 @@ public sealed partial class ResearchPage : Page
         ResearchTopicsChangedEventArgs e)
     {
         DispatcherQueue.TryEnqueue(() =>
-            RefreshCatalog(requestedTopicId: null, preserveCurrentState: true));
+        {
+            if ((_drawerMode is ResearchDrawerMode.SessionSelection
+                    or ResearchDrawerMode.DurableCuration)
+                && _selectedTopic is not null
+                && e.Snapshot.Topics.FirstOrDefault(topic => string.Equals(
+                    topic.Id,
+                    _selectedTopic.Id,
+                    StringComparison.OrdinalIgnoreCase)) is { } refreshedTopic
+                && ReferenceEquals(refreshedTopic, _selectedTopic))
+            {
+                return;
+            }
+            RefreshCatalog(requestedTopicId: null, preserveCurrentState: true);
+        });
     }
 
     private void RefreshCatalog(
@@ -124,6 +137,7 @@ public sealed partial class ResearchPage : Page
             TopicList.SelectedItem = null;
             ShowRelatedContext(ResearchContext.Empty);
             ReconcileOpenPreview();
+            ReconcileOpenContextSelectionDrawer();
             return;
         }
 
@@ -146,6 +160,7 @@ public sealed partial class ResearchPage : Page
             TopicList.ScrollIntoView(selection);
         ShowTopic(selection.Topic, snapshot.Diagnostics);
         ReconcileOpenPreview();
+        ReconcileOpenContextSelectionDrawer();
         if (state.PreserveReadingPosition)
             RestoreReadingPosition(state.VerticalOffset, attempts: 0);
         else
@@ -249,14 +264,6 @@ public sealed partial class ResearchPage : Page
     {
         _selectedTopic = topic;
         _selectedTopicId = topic.Id;
-        if (!string.Equals(
-                _preparedSessionTopicId,
-                topic.Id,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            _preparedSessionContext = null;
-            _preparedSessionTopicId = null;
-        }
         TopicTitle.Text = topic.Title;
         TopicType.Text = CultureInfo.InvariantCulture.TextInfo.ToTitleCase(topic.WikiType);
         TopicConfidence.Text = $"Confidence: {topic.Confidence ?? "not set"}";
@@ -316,11 +323,12 @@ public sealed partial class ResearchPage : Page
     private void UpdateContextSummary(ResearchTopic topic)
     {
         var total = topic.Context.RelatedPages.Count + 1;
+        var prepared = App.Research.PreparedSessionContext;
         var selected = string.Equals(
-                _preparedSessionTopicId,
+                prepared?.TopicId,
                 topic.Id,
                 StringComparison.OrdinalIgnoreCase)
-            ? _preparedSessionContext?.PageIds.Count ?? total
+            ? prepared!.PageIds.Count
             : total;
         ContextSummary.Text = $"{selected} of {total} context pages";
     }
@@ -702,6 +710,11 @@ public sealed partial class ResearchPage : Page
         PreviewDrawerOverlay.Visibility = Visibility.Visible;
         window.ShowModalOverlay(PreviewDrawerOverlay, ContextSelectionCloseButton);
         PreviewDrawerOverlay.UpdateLayout();
+        foreach (var checkBox in FindDescendants<CheckBox>(ContextSelectionList))
+        {
+            if (checkBox.Tag is ResearchContextSelectionRow row)
+                checkBox.IsChecked = row.IsSelected;
+        }
         await FocusManager.TryFocusAsync(
             ContextSelectionCloseButton,
             FocusState.Programmatic);
@@ -738,9 +751,15 @@ public sealed partial class ResearchPage : Page
             ContextSelectionError.IsOpen = false;
             _selectedTopic = result.Topic;
             _selectedTopicId = result.Topic!.Id;
-            _preparedSessionContext = null;
-            _preparedSessionTopicId = null;
-            RefreshCatalog(result.Topic.Id, preserveCurrentState: true);
+            _suppressContextDrawerRefreshClose = true;
+            try
+            {
+                RefreshCatalog(result.Topic.Id, preserveCurrentState: true);
+            }
+            finally
+            {
+                _suppressContextDrawerRefreshClose = false;
+            }
         }
         UpdateContextSelectionSummary();
     }
@@ -748,7 +767,7 @@ public sealed partial class ResearchPage : Page
     private void UpdateContextSelectionSummary()
     {
         var optional = ContextSelectionRows.Where(row => !row.IsTopic).ToArray();
-        var selected = optional.Count(row => row.IsSelected);
+        var selected = optional.Count(row => row.IsSelected == true);
         ContextSelectionSummary.Text = _drawerMode == ResearchDrawerMode.SessionSelection
             ? $"{selected} of {optional.Length} optional pages selected"
             : $"{selected} of {optional.Length} eligible pages included";
@@ -761,7 +780,7 @@ public sealed partial class ResearchPage : Page
         if (_drawerMode == ResearchDrawerMode.SessionSelection)
         {
             var selectedIds = ContextSelectionRows
-                .Where(row => !row.IsTopic && row.IsSelected)
+                .Where(row => !row.IsTopic && row.IsSelected == true)
                 .Select(row => row.Id)
                 .ToArray();
             var result = App.Research.PrepareSessionContext(_selectedTopic.Id, selectedIds);
@@ -771,8 +790,6 @@ public sealed partial class ResearchPage : Page
                 ContextSelectionError.IsOpen = true;
                 return;
             }
-            _preparedSessionContext = result.Context;
-            _preparedSessionTopicId = _selectedTopic.Id;
             UpdateContextSummary(_selectedTopic);
         }
         CloseContextSelectionDrawer(restoreFocus: true);
@@ -798,6 +815,18 @@ public sealed partial class ResearchPage : Page
         _drawerMode = ResearchDrawerMode.None;
         if (restoreFocus && invoker is not null)
             _ = invoker.Focus(FocusState.Programmatic);
+    }
+
+    private void ReconcileOpenContextSelectionDrawer()
+    {
+        if (_suppressContextDrawerRefreshClose
+            || _drawerMode is not (ResearchDrawerMode.SessionSelection
+                or ResearchDrawerMode.DurableCuration))
+        {
+            return;
+        }
+
+        CloseContextSelectionDrawer(restoreFocus: true);
     }
 
     private async void PreviewOpenInObsidianButton_Click(
@@ -959,74 +988,99 @@ public sealed class ResearchContextWarningRow
     public string Message { get; }
 }
 
-public sealed class ResearchContextSelectionRow
+public sealed class ResearchContextSelectionRow : INotifyPropertyChanged
+{
+    private readonly ResearchDrawerMode _mode;
+    private bool _isSelected;
+
+    private ResearchContextSelectionRow(
+        string id,
+        string title,
+        string metadata,
+        bool isTopic,
+        bool isSelected,
+        ResearchDrawerMode mode)
     {
-        private ResearchContextSelectionRow(
-            string id,
-            string title,
-            string metadata,
-            bool isTopic,
-            bool isSelected,
-            ResearchDrawerMode mode)
-        {
-            Id = id;
-            Title = title;
-            Metadata = metadata;
-            IsTopic = isTopic;
-            IsSelected = isSelected;
-            IsEnabled = !isTopic;
-            LockLabel = isTopic ? "Always included" : string.Empty;
-            AccessibleName = isTopic
-                ? $"{title}, Research Topic, always included"
-                : mode == ResearchDrawerMode.SessionSelection
-                    ? $"Include {title} in the next Research Session"
-                    : $"Include {title} in durable Research context";
-        }
-
-        public string Id { get; }
-        public string Title { get; }
-        public string Metadata { get; }
-        public bool IsTopic { get; }
-        public bool IsEnabled { get; }
-        public string LockLabel { get; }
-        public string AccessibleName { get; }
-        public bool IsSelected { get; set; }
-
-        internal static ResearchContextSelectionRow Topic(
-            ResearchTopic topic,
-            ResearchDrawerMode mode) =>
-            new(
-                topic.Id,
-                topic.Title,
-                CultureInfo.InvariantCulture.TextInfo.ToTitleCase(topic.WikiType),
-                isTopic: true,
-                isSelected: true,
-                mode);
-
-        internal static ResearchContextSelectionRow Related(
-            ResearchContextPage page,
-            bool isSelected,
-            ResearchDrawerMode mode) =>
-            new(
-                page.Id,
-                page.Title,
-                ResearchRelatedPageRow.BuildMetadataLine(page),
-                isTopic: false,
-                isSelected,
-                mode);
-
-        internal static ResearchContextSelectionRow Candidate(
-            ResearchPageCandidate page,
-            bool isSelected,
-            ResearchDrawerMode mode) =>
-            new(
-                page.Id,
-                page.Title,
-                CultureInfo.InvariantCulture.TextInfo.ToTitleCase(page.WikiType),
-                isTopic: false,
-                isSelected,
-                mode);
+        Id = id;
+        Title = title;
+        Metadata = metadata;
+        IsTopic = isTopic;
+        _isSelected = isSelected;
+        _mode = mode;
+        IsEnabled = !isTopic;
+        AccessibleName = isTopic
+            ? $"{title}, Research Topic, always included"
+            : mode == ResearchDrawerMode.SessionSelection
+                ? $"Include {title} in the next Research Session"
+                : $"Include {title} in durable Research context";
     }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public string Id { get; }
+    public string Title { get; }
+    public string Metadata { get; }
+    public bool IsTopic { get; }
+    public bool IsEnabled { get; }
+    public string AccessibleName { get; }
+    public string StatusLabel => IsTopic
+        ? "Always included"
+        : _mode == ResearchDrawerMode.SessionSelection
+            ? IsSelected ? "Selected" : "Not selected"
+            : IsSelected ? "Included" : "Excluded";
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+                return;
+            _isSelected = value;
+            PropertyChanged?.Invoke(
+                this,
+                new PropertyChangedEventArgs(nameof(IsSelected)));
+            PropertyChanged?.Invoke(
+                this,
+                new PropertyChangedEventArgs(nameof(StatusLabel)));
+        }
+    }
+
+    internal static ResearchContextSelectionRow Topic(
+        ResearchTopic topic,
+        ResearchDrawerMode mode) =>
+        new(
+            topic.Id,
+            topic.Title,
+            CultureInfo.InvariantCulture.TextInfo.ToTitleCase(topic.WikiType),
+            isTopic: true,
+            isSelected: true,
+            mode);
+
+    internal static ResearchContextSelectionRow Related(
+        ResearchContextPage page,
+        bool isSelected,
+        ResearchDrawerMode mode) =>
+        new(
+            page.Id,
+            page.Title,
+            ResearchRelatedPageRow.BuildMetadataLine(page),
+            isTopic: false,
+            isSelected,
+            mode);
+
+    internal static ResearchContextSelectionRow Candidate(
+        ResearchPageCandidate page,
+        bool isSelected,
+        ResearchDrawerMode mode) =>
+        new(
+            page.Id,
+            page.Title,
+            CultureInfo.InvariantCulture.TextInfo.ToTitleCase(page.WikiType),
+            isTopic: false,
+            isSelected,
+            mode);
+}
 
 public enum ResearchDrawerMode
 {

@@ -5,6 +5,7 @@ public interface IResearchCatalog : IDisposable
     event EventHandler<ResearchTopicsChangedEventArgs>? TopicsChanged;
 
     bool IsWatching { get; }
+    ResearchSessionContext? PreparedSessionContext { get; }
 
     ResearchCatalogSnapshot Capture();
     ResearchCatalogSnapshot Capture(DateOnly queryDate);
@@ -13,6 +14,7 @@ public interface IResearchCatalog : IDisposable
     ResearchSessionContextResult PrepareSessionContext(
         string topicId,
         IReadOnlyCollection<string>? selectedPageIds = null);
+    ResearchSessionContext? ConsumePreparedSessionContext(string topicId);
     ResearchContextUpdateResult SetContextPageIncluded(
         string topicId,
         string pageId,

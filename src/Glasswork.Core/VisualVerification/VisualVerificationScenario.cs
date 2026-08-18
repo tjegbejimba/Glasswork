@@ -106,6 +106,13 @@ public sealed partial class VisualVerificationScenario
                 if (action.Value is null)
                     throw new FormatException("replace-wiki-page-text requires value.");
             }
+            if (action.Type.Equals("delete-wiki-page", StringComparison.OrdinalIgnoreCase)
+                && (action.WikiPagePath is null
+                    || !IsSafeWikiPagePath(action.WikiPagePath)))
+            {
+                throw new FormatException(
+                    "delete-wiki-page requires a safe wikiPagePath relative to wiki/.");
+            }
             if (action.Type.Equals("scroll-percent", StringComparison.OrdinalIgnoreCase)
                 || action.Type.Equals(
                     "assert-vertical-scroll-at-least",

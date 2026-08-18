@@ -1083,7 +1083,7 @@ public sealed class ResearchCatalogTests
         Assert.AreEqual(
             original.Replace(
                 "  research: {}",
-                "  research:\n    include: [beyond-one-hop]",
+                "  research: { include: [beyond-one-hop] }",
                 StringComparison.Ordinal),
             File.ReadAllText(fullPath).ReplaceLineEndings("\n"));
         var related = catalog.Capture().Topics.Single().Context.RelatedPages;
@@ -1092,6 +1092,78 @@ public sealed class ResearchCatalogTests
         Assert.AreEqual(
             ResearchContextRelation.IncludeOverride,
             related.Single().Relations);
+    }
+
+    [TestMethod]
+    public void SetContextPageIncluded_MergesWithAuthoritativeOverridesOnDisk()
+    {
+        const string topicPath = "wiki/concepts/topic.md";
+        WritePage(
+            topicPath,
+            "---\nid: topic\ntitle: Topic\ntype: concept\nglasswork:\n  research:\n    include: [cached-page]\n---\nTopic.");
+        WritePage(
+            "wiki/sources/cached.md",
+            "---\nid: cached-page\ntitle: Cached\ntype: source\n---\nCached.");
+        WritePage(
+            "wiki/sources/external.md",
+            "---\nid: external-page\ntitle: External\ntype: source\n---\nExternal.");
+        WritePage(
+            "wiki/sources/added.md",
+            "---\nid: added-page\ntitle: Added\ntype: source\n---\nAdded.");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            quietPeriod: TimeSpan.FromMinutes(1));
+        _ = catalog.Capture();
+        catalog.Start();
+        WritePage(
+            topicPath,
+            "---\nid: topic\ntitle: Topic\ntype: concept\nglasswork:\n  research:\n    include: [external-page]\n---\nTopic.");
+
+        var result = catalog.SetContextPageIncluded("topic", "added-page", included: true);
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        var updated = File.ReadAllText(FullPath(topicPath)).ReplaceLineEndings("\n");
+        StringAssert.Contains(updated, "include: [added-page, external-page]");
+        Assert.DoesNotContain("cached-page", updated, StringComparison.Ordinal);
+    }
+
+    [TestMethod]
+    public void SetContextPageIncluded_PreservesSiblingResearchMetadataAndComments()
+    {
+        const string topicPath = "wiki/concepts/topic.md";
+        const string original =
+            "---\n" +
+            "id: topic\n" +
+            "title: Topic\n" +
+            "type: concept\n" +
+            "glasswork:\n" +
+            "  research:\n" +
+            "    mode: guided # preserve inline comment\n" +
+            "    include: [existing-page]\n" +
+            "    future:\n" +
+            "      answer: 42\n" +
+            "  presentation:\n" +
+            "    accent: blue\n" +
+            "---\n" +
+            "Topic prose remains unchanged.\n";
+        WritePage(topicPath, original);
+        WritePage(
+            "wiki/sources/existing.md",
+            "---\nid: existing-page\ntitle: Existing\ntype: source\n---\nExisting.");
+        WritePage(
+            "wiki/sources/added.md",
+            "---\nid: added-page\ntitle: Added\ntype: source\n---\nAdded.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.SetContextPageIncluded("topic", "added-page", included: true);
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual(
+            original.Replace(
+                "    include: [existing-page]",
+                "    include: [added-page, existing-page]",
+                StringComparison.Ordinal),
+            File.ReadAllText(FullPath(topicPath)).ReplaceLineEndings("\n"));
     }
 
     [TestMethod]
@@ -1167,12 +1239,80 @@ public sealed class ResearchCatalogTests
             new[] { "topic", "beta" },
             narrowed.Context.PageIds.ToArray());
         Assert.AreEqual(3, narrowed.Context.TotalPageCount);
+        Assert.AreEqual(narrowed.Context, catalog.PreparedSessionContext);
+        Assert.IsNull(catalog.ConsumePreparedSessionContext("another-topic"));
+        Assert.AreEqual(narrowed.Context, catalog.PreparedSessionContext);
+        Assert.AreEqual(
+            narrowed.Context,
+            catalog.ConsumePreparedSessionContext("topic"));
+        Assert.IsNull(catalog.ConsumePreparedSessionContext("topic"));
+        Assert.IsNull(catalog.PreparedSessionContext);
         Assert.AreEqual(original, File.ReadAllText(FullPath(topicPath)).ReplaceLineEndings("\n"));
         CollectionAssert.AreEqual(
             new[] { "alpha", "beta" },
             catalog.Capture().Topics.Single().Context.RelatedPages
                 .Select(page => page.Id)
                 .ToArray());
+    }
+
+    [TestMethod]
+    public void Capture_ReconcilesPreparedSessionContextWhenSelectedPageDisappears()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            "---\nid: topic\ntitle: Topic\ntype: concept\nglasswork:\n  research: {}\n---\n" +
+            "[[wiki/sources/alpha]] [[wiki/systems/beta]]");
+        WritePage(
+            "wiki/sources/alpha.md",
+            "---\nid: alpha\ntitle: Alpha\ntype: source\n---\nAlpha.");
+        WritePage(
+            "wiki/systems/beta.md",
+            "---\nid: beta\ntitle: Beta\ntype: system\n---\nBeta.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        var prepared = catalog.PrepareSessionContext("topic");
+        Assert.IsTrue(prepared.Succeeded, prepared.Message);
+
+        File.Delete(FullPath("wiki/sources/alpha.md"));
+        _ = catalog.Capture();
+
+        Assert.IsNotNull(catalog.PreparedSessionContext);
+        CollectionAssert.AreEqual(
+            new[] { "topic", "beta" },
+            catalog.PreparedSessionContext.PageIds.ToArray());
+        Assert.AreEqual(2, catalog.PreparedSessionContext.TotalPageCount);
+    }
+
+    [TestMethod]
+    public void SetContextPageIncluded_InvalidatesOnlyTheMutatedTopicsPreparedContext()
+    {
+        WritePage(
+            "wiki/concepts/topic-a.md",
+            "---\nid: topic-a\ntitle: Topic A\ntype: concept\nglasswork:\n  research: {}\n---\nA.");
+        WritePage(
+            "wiki/concepts/topic-b.md",
+            "---\nid: topic-b\ntitle: Topic B\ntype: concept\nglasswork:\n  research: {}\n---\nB.");
+        WritePage(
+            "wiki/sources/evidence.md",
+            "---\nid: evidence\ntitle: Evidence\ntype: source\n---\nEvidence.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        var prepared = catalog.PrepareSessionContext("topic-b");
+        Assert.IsTrue(prepared.Succeeded, prepared.Message);
+
+        var unrelatedMutation = catalog.SetContextPageIncluded(
+            "topic-a",
+            "evidence",
+            included: true);
+
+        Assert.IsTrue(unrelatedMutation.Succeeded, unrelatedMutation.Message);
+        Assert.AreEqual("topic-b", catalog.PreparedSessionContext?.TopicId);
+
+        var matchingMutation = catalog.SetContextPageIncluded(
+            "topic-b",
+            "evidence",
+            included: true);
+
+        Assert.IsTrue(matchingMutation.Succeeded, matchingMutation.Message);
+        Assert.IsNull(catalog.PreparedSessionContext);
     }
 
     [TestMethod]
@@ -1195,7 +1335,7 @@ public sealed class ResearchCatalogTests
         Assert.AreEqual(
             original.Replace(
                 "  research: {}",
-                "  research:\n    exclude: [linked]",
+                "  research: { exclude: [linked] }",
                 StringComparison.Ordinal),
             File.ReadAllText(FullPath(topicPath)).ReplaceLineEndings("\n"));
     }
@@ -1258,6 +1398,47 @@ public sealed class ResearchCatalogTests
         var warning = context.Warnings.Single();
         Assert.AreEqual(ResearchContextWarningCode.DuplicateOverride, warning.Code);
         Assert.AreEqual("evidence", warning.Reference);
+    }
+
+    [TestMethod]
+    public void Capture_OverrideStableIdsAreMatchedExactlyWithoutWikiLinkNormalization()
+    {
+        var stableIds = new[]
+        {
+            "report.md",
+            "area/page",
+            "claim#part",
+            "source|alias",
+        };
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            glasswork:
+              research:
+                include: ["report.md", "area/page", "claim#part", "source|alias"]
+            ---
+            Topic.
+            """);
+        for (var index = 0; index < stableIds.Length; index++)
+        {
+            WritePage(
+                $"wiki/sources/special-{index}.md",
+                $"---\nid: \"{stableIds[index]}\"\ntitle: \"Special {index}\"\ntype: source\n---\nEvidence.");
+        }
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        CollectionAssert.AreEquivalent(
+            stableIds,
+            context.RelatedPages.Select(page => page.Id).ToArray());
+        Assert.IsTrue(context.RelatedPages.All(page =>
+            page.Relations == ResearchContextRelation.IncludeOverride));
+        Assert.IsEmpty(context.Warnings);
     }
 
     [TestMethod]

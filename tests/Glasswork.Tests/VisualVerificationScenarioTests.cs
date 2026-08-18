@@ -104,6 +104,10 @@ public class VisualVerificationScenarioTests
               "value": "title: [unterminated"
             },
             {
+              "type": "delete-wiki-page",
+              "wikiPagePath": "sources/removed.md"
+            },
+            {
               "type": "scroll-percent",
               "automationId": "ResearchTopicDetail",
               "value": "60"
@@ -127,9 +131,10 @@ public class VisualVerificationScenarioTests
         var actions = VisualVerificationScenario.FromJson(json).Actions;
 
         Assert.AreEqual("concepts/live.md", actions[0].WikiPagePath);
-        Assert.AreEqual("60", actions[1].Value);
-        Assert.AreEqual("assert-selected", actions[2].Type);
-        Assert.AreEqual("40", actions[3].Value);
+        Assert.AreEqual("sources/removed.md", actions[1].WikiPagePath);
+        Assert.AreEqual("60", actions[2].Value);
+        Assert.AreEqual("assert-selected", actions[3].Type);
+        Assert.AreEqual("40", actions[4].Value);
     }
 
     [TestMethod]

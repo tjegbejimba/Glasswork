@@ -394,6 +394,9 @@ internal static partial class VisualVerificationRunner
             case "replace-wiki-page-text":
                 ReplaceWikiPageText(vaultRoot, action);
                 return;
+            case "delete-wiki-page":
+                DeleteWikiPage(vaultRoot, action);
+                return;
             default:
                 throw new FormatException($"Unsupported visual verification action type '{action.Type}'.");
         }
@@ -437,6 +440,29 @@ internal static partial class VisualVerificationRunner
                 $"replace-wiki-page-text did not find '{action.OldValue}' in '{action.WikiPagePath}'.");
         }
         File.WriteAllText(path, updated);
+    }
+
+    private static void DeleteWikiPage(
+        string vaultRoot,
+        VisualVerificationAction action)
+    {
+        var wikiRoot = Path.Combine(vaultRoot, "wiki");
+        var path = Path.GetFullPath(Path.Combine(
+            wikiRoot,
+            action.WikiPagePath!.Replace('/', Path.DirectorySeparatorChar)));
+        if (!path.StartsWith(
+                wikiRoot + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Wiki Page path '{action.WikiPagePath}' escapes the scenario Vault.");
+        }
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException(
+                $"Wiki Page '{action.WikiPagePath}' does not exist.");
+        }
+        File.Delete(path);
     }
 
     private static InspectionPaths EmitInspection(

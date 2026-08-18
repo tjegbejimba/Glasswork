@@ -540,8 +540,9 @@
                                     AutomationProperties.AutomationId="ResearchContextPageSelection"
                                     AutomationProperties.Name="{Binding AccessibleName}"
                                     Click="ContextSelectionCheckBox_Click"
-                                    IsChecked="{Binding IsSelected}"
+                                    IsChecked="{Binding IsSelected, Mode=OneWay}"
                                     IsEnabled="{Binding IsEnabled}"
+                                    IsThreeState="False"
                                     Tag="{Binding}">
                                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                                         <StackPanel Spacing="3">
@@ -560,7 +561,7 @@
                                             VerticalAlignment="Center"
                                             FontSize="11"
                                             Opacity="0.72"
-                                            Text="{Binding LockLabel}" />
+                                            Text="{Binding StatusLabel}" />
                                     </Grid>
                                 </CheckBox>
                             </DataTemplate>

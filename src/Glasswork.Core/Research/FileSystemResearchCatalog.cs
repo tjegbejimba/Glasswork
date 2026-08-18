@@ -57,6 +57,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private readonly Debouncer _refreshDebouncer;
     private readonly FileSystemWatcher _watcher;
     private ResearchCatalogSnapshot _snapshot = EmptySnapshot();
+    private ResearchSessionContext? _preparedSessionContext;
     private bool _initialized;
     private bool _disposed;
     private int _recoveryPending;
@@ -100,6 +101,15 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     public event EventHandler<ResearchTopicsChangedEventArgs>? TopicsChanged;
 
     public bool IsWatching => _watcher.EnableRaisingEvents;
+
+    public ResearchSessionContext? PreparedSessionContext
+    {
+        get
+        {
+            lock (_gate)
+                return _preparedSessionContext;
+        }
+    }
 
     public ResearchCatalogSnapshot Capture() => Capture(_today());
 
@@ -494,10 +504,32 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             pageIds.AddRange(topic.Context.RelatedPages
                 .Where(page => requestedIds is null || requestedIds.Contains(page.Id))
                 .Select(page => page.Id));
-            return ResearchSessionContextResult.Success(new ResearchSessionContext(
+            _preparedSessionContext = new ResearchSessionContext(
                 topic.Id,
                 Array.AsReadOnly(pageIds.ToArray()),
-                topic.Context.RelatedPages.Count + 1));
+                topic.Context.RelatedPages.Count + 1);
+            return ResearchSessionContextResult.Success(_preparedSessionContext);
+        }
+    }
+
+    public ResearchSessionContext? ConsumePreparedSessionContext(string topicId)
+    {
+        if (string.IsNullOrWhiteSpace(topicId))
+            return null;
+        lock (_gate)
+        {
+            if (_preparedSessionContext is null
+                || !string.Equals(
+                    _preparedSessionContext.TopicId,
+                    topicId.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var context = _preparedSessionContext;
+            _preparedSessionContext = null;
+            return context;
         }
     }
 
@@ -583,22 +615,6 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     $"Wiki Page '{pageId}' is not eligible for Research context.");
             }
 
-            var topicPage = _pagesByPath[topic.VaultRelativePath];
-            var includeIds = topicPage.IncludeIds
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var excludeIds = topicPage.ExcludeIds
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (included)
-            {
-                includeIds.Add(pageMatches[0].Id);
-                excludeIds.Remove(pageMatches[0].Id);
-            }
-            else
-            {
-                includeIds.Remove(pageMatches[0].Id);
-                excludeIds.Add(pageMatches[0].Id);
-            }
-
             var fullPath = Path.Combine(
                 _vaultRoot,
                 topic.VaultRelativePath.Replace('/', Path.DirectorySeparatorChar));
@@ -621,8 +637,56 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             }
 
             var match = FrontmatterRegex().Match(original);
-            if (!match.Success
-                || !TrySetResearchOverrides(
+            if (!match.Success)
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.InvalidResearchMetadata,
+                    $"Research Topic '{topic.Title}' has invalid Research metadata.");
+            }
+            WikiPageFrontmatter? authoritativeFrontmatter;
+            try
+            {
+                authoritativeFrontmatter = YamlDeserializer.Deserialize<WikiPageFrontmatter>(
+                    match.Groups[1].Value);
+            }
+            catch (Exception ex) when (ex is YamlException or InvalidOperationException)
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.InvalidResearchMetadata,
+                    $"Research Topic '{topic.Title}' has invalid frontmatter: {ex.Message}");
+            }
+            if (authoritativeFrontmatter is null
+                || !string.Equals(
+                    authoritativeFrontmatter.Id?.Trim(),
+                    topic.Id,
+                    StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(authoritativeFrontmatter.Type)
+                || !EligibleTypes.Contains(authoritativeFrontmatter.Type)
+                || !ContainsResearchMetadata(match.Groups[1].Value))
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.ConcurrentModification,
+                    $"Research Topic '{topic.Title}' changed identity or eligibility before its context was updated.");
+            }
+            var authoritativeMetadata = ParseResearchMetadata(
+                match.Groups[1].Value,
+                topic.Id);
+            var includeIds = authoritativeMetadata.IncludeIds
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var excludeIds = authoritativeMetadata.ExcludeIds
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (included)
+            {
+                includeIds.Add(pageMatches[0].Id);
+                excludeIds.Remove(pageMatches[0].Id);
+            }
+            else
+            {
+                includeIds.Remove(pageMatches[0].Id);
+                excludeIds.Add(pageMatches[0].Id);
+            }
+
+            if (!TrySetResearchOverrides(
                     original,
                     match.Groups[1],
                     includeIds,
@@ -677,6 +741,13 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             var read = ReadPage(fullPath, topic.VaultRelativePath, queryDate, _pagesByPath);
             ApplyReadResult(read, topic.VaultRelativePath, _pagesByPath, _diagnosticsByPath);
             _snapshot = BuildSnapshot(queryDate, before);
+            if (string.Equals(
+                    _preparedSessionContext?.TopicId,
+                    topic.Id,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _preparedSessionContext = null;
+            }
             var reloaded = _snapshot.Topics.SingleOrDefault(candidate =>
                 string.Equals(candidate.Id, topic.Id, StringComparison.OrdinalIgnoreCase));
             return reloaded is null
@@ -1260,10 +1331,45 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             .ThenBy(page => page.Id, StringComparer.Ordinal)
             .ToArray();
 
-        return new ResearchCatalogSnapshot(
+        var snapshot = new ResearchCatalogSnapshot(
             Array.AsReadOnly(topics),
             Array.AsReadOnly(eligiblePages),
             Array.AsReadOnly(diagnostics));
+        ReconcilePreparedSessionContext(snapshot);
+        return snapshot;
+    }
+
+    private void ReconcilePreparedSessionContext(ResearchCatalogSnapshot snapshot)
+    {
+        if (_preparedSessionContext is null)
+            return;
+        var topic = snapshot.Topics.SingleOrDefault(candidate => string.Equals(
+            candidate.Id,
+            _preparedSessionContext.TopicId,
+            StringComparison.OrdinalIgnoreCase));
+        if (topic is null)
+        {
+            _preparedSessionContext = null;
+            return;
+        }
+
+        var availableIds = topic.Context.RelatedPages
+            .Select(page => page.Id)
+            .Append(topic.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedIds = _preparedSessionContext.PageIds
+            .Where(availableIds.Contains)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        selectedIds.RemoveAll(id => string.Equals(
+            id,
+            topic.Id,
+            StringComparison.OrdinalIgnoreCase));
+        selectedIds.Insert(0, topic.Id);
+        _preparedSessionContext = new ResearchSessionContext(
+            topic.Id,
+            Array.AsReadOnly(selectedIds.ToArray()),
+            topic.Context.RelatedPages.Count + 1);
     }
 
     private ResearchContext BuildContext(
@@ -1278,11 +1384,11 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         var warnings = new Dictionary<string, ResearchContextWarning>(
             StringComparer.OrdinalIgnoreCase);
         var excludedIds = topic.ExcludeIds
-            .Select(NormalizeReference)
+            .Select(id => id.Trim())
             .Where(id => id.Length > 0)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var includedIds = topic.IncludeIds
-            .Select(NormalizeReference)
+            .Select(id => id.Trim())
             .Where(id => id.Length > 0)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -1292,7 +1398,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             ResearchContextWarningCode code,
             string message)
         {
-            var key = $"{code}:{NormalizeReference(reference)}";
+            var key = $"{code}:{reference.Trim()}";
             if (warnings.TryGetValue(key, out var existing))
             {
                 warnings[key] = existing with
@@ -1385,7 +1491,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 return;
             }
             if (string.Equals(target.Id, topic.Id, StringComparison.OrdinalIgnoreCase)
-                || excludedIds.Contains(NormalizeReference(target.Id)))
+                || excludedIds.Contains(target.Id.Trim()))
             {
                 return;
             }
@@ -1402,9 +1508,14 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             related[target.Id] = ToContextPage(target, queryDate, relation);
         }
 
-        void AddIdentityReference(string reference, ResearchContextRelation relation)
+        void AddIdentityReference(
+            string reference,
+            ResearchContextRelation relation,
+            bool exactStableId = false)
         {
-            var normalized = NormalizeReference(reference);
+            var normalized = exactStableId
+                ? reference.Trim()
+                : NormalizeReference(reference);
             if (normalized.Length == 0)
                 return;
             if (excludedIds.Contains(normalized))
@@ -1486,7 +1597,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 .ToArray();
             if (pathDescriptors.Any(descriptor =>
                     descriptor.StableId is not null
-                    && excludedIds.Contains(NormalizeReference(descriptor.StableId))))
+                    && excludedIds.Contains(descriptor.StableId.Trim())))
             {
                 return;
             }
@@ -1587,7 +1698,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     $"Wiki Page '{includedId}' appears in both include and exclude overrides; exclude wins.");
                 continue;
             }
-            AddIdentityReference(includedId, ResearchContextRelation.IncludeOverride);
+            AddIdentityReference(
+                includedId,
+                ResearchContextRelation.IncludeOverride,
+                exactStableId: true);
         }
 
         foreach (var excludedId in excludedIds)
@@ -1968,7 +2082,43 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         out string updated)
     {
         updated = content;
-        var yaml = yamlGroup.Value;
+        var orderedIncludes = includeIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var orderedExcludes = excludeIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (!TrySetResearchOverrideList(
+                yamlGroup.Value,
+                "include",
+                orderedIncludes,
+                out var updatedYaml)
+            || !TrySetResearchOverrideList(
+                updatedYaml,
+                "exclude",
+                orderedExcludes,
+                out updatedYaml))
+        {
+            return false;
+        }
+
+        updated = content[..yamlGroup.Index]
+            + updatedYaml
+            + content[(yamlGroup.Index + yamlGroup.Length)..];
+        return true;
+    }
+
+    private static bool TrySetResearchOverrideList(
+        string yaml,
+        string propertyName,
+        IReadOnlyCollection<string> values,
+        out string updatedYaml)
+    {
+        updatedYaml = yaml;
         var stream = new YamlStream();
         try
         {
@@ -1993,94 +2143,100 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         var researchEntry = glasswork.Children.FirstOrDefault(pair =>
             pair.Key is YamlScalarNode key
             && string.Equals(key.Value, "research", StringComparison.Ordinal));
-        if (researchEntry.Key is null || researchEntry.Value is not YamlMappingNode)
+        if (researchEntry.Key is null
+            || researchEntry.Value is not YamlMappingNode research)
             return false;
-
-        var orderedIncludes = includeIds
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var orderedExcludes = excludeIds
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var newLine = content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
-        string replacement;
-        int start;
-        int end;
-        if (glasswork.Style == YamlDotNet.Core.Events.MappingStyle.Flow)
+        var overrideEntry = research.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, propertyName, StringComparison.Ordinal));
+        var formatted = $"[{string.Join(", ", values.Select(FormatYamlScalar))}]";
+        if (overrideEntry.Key is not null)
         {
-            start = checked((int)researchEntry.Key.Start.Index);
-            end = checked((int)researchEntry.Value.End.Index);
-            replacement = BuildFlowResearchMetadata(orderedIncludes, orderedExcludes);
-        }
-        else
-        {
-            var keyStart = checked((int)researchEntry.Key.Start.Index);
-            start = yaml.LastIndexOf('\n', Math.Max(0, keyStart - 1)) + 1;
-            end = checked((int)researchEntry.Value.End.Index);
-            while (end < yaml.Length && yaml[end] is not '\r' and not '\n')
-                end++;
-            if (end < yaml.Length && yaml[end] == '\r')
-                end++;
-            if (end < yaml.Length && yaml[end] == '\n')
-                end++;
-            var indent = yaml[start..keyStart];
-            replacement = BuildBlockResearchMetadata(
-                indent,
-                newLine,
-                orderedIncludes,
-                orderedExcludes);
-            if (end > start && yaml[end - 1] == '\n')
-                replacement += newLine;
+            if (overrideEntry.Value is not YamlSequenceNode sequence)
+                return false;
+            if (sequence.Style == YamlDotNet.Core.Events.SequenceStyle.Flow)
+            {
+                var valueStart = yaml.IndexOf(
+                    '[',
+                    checked((int)overrideEntry.Key.End.Index));
+                var closingBracket = FindFlowCollectionClosingCharacter(
+                    yaml,
+                    valueStart,
+                    '[',
+                    ']');
+                if (valueStart < 0 || closingBracket < 0)
+                    return false;
+                var valueEnd = closingBracket + 1;
+                updatedYaml = yaml[..valueStart] + formatted + yaml[valueEnd..];
+                return true;
+            }
+
+            var keyStart = checked((int)overrideEntry.Key.Start.Index);
+            var entryStart = yaml.LastIndexOf('\n', Math.Max(0, keyStart - 1)) + 1;
+            var entryEnd = checked((int)overrideEntry.Value.End.Index);
+            while (entryEnd < yaml.Length && yaml[entryEnd] is not '\r' and not '\n')
+                entryEnd++;
+            if (entryEnd < yaml.Length && yaml[entryEnd] == '\r')
+                entryEnd++;
+            if (entryEnd < yaml.Length && yaml[entryEnd] == '\n')
+                entryEnd++;
+            var indent = yaml[entryStart..keyStart];
+            var replacement = indent + propertyName + ": " + formatted;
+            if (entryEnd > entryStart && yaml[entryEnd - 1] == '\n')
+                replacement += yaml.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+            updatedYaml = yaml[..entryStart] + replacement + yaml[entryEnd..];
+            return true;
         }
 
-        var updatedYaml = yaml[..start] + replacement + yaml[end..];
-        updated = content[..yamlGroup.Index]
-            + updatedYaml
-            + content[(yamlGroup.Index + yamlGroup.Length)..];
+        if (values.Count == 0)
+            return true;
+
+        if (research.Style == YamlDotNet.Core.Events.MappingStyle.Flow)
+        {
+            var closingBrace = FindFlowMappingClosingBrace(
+                yaml,
+                checked((int)researchEntry.Value.Start.Index));
+            if (closingBrace < 0)
+                return false;
+            var insertionIndex = closingBrace;
+            while (insertionIndex > 0 && char.IsWhiteSpace(yaml[insertionIndex - 1]))
+                insertionIndex--;
+            var flowInsertion = research.Children.Count == 0
+                ? " " + propertyName + ": " + formatted + " "
+                : ", " + propertyName + ": " + formatted;
+            updatedYaml = yaml.Insert(
+                insertionIndex,
+                flowInsertion);
+            return true;
+        }
+
+        if (research.Children.Count == 0)
+            return false;
+        var firstKey = research.Children.First().Key;
+        var firstKeyStart = checked((int)firstKey.Start.Index);
+        var childLineStart = yaml.LastIndexOf('\n', Math.Max(0, firstKeyStart - 1)) + 1;
+        var childIndent = yaml[childLineStart..firstKeyStart];
+        var lastValue = research.Children.Last().Value;
+        var insertionPoint = checked((int)lastValue.End.Index);
+        while (insertionPoint < yaml.Length
+               && yaml[insertionPoint] is not '\r' and not '\n')
+        {
+            insertionPoint++;
+        }
+        if (insertionPoint < yaml.Length && yaml[insertionPoint] == '\r')
+            insertionPoint++;
+        if (insertionPoint < yaml.Length && yaml[insertionPoint] == '\n')
+            insertionPoint++;
+        var newLine = yaml.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var insertion = childIndent + propertyName + ": " + formatted + newLine;
+        if (insertionPoint == yaml.Length
+            && insertionPoint > 0
+            && yaml[insertionPoint - 1] is not '\r' and not '\n')
+        {
+            insertion = newLine + insertion;
+        }
+        updatedYaml = yaml.Insert(insertionPoint, insertion);
         return true;
-    }
-
-    private static string BuildFlowResearchMetadata(
-        IReadOnlyCollection<string> includeIds,
-        IReadOnlyCollection<string> excludeIds)
-    {
-        var entries = new List<string>();
-        if (includeIds.Count > 0)
-            entries.Add($"include: [{string.Join(", ", includeIds.Select(FormatYamlScalar))}]");
-        if (excludeIds.Count > 0)
-            entries.Add($"exclude: [{string.Join(", ", excludeIds.Select(FormatYamlScalar))}]");
-        return entries.Count == 0
-            ? "research: {}"
-            : $"research: {{ {string.Join(", ", entries)} }}";
-    }
-
-    private static string BuildBlockResearchMetadata(
-        string indent,
-        string newLine,
-        IReadOnlyCollection<string> includeIds,
-        IReadOnlyCollection<string> excludeIds)
-    {
-        if (includeIds.Count == 0 && excludeIds.Count == 0)
-            return indent + "research: {}";
-        var lines = new List<string> { indent + "research:" };
-        var childIndent = indent + "  ";
-        if (includeIds.Count > 0)
-        {
-            lines.Add(
-                childIndent +
-                $"include: [{string.Join(", ", includeIds.Select(FormatYamlScalar))}]");
-        }
-        if (excludeIds.Count > 0)
-        {
-            lines.Add(
-                childIndent +
-                $"exclude: [{string.Join(", ", excludeIds.Select(FormatYamlScalar))}]");
-        }
-        return string.Join(newLine, lines);
     }
 
     private static string FormatYamlScalar(string value)
@@ -2147,14 +2303,24 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     }
 
     private static int FindFlowMappingClosingBrace(string yaml, int startIndex)
+        => FindFlowCollectionClosingCharacter(yaml, startIndex, '{', '}');
+
+    private static int FindFlowCollectionClosingCharacter(
+        string yaml,
+        int startIndex,
+        char openingCharacter,
+        char closingCharacter)
     {
-        var openingBrace = yaml.IndexOf('{', startIndex);
-        if (openingBrace < 0) return -1;
+        if (startIndex < 0)
+            return -1;
+        var openingIndex = yaml.IndexOf(openingCharacter, startIndex);
+        if (openingIndex < 0)
+            return -1;
         var depth = 0;
         var inSingleQuote = false;
         var inDoubleQuote = false;
         var escaped = false;
-        for (var index = openingBrace; index < yaml.Length; index++)
+        for (var index = openingIndex; index < yaml.Length; index++)
         {
             var character = yaml[index];
             if (inDoubleQuote)
@@ -2179,10 +2345,15 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             {
                 case '"': inDoubleQuote = true; break;
                 case '\'': inSingleQuote = true; break;
-                case '{': depth++; break;
-                case '}':
-                    depth--;
-                    if (depth == 0) return index;
+                default:
+                    if (character == openingCharacter)
+                        depth++;
+                    else if (character == closingCharacter)
+                    {
+                        depth--;
+                        if (depth == 0)
+                            return index;
+                    }
                     break;
             }
         }
