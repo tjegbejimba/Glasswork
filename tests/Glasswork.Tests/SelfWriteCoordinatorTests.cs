@@ -249,4 +249,33 @@ public class SelfWriteCoordinatorTests
 
         Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
     }
+
+    [TestMethod]
+    public void BeginWrite_DisposeWithoutCommitAbortsOwnProcessAndMarkerRegistration()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "aborted.md");
+
+        using (coord.BeginWrite(path))
+        {
+            Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        }
+
+        Assert.IsFalse(coord.IsOwnProcessWrite(path));
+        Assert.IsFalse(coord.IsSuppressed(path));
+        Assert.IsFalse(coord.TryConsumeOwnProcessWrite(path));
+    }
+
+    [TestMethod]
+    public void BeginWrite_CommitKeepsOwnProcessRegistration()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "committed.md");
+        using var registration = coord.BeginWrite(path);
+
+        registration.Commit();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+    }
 }

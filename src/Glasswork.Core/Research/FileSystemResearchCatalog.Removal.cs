@@ -12,6 +12,11 @@ public sealed partial class FileSystemResearchCatalog
     internal Action? AfterRemovalPageReplacementHook { get; set; }
     internal Action? BeforeRemovalRollbackHook { get; set; }
     internal Action? BeforeRemovalJournalWriteHook { get; set; }
+    internal Action? BeforeRemovalPageSwapHook { get; set; }
+    internal Action? BeforeRemovalLogMoveHook { get; set; }
+    internal Action? BeforeRemovalPreparationCleanupHook { get; set; }
+    internal Action? BeforeRemovalJournalPromoteHook { get; set; }
+    internal Action? BeforeRemovalJournalTempCleanupHook { get; set; }
 
     public ResearchRemovalResult Remove(string topicId)
     {
@@ -133,14 +138,26 @@ public sealed partial class FileSystemResearchCatalog
             {
                 if (!File.Exists(ResearchRemovalJournalPath))
                 {
-                    if (journal is not null)
+                    if (ex is ResearchPreparationCleanupException preparationCleanup)
                     {
-                        var operationPath =
-                            GetResearchRemovalOperationPath(journal.OperationId);
-                        if (Directory.Exists(operationPath))
-                            Directory.Delete(operationPath, recursive: true);
+                        return ResearchRemovalResult.Failure(
+                            ResearchRemovalErrorCode.RecoveryRequired,
+                            $"Research Topic '{topic.Title}' was not changed, but staged recovery data " +
+                            $"could not be cleaned up and was retained at '{preparationCleanup.RecoveryPath}': " +
+                            preparationCleanup.InnerException?.Message);
                     }
-                    TryDeleteRecoveryFile(ResearchRemovalJournalPath + ".tmp");
+
+                    if (!TryCleanupUnjournaledRemoval(
+                            journal,
+                            out var retainedPath,
+                            out var cleanupError))
+                    {
+                        return ResearchRemovalResult.Failure(
+                            ResearchRemovalErrorCode.RecoveryRequired,
+                            $"Research Topic '{topic.Title}' was not changed, but staged recovery data " +
+                            $"could not be cleaned up and was retained at '{retainedPath}': {cleanupError}");
+                    }
+
                     return ResearchRemovalResult.Failure(
                         ResearchRemovalErrorCode.WriteFailed,
                         $"Research Topic '{topic.Title}' was not changed because the removal could not be prepared: {ex.Message}");
@@ -240,10 +257,65 @@ public sealed partial class FileSystemResearchCatalog
         }
         catch
         {
-            if (Directory.Exists(operationPath))
-                Directory.Delete(operationPath, recursive: true);
+            try
+            {
+                if (Directory.Exists(operationPath))
+                    Directory.Delete(operationPath, recursive: true);
+            }
+            catch (Exception cleanupEx) when (
+                cleanupEx is IOException or UnauthorizedAccessException)
+            {
+                throw new ResearchPreparationCleanupException(
+                    operationPath,
+                    cleanupEx);
+            }
             throw;
         }
+    }
+
+    private bool TryCleanupUnjournaledRemoval(
+        ResearchRemovalJournal? journal,
+        out string? retainedPath,
+        out string? error)
+    {
+        var retainedPaths = new List<string>();
+        var errors = new List<string>();
+        var operationPath = journal is null
+            ? null
+            : GetResearchRemovalOperationPath(journal.OperationId);
+        try
+        {
+            if (operationPath is not null)
+            {
+                BeforeRemovalPreparationCleanupHook?.Invoke();
+                if (Directory.Exists(operationPath))
+                    Directory.Delete(operationPath, recursive: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            retainedPaths.Add(operationPath!);
+            errors.Add(ex.Message);
+        }
+
+        var journalTempPath = ResearchRemovalJournalPath + ".tmp";
+        try
+        {
+            BeforeRemovalJournalTempCleanupHook?.Invoke();
+            if (File.Exists(journalTempPath))
+                File.Delete(journalTempPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            retainedPaths.Add(journalTempPath);
+            errors.Add(ex.Message);
+        }
+
+        retainedPath = retainedPaths.Count == 0
+            ? null
+            : string.Join("; ", retainedPaths);
+        error = errors.Count == 0 ? null : string.Join(" | ", errors);
+        return retainedPaths.Count == 0;
     }
 
     private void ApplyResearchRemoval(ResearchRemovalJournal journal)
@@ -261,7 +333,10 @@ public sealed partial class FileSystemResearchCatalog
                 pagePath,
                 Path.Combine(
                     GetResearchRemovalOperationPath(journal.OperationId),
-                    "page.updated"));
+                    "page.updated"),
+                journal.OriginalPageRevision,
+                GetResearchRemovalOperationPath(journal.OperationId),
+                BeforeRemovalPageSwapHook);
         }
         else if (!string.Equals(
                      pageRevision,
@@ -288,18 +363,23 @@ public sealed partial class FileSystemResearchCatalog
                 throw new InvalidDataException(
                     "The Research Change Log disappeared before it could be removed safely.");
             }
+            if (!string.Equals(
+                    RemovalRevision(File.ReadAllBytes(removedLogPath)),
+                    journal.OriginalLogRevision,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "The removed Research Change Log does not match the prepared revision.");
+            }
             return;
         }
 
-        var logRevision = RemovalRevision(File.ReadAllBytes(logPath));
-        if (!string.Equals(logRevision, journal.OriginalLogRevision, StringComparison.Ordinal))
-        {
-            throw new InvalidDataException(
-                "The Research Change Log changed after removal was prepared.");
-        }
-
-        _selfWrites?.RegisterWrite(logPath);
-        File.Move(logPath, removedLogPath);
+        MoveRemovalLog(
+            logPath,
+            removedLogPath,
+            journal.OriginalLogRevision!,
+            GetResearchRemovalOperationPath(journal.OperationId),
+            BeforeRemovalLogMoveHook);
     }
 
     private void RollBackResearchRemoval(ResearchRemovalJournal journal)
@@ -316,7 +396,9 @@ public sealed partial class FileSystemResearchCatalog
         {
             ReplaceRemovalPage(
                 pagePath,
-                Path.Combine(operationPath, "page.original"));
+                Path.Combine(operationPath, "page.original"),
+                journal.UpdatedPageRevision,
+                operationPath);
         }
         else if (!string.Equals(
                      pageRevision,
@@ -356,8 +438,9 @@ public sealed partial class FileSystemResearchCatalog
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-        _selfWrites?.RegisterWrite(logPath);
+        using var registration = _selfWrites?.BeginWrite(logPath);
         File.Move(removedLogPath, logPath);
+        registration?.Commit();
     }
 
     private void RecoverResearchRemoval()
@@ -373,20 +456,110 @@ public sealed partial class FileSystemResearchCatalog
         CleanupResearchRemoval(journal);
     }
 
-    private void ReplaceRemovalPage(string pagePath, string stagedPath)
+    private void ReplaceRemovalPage(
+        string pagePath,
+        string stagedPath,
+        string expectedRevision,
+        string operationPath,
+        Action? beforeSwap = null)
     {
         var replacementPath =
             pagePath + ".research-remove-" + Guid.NewGuid().ToString("N") + ".tmp";
+        var displacedPath = Path.Combine(
+            operationPath,
+            "page.displaced-" + Guid.NewGuid().ToString("N"));
         try
         {
             WriteDurableRemovalFile(replacementPath, File.ReadAllBytes(stagedPath));
-            _selfWrites?.RegisterWrite(pagePath);
-            File.Replace(replacementPath, pagePath, null);
+            using var registration = _selfWrites?.BeginWrite(pagePath);
+            beforeSwap?.Invoke();
+            File.Replace(replacementPath, pagePath, displacedPath);
+            var displacedRevision = RemovalRevision(File.ReadAllBytes(displacedPath));
+            if (!string.Equals(
+                    displacedRevision,
+                    expectedRevision,
+                    StringComparison.Ordinal))
+            {
+                var recoveryPath = RestoreRacingPageEdit(
+                    pagePath,
+                    displacedPath,
+                    operationPath);
+                throw new InvalidDataException(
+                    "The Wiki Page changed during its atomic swap. " +
+                    $"The newer external content was restored and recovery data was retained at '{recoveryPath}'.");
+            }
+
+            registration?.Commit();
+            TryDeleteRecoveryFile(displacedPath);
         }
         finally
         {
             TryDeleteRecoveryFile(replacementPath);
         }
+    }
+
+    private static string RestoreRacingPageEdit(
+        string pagePath,
+        string displacedPath,
+        string operationPath)
+    {
+        var candidatePath = displacedPath;
+        var expectedLiveRevision = RemovalRevision(File.ReadAllBytes(pagePath));
+        for (var attempt = 0; attempt < 16; attempt++)
+        {
+            var candidateRevision = RemovalRevision(File.ReadAllBytes(candidatePath));
+            var recoveryPath = Path.Combine(
+                operationPath,
+                $"page.recovery-{attempt:D2}-{Guid.NewGuid():N}");
+            File.Replace(candidatePath, pagePath, recoveryPath);
+            var displacedLiveRevision =
+                RemovalRevision(File.ReadAllBytes(recoveryPath));
+            if (string.Equals(
+                    displacedLiveRevision,
+                    expectedLiveRevision,
+                    StringComparison.Ordinal))
+            {
+                return recoveryPath;
+            }
+
+            candidatePath = recoveryPath;
+            expectedLiveRevision = candidateRevision;
+        }
+
+        throw new InvalidDataException(
+            $"The Wiki Page kept changing during restoration. Recovery data was retained at '{candidatePath}'.");
+    }
+
+    private void MoveRemovalLog(
+        string logPath,
+        string removedLogPath,
+        string expectedRevision,
+        string operationPath,
+        Action? beforeMove)
+    {
+        using var registration = _selfWrites?.BeginWrite(logPath);
+        beforeMove?.Invoke();
+        File.Move(logPath, removedLogPath);
+        if (string.Equals(
+                RemovalRevision(File.ReadAllBytes(removedLogPath)),
+                expectedRevision,
+                StringComparison.Ordinal))
+        {
+            registration?.Commit();
+            return;
+        }
+
+        var recoveryPath = Path.Combine(
+            operationPath,
+            "log.recovery-" + Guid.NewGuid().ToString("N"));
+        WriteDurableRemovalFile(
+            recoveryPath,
+            File.ReadAllBytes(removedLogPath));
+        if (!File.Exists(logPath))
+            File.Move(removedLogPath, logPath);
+        throw new InvalidDataException(
+            "The Research Change Log changed during its atomic move. " +
+            $"The newer external content was restored and recovery data was retained at '{recoveryPath}'.");
     }
 
     private void WriteResearchRemovalJournal(ResearchRemovalJournal journal)
@@ -407,6 +580,7 @@ public sealed partial class FileSystemResearchCatalog
             stream.Flush(flushToDisk: true);
         }
 
+        BeforeRemovalJournalPromoteHook?.Invoke();
         if (File.Exists(ResearchRemovalJournalPath))
             File.Replace(tempPath, ResearchRemovalJournalPath, null);
         else
@@ -529,6 +703,14 @@ public sealed partial class FileSystemResearchCatalog
         string? OriginalLogRevision,
         bool Committed);
 
+    private sealed class ResearchPreparationCleanupException(
+        string recoveryPath,
+        Exception innerException)
+        : IOException("Research removal preparation cleanup failed.", innerException)
+    {
+        public string RecoveryPath { get; } = recoveryPath;
+    }
+
     private static bool TryRemoveResearchMetadata(
         string content,
         System.Text.RegularExpressions.Group yamlGroup,
@@ -624,7 +806,12 @@ public sealed partial class FileSystemResearchCatalog
             if (lineEnd < 0) lineEnd = yaml.Length;
             var line = yaml[cursor..lineEnd].TrimEnd('\r');
             var trimmed = line.TrimStart(' ', '\t');
-            if (trimmed.Length > 0 && !trimmed.StartsWith('#'))
+            if (trimmed.Length == 0)
+            {
+                if (!NextNonBlankLineIsNested(yaml, lineEnd, keyIndent))
+                    break;
+            }
+            else
             {
                 var indent = line.Length - trimmed.Length;
                 if (indent <= keyIndent)
@@ -634,6 +821,25 @@ public sealed partial class FileSystemResearchCatalog
         }
 
         return yaml.Remove(lineStart, cursor - lineStart);
+    }
+
+    private static bool NextNonBlankLineIsNested(
+        string yaml,
+        int currentLineEnd,
+        int keyIndent)
+    {
+        var cursor = currentLineEnd < yaml.Length ? currentLineEnd + 1 : yaml.Length;
+        while (cursor < yaml.Length)
+        {
+            var lineEnd = yaml.IndexOf('\n', cursor);
+            if (lineEnd < 0) lineEnd = yaml.Length;
+            var line = yaml[cursor..lineEnd].TrimEnd('\r');
+            var trimmed = line.TrimStart(' ', '\t');
+            if (trimmed.Length > 0)
+                return line.Length - trimmed.Length > keyIndent;
+            cursor = lineEnd < yaml.Length ? lineEnd + 1 : yaml.Length;
+        }
+        return false;
     }
 
     private static string RemoveFlowMappingPair(

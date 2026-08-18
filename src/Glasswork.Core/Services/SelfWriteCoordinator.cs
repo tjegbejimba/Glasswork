@@ -34,6 +34,7 @@ public class SelfWriteCoordinator
         new(StringComparer.OrdinalIgnoreCase);
     private long _nextWriteGeneration;
     private readonly object _fileLock = new();
+    private readonly object _registrationLock = new();
 
     public SelfWriteCoordinator() : this(TimeSpan.FromMilliseconds(1500)) { }
 
@@ -54,12 +55,55 @@ public class SelfWriteCoordinator
     /// <summary>Mark a path as one we are about to write to ourselves.</summary>
     public void RegisterWrite(string fullPath)
     {
-        if (string.IsNullOrEmpty(fullPath)) return;
-        var now = DateTime.UtcNow;
-        _recentWrites[fullPath] = now;
-        _writeGenerations[fullPath] = Interlocked.Increment(ref _nextWriteGeneration);
-        if (_markerFilePath != null)
-            WriteMarkerFile(fullPath, now);
+        using var registration = BeginWrite(fullPath);
+        registration.Commit();
+    }
+
+    /// <summary>
+    /// Tentatively marks a path as a self-write. Commit after the filesystem
+    /// mutation succeeds; disposing without commit restores the prior marker.
+    /// </summary>
+    public SelfWriteRegistration BeginWrite(string fullPath)
+    {
+        if (string.IsNullOrEmpty(fullPath))
+            return SelfWriteRegistration.Empty;
+
+        lock (_registrationLock)
+        {
+            var previous = new RegistrationSnapshot(
+                _recentWrites.TryGetValue(fullPath, out var priorWhen)
+                    ? priorWhen
+                    : null,
+                _writeGenerations.TryGetValue(fullPath, out var priorGeneration)
+                    ? priorGeneration
+                    : null,
+                _consumedWriteGenerations.TryGetValue(fullPath, out var priorConsumed)
+                    ? priorConsumed
+                    : null,
+                ReadMarkerValue(fullPath));
+            var now = DateTime.UtcNow;
+            var generation = Interlocked.Increment(ref _nextWriteGeneration);
+            _recentWrites[fullPath] = now;
+            _writeGenerations[fullPath] = generation;
+            _consumedWriteGenerations.TryRemove(fullPath, out _);
+            try
+            {
+                if (_markerFilePath != null)
+                    WriteMarkerFile(fullPath, now);
+            }
+            catch
+            {
+                RestoreRegistration(fullPath, generation, now, previous);
+                throw;
+            }
+
+            return new SelfWriteRegistration(
+                this,
+                fullPath,
+                generation,
+                now,
+                previous);
+        }
     }
 
     /// <summary>True if the given path was recently registered (within TTL).</summary>
@@ -142,6 +186,74 @@ public class SelfWriteCoordinator
         }
     }
 
+    private string? ReadMarkerValue(string fullPath)
+    {
+        if (_markerFilePath is null)
+            return null;
+        lock (_fileLock)
+        {
+            var entries = ReadEntries();
+            return entries.TryGetValue(fullPath, out var value) ? value : null;
+        }
+    }
+
+    private void RestoreRegistration(
+        string fullPath,
+        long generation,
+        DateTime timestamp,
+        RegistrationSnapshot previous)
+    {
+        lock (_registrationLock)
+        {
+            if (!_writeGenerations.TryGetValue(fullPath, out var currentGeneration)
+                || currentGeneration != generation)
+            {
+                return;
+            }
+
+            RestoreEntry(_recentWrites, fullPath, previous.When);
+            RestoreEntry(_writeGenerations, fullPath, previous.Generation);
+            RestoreEntry(
+                _consumedWriteGenerations,
+                fullPath,
+                previous.ConsumedGeneration);
+            if (_markerFilePath is null)
+                return;
+
+            lock (_fileLock)
+            {
+                var entries = ReadEntries();
+                var tentativeValue = timestamp.ToString("O", CultureInfo.InvariantCulture);
+                if (!entries.TryGetValue(fullPath, out var currentValue)
+                    || !string.Equals(
+                        currentValue,
+                        tentativeValue,
+                        StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                if (previous.MarkerValue is null)
+                    entries.Remove(fullPath);
+                else
+                    entries[fullPath] = previous.MarkerValue;
+                WriteAtomically(entries);
+            }
+        }
+    }
+
+    private static void RestoreEntry<T>(
+        ConcurrentDictionary<string, T> entries,
+        string path,
+        T? value)
+        where T : struct
+    {
+        if (value is { } restored)
+            entries[path] = restored;
+        else
+            entries.TryRemove(path, out _);
+    }
+
     private bool CheckMarkerFile(string fullPath)
     {
         lock (_fileLock)
@@ -216,5 +328,63 @@ public class SelfWriteCoordinator
             File.Replace(tmp, markerFile, null);
         else
             File.Move(tmp, markerFile);
+    }
+
+    internal sealed record RegistrationSnapshot(
+        DateTime? When,
+        long? Generation,
+        long? ConsumedGeneration,
+        string? MarkerValue);
+
+    public sealed class SelfWriteRegistration : IDisposable
+    {
+        internal static SelfWriteRegistration Empty { get; } = new();
+
+        private readonly SelfWriteCoordinator? _coordinator;
+        private readonly string _path = string.Empty;
+        private readonly long _generation;
+        private readonly DateTime _timestamp;
+        private readonly RegistrationSnapshot? _previous;
+        private int _state;
+
+        private SelfWriteRegistration()
+        {
+            _state = 1;
+        }
+
+        internal SelfWriteRegistration(
+            SelfWriteCoordinator coordinator,
+            string path,
+            long generation,
+            DateTime timestamp,
+            RegistrationSnapshot previous)
+        {
+            _coordinator = coordinator;
+            _path = path;
+            _generation = generation;
+            _timestamp = timestamp;
+            _previous = previous;
+        }
+
+        public void Commit()
+        {
+            Interlocked.CompareExchange(ref _state, 1, 0);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.CompareExchange(ref _state, 2, 0) != 0
+                || _coordinator is null
+                || _previous is null)
+            {
+                return;
+            }
+
+            _coordinator.RestoreRegistration(
+                _path,
+                _generation,
+                _timestamp,
+                _previous);
+        }
     }
 }
