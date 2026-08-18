@@ -194,6 +194,7 @@ public sealed class VisualVerificationTask
     public string? CancelledAt { get; init; }
     public string? CancellationReason { get; init; }
     public string? Parent { get; init; }
+    public int? AdoLink { get; init; }
     public List<VisualVerificationSubtask> Subtasks { get; init; } = [];
     public List<VisualVerificationArtifact> Artifacts { get; init; } = [];
 
@@ -213,6 +214,7 @@ public sealed class VisualVerificationTask
             CancelledAt = ParseScenarioDateTimeOffset(CancelledAt),
             CancellationReason = CancellationReason,
             Parent = Parent,
+            AdoLink = AdoLink,
             Description = Description ?? string.Empty,
             Notes = Notes ?? string.Empty,
         };
