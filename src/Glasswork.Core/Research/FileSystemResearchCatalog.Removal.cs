@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Glasswork.Core.Services;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
@@ -17,6 +18,11 @@ public sealed partial class FileSystemResearchCatalog
     internal Action? BeforeRemovalPreparationCleanupHook { get; set; }
     internal Action? BeforeRemovalJournalPromoteHook { get; set; }
     internal Action? BeforeRemovalJournalTempCleanupHook { get; set; }
+    internal Action? BeforeRemovalOperationCleanupHook { get; set; }
+    internal Action? BeforeRemovalJournalCleanupHook { get; set; }
+    internal Action? BeforeAbsentLogGuardHook { get; set; }
+
+    public ResearchRemovalRecoveryState? RemovalRecoveryState { get; private set; }
 
     public ResearchRemovalResult Remove(string topicId)
     {
@@ -29,6 +35,13 @@ public sealed partial class FileSystemResearchCatalog
 
         lock (_gate)
         {
+            if (RemovalRecoveryState is { } blockedRecovery)
+            {
+                return ResearchRemovalResult.Failure(
+                    ResearchRemovalErrorCode.RecoveryRequired,
+                    blockedRecovery.Message);
+            }
+
             if (File.Exists(ResearchRemovalJournalPath))
             {
                 try
@@ -38,8 +51,10 @@ public sealed partial class FileSystemResearchCatalog
                 catch (Exception ex) when (
                     ex is IOException
                         or UnauthorizedAccessException
-                        or InvalidDataException)
+                        or InvalidDataException
+                        or JsonException)
                 {
+                    SetRemovalRecoveryBlocked(ex.Message);
                     return ResearchRemovalResult.Failure(
                         ResearchRemovalErrorCode.RecoveryRequired,
                         $"A prior Research removal still requires recovery: {ex.Message}");
@@ -128,8 +143,12 @@ public sealed partial class FileSystemResearchCatalog
                     changeLogBytes);
                 journal = stagedJournal;
                 WriteResearchRemovalJournal(stagedJournal);
-                ApplyResearchRemoval(stagedJournal);
-                WriteResearchRemovalJournal(stagedJournal with { Committed = true });
+                using var applyGuard = ApplyResearchRemoval(stagedJournal);
+                WriteResearchRemovalJournal(stagedJournal with
+                {
+                    Committed = true,
+                    CleanupPending = true,
+                });
             }
             catch (Exception ex) when (
                 ex is IOException
@@ -167,7 +186,21 @@ public sealed partial class FileSystemResearchCatalog
                 {
                     var pending = ReadResearchRemovalJournal();
                     RollBackResearchRemoval(pending);
-                    CleanupResearchRemoval(pending);
+                    pending = pending with { CleanupPending = true };
+                    WriteResearchRemovalJournal(pending);
+                    if (!TryCleanupResearchRemoval(
+                            pending,
+                            out var rollbackRetainedPath,
+                            out var rollbackCleanupError))
+                    {
+                        SetRemovalRecoveryBlocked(
+                            $"The partial mutation was rolled back, but cleanup requires recovery. " +
+                            $"Retained: {rollbackRetainedPath}. {rollbackCleanupError}",
+                            topic.Id);
+                        return ResearchRemovalResult.Failure(
+                            ResearchRemovalErrorCode.RecoveryRequired,
+                            RemovalRecoveryState!.Message);
+                    }
                     return ResearchRemovalResult.Failure(
                         ResearchRemovalErrorCode.WriteFailed,
                         $"Research Topic '{topic.Title}' was not removed. The partial mutation was rolled back: {ex.Message}");
@@ -175,8 +208,10 @@ public sealed partial class FileSystemResearchCatalog
                 catch (Exception rollbackEx) when (
                     rollbackEx is IOException
                         or UnauthorizedAccessException
-                        or InvalidDataException)
+                        or InvalidDataException
+                        or JsonException)
                 {
+                    SetRemovalRecoveryBlocked(rollbackEx.Message, topic.Id);
                     return ResearchRemovalResult.Failure(
                         ResearchRemovalErrorCode.RecoveryRequired,
                         $"Research Topic '{topic.Title}' was only partially changed and automatic rollback could not finish. " +
@@ -184,15 +219,23 @@ public sealed partial class FileSystemResearchCatalog
                 }
             }
 
-            var committedJournal = journal! with { Committed = true };
-            try
+            var committedJournal = journal! with
             {
-                CleanupResearchRemoval(committedJournal);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                Committed = true,
+                CleanupPending = true,
+            };
+            if (!TryCleanupResearchRemoval(
+                    committedJournal,
+                    out var committedRetainedPath,
+                    out var committedCleanupError))
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"Research removal cleanup will retry at startup: {ex.Message}");
+                SetRemovalRecoveryBlocked(
+                    $"Research Topic '{topic.Title}' was removed, but cleanup requires recovery. " +
+                    $"Retained: {committedRetainedPath}. {committedCleanupError}",
+                    topic.Id);
+                return ResearchRemovalResult.Failure(
+                    ResearchRemovalErrorCode.RecoveryRequired,
+                    RemovalRecoveryState!.Message);
             }
 
             var before = _snapshot;
@@ -318,7 +361,7 @@ public sealed partial class FileSystemResearchCatalog
         return retainedPaths.Count == 0;
     }
 
-    private void ApplyResearchRemoval(ResearchRemovalJournal journal)
+    private IDisposable? ApplyResearchRemoval(ResearchRemovalJournal journal)
     {
         ValidateResearchRemovalJournal(journal);
         var pagePath = ResolveRemovalVaultPath(journal.PageRelativePath);
@@ -350,7 +393,7 @@ public sealed partial class FileSystemResearchCatalog
         AfterRemovalPageReplacementHook?.Invoke();
 
         if (!journal.HadLog)
-            return;
+            return AcquireAbsentLogGuard(journal);
 
         var logPath = ResolveRemovalVaultPath(journal.LogRelativePath);
         var removedLogPath = Path.Combine(
@@ -371,7 +414,7 @@ public sealed partial class FileSystemResearchCatalog
                 throw new InvalidDataException(
                     "The removed Research Change Log does not match the prepared revision.");
             }
-            return;
+            return null;
         }
 
         MoveRemovalLog(
@@ -380,6 +423,7 @@ public sealed partial class FileSystemResearchCatalog
             journal.OriginalLogRevision!,
             GetResearchRemovalOperationPath(journal.OperationId),
             BeforeRemovalLogMoveHook);
+        return null;
     }
 
     private void RollBackResearchRemoval(ResearchRemovalJournal journal)
@@ -449,11 +493,27 @@ public sealed partial class FileSystemResearchCatalog
             return;
 
         var journal = ReadResearchRemovalJournal();
+        if (journal.CleanupPending)
+        {
+            CleanupResearchRemoval(journal);
+            RemovalRecoveryState = null;
+            return;
+        }
+
         if (journal.Committed)
-            ApplyResearchRemoval(journal);
+        {
+            using var applyGuard = ApplyResearchRemoval(journal);
+            journal = journal with { CleanupPending = true };
+            WriteResearchRemovalJournal(journal);
+        }
         else
+        {
             RollBackResearchRemoval(journal);
+            journal = journal with { CleanupPending = true };
+            WriteResearchRemovalJournal(journal);
+        }
         CleanupResearchRemoval(journal);
+        RemovalRecoveryState = null;
     }
 
     private void ReplaceRemovalPage(
@@ -562,6 +622,42 @@ public sealed partial class FileSystemResearchCatalog
             $"The newer external content was restored and recovery data was retained at '{recoveryPath}'.");
     }
 
+    private IDisposable AcquireAbsentLogGuard(ResearchRemovalJournal journal)
+    {
+        var logPath = ResolveRemovalVaultPath(journal.LogRelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        BeforeAbsentLogGuardHook?.Invoke();
+        SelfWriteCoordinator.SelfWriteRegistration? registration = null;
+        try
+        {
+            registration = _selfWrites?.BeginWrite(logPath);
+            var stream = new FileStream(
+                logPath,
+                FileMode.CreateNew,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                bufferSize: 1,
+                FileOptions.WriteThrough | FileOptions.DeleteOnClose);
+            stream.Flush(flushToDisk: true);
+            registration?.Commit();
+            registration?.Dispose();
+            return stream;
+        }
+        catch (IOException ex) when (File.Exists(logPath))
+        {
+            registration?.Dispose();
+            throw new InvalidDataException(
+                "A Research Change Log was created after removal was prepared. " +
+                "The concurrent log was preserved and the Topic was not removed.",
+                ex);
+        }
+        catch
+        {
+            registration?.Dispose();
+            throw;
+        }
+    }
+
     private void WriteResearchRemovalJournal(ResearchRemovalJournal journal)
     {
         BeforeRemovalJournalWriteHook?.Invoke();
@@ -623,6 +719,9 @@ public sealed partial class FileSystemResearchCatalog
         _ = ResolveRemovalVaultPath(journal.PageRelativePath);
         _ = ResolveRemovalVaultPath(journal.LogRelativePath);
         var operationPath = GetResearchRemovalOperationPath(journal.OperationId);
+        if (journal.CleanupPending)
+            return;
+
         if (!File.Exists(Path.Combine(operationPath, "page.original"))
             || !File.Exists(Path.Combine(operationPath, "page.updated")))
         {
@@ -672,11 +771,64 @@ public sealed partial class FileSystemResearchCatalog
 
     private void CleanupResearchRemoval(ResearchRemovalJournal journal)
     {
-        if (File.Exists(ResearchRemovalJournalPath))
-            File.Delete(ResearchRemovalJournalPath);
         var operationPath = GetResearchRemovalOperationPath(journal.OperationId);
+        BeforeRemovalOperationCleanupHook?.Invoke();
         if (Directory.Exists(operationPath))
             Directory.Delete(operationPath, recursive: true);
+        BeforeRemovalJournalCleanupHook?.Invoke();
+        if (File.Exists(ResearchRemovalJournalPath))
+            File.Delete(ResearchRemovalJournalPath);
+    }
+
+    private bool TryCleanupResearchRemoval(
+        ResearchRemovalJournal journal,
+        out string? retainedPath,
+        out string? error)
+    {
+        try
+        {
+            CleanupResearchRemoval(journal);
+            retainedPath = null;
+            error = null;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            var retained = new List<string>();
+            var operationPath = GetResearchRemovalOperationPath(journal.OperationId);
+            if (Directory.Exists(operationPath))
+                retained.Add(operationPath);
+            if (File.Exists(ResearchRemovalJournalPath))
+                retained.Add(ResearchRemovalJournalPath);
+            retainedPath = string.Join("; ", retained);
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private void SetRemovalRecoveryBlocked(string message, string? topicId = null)
+    {
+        RemovalRecoveryState = new ResearchRemovalRecoveryState(
+            topicId ?? TryReadRemovalTopicId(),
+            ResearchRemovalJournalPath,
+            $"Research removal recovery is blocked. {message} " +
+            $"Resolve the conflicting Vault edit or recovery files at '{ResearchRemovalJournalPath}' before removing another Topic.");
+    }
+
+    private string? TryReadRemovalTopicId()
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<ResearchRemovalJournal>(
+                File.ReadAllBytes(ResearchRemovalJournalPath))?.TopicId;
+        }
+        catch (Exception ex) when (
+            ex is IOException
+                or UnauthorizedAccessException
+                or JsonException)
+        {
+            return null;
+        }
     }
 
     private string GetResearchRemovalOperationPath(string operationId) =>
@@ -701,7 +853,8 @@ public sealed partial class FileSystemResearchCatalog
         string OriginalPageRevision,
         string UpdatedPageRevision,
         string? OriginalLogRevision,
-        bool Committed);
+        bool Committed,
+        bool CleanupPending = false);
 
     private sealed class ResearchPreparationCleanupException(
         string recoveryPath,

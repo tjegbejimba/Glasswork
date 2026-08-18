@@ -80,7 +80,18 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         Directory.CreateDirectory(_vaultRoot);
         _today = today ?? (() => DateOnly.FromDateTime(DateTime.Today));
         _selfWrites = selfWrites;
-        RecoverResearchRemoval();
+        try
+        {
+            RecoverResearchRemoval();
+        }
+        catch (Exception ex) when (
+            ex is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or System.Text.Json.JsonException)
+        {
+            SetRemovalRecoveryBlocked(ex.Message);
+        }
         _quietPeriod = quietPeriod ?? TimeSpan.FromMilliseconds(250);
         _refreshDebouncer = new Debouncer(_quietPeriod, ApplyPendingPaths);
         _watcher = new FileSystemWatcher(_vaultRoot, "*.md")

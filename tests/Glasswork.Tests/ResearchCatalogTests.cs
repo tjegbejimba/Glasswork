@@ -472,6 +472,35 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Remove_ChangeLogCreatedAfterPreparationPreventsSuccess()
+    {
+        const string relativePath = "wiki/concepts/late-log.md";
+        const string originalPage =
+            "---\nid: late-log\ntitle: Late log\ntype: concept\nglasswork:\n  research: {}\n---\nOriginal synthesis.";
+        const string logPath = "wiki/research-logs/late-log.md";
+        const string externalLog =
+            "# Research Change Log\n\nCreated concurrently after preparation.";
+        WritePage(relativePath, originalPage);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            BeforeAbsentLogGuardHook = () =>
+                WritePage(logPath, externalLog),
+        };
+
+        var result = catalog.Remove("late-log");
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchRemovalErrorCode.WriteFailed, result.ErrorCode);
+        Assert.AreEqual(
+            originalPage.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+        Assert.AreEqual(
+            externalLog.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(logPath)));
+        Assert.HasCount(1, catalog.Capture().Topics);
+    }
+
+    [TestMethod]
     public void Remove_FailureAfterMetadataWriteRollsBackPageAndChangeLog()
     {
         const string relativePath = "wiki/concepts/rollback.md";
@@ -572,6 +601,74 @@ public sealed class ResearchCatalogTests
         Assert.AreEqual(
             externalLog.ReplaceLineEndings(),
             File.ReadAllText(recoveryFiles[0]));
+    }
+
+    [TestMethod]
+    public void Startup_PageConflictSurfacesBlockedRecoveryWithoutBreakingCatalogReads()
+    {
+        const string relativePath = "wiki/concepts/startup-page-conflict.md";
+        const string externalPage =
+            "---\nid: startup-page-conflict\ntitle: External page survives\ntype: concept\nglasswork:\n  research: {}\n---\nExternal synthesis.";
+        WriteOptedInPage(relativePath, "startup-page-conflict", "concept");
+        using (var failed = new FileSystemResearchCatalog(_vaultRoot)
+               {
+                   BeforeRemovalPageSwapHook = () =>
+                       WritePage(relativePath, externalPage),
+               })
+        {
+            Assert.AreEqual(
+                ResearchRemovalErrorCode.RecoveryRequired,
+                failed.Remove("startup-page-conflict").ErrorCode);
+        }
+
+        using var firstStartup = new FileSystemResearchCatalog(_vaultRoot);
+        using var secondStartup = new FileSystemResearchCatalog(_vaultRoot);
+
+        Assert.IsNotNull(firstStartup.RemovalRecoveryState);
+        Assert.IsNotNull(secondStartup.RemovalRecoveryState);
+        Assert.AreEqual(
+            "External page survives",
+            firstStartup.Capture().Topics.Single().Title);
+        Assert.AreEqual(
+            ResearchRemovalErrorCode.RecoveryRequired,
+            firstStartup.Remove("startup-page-conflict").ErrorCode);
+        Assert.IsTrue(File.Exists(Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removal-journal.json")));
+    }
+
+    [TestMethod]
+    public void Startup_LogConflictSurfacesBlockedRecoveryWithoutBreakingCatalogReads()
+    {
+        const string relativePath = "wiki/concepts/startup-log-conflict.md";
+        const string logPath = "wiki/research-logs/startup-log-conflict.md";
+        const string externalLog = "# Research Change Log\n\nExternal history survives.";
+        WriteOptedInPage(relativePath, "startup-log-conflict", "concept");
+        WritePage(logPath, "# Research Change Log\n\nOriginal history.");
+        using (var failed = new FileSystemResearchCatalog(_vaultRoot)
+               {
+                   BeforeRemovalLogMoveHook = () =>
+                       WritePage(logPath, externalLog),
+               })
+        {
+            Assert.AreEqual(
+                ResearchRemovalErrorCode.RecoveryRequired,
+                failed.Remove("startup-log-conflict").ErrorCode);
+        }
+
+        using var firstStartup = new FileSystemResearchCatalog(_vaultRoot);
+        using var secondStartup = new FileSystemResearchCatalog(_vaultRoot);
+
+        Assert.IsNotNull(firstStartup.RemovalRecoveryState);
+        Assert.IsNotNull(secondStartup.RemovalRecoveryState);
+        Assert.HasCount(1, firstStartup.Capture().Topics);
+        Assert.AreEqual(
+            externalLog.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(logPath)));
+        Assert.AreEqual(
+            ResearchRemovalErrorCode.RecoveryRequired,
+            secondStartup.Remove("startup-log-conflict").ErrorCode);
     }
 
     [TestMethod]
@@ -727,6 +824,121 @@ public sealed class ResearchCatalogTests
         StringAssert.Contains(result.Message, journalTempPath);
         StringAssert.Contains(result.Message, "operation cleanup failure");
         StringAssert.Contains(result.Message, "journal temp cleanup failure");
+    }
+
+    [TestMethod]
+    public void Remove_OperationCleanupFailureKeepsJournalForStartupRetry()
+    {
+        const string relativePath = "wiki/concepts/operation-cleanup.md";
+        WriteOptedInPage(relativePath, "operation-cleanup", "concept");
+        using (var catalog = new FileSystemResearchCatalog(_vaultRoot)
+               {
+                   BeforeRemovalOperationCleanupHook = () =>
+                       throw new IOException("Injected operation cleanup failure."),
+               })
+        {
+            var result = catalog.Remove("operation-cleanup");
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(ResearchRemovalErrorCode.RecoveryRequired, result.ErrorCode);
+            StringAssert.Contains(result.Message, "operation cleanup failure");
+            Assert.IsNotNull(catalog.RemovalRecoveryState);
+        }
+
+        var journalPath = Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removal-journal.json");
+        Assert.IsTrue(File.Exists(journalPath));
+        Assert.HasCount(1, Directory.GetDirectories(Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removals")));
+
+        using var recovered = new FileSystemResearchCatalog(_vaultRoot);
+
+        Assert.IsNull(recovered.RemovalRecoveryState);
+        Assert.IsFalse(File.Exists(journalPath));
+        Assert.IsEmpty(recovered.Capture().Topics);
+    }
+
+    [TestMethod]
+    public void Remove_JournalCleanupFailureRetriesAfterOperationArtifactsAreGone()
+    {
+        const string relativePath = "wiki/concepts/journal-cleanup.md";
+        WriteOptedInPage(relativePath, "journal-cleanup", "concept");
+        using (var catalog = new FileSystemResearchCatalog(_vaultRoot)
+               {
+                   BeforeRemovalJournalCleanupHook = () =>
+                       throw new IOException("Injected journal cleanup failure."),
+               })
+        {
+            var result = catalog.Remove("journal-cleanup");
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(ResearchRemovalErrorCode.RecoveryRequired, result.ErrorCode);
+            StringAssert.Contains(result.Message, "journal cleanup failure");
+        }
+
+        var journalPath = Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removal-journal.json");
+        Assert.IsTrue(File.Exists(journalPath));
+        Assert.IsFalse(Directory.Exists(Path.Combine(
+                _vaultRoot,
+                ".glasswork",
+                "research-removals"))
+            && Directory.EnumerateFileSystemEntries(Path.Combine(
+                _vaultRoot,
+                ".glasswork",
+                "research-removals")).Any());
+
+        using var recovered = new FileSystemResearchCatalog(_vaultRoot);
+
+        Assert.IsNull(recovered.RemovalRecoveryState);
+        Assert.IsFalse(File.Exists(journalPath));
+        Assert.IsEmpty(recovered.Capture().Topics);
+    }
+
+    [TestMethod]
+    public void Remove_RolledBackJournalCleanupFailureRetriesWithoutStagingFiles()
+    {
+        const string relativePath = "wiki/concepts/rollback-journal-cleanup.md";
+        WriteOptedInPage(relativePath, "rollback-journal-cleanup", "concept");
+        using (var catalog = new FileSystemResearchCatalog(_vaultRoot)
+               {
+                   AfterRemovalPageReplacementHook = () =>
+                       throw new IOException("Injected apply failure."),
+                   BeforeRemovalJournalCleanupHook = () =>
+                       throw new IOException("Injected rollback journal cleanup failure."),
+               })
+        {
+            var result = catalog.Remove("rollback-journal-cleanup");
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(ResearchRemovalErrorCode.RecoveryRequired, result.ErrorCode);
+        }
+
+        var journalPath = Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removal-journal.json");
+        Assert.IsTrue(File.Exists(journalPath));
+        Assert.IsFalse(Directory.Exists(Path.Combine(
+                _vaultRoot,
+                ".glasswork",
+                "research-removals"))
+            && Directory.EnumerateFileSystemEntries(Path.Combine(
+                _vaultRoot,
+                ".glasswork",
+                "research-removals")).Any());
+
+        using var recovered = new FileSystemResearchCatalog(_vaultRoot);
+
+        Assert.IsNull(recovered.RemovalRecoveryState);
+        Assert.IsFalse(File.Exists(journalPath));
+        Assert.HasCount(1, recovered.Capture().Topics);
     }
 
     [TestMethod]

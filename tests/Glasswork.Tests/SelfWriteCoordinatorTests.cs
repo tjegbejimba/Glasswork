@@ -277,5 +277,58 @@ public class SelfWriteCoordinatorTests
 
         Assert.IsTrue(coord.IsOwnProcessWrite(path));
         Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
+
+    [TestMethod]
+    public void BeginWrite_DisposingOlderThenNewerDoesNotResurrectCancelledPredecessor()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "nested-cancel.md");
+        var older = coord.BeginWrite(path);
+        var newer = coord.BeginWrite(path);
+
+        older.Dispose();
+        newer.Dispose();
+
+        Assert.IsFalse(coord.IsOwnProcessWrite(path));
+        Assert.IsFalse(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
+
+    [TestMethod]
+    public void BeginWrite_NestedCommitAndCancelKeepsNewestCommittedRegistration()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "nested-mixed.md");
+        var older = coord.BeginWrite(path);
+        var newer = coord.BeginWrite(path);
+
+        newer.Commit();
+        older.Dispose();
+        newer.Dispose();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
+
+    [TestMethod]
+    public void BeginWrite_CancellingNewerRestoresCommittedPredecessor()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "nested-predecessor.md");
+        var older = coord.BeginWrite(path);
+        older.Commit();
+        var newer = coord.BeginWrite(path);
+
+        newer.Dispose();
+        older.Dispose();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
     }
 }

@@ -5,6 +5,7 @@ public interface IResearchCatalog : IDisposable
     event EventHandler<ResearchTopicsChangedEventArgs>? TopicsChanged;
 
     bool IsWatching { get; }
+    ResearchRemovalRecoveryState? RemovalRecoveryState { get; }
 
     ResearchCatalogSnapshot Capture();
     ResearchCatalogSnapshot Capture(DateOnly queryDate);
@@ -188,6 +189,11 @@ public enum ResearchRemovalErrorCode
     WriteFailed,
     RecoveryRequired,
 }
+
+public sealed record ResearchRemovalRecoveryState(
+    string? TopicId,
+    string JournalPath,
+    string Message);
 
 public sealed record ResearchContext(
     IReadOnlyList<ResearchContextPage> RelatedPages,

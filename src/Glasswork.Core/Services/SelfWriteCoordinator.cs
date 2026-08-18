@@ -32,9 +32,15 @@ public class SelfWriteCoordinator
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, long> _consumedWriteGenerations =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<long, RegistrationSnapshot> _registrationSnapshots = new();
+    private readonly ConcurrentDictionary<long, byte> _cancelledWriteGenerations = new();
+    private readonly ConcurrentDictionary<long, byte> _activeWriteRegistrations = new();
     private long _nextWriteGeneration;
     private readonly object _fileLock = new();
     private readonly object _registrationLock = new();
+
+    internal int PendingRegistrationCount => _registrationSnapshots.Count;
+    internal int CancelledRegistrationCount => _cancelledWriteGenerations.Count;
 
     public SelfWriteCoordinator() : this(TimeSpan.FromMilliseconds(1500)) { }
 
@@ -86,6 +92,8 @@ public class SelfWriteCoordinator
             _recentWrites[fullPath] = now;
             _writeGenerations[fullPath] = generation;
             _consumedWriteGenerations.TryRemove(fullPath, out _);
+            _registrationSnapshots[generation] = previous;
+            _activeWriteRegistrations[generation] = 0;
             try
             {
                 if (_markerFilePath != null)
@@ -205,20 +213,39 @@ public class SelfWriteCoordinator
     {
         lock (_registrationLock)
         {
+            _activeWriteRegistrations.TryRemove(generation, out _);
+            _cancelledWriteGenerations[generation] = 0;
             if (!_writeGenerations.TryGetValue(fullPath, out var currentGeneration)
                 || currentGeneration != generation)
             {
+                if (!_activeWriteRegistrations.ContainsKey(currentGeneration))
+                    ForgetRegistrations(new[] { generation });
                 return;
             }
 
-            RestoreEntry(_recentWrites, fullPath, previous.When);
-            RestoreEntry(_writeGenerations, fullPath, previous.Generation);
+            var restored = previous;
+            var traversed = new List<long> { generation };
+            while (restored.Generation is { } predecessor
+                   && _cancelledWriteGenerations.ContainsKey(predecessor)
+                   && _registrationSnapshots.TryGetValue(
+                       predecessor,
+                       out var predecessorSnapshot))
+            {
+                traversed.Add(predecessor);
+                restored = predecessorSnapshot;
+            }
+
+            RestoreEntry(_recentWrites, fullPath, restored.When);
+            RestoreEntry(_writeGenerations, fullPath, restored.Generation);
             RestoreEntry(
                 _consumedWriteGenerations,
                 fullPath,
-                previous.ConsumedGeneration);
+                restored.ConsumedGeneration);
             if (_markerFilePath is null)
+            {
+                ForgetRegistrations(traversed);
                 return;
+            }
 
             lock (_fileLock)
             {
@@ -233,12 +260,40 @@ public class SelfWriteCoordinator
                     return;
                 }
 
-                if (previous.MarkerValue is null)
+                if (restored.MarkerValue is null)
                     entries.Remove(fullPath);
                 else
-                    entries[fullPath] = previous.MarkerValue;
+                    entries[fullPath] = restored.MarkerValue;
                 WriteAtomically(entries);
             }
+            ForgetRegistrations(traversed);
+        }
+    }
+
+    private void CommitRegistration(long generation)
+    {
+        _activeWriteRegistrations.TryRemove(generation, out _);
+        if (_registrationSnapshots.TryRemove(generation, out var snapshot))
+        {
+            while (snapshot.Generation is { } predecessor
+                   && _cancelledWriteGenerations.TryRemove(predecessor, out _)
+                   && _registrationSnapshots.TryRemove(
+                       predecessor,
+                       out var predecessorSnapshot))
+            {
+                snapshot = predecessorSnapshot;
+            }
+        }
+        _cancelledWriteGenerations.TryRemove(generation, out _);
+    }
+
+    private void ForgetRegistrations(IEnumerable<long> generations)
+    {
+        foreach (var generation in generations)
+        {
+            _registrationSnapshots.TryRemove(generation, out _);
+            _cancelledWriteGenerations.TryRemove(generation, out _);
+            _activeWriteRegistrations.TryRemove(generation, out _);
         }
     }
 
@@ -368,7 +423,8 @@ public class SelfWriteCoordinator
 
         public void Commit()
         {
-            Interlocked.CompareExchange(ref _state, 1, 0);
+            if (Interlocked.CompareExchange(ref _state, 1, 0) == 0)
+                _coordinator?.CommitRegistration(_generation);
         }
 
         public void Dispose()
