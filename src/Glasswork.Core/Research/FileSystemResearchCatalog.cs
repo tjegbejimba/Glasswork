@@ -62,7 +62,11 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private int _recoveryPending;
 
     internal Action? AfterOptInReplacementHook { get; set; }
-    internal Action? BeforeOptInRollbackWriteHook { get; set; }
+    internal Action<string>? AfterOptInFileReplaceHook { get; set; }
+    internal Action<string, string, string>? ReplaceOptInFileHook { get; set; }
+    internal Action<string, string, string>? ReplaceOptInRollbackFileHook { get; set; }
+    internal Action? BeforeOptInRollbackPreparationHook { get; set; }
+    internal Action? BeforeOptInRollbackReplaceHook { get; set; }
 
     public FileSystemResearchCatalog(
         string vaultRoot,
@@ -272,6 +276,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     var backupPath = fullPath + ".research-" + Guid.NewGuid().ToString("N") + ".bak";
                     var replacementApplied = false;
                     var preserveBackup = false;
+                    var preserveTemp = false;
                     try
                     {
                         using (var temp = new FileStream(
@@ -327,14 +332,18 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
                         writeGuard.Dispose();
                         _selfWrites?.RegisterWrite(fullPath);
-                        File.Replace(tempPath, fullPath, backupPath);
+                        if (ReplaceOptInFileHook is { } replaceOptInFile)
+                            replaceOptInFile(tempPath, fullPath, backupPath);
+                        else
+                            File.Replace(tempPath, fullPath, backupPath);
                         replacementApplied = true;
+                        AfterOptInFileReplaceHook?.Invoke(backupPath);
                         byte[] replacedBytes;
                         using (var backup = new FileStream(
                                    backupPath,
                                    FileMode.Open,
                                    FileAccess.Read,
-                                   FileShare.ReadWrite | FileShare.Delete))
+                                   FileShare.Read))
                         {
                             replacedBytes = new byte[backup.Length];
                             backup.ReadExactly(replacedBytes);
@@ -417,6 +426,19 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                             }
                             replacementApplied = false;
                         }
+                        else if (!replacementApplied)
+                        {
+                            preserveBackup = File.Exists(backupPath);
+                            preserveTemp = File.Exists(tempPath);
+                            if (preserveBackup || preserveTemp || !File.Exists(fullPath))
+                            {
+                                return ResearchOptInResult.Failure(
+                                    ResearchOptInErrorCode.WriteFailed,
+                                    $"Wiki Page '{relativePath}' encountered an unverified atomic-replace failure. " +
+                                    $"Live exists: {File.Exists(fullPath)}; replacement preserved: {preserveTemp}; " +
+                                    $"backup preserved: {preserveBackup}. Inspect the recovery files before retrying: {ex.Message}");
+                            }
+                        }
 
                         return ResearchOptInResult.Failure(
                             ResearchOptInErrorCode.WriteFailed,
@@ -424,7 +446,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     }
                     finally
                     {
-                        TryDeleteRecoveryFile(tempPath);
+                        if (!preserveTemp)
+                            TryDeleteRecoveryFile(tempPath);
                         if (!preserveBackup)
                             TryDeleteRecoveryFile(backupPath);
                     }
@@ -1715,34 +1738,84 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         out string? error)
     {
         error = null;
+        var restorePath = fullPath + ".rollback-" + Guid.NewGuid().ToString("N") + ".tmp";
+        var displacedPath = fullPath + ".rollback-" + Guid.NewGuid().ToString("N") + ".displaced";
+        var raceRecoveryPath = fullPath + ".rollback-" + Guid.NewGuid().ToString("N") + ".recovery";
+        var preserveRestore = false;
+        var preserveDisplaced = false;
+        var preserveRaceRecovery = false;
         try
         {
             var originalBytes = File.ReadAllBytes(backupPath);
-            using var current = new FileStream(
-                fullPath,
-                FileMode.Open,
-                FileAccess.ReadWrite,
-                FileShare.Read);
-            var currentBytes = new byte[current.Length];
-            current.ReadExactly(currentBytes);
+            BeforeOptInRollbackPreparationHook?.Invoke();
+            using (var restore = new FileStream(
+                       restorePath,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None,
+                       bufferSize: 4096,
+                       FileOptions.WriteThrough))
+            {
+                restore.Write(originalBytes);
+                restore.Flush(flushToDisk: true);
+            }
+
+            var currentBytes = File.ReadAllBytes(fullPath);
             if (!currentBytes.AsSpan().SequenceEqual(expectedReplacement))
             {
                 error = "The selected Wiki Page changed again after Glasswork wrote it.";
                 return false;
             }
 
-            BeforeOptInRollbackWriteHook?.Invoke();
+            BeforeOptInRollbackReplaceHook?.Invoke();
             _selfWrites?.RegisterWrite(fullPath);
-            current.Position = 0;
-            current.SetLength(0);
-            current.Write(originalBytes);
-            current.Flush(flushToDisk: true);
-            return true;
+            if (ReplaceOptInRollbackFileHook is { } replaceRollbackFile)
+                replaceRollbackFile(restorePath, fullPath, displacedPath);
+            else
+                File.Replace(restorePath, fullPath, displacedPath);
+
+            var displacedBytes = File.ReadAllBytes(displacedPath);
+            if (displacedBytes.AsSpan().SequenceEqual(expectedReplacement))
+                return true;
+
+            try
+            {
+                _selfWrites?.RegisterWrite(fullPath);
+                if (ReplaceOptInRollbackFileHook is { } restoreExternalFile)
+                    restoreExternalFile(displacedPath, fullPath, raceRecoveryPath);
+                else
+                    File.Replace(displacedPath, fullPath, raceRecoveryPath);
+                preserveRaceRecovery = true;
+                error =
+                    "The selected Wiki Page changed during rollback. Its external content was restored, " +
+                    $"and the displaced rollback version was preserved at '{raceRecoveryPath}'.";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                preserveDisplaced = File.Exists(displacedPath);
+                preserveRaceRecovery = File.Exists(raceRecoveryPath);
+                error =
+                    "The selected Wiki Page changed during rollback. Its external content was preserved " +
+                    $"at '{displacedPath}', but could not be restored to the live path: {ex.Message}";
+            }
+            return false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            preserveRestore = File.Exists(restorePath);
+            preserveDisplaced = File.Exists(displacedPath);
+            preserveRaceRecovery = File.Exists(raceRecoveryPath);
             error = ex.Message;
             return false;
+        }
+        finally
+        {
+            if (!preserveRestore)
+                TryDeleteRecoveryFile(restorePath);
+            if (!preserveDisplaced)
+                TryDeleteRecoveryFile(displacedPath);
+            if (!preserveRaceRecovery)
+                TryDeleteRecoveryFile(raceRecoveryPath);
         }
     }
 

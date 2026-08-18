@@ -527,6 +527,79 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void OptIn_InFlightWriterOnDisplacedPagePreventsSuccessAndPreservesBackup()
+    {
+        const string selectedPath = "wiki/concepts/in-flight-writer.md";
+        WritePage(
+            selectedPath,
+            "---\nid: in-flight-writer\ntitle: Original concept\ntype: concept\n---\nOriginal body");
+        var fullPath = FullPath(selectedPath);
+        var original = File.ReadAllBytes(fullPath);
+        FileStream? writer = null;
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            AfterOptInFileReplaceHook = backupPath =>
+                writer = new FileStream(
+                    backupPath,
+                    FileMode.Open,
+                    FileAccess.ReadWrite,
+                    FileShare.ReadWrite | FileShare.Delete),
+        };
+
+        ResearchOptInResult result;
+        try
+        {
+            result = catalog.OptIn(selectedPath);
+        }
+        finally
+        {
+            writer?.Dispose();
+        }
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
+        var backup = Directory.GetFiles(
+            Path.GetDirectoryName(fullPath)!,
+            "*.bak",
+            SearchOption.TopDirectoryOnly);
+        Assert.HasCount(1, backup);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(backup[0]));
+    }
+
+    [TestMethod]
+    public void OptIn_PartialAtomicReplaceFailurePreservesOriginalAndReplacementFiles()
+    {
+        const string selectedPath = "wiki/concepts/partial-replace.md";
+        WritePage(
+            selectedPath,
+            "---\nid: partial-replace\ntitle: Original concept\ntype: concept\n---\nOriginal body");
+        var fullPath = FullPath(selectedPath);
+        var original = File.ReadAllBytes(fullPath);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            ReplaceOptInFileHook = (replacementPath, destinationPath, backupPath) =>
+            {
+                File.Move(destinationPath, backupPath);
+                Assert.IsTrue(File.Exists(replacementPath));
+                throw new IOException("Injected partial atomic-replace failure.");
+            },
+        };
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
+        Assert.IsFalse(File.Exists(fullPath));
+        var directory = Path.GetDirectoryName(fullPath)!;
+        var backup = Directory.GetFiles(directory, "*.bak", SearchOption.TopDirectoryOnly);
+        var replacement = Directory.GetFiles(directory, "*.tmp", SearchOption.TopDirectoryOnly);
+        Assert.HasCount(1, backup);
+        Assert.HasCount(1, replacement);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(backup[0]));
+        StringAssert.Contains(File.ReadAllText(replacement[0]), "glasswork:");
+    }
+
+    [TestMethod]
     public void OptIn_PreservesNewerExternalEditWhenPostWriteRollbackIsRequired()
     {
         const string selectedPath = "wiki/concepts/concurrent-edit.md";
@@ -563,46 +636,202 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
-    public void OptIn_BlocksAtomicExternalSaveBetweenRollbackVerificationAndRestore()
+    public void OptIn_RestoresAtomicExternalSaveRacingRollback()
     {
-        const string selectedPath = "wiki/concepts/guarded-rollback.md";
+        const string selectedPath = "wiki/concepts/racing-rollback.md";
+        const string external =
+            "---\nid: racing-rollback\ntitle: External edit\ntype: concept\n---\nExternal body";
         WritePage(
             selectedPath,
-            "---\nid: guarded-rollback\ntitle: Original concept\ntype: concept\n---\nOriginal body");
+            "---\nid: racing-rollback\ntitle: Original concept\ntype: concept\n---\nOriginal body");
         var fullPath = FullPath(selectedPath);
         var original = File.ReadAllBytes(fullPath);
         var externalPath = fullPath + ".external";
-        File.WriteAllText(
-            externalPath,
-            "---\nid: guarded-rollback\ntitle: External edit\ntype: concept\n---\nExternal body");
-        Exception? externalWriteError = null;
+        File.WriteAllText(externalPath, external.ReplaceLineEndings());
         var catalog = new FileSystemResearchCatalog(_vaultRoot)
         {
             AfterOptInReplacementHook = () => WritePage(
-                "wiki/sources/guarded-rollback-duplicate.md",
-                "---\nid: GUARDED-ROLLBACK\ntitle: Duplicate source\ntype: source\n---\nDuplicate"),
-            BeforeOptInRollbackWriteHook = () =>
+                "wiki/sources/racing-rollback-duplicate.md",
+                "---\nid: RACING-ROLLBACK\ntitle: Duplicate source\ntype: source\n---\nDuplicate"),
+            BeforeOptInRollbackReplaceHook = () =>
+                File.Move(externalPath, fullPath, overwrite: true),
+        };
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
+        Assert.AreEqual(external.ReplaceLineEndings(), File.ReadAllText(fullPath));
+        var recovery = Directory.GetFiles(
+            Path.GetDirectoryName(fullPath)!,
+            "*.recovery",
+            SearchOption.TopDirectoryOnly);
+        Assert.HasCount(1, recovery);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(recovery[0]));
+    }
+
+    [TestMethod]
+    public void OptIn_RollbackPreparationFailureLeavesLiveReplacementAndBackupIntact()
+    {
+        const string selectedPath = "wiki/concepts/preparation-failure.md";
+        WritePage(
+            selectedPath,
+            "---\nid: preparation-failure\ntitle: Original concept\ntype: concept\n---\nOriginal body");
+        var fullPath = FullPath(selectedPath);
+        var original = File.ReadAllBytes(fullPath);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            AfterOptInReplacementHook = () => WritePage(
+                "wiki/sources/preparation-failure-duplicate.md",
+                "---\nid: PREPARATION-FAILURE\ntitle: Duplicate source\ntype: source\n---\nDuplicate"),
+            BeforeOptInRollbackPreparationHook = () =>
+                throw new IOException("Injected rollback preparation failure."),
+        };
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
+        StringAssert.Contains(File.ReadAllText(fullPath), "glasswork:");
+        var backup = Directory.GetFiles(
+            Path.GetDirectoryName(fullPath)!,
+            "*.bak",
+            SearchOption.TopDirectoryOnly);
+        Assert.HasCount(1, backup);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(backup[0]));
+    }
+
+    [TestMethod]
+    public void OptIn_RollbackReplacementFailureLeavesLiveReplacementAndBackupIntact()
+    {
+        const string selectedPath = "wiki/concepts/replacement-failure.md";
+        WritePage(
+            selectedPath,
+            "---\nid: replacement-failure\ntitle: Original concept\ntype: concept\n---\nOriginal body");
+        var fullPath = FullPath(selectedPath);
+        var original = File.ReadAllBytes(fullPath);
+        FileStream? destinationLock = null;
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            AfterOptInReplacementHook = () => WritePage(
+                "wiki/sources/replacement-failure-duplicate.md",
+                "---\nid: REPLACEMENT-FAILURE\ntitle: Duplicate source\ntype: source\n---\nDuplicate"),
+            BeforeOptInRollbackReplaceHook = () =>
+                destinationLock = new FileStream(
+                    fullPath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read),
+        };
+
+        ResearchOptInResult result;
+        try
+        {
+            result = catalog.OptIn(selectedPath);
+        }
+        finally
+        {
+            destinationLock?.Dispose();
+        }
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
+        StringAssert.Contains(File.ReadAllText(fullPath), "glasswork:");
+        var backup = Directory.GetFiles(
+            Path.GetDirectoryName(fullPath)!,
+            "*.bak",
+            SearchOption.TopDirectoryOnly);
+        Assert.HasCount(1, backup);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(backup[0]));
+    }
+
+    [TestMethod]
+    public void OptIn_PartialRollbackReplaceFailurePreservesEverySurvivingFile()
+    {
+        const string selectedPath = "wiki/concepts/partial-rollback.md";
+        WritePage(
+            selectedPath,
+            "---\nid: partial-rollback\ntitle: Original concept\ntype: concept\n---\nOriginal body");
+        var fullPath = FullPath(selectedPath);
+        var original = File.ReadAllBytes(fullPath);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            AfterOptInReplacementHook = () => WritePage(
+                "wiki/sources/partial-rollback-duplicate.md",
+                "---\nid: PARTIAL-ROLLBACK\ntitle: Duplicate source\ntype: source\n---\nDuplicate"),
+            ReplaceOptInRollbackFileHook = (replacementPath, destinationPath, backupPath) =>
             {
-                try
-                {
-                    File.Move(externalPath, fullPath, overwrite: true);
-                }
-                catch (Exception ex)
-                {
-                    externalWriteError = ex;
-                }
+                File.Move(destinationPath, backupPath);
+                Assert.IsTrue(File.Exists(replacementPath));
+                throw new IOException("Injected partial rollback failure.");
             },
         };
 
         var result = catalog.OptIn(selectedPath);
 
         Assert.IsFalse(result.Succeeded);
-        Assert.AreEqual(ResearchOptInErrorCode.DuplicateStableId, result.ErrorCode);
-        Assert.IsTrue(
-            externalWriteError is IOException or UnauthorizedAccessException,
-            externalWriteError?.ToString());
-        Assert.IsTrue(File.Exists(externalPath));
-        CollectionAssert.AreEqual(original, File.ReadAllBytes(fullPath));
+        Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
+        Assert.IsFalse(File.Exists(fullPath));
+        var directory = Path.GetDirectoryName(fullPath)!;
+        var backup = Directory.GetFiles(directory, "*.bak", SearchOption.TopDirectoryOnly);
+        var restore = Directory.GetFiles(directory, "*.tmp", SearchOption.TopDirectoryOnly);
+        var displaced = Directory.GetFiles(directory, "*.displaced", SearchOption.TopDirectoryOnly);
+        Assert.HasCount(1, backup);
+        Assert.HasCount(1, restore);
+        Assert.HasCount(1, displaced);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(backup[0]));
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(restore[0]));
+        StringAssert.Contains(File.ReadAllText(displaced[0]), "glasswork:");
+    }
+
+    [TestMethod]
+    public void OptIn_PartialExternalRestoreFailurePreservesDisplacedAndRecoveryFiles()
+    {
+        const string selectedPath = "wiki/concepts/partial-external-restore.md";
+        const string external =
+            "---\nid: partial-external-restore\ntitle: External edit\ntype: concept\n---\nExternal body";
+        WritePage(
+            selectedPath,
+            "---\nid: partial-external-restore\ntitle: Original concept\ntype: concept\n---\nOriginal body");
+        var fullPath = FullPath(selectedPath);
+        var original = File.ReadAllBytes(fullPath);
+        var replacementCount = 0;
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            AfterOptInReplacementHook = () => WritePage(
+                "wiki/sources/partial-external-restore-duplicate.md",
+                "---\nid: PARTIAL-EXTERNAL-RESTORE\ntitle: Duplicate source\ntype: source\n---\nDuplicate"),
+            BeforeOptInRollbackReplaceHook = () => WritePage(selectedPath, external),
+            ReplaceOptInRollbackFileHook = (replacementPath, destinationPath, backupPath) =>
+            {
+                replacementCount++;
+                if (replacementCount == 1)
+                {
+                    File.Replace(replacementPath, destinationPath, backupPath);
+                    return;
+                }
+
+                File.Move(destinationPath, backupPath);
+                Assert.IsTrue(File.Exists(replacementPath));
+                throw new IOException("Injected partial external-restore failure.");
+            },
+        };
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
+        Assert.IsFalse(File.Exists(fullPath));
+        var directory = Path.GetDirectoryName(fullPath)!;
+        var backup = Directory.GetFiles(directory, "*.bak", SearchOption.TopDirectoryOnly);
+        var displaced = Directory.GetFiles(directory, "*.displaced", SearchOption.TopDirectoryOnly);
+        var recovery = Directory.GetFiles(directory, "*.recovery", SearchOption.TopDirectoryOnly);
+        Assert.HasCount(1, backup);
+        Assert.HasCount(1, displaced);
+        Assert.HasCount(1, recovery);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(backup[0]));
+        Assert.AreEqual(external.ReplaceLineEndings(), File.ReadAllText(displaced[0]));
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(recovery[0]));
     }
 
     [TestMethod]
