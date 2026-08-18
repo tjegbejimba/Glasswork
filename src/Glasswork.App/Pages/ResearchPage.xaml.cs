@@ -31,6 +31,8 @@ public sealed partial class ResearchPage : Page
     private ResearchCatalogSnapshot _snapshot =
         new(Array.Empty<ResearchTopic>(), Array.Empty<ResearchCatalogDiagnostic>());
     private bool _isReconciling;
+    private string? _selectedTopicId;
+    private bool _suppressCatalogRefresh;
 
     public ResearchPage()
     {
@@ -48,9 +50,7 @@ public sealed partial class ResearchPage : Page
         base.OnNavigatedTo(e);
         var navigation = e.Parameter as ResearchPageNavigation;
         App.Research.TopicsChanged += OnResearchTopicsChanged;
-        var snapshot = navigation?.Snapshot
-            ?? App.Research.Capture(DateOnly.FromDateTime(DateTime.Today));
-        ApplySnapshot(snapshot, navigation?.TopicId, preserveCurrentState: false);
+        RefreshCatalog(navigation?.TopicId, preserveCurrentState: false);
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -65,15 +65,39 @@ public sealed partial class ResearchPage : Page
         ResearchTopicsChangedEventArgs e)
     {
         DispatcherQueue.TryEnqueue(() =>
-            ApplySnapshot(e.Snapshot, requestedTopicId: null, preserveCurrentState: true));
+            RefreshCatalog(requestedTopicId: null, preserveCurrentState: true));
+    }
+
+    private void RefreshCatalog(
+        string? requestedTopicId = null,
+        bool preserveCurrentState = true)
+    {
+        var type = (CatalogTypeFilter?.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        var confidence = (CatalogConfidenceFilter?.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        var freshness = ParseFreshness(
+            (CatalogFreshnessFilter?.SelectedItem as ComboBoxItem)?.Tag?.ToString());
+        var result = App.Research.Search(new ResearchCatalogQuery(
+            Text: CatalogSearchBox?.Text,
+            WikiType: type,
+            Confidence: confidence,
+            Freshness: freshness));
+        ApplySnapshot(
+            new ResearchCatalogSnapshot(
+                result.Topics,
+                result.EligiblePages,
+                result.Diagnostics),
+            result.TotalTopicCount,
+            requestedTopicId,
+            preserveCurrentState);
     }
 
     private void ApplySnapshot(
         ResearchCatalogSnapshot snapshot,
+        int totalTopicCount,
         string? requestedTopicId,
         bool preserveCurrentState)
     {
-        var currentTopicId = preserveCurrentState ? _selectedTopic?.Id : null;
+        var currentTopicId = preserveCurrentState ? _selectedTopicId : null;
         var state = ResearchPageRefreshPolicy.Resolve(
             snapshot,
             currentTopicId,
@@ -82,10 +106,13 @@ public sealed partial class ResearchPage : Page
         _snapshot = snapshot;
         ReconcileTopics(snapshot.Topics);
 
-        var isEmpty = Topics.Count == 0;
-        PopulatedView.Visibility = isEmpty ? Visibility.Collapsed : Visibility.Visible;
-        EmptyStateView.Visibility = isEmpty ? Visibility.Visible : Visibility.Collapsed;
-        if (isEmpty)
+        var libraryIsEmpty = totalTopicCount == 0;
+        var hasNoMatches = !libraryIsEmpty && Topics.Count == 0;
+        PopulatedView.Visibility = libraryIsEmpty ? Visibility.Collapsed : Visibility.Visible;
+        EmptyStateView.Visibility = libraryIsEmpty ? Visibility.Visible : Visibility.Collapsed;
+        TopicDetailView.Visibility = hasNoMatches ? Visibility.Collapsed : Visibility.Visible;
+        NoResultsView.Visibility = hasNoMatches ? Visibility.Visible : Visibility.Collapsed;
+        if (libraryIsEmpty || hasNoMatches)
         {
             _selectedTopic = null;
             TopicList.SelectedItem = null;
@@ -115,6 +142,49 @@ public sealed partial class ResearchPage : Page
         ReconcileOpenPreview();
         if (state.PreserveReadingPosition)
             RestoreReadingPosition(state.VerticalOffset, attempts: 0);
+        else
+            TopicDetailScroll.ChangeView(
+                horizontalOffset: null,
+                verticalOffset: 0,
+                zoomFactor: null,
+                disableAnimation: true);
+    }
+
+    private static ResearchFreshness? ParseFreshness(string? value) => value switch
+    {
+        "healthy" => ResearchFreshness.Healthy,
+        "low" => ResearchFreshness.LowConfidence,
+        "expired" => ResearchFreshness.Expired,
+        "incomplete" => ResearchFreshness.Incomplete,
+        _ => null,
+    };
+
+    private void CatalogFilter_Changed(object sender, object e)
+    {
+        if (!_suppressCatalogRefresh && TopicList is not null)
+            RefreshCatalog();
+    }
+
+    private void ClearCatalogFilters_Click(object sender, RoutedEventArgs e)
+    {
+        ResetCatalogFilters();
+        RefreshCatalog();
+    }
+
+    private void ResetCatalogFilters()
+    {
+        _suppressCatalogRefresh = true;
+        try
+        {
+            CatalogSearchBox.Text = string.Empty;
+            CatalogTypeFilter.SelectedIndex = 0;
+            CatalogConfidenceFilter.SelectedIndex = 0;
+            CatalogFreshnessFilter.SelectedIndex = 0;
+        }
+        finally
+        {
+            _suppressCatalogRefresh = false;
+        }
     }
 
     private void ReconcileTopics(IReadOnlyList<ResearchTopic> topics)
@@ -172,6 +242,7 @@ public sealed partial class ResearchPage : Page
         IReadOnlyList<ResearchCatalogDiagnostic> diagnostics)
     {
         _selectedTopic = topic;
+        _selectedTopicId = topic.Id;
         TopicTitle.Text = topic.Title;
         TopicType.Text = CultureInfo.InvariantCulture.TextInfo.ToTitleCase(topic.WikiType);
         TopicConfidence.Text = $"Confidence: {topic.Confidence ?? "not set"}";
@@ -375,7 +446,7 @@ public sealed partial class ResearchPage : Page
             var invoker = focusTarget
                 ?? FindCurrentPreviewInvoker(invokerPageId)
                 ?? (EmptyStateView.Visibility == Visibility.Visible
-                    ? EmptyStateView
+                    ? ResearchEmptyAddTopicButton
                     : TopicList);
             RestorePreviewInvokerFocus(
                 invoker,
@@ -391,10 +462,13 @@ public sealed partial class ResearchPage : Page
 
         if (_selectedTopic is null)
         {
+            Control focusTarget = EmptyStateView.Visibility == Visibility.Visible
+                ? ResearchEmptyAddTopicButton
+                : CatalogSearchBox;
             ClosePreviewDrawer(
                 restoreFocus: true,
                 restoreReadingPosition: false,
-                focusTarget: EmptyStateView);
+                focusTarget: focusTarget);
             return;
         }
 
@@ -530,6 +604,21 @@ public sealed partial class ResearchPage : Page
     {
         if (_selectedTopic is not null)
             await App.ObsidianLauncher.Open(_selectedTopic.VaultRelativePath);
+    }
+
+    private async void AddTopicButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AddResearchTopicDialog(App.Research)
+        {
+            XamlRoot = XamlRoot,
+        };
+        await dialog.ShowAsync();
+        if (dialog.AddedTopic is null)
+            return;
+
+        _selectedTopicId = dialog.AddedTopic.Id;
+        ResetCatalogFilters();
+        RefreshCatalog(dialog.AddedTopic.Id, preserveCurrentState: false);
     }
 }
 
