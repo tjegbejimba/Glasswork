@@ -604,6 +604,210 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Remove_RejectsSymlinkedWikiPageWithoutTouchingOutsideFile()
+    {
+        const string relativePath = "wiki/concepts/symlink-topic.md";
+        var outsidePath = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-research-outside-" + Guid.NewGuid().ToString("N") + ".md");
+        const string outsideContent =
+            "---\nid: symlink-topic\ntitle: Symlink topic\ntype: concept\nglasswork:\n  research: {}\n---\nOutside content.";
+        File.WriteAllText(outsidePath, outsideContent.ReplaceLineEndings());
+        var linkPath = FullPath(relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(linkPath)!);
+        try
+        {
+            if (!TryCreateFileSymbolicLink(linkPath, outsidePath))
+                Assert.Inconclusive("File symbolic links are unavailable on this machine.");
+            IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+            var result = catalog.Remove("symlink-topic");
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(
+                outsideContent.ReplaceLineEndings(),
+                File.ReadAllText(outsidePath));
+        }
+        finally
+        {
+            if (File.Exists(linkPath))
+                File.Delete(linkPath);
+            if (File.Exists(outsidePath))
+                File.Delete(outsidePath);
+        }
+    }
+
+    [TestMethod]
+    public void Remove_RejectsSymlinkedChangeLogBeforeRecoveryStaging()
+    {
+        const string relativePath = "wiki/concepts/symlink-log.md";
+        const string logPath = "wiki/research-logs/symlink-log.md";
+        WriteOptedInPage(relativePath, "symlink-log", "concept");
+        var outsidePath = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-research-outside-log-" + Guid.NewGuid().ToString("N") + ".md");
+        const string outsideContent = "Outside log secret must not be staged.";
+        File.WriteAllText(outsidePath, outsideContent);
+        var linkPath = FullPath(logPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(linkPath)!);
+        try
+        {
+            if (!TryCreateFileSymbolicLink(linkPath, outsidePath))
+                Assert.Inconclusive("File symbolic links are unavailable on this machine.");
+            IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+            var result = catalog.Remove("symlink-log");
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(outsideContent, File.ReadAllText(outsidePath));
+            Assert.IsFalse(Directory.Exists(Path.Combine(
+                _vaultRoot,
+                ".glasswork",
+                "research-removals")));
+            Assert.IsFalse(File.Exists(Path.Combine(
+                _vaultRoot,
+                ".glasswork",
+                "research-removal-journal.json")));
+        }
+        finally
+        {
+            if (File.Exists(linkPath))
+                File.Delete(linkPath);
+            if (File.Exists(outsidePath))
+                File.Delete(outsidePath);
+        }
+    }
+
+    [TestMethod]
+    public void Remove_PageSwapToSymlinkLeavesOutsideFileUntouched()
+    {
+        const string relativePath = "wiki/concepts/symlink-swap.md";
+        WriteOptedInPage(relativePath, "symlink-swap", "concept");
+        var outsidePath = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-research-outside-" + Guid.NewGuid().ToString("N") + ".md");
+        const string outsideContent = "Outside page must remain untouched.";
+        File.WriteAllText(outsidePath, outsideContent);
+        var pagePath = FullPath(relativePath);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            BeforeRemovalPageSwapHook = () =>
+            {
+                File.Delete(pagePath);
+                if (!TryCreateFileSymbolicLink(pagePath, outsidePath))
+                    throw new PlatformNotSupportedException("File symbolic links are unavailable.");
+            },
+        };
+
+        try
+        {
+            var result = catalog.Remove("symlink-swap");
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(outsideContent, File.ReadAllText(outsidePath));
+        }
+        catch (PlatformNotSupportedException)
+        {
+            Assert.Inconclusive("File symbolic links are unavailable on this machine.");
+        }
+        finally
+        {
+            if (File.Exists(pagePath))
+                File.Delete(pagePath);
+            if (File.Exists(outsidePath))
+                File.Delete(outsidePath);
+        }
+    }
+
+    [TestMethod]
+    public void Remove_LogSwapToSymlinkLeavesOutsideFileUntouched()
+    {
+        const string relativePath = "wiki/concepts/log-symlink-swap.md";
+        const string logPath = "wiki/research-logs/log-symlink-swap.md";
+        WriteOptedInPage(relativePath, "log-symlink-swap", "concept");
+        WritePage(logPath, "# Research Change Log\n\nOriginal.");
+        var outsidePath = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-research-outside-log-" + Guid.NewGuid().ToString("N") + ".md");
+        const string outsideContent = "Outside log must remain untouched.";
+        File.WriteAllText(outsidePath, outsideContent);
+        var fullLogPath = FullPath(logPath);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            BeforeRemovalLogMoveHook = () =>
+            {
+                File.Delete(fullLogPath);
+                if (!TryCreateFileSymbolicLink(fullLogPath, outsidePath))
+                    throw new PlatformNotSupportedException("File symbolic links are unavailable.");
+            },
+        };
+
+        try
+        {
+            var result = catalog.Remove("log-symlink-swap");
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(outsideContent, File.ReadAllText(outsidePath));
+        }
+        catch (PlatformNotSupportedException)
+        {
+            Assert.Inconclusive("File symbolic links are unavailable on this machine.");
+        }
+        finally
+        {
+            if (File.Exists(fullLogPath))
+                File.Delete(fullLogPath);
+            if (File.Exists(outsidePath))
+                File.Delete(outsidePath);
+        }
+    }
+
+    [TestMethod]
+    public void Remove_CleanupJunctionLeavesOutsideDirectoryUntouched()
+    {
+        const string relativePath = "wiki/concepts/cleanup-junction.md";
+        WriteOptedInPage(relativePath, "cleanup-junction", "concept");
+        var outsideDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-research-outside-dir-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outsideDirectory);
+        var sentinelPath = Path.Combine(outsideDirectory, "sentinel.txt");
+        File.WriteAllText(sentinelPath, "outside");
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            BeforeRemovalOperationCleanupHook = () =>
+            {
+                var operationsRoot = Path.Combine(
+                    _vaultRoot,
+                    ".glasswork",
+                    "research-removals");
+                var operationPath = Directory.GetDirectories(operationsRoot).Single();
+                Directory.Delete(operationPath, recursive: true);
+                if (!TryCreateDirectorySymbolicLink(operationPath, outsideDirectory))
+                    throw new PlatformNotSupportedException("Directory symbolic links are unavailable.");
+            },
+        };
+
+        try
+        {
+            var result = catalog.Remove("cleanup-junction");
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(ResearchRemovalErrorCode.RecoveryRequired, result.ErrorCode);
+            Assert.AreEqual("outside", File.ReadAllText(sentinelPath));
+        }
+        catch (PlatformNotSupportedException)
+        {
+            Assert.Inconclusive("Directory symbolic links are unavailable on this machine.");
+        }
+        finally
+        {
+            if (Directory.Exists(outsideDirectory))
+                Directory.Delete(outsideDirectory, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void Startup_PageConflictSurfacesBlockedRecoveryWithoutBreakingCatalogReads()
     {
         const string relativePath = "wiki/concepts/startup-page-conflict.md";
@@ -1140,6 +1344,124 @@ public sealed class ResearchCatalogTests
             type: concept
             glasswork:
               # Preserve this sibling comment exactly.
+              unrelated: keep
+            ---
+            Exact prose.
+            """.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+    }
+
+    [TestMethod]
+    public void Remove_InlineBlockValuePreservesDeeplyIndentedSiblingComment()
+    {
+        const string relativePath = "wiki/concepts/inline-deep-comment.md";
+        WritePage(
+            relativePath,
+            """
+            ---
+            id: inline-deep-comment
+            title: Inline deep comment
+            type: concept
+            glasswork:
+              research: {}
+                # Preserve this deeply indented sibling comment.
+              unrelated: keep
+            ---
+            Exact prose.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Remove("inline-deep-comment");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual(
+            """
+            ---
+            id: inline-deep-comment
+            title: Inline deep comment
+            type: concept
+            glasswork:
+                # Preserve this deeply indented sibling comment.
+              unrelated: keep
+            ---
+            Exact prose.
+            """.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+    }
+
+    [TestMethod]
+    public void Remove_BlockMappingPreservesCommentAfterParsedValueSpan()
+    {
+        const string relativePath = "wiki/concepts/block-deep-comment.md";
+        WritePage(
+            relativePath,
+            """
+            ---
+            id: block-deep-comment
+            title: Block deep comment
+            type: concept
+            glasswork:
+              research:
+                include: [related]
+                    # Preserve after the parsed Research value.
+              unrelated: keep
+            ---
+            Exact prose.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Remove("block-deep-comment");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual(
+            """
+            ---
+            id: block-deep-comment
+            title: Block deep comment
+            type: concept
+            glasswork:
+                    # Preserve after the parsed Research value.
+              unrelated: keep
+            ---
+            Exact prose.
+            """.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+    }
+
+    [TestMethod]
+    public void Remove_BlockScalarRemovesScalarContentAndPreservesFollowingComment()
+    {
+        const string relativePath = "wiki/concepts/block-scalar-comment.md";
+        WritePage(
+            relativePath,
+            """
+            ---
+            id: block-scalar-comment
+            title: Block scalar comment
+            type: concept
+            glasswork:
+              research:
+                note: |
+                  Research scalar content.
+                  # This is scalar content and is removed.
+              # Preserve this sibling comment.
+              unrelated: keep
+            ---
+            Exact prose.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Remove("block-scalar-comment");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual(
+            """
+            ---
+            id: block-scalar-comment
+            title: Block scalar comment
+            type: concept
+            glasswork:
+              # Preserve this sibling comment.
               unrelated: keep
             ---
             Exact prose.
@@ -2675,4 +2997,38 @@ public sealed class ResearchCatalogTests
         Path.Combine(
             _vaultRoot,
             relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+    private static bool TryCreateFileSymbolicLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is IOException
+                or UnauthorizedAccessException
+                or PlatformNotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryCreateDirectorySymbolicLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is IOException
+                or UnauthorizedAccessException
+                or PlatformNotSupportedException)
+        {
+            return false;
+        }
+    }
 }

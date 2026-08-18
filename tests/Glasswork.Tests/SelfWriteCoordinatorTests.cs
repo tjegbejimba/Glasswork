@@ -371,4 +371,25 @@ public class SelfWriteCoordinatorTests
         Assert.AreEqual(0, coord.PendingRegistrationCount);
         Assert.AreEqual(0, coord.CancelledRegistrationCount);
     }
+
+    [TestMethod]
+    public void BeginWrite_ExternalMarkerChangeDoesNotLeakCancelledBookkeeping()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var external = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "external-marker.md");
+
+        for (var index = 0; index < 25; index++)
+        {
+            var registration = coord.BeginWrite(path);
+            Thread.Sleep(1);
+            external.RegisterWrite(path);
+
+            registration.Dispose();
+
+            Assert.AreEqual(0, coord.PendingRegistrationCount);
+            Assert.AreEqual(0, coord.CancelledRegistrationCount);
+            Assert.IsTrue(external.IsSuppressed(path));
+        }
+    }
 }

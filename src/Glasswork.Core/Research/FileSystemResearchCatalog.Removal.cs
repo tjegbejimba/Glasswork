@@ -78,18 +78,27 @@ public sealed partial class FileSystemResearchCatalog
             var fullPath = Path.GetFullPath(Path.Combine(
                 _vaultRoot,
                 topic.VaultRelativePath.Replace('/', Path.DirectorySeparatorChar)));
+            if (ContainsReparsePoint(topic.VaultRelativePath))
+            {
+                return ResearchRemovalResult.Failure(
+                    ResearchRemovalErrorCode.WriteFailed,
+                    $"Wiki Page '{topic.VaultRelativePath}' crosses a reparse point and cannot be removed safely.");
+            }
             byte[] originalBytes;
             string original;
             TextEncodingInfo encoding;
             try
             {
-                originalBytes = File.ReadAllBytes(fullPath);
+                originalBytes = ReadRemovalFileSafely(
+                    fullPath,
+                    topic.VaultRelativePath);
                 original = DecodeText(originalBytes, out encoding);
             }
             catch (Exception ex) when (
                 ex is IOException
                     or UnauthorizedAccessException
-                    or DecoderFallbackException)
+                    or DecoderFallbackException
+                    or InvalidDataException)
             {
                 return ResearchRemovalResult.Failure(
                     ex is DecoderFallbackException
@@ -125,9 +134,16 @@ public sealed partial class FileSystemResearchCatalog
             try
             {
                 if (File.Exists(changeLogPath))
-                    changeLogBytes = File.ReadAllBytes(changeLogPath);
+                {
+                    changeLogBytes = ReadRemovalFileSafely(
+                        changeLogPath,
+                        ToRelativePath(changeLogPath));
+                }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (
+                ex is IOException
+                    or UnauthorizedAccessException
+                    or InvalidDataException)
             {
                 return ResearchRemovalResult.Failure(
                     ResearchRemovalErrorCode.WriteFailed,
@@ -483,6 +499,8 @@ public sealed partial class FileSystemResearchCatalog
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        EnsureRemovalParentDirectoryIsExpected(journal.LogRelativePath);
+        EnsureRemovalFileIsExpected(removedLogPath);
         using var registration = _selfWrites?.BeginWrite(logPath);
         File.Move(removedLogPath, logPath);
         registration?.Commit();
@@ -531,9 +549,13 @@ public sealed partial class FileSystemResearchCatalog
             "page.displaced-" + Guid.NewGuid().ToString("N"));
         try
         {
+            EnsureRemovalFileIsExpected(pagePath);
+            EnsureRemovalDirectoryIsExpected(operationPath);
+            EnsureRemovalFileIsExpected(stagedPath);
             WriteDurableRemovalFile(replacementPath, File.ReadAllBytes(stagedPath));
             using var registration = _selfWrites?.BeginWrite(pagePath);
             beforeSwap?.Invoke();
+            EnsureRemovalFileIsExpected(pagePath);
             File.Replace(replacementPath, pagePath, displacedPath);
             var displacedRevision = RemovalRevision(File.ReadAllBytes(displacedPath));
             if (!string.Equals(
@@ -559,15 +581,18 @@ public sealed partial class FileSystemResearchCatalog
         }
     }
 
-    private static string RestoreRacingPageEdit(
+    private string RestoreRacingPageEdit(
         string pagePath,
         string displacedPath,
         string operationPath)
     {
+        EnsureRemovalDirectoryIsExpected(operationPath);
         var candidatePath = displacedPath;
         var expectedLiveRevision = RemovalRevision(File.ReadAllBytes(pagePath));
         for (var attempt = 0; attempt < 16; attempt++)
         {
+            EnsureRemovalFileIsExpected(pagePath);
+            EnsureRemovalFileIsExpected(candidatePath);
             var candidateRevision = RemovalRevision(File.ReadAllBytes(candidatePath));
             var recoveryPath = Path.Combine(
                 operationPath,
@@ -598,8 +623,11 @@ public sealed partial class FileSystemResearchCatalog
         string operationPath,
         Action? beforeMove)
     {
+        EnsureRemovalFileIsExpected(logPath);
+        EnsureRemovalDirectoryIsExpected(operationPath);
         using var registration = _selfWrites?.BeginWrite(logPath);
         beforeMove?.Invoke();
+        EnsureRemovalFileIsExpected(logPath);
         File.Move(logPath, removedLogPath);
         if (string.Equals(
                 RemovalRevision(File.ReadAllBytes(removedLogPath)),
@@ -627,7 +655,9 @@ public sealed partial class FileSystemResearchCatalog
     {
         var logPath = ResolveRemovalVaultPath(journal.LogRelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        EnsureRemovalParentDirectoryIsExpected(journal.LogRelativePath);
         BeforeAbsentLogGuardHook?.Invoke();
+        EnsureRemovalParentDirectoryIsExpected(journal.LogRelativePath);
         SelfWriteCoordinator.SelfWriteRegistration? registration = null;
         try
         {
@@ -831,10 +861,96 @@ public sealed partial class FileSystemResearchCatalog
         var operationPath = GetResearchRemovalOperationPath(journal.OperationId);
         BeforeRemovalOperationCleanupHook?.Invoke();
         if (Directory.Exists(operationPath))
+        {
+            EnsureRemovalDirectoryIsExpected(operationPath);
+            if (ContainsReparsePointInDirectoryTree(operationPath))
+                throw new InvalidDataException(
+                    $"Removal directory '{ToRelativePath(operationPath)}' contains a reparse point.");
             Directory.Delete(operationPath, recursive: true);
+        }
         BeforeRemovalJournalCleanupHook?.Invoke();
         if (File.Exists(ResearchRemovalJournalPath))
+        {
+            EnsureRemovalFileIsExpected(ResearchRemovalJournalPath);
             File.Delete(ResearchRemovalJournalPath);
+        }
+    }
+
+    private void EnsureRemovalFileIsExpected(string fullPath)
+    {
+        var relativePath = ToRelativePath(fullPath);
+        if (ContainsReparsePoint(relativePath))
+            throw new InvalidDataException(
+                $"Removal path '{relativePath}' crosses a reparse point.");
+        using var opened = new FileStream(
+            fullPath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.Read | FileShare.Delete);
+        if (!IsOpenedFileExpected(opened, relativePath))
+            throw new InvalidDataException(
+                $"Removal path '{relativePath}' no longer resolves inside the Vault.");
+    }
+
+    private byte[] ReadRemovalFileSafely(
+        string fullPath,
+        string relativePath)
+    {
+        if (ContainsReparsePoint(relativePath))
+            throw new InvalidDataException(
+                $"Removal path '{relativePath}' crosses a reparse point.");
+        using var opened = new FileStream(
+            fullPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete);
+        if (!IsOpenedFileExpected(opened, relativePath))
+            throw new InvalidDataException(
+                $"Removal path '{relativePath}' no longer resolves inside the Vault.");
+        var bytes = new byte[opened.Length];
+        opened.ReadExactly(bytes);
+        return bytes;
+    }
+
+    private void EnsureRemovalDirectoryIsExpected(string fullPath)
+    {
+        var relativePath = ToRelativePath(fullPath);
+        if (ContainsReparsePoint(relativePath)
+            || !IsExistingDirectoryExpected(relativePath))
+        {
+            throw new InvalidDataException(
+                $"Removal directory '{relativePath}' no longer resolves inside the Vault.");
+        }
+    }
+
+    private void EnsureRemovalParentDirectoryIsExpected(string relativeFilePath)
+    {
+        var normalized = relativeFilePath.Replace('\\', '/');
+        var separator = normalized.LastIndexOf('/');
+        var relativeDirectory = separator < 0
+            ? string.Empty
+            : normalized[..separator];
+        var fullDirectory = ResolveRemovalVaultPath(relativeDirectory);
+        EnsureRemovalDirectoryIsExpected(fullDirectory);
+    }
+
+    private static bool ContainsReparsePointInDirectoryTree(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    return true;
+                if ((attributes & FileAttributes.Directory) != 0)
+                    pending.Push(entry);
+            }
+        }
+        return false;
     }
 
     private bool TryCleanupResearchRemoval(
@@ -849,7 +965,10 @@ public sealed partial class FileSystemResearchCatalog
             error = null;
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (
+            ex is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException)
         {
             var retained = new List<string>();
             var operationPath = GetResearchRemovalOperationPath(journal.OperationId);
@@ -980,7 +1099,7 @@ public sealed partial class FileSystemResearchCatalog
         var owner = glasswork.Children.Count == 1 ? root : glasswork;
         var updatedYaml = owner.Style == YamlDotNet.Core.Events.MappingStyle.Flow
             ? RemoveFlowMappingPair(yaml, owner, key)
-            : RemoveBlockMappingPair(yaml, key);
+            : RemoveBlockMappingPair(yaml, key, value);
         if (TransformRemovalYamlForTest is { } transform)
             updatedYaml = transform(updatedYaml);
         if (!TryValidateResearchMetadataRemoval(
@@ -1000,61 +1119,104 @@ public sealed partial class FileSystemResearchCatalog
         return true;
     }
 
-    private static string RemoveBlockMappingPair(string yaml, YamlNode key)
+    private static string RemoveBlockMappingPair(
+        string yaml,
+        YamlNode key,
+        YamlNode value)
     {
         var keyStart = checked((int)key.Start.Index);
-        var keyEnd = checked((int)key.End.Index);
         var lineStart = yaml.LastIndexOf('\n', Math.Max(0, keyStart - 1));
         lineStart = lineStart < 0 ? 0 : lineStart + 1;
-        var keyIndent = 0;
-        while (lineStart + keyIndent < yaml.Length
-               && yaml[lineStart + keyIndent] is ' ' or '\t')
-            keyIndent++;
-
-        var cursor = yaml.IndexOf('\n', keyEnd);
-        if (cursor < 0)
+        var structuralEnd = Math.Max(
+            checked((int)key.End.Index),
+            FindYamlNodeStructuralEnd(yaml, value));
+        var lineEnd = yaml.IndexOf(
+            '\n',
+            Math.Max(lineStart, structuralEnd - 1));
+        if (lineEnd < 0)
             return yaml[..lineStart];
-        cursor++;
-        while (cursor < yaml.Length)
-        {
-            var lineEnd = yaml.IndexOf('\n', cursor);
-            if (lineEnd < 0) lineEnd = yaml.Length;
-            var line = yaml[cursor..lineEnd].TrimEnd('\r');
-            var trimmed = line.TrimStart(' ', '\t');
-            if (trimmed.Length == 0)
-            {
-                if (!NextNonBlankLineIsNested(yaml, lineEnd, keyIndent))
-                    break;
-            }
-            else
-            {
-                var indent = line.Length - trimmed.Length;
-                if (indent <= keyIndent)
-                    break;
-            }
-            cursor = lineEnd < yaml.Length ? lineEnd + 1 : yaml.Length;
-        }
-
-        return yaml.Remove(lineStart, cursor - lineStart);
+        return yaml.Remove(lineStart, lineEnd + 1 - lineStart);
     }
 
-    private static bool NextNonBlankLineIsNested(
-        string yaml,
-        int currentLineEnd,
-        int keyIndent)
+    private static int FindYamlNodeStructuralEnd(string yaml, YamlNode node)
     {
-        var cursor = currentLineEnd < yaml.Length ? currentLineEnd + 1 : yaml.Length;
-        while (cursor < yaml.Length)
+        switch (node)
         {
-            var lineEnd = yaml.IndexOf('\n', cursor);
-            if (lineEnd < 0) lineEnd = yaml.Length;
-            var line = yaml[cursor..lineEnd].TrimEnd('\r');
-            var trimmed = line.TrimStart(' ', '\t');
-            if (trimmed.Length > 0)
-                return line.Length - trimmed.Length > keyIndent;
-            cursor = lineEnd < yaml.Length ? lineEnd + 1 : yaml.Length;
+            case YamlScalarNode:
+                return checked((int)node.End.Index);
+            case YamlMappingNode mapping
+                when mapping.Style == YamlDotNet.Core.Events.MappingStyle.Flow:
+                return FindFlowCollectionEnd(yaml, checked((int)mapping.Start.Index));
+            case YamlSequenceNode sequence
+                when sequence.Style == YamlDotNet.Core.Events.SequenceStyle.Flow:
+                return FindFlowCollectionEnd(yaml, checked((int)sequence.Start.Index));
+            case YamlMappingNode mapping:
+                return mapping.Children.Count == 0
+                    ? checked((int)mapping.Start.Index)
+                    : mapping.Children.Max(pair => Math.Max(
+                        FindYamlNodeStructuralEnd(yaml, pair.Key),
+                        FindYamlNodeStructuralEnd(yaml, pair.Value)));
+            case YamlSequenceNode sequence:
+                return sequence.Children.Count == 0
+                    ? checked((int)sequence.Start.Index)
+                    : sequence.Children.Max(child =>
+                        FindYamlNodeStructuralEnd(yaml, child));
+            default:
+                return checked((int)node.End.Index);
         }
-        return false;
+    }
+
+    private static int FindFlowCollectionEnd(string yaml, int startIndex)
+    {
+        var opening = yaml[startIndex];
+        var closing = opening == '{' ? '}' : ']';
+        var depth = 0;
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        var inComment = false;
+        var escaped = false;
+        for (var index = startIndex; index < yaml.Length; index++)
+        {
+            var character = yaml[index];
+            if (inComment)
+            {
+                if (character is '\r' or '\n')
+                    inComment = false;
+                continue;
+            }
+            if (inDoubleQuote)
+            {
+                if (escaped) escaped = false;
+                else if (character == '\\') escaped = true;
+                else if (character == '"') inDoubleQuote = false;
+                continue;
+            }
+            if (inSingleQuote)
+            {
+                if (character != '\'') continue;
+                if (index + 1 < yaml.Length && yaml[index + 1] == '\'')
+                {
+                    index++;
+                    continue;
+                }
+                inSingleQuote = false;
+                continue;
+            }
+            if (IsYamlCommentStart(yaml, index))
+            {
+                inComment = true;
+                continue;
+            }
+            if (character == opening)
+                depth++;
+            else if (character == closing && --depth == 0)
+                return index + 1;
+            else if (character == '"')
+                inDoubleQuote = true;
+            else if (character == '\'')
+                inSingleQuote = true;
+        }
+        return checked((int)yaml.Length);
     }
 
     private static string RemoveFlowMappingPair(

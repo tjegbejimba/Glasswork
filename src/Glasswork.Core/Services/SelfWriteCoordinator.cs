@@ -270,6 +270,7 @@ public class SelfWriteCoordinator
                         tentativeValue,
                         StringComparison.Ordinal))
                 {
+                    ForgetRegistrations(traversed);
                     return;
                 }
 
