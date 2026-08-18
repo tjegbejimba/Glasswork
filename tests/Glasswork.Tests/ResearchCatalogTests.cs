@@ -1371,6 +1371,93 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void SetContextPageIncluded_RevalidatesCandidateFromAuthoritativeVault()
+    {
+        const string topicPath = "wiki/concepts/topic.md";
+        const string candidatePath = "wiki/sources/candidate.md";
+        const string original =
+            "---\nid: topic\ntitle: Topic\ntype: concept\nglasswork:\n  research: {}\n---\nTopic.";
+        WritePage(topicPath, original);
+        WritePage(
+            candidatePath,
+            "---\nid: candidate\ntitle: Candidate\ntype: source\n---\nCandidate.");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            quietPeriod: TimeSpan.FromMinutes(1));
+        _ = catalog.Capture();
+        catalog.Start();
+        WritePage(
+            candidatePath,
+            "---\nid: candidate\ntitle: Candidate\ntype: task\nstatus: todo\n---\nCandidate.");
+
+        var retyped = catalog.SetContextPageIncluded("topic", "candidate", included: true);
+
+        Assert.IsFalse(retyped.Succeeded);
+        Assert.AreEqual(ResearchContextUpdateErrorCode.IneligiblePage, retyped.ErrorCode);
+        Assert.AreEqual(original, File.ReadAllText(FullPath(topicPath)).ReplaceLineEndings("\n"));
+
+        File.Delete(FullPath(candidatePath));
+        var deleted = catalog.SetContextPageIncluded("topic", "candidate", included: true);
+
+        Assert.IsFalse(deleted.Succeeded);
+        Assert.AreEqual(ResearchContextUpdateErrorCode.PageNotFound, deleted.ErrorCode);
+        Assert.AreEqual(original, File.ReadAllText(FullPath(topicPath)).ReplaceLineEndings("\n"));
+
+        WritePage(
+            candidatePath,
+            "---\nid: candidate\ntitle: Candidate\ntype: source\n---\nCandidate.");
+        WritePage(
+            "wiki/systems/duplicate-candidate.md",
+            "---\nid: CANDIDATE\ntitle: Duplicate\ntype: system\n---\nDuplicate.");
+
+        var duplicated = catalog.SetContextPageIncluded("topic", "candidate", included: true);
+
+        Assert.IsFalse(duplicated.Succeeded);
+        Assert.AreEqual(ResearchContextUpdateErrorCode.DuplicateStableId, duplicated.ErrorCode);
+        Assert.AreEqual(original, File.ReadAllText(FullPath(topicPath)).ReplaceLineEndings("\n"));
+
+        File.Delete(FullPath("wiki/systems/duplicate-candidate.md"));
+        WritePage(
+            "wiki/todo/candidate-task.md",
+            "---\nid: candidate\ntitle: Candidate task\ntype: task\nstatus: todo\n---\nTask.");
+
+        var ignoresIneligibleDuplicate = catalog.SetContextPageIncluded(
+            "topic",
+            "candidate",
+            included: true);
+
+        Assert.IsTrue(
+            ignoresIneligibleDuplicate.Succeeded,
+            ignoresIneligibleDuplicate.Message);
+    }
+
+    [TestMethod]
+    public void SetContextPageIncluded_RestoresExternalSaveRacingAtomicReplace()
+    {
+        const string topicPath = "wiki/concepts/topic.md";
+        const string original =
+            "---\nid: topic\ntitle: Topic\ntype: concept\nglasswork:\n  research: {}\n---\nOriginal.";
+        const string external =
+            "---\nid: topic\ntitle: Externally updated\ntype: concept\nglasswork:\n  research: {}\n---\nExternal.";
+        WritePage(topicPath, original);
+        WritePage(
+            "wiki/sources/evidence.md",
+            "---\nid: evidence\ntitle: Evidence\ntype: source\n---\nEvidence.");
+        var catalog = new FileSystemResearchCatalog(_vaultRoot);
+        catalog.BeforeContextFileReplaceHook = () => WritePage(topicPath, external);
+
+        var result = catalog.SetContextPageIncluded("topic", "evidence", included: true);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchContextUpdateErrorCode.ConcurrentModification, result.ErrorCode);
+        Assert.AreEqual(external, File.ReadAllText(FullPath(topicPath)).ReplaceLineEndings("\n"));
+        Assert.IsEmpty(
+            Directory.GetFiles(
+                Path.GetDirectoryName(FullPath(topicPath))!,
+                "topic.md.research-context-*"));
+    }
+
+    [TestMethod]
     public void Capture_DuplicateOverridesAreDeduplicatedWithExplicitWarning()
     {
         WritePage(

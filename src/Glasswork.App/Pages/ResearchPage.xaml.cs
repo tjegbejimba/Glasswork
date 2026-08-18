@@ -72,18 +72,23 @@ public sealed partial class ResearchPage : Page
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            if ((_drawerMode is ResearchDrawerMode.SessionSelection
+            var preserveOpenDrawer = (_drawerMode is ResearchDrawerMode.SessionSelection
                     or ResearchDrawerMode.DurableCuration)
                 && _selectedTopic is not null
                 && e.Snapshot.Topics.FirstOrDefault(topic => string.Equals(
                     topic.Id,
                     _selectedTopic.Id,
                     StringComparison.OrdinalIgnoreCase)) is { } refreshedTopic
-                && ReferenceEquals(refreshedTopic, _selectedTopic))
+                && ReferenceEquals(refreshedTopic, _selectedTopic);
+            _suppressContextDrawerRefreshClose = preserveOpenDrawer;
+            try
             {
-                return;
+                RefreshCatalog(requestedTopicId: null, preserveCurrentState: true);
             }
-            RefreshCatalog(requestedTopicId: null, preserveCurrentState: true);
+            finally
+            {
+                _suppressContextDrawerRefreshClose = false;
+            }
         });
     }
 

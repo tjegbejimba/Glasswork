@@ -68,7 +68,29 @@
       "value": "1 of 1 optional pages selected"
     },
     {
+      "type": "wait-for",
+      "name": "Refreshed unrelated synthesis.",
+      "timeoutMilliseconds": 10000
+    },
+    {
       "type": "assert-disabled",
+      "automationId": "ShellNavigation"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextDrawerClose"
+    },
+    {
+      "type": "select",
+      "name": "Unrelated Topic"
+    },
+    {
+      "type": "wait-for",
+      "name": "Refreshed unrelated synthesis.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-enabled",
       "automationId": "ShellNavigation"
     }
   ],

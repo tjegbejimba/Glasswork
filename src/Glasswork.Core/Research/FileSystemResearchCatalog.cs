@@ -68,6 +68,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     internal Action<string, string, string>? ReplaceOptInRollbackFileHook { get; set; }
     internal Action? BeforeOptInRollbackPreparationHook { get; set; }
     internal Action? BeforeOptInRollbackReplaceHook { get; set; }
+    internal Action? BeforeContextFileReplaceHook { get; set; }
 
     public FileSystemResearchCatalog(
         string vaultRoot,
@@ -578,42 +579,12 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                         "The Research Topic is always included in its own context.");
             }
 
-            var pageMatches = snapshot.EligiblePages
-                .Where(candidate => string.Equals(
-                    candidate.Id,
+            if (!TryValidateContextCandidateOnDisk(
                     pageId.Trim(),
-                    StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            if (pageMatches.Length == 0)
-            {
-                var isKnownIneligible = _referencesByPath.Values.Any(reference =>
-                    string.Equals(
-                        reference.StableId,
-                        pageId.Trim(),
-                        StringComparison.OrdinalIgnoreCase)
-                    && reference.Status == WikiReferenceStatus.Excluded);
-                return ResearchContextUpdateResult.Failure(
-                    isKnownIneligible
-                        ? ResearchContextUpdateErrorCode.IneligiblePage
-                        : ResearchContextUpdateErrorCode.PageNotFound,
-                    isKnownIneligible
-                        ? $"Wiki Page '{pageId}' is not eligible for Research context."
-                        : $"Wiki Page '{pageId}' was not found.");
-            }
-            if (pageMatches.Length > 1
-                || pageMatches.Any(page =>
-                    page.Eligibility == ResearchPageEligibility.DuplicateStableId))
-            {
-                return ResearchContextUpdateResult.Failure(
-                    ResearchContextUpdateErrorCode.DuplicateStableId,
-                    $"Stable Wiki Page id '{pageId}' is duplicated.");
-            }
-            if (pageMatches[0].Eligibility != ResearchPageEligibility.Eligible)
-            {
-                return ResearchContextUpdateResult.Failure(
-                    ResearchContextUpdateErrorCode.IneligiblePage,
-                    $"Wiki Page '{pageId}' is not eligible for Research context.");
-            }
+                    out var authoritativePageId,
+                    out var candidateErrorCode,
+                    out var candidateMessage))
+                return ResearchContextUpdateResult.Failure(candidateErrorCode, candidateMessage);
 
             var fullPath = Path.Combine(
                 _vaultRoot,
@@ -677,13 +648,13 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (included)
             {
-                includeIds.Add(pageMatches[0].Id);
-                excludeIds.Remove(pageMatches[0].Id);
+                includeIds.Add(authoritativePageId);
+                excludeIds.Remove(authoritativePageId);
             }
             else
             {
-                includeIds.Remove(pageMatches[0].Id);
-                excludeIds.Add(pageMatches[0].Id);
+                includeIds.Remove(authoritativePageId);
+                excludeIds.Add(authoritativePageId);
             }
 
             if (!TrySetResearchOverrides(
@@ -701,6 +672,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             var updatedBytes = EncodeText(updated, encoding);
             var tempPath = fullPath + ".research-context-" + Guid.NewGuid().ToString("N") + ".tmp";
             var backupPath = fullPath + ".research-context-" + Guid.NewGuid().ToString("N") + ".bak";
+            var replacementApplied = false;
+            var preserveTemp = false;
+            var preserveBackup = false;
             try
             {
                 using (var temp = new FileStream(
@@ -715,6 +689,20 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     temp.Flush(flushToDisk: true);
                 }
 
+                if (!TryValidateContextCandidateOnDisk(
+                        authoritativePageId,
+                        out var revalidatedPageId,
+                        out candidateErrorCode,
+                        out candidateMessage)
+                    || !string.Equals(
+                        revalidatedPageId,
+                        authoritativePageId,
+                        StringComparison.Ordinal))
+                {
+                    return ResearchContextUpdateResult.Failure(
+                        candidateErrorCode,
+                        candidateMessage);
+                }
                 if (!File.ReadAllBytes(fullPath).AsSpan().SequenceEqual(originalBytes))
                 {
                     return ResearchContextUpdateResult.Failure(
@@ -722,19 +710,68 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                         $"Research Topic '{topic.Title}' changed while its context was being updated.");
                 }
 
+                BeforeContextFileReplaceHook?.Invoke();
                 _selfWrites?.RegisterWrite(fullPath);
                 File.Replace(tempPath, fullPath, backupPath);
+                replacementApplied = true;
+                var displacedBytes = File.ReadAllBytes(backupPath);
+                if (!displacedBytes.AsSpan().SequenceEqual(originalBytes))
+                {
+                    if (!TryRestoreOptInBackup(
+                            fullPath,
+                            backupPath,
+                            updatedBytes,
+                            out var rollbackError))
+                    {
+                        preserveBackup = true;
+                        return ResearchContextUpdateResult.Failure(
+                            ResearchContextUpdateErrorCode.WriteFailed,
+                            $"Research Topic '{topic.Title}' changed during the atomic update and newer content could not be safely restored. Recovery copy preserved at '{backupPath}': {rollbackError}");
+                    }
+                    replacementApplied = false;
+                    return ResearchContextUpdateResult.Failure(
+                        ResearchContextUpdateErrorCode.ConcurrentModification,
+                        $"Research Topic '{topic.Title}' changed during the atomic update. The newer external content was restored.");
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
+                if (replacementApplied && File.Exists(backupPath))
+                {
+                    if (!TryRestoreOptInBackup(
+                            fullPath,
+                            backupPath,
+                            updatedBytes,
+                            out var rollbackError))
+                    {
+                        preserveBackup = true;
+                        return ResearchContextUpdateResult.Failure(
+                            ResearchContextUpdateErrorCode.WriteFailed,
+                            $"Research Topic '{topic.Title}' could not finish its atomic update or safely restore displaced content. Recovery copy preserved at '{backupPath}': {rollbackError}");
+                    }
+                    replacementApplied = false;
+                }
+                else if (!replacementApplied)
+                {
+                    preserveTemp = File.Exists(tempPath);
+                    preserveBackup = File.Exists(backupPath);
+                    if (preserveTemp || preserveBackup || !File.Exists(fullPath))
+                    {
+                        return ResearchContextUpdateResult.Failure(
+                            ResearchContextUpdateErrorCode.WriteFailed,
+                            $"Research Topic '{topic.Title}' encountered an ambiguous atomic-replace failure. Live exists: {File.Exists(fullPath)}; replacement preserved: {preserveTemp}; backup preserved: {preserveBackup}. Inspect recovery files before retrying: {ex.Message}");
+                    }
+                }
                 return ResearchContextUpdateResult.Failure(
                     ResearchContextUpdateErrorCode.WriteFailed,
                     $"Research Topic '{topic.Title}' could not be updated: {ex.Message}");
             }
             finally
             {
-                TryDeleteRecoveryFile(tempPath);
-                TryDeleteRecoveryFile(backupPath);
+                if (!preserveTemp)
+                    TryDeleteRecoveryFile(tempPath);
+                if (!preserveBackup)
+                    TryDeleteRecoveryFile(backupPath);
             }
 
             var before = _snapshot;
@@ -2583,6 +2620,113 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 continue;
             }
         }
+        return true;
+    }
+
+    private bool TryValidateContextCandidateOnDisk(
+        string stableId,
+        out string authoritativeId,
+        out ResearchContextUpdateErrorCode errorCode,
+        out string message)
+    {
+        authoritativeId = stableId;
+        errorCode = ResearchContextUpdateErrorCode.PageNotFound;
+        message = $"Wiki Page '{stableId}' was not found.";
+        var wikiRoot = Path.Combine(_vaultRoot, "wiki");
+        string[] paths;
+        try
+        {
+            paths = Directory.GetFiles(
+                wikiRoot,
+                "*.md",
+                new EnumerationOptions
+                {
+                    RecurseSubdirectories = true,
+                    AttributesToSkip = FileAttributes.ReparsePoint,
+                });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            errorCode = ResearchContextUpdateErrorCode.ConcurrentModification;
+            message = $"Wiki Page '{stableId}' could not be revalidated against the Vault: {ex.Message}";
+            return false;
+        }
+
+        var matches = new List<(string Id, bool Eligible)>();
+        var foundIneligibleLocationMatch = false;
+        foreach (var path in paths)
+        {
+            var hasEligibleLocation = TryGetEligibleRelativePath(path, out var relativePath)
+                && IsEligibleLocation(relativePath)
+                && !ContainsReparsePoint(relativePath);
+
+            string content;
+            try
+            {
+                content = File.ReadAllText(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                errorCode = ResearchContextUpdateErrorCode.ConcurrentModification;
+                message = $"Wiki Page '{stableId}' could not be revalidated against the Vault: {ex.Message}";
+                return false;
+            }
+
+            var match = FrontmatterRegex().Match(content);
+            if (!match.Success)
+                continue;
+            WikiPageFrontmatter? page;
+            try
+            {
+                page = YamlDeserializer.Deserialize<WikiPageFrontmatter>(
+                    match.Groups[1].Value);
+            }
+            catch (Exception ex) when (ex is YamlException or InvalidOperationException)
+            {
+                continue;
+            }
+            var candidateId = page?.Id?.Trim();
+            if (!string.Equals(
+                    candidateId,
+                    stableId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!hasEligibleLocation)
+            {
+                foundIneligibleLocationMatch = true;
+                continue;
+            }
+            var hasEligibleType = !string.IsNullOrWhiteSpace(page?.Type)
+                && EligibleTypes.Contains(page.Type);
+            matches.Add((candidateId!, hasEligibleType));
+        }
+
+        if (matches.Count == 0)
+        {
+            if (foundIneligibleLocationMatch)
+            {
+                errorCode = ResearchContextUpdateErrorCode.IneligiblePage;
+                message = $"Wiki Page '{stableId}' is not an eligible schema-governed Wiki Page.";
+            }
+            return false;
+        }
+        if (matches.Count > 1)
+        {
+            errorCode = ResearchContextUpdateErrorCode.DuplicateStableId;
+            message = $"Stable Wiki Page id '{stableId}' is duplicated.";
+            return false;
+        }
+        if (!matches[0].Eligible)
+        {
+            errorCode = ResearchContextUpdateErrorCode.IneligiblePage;
+            message = $"Wiki Page '{stableId}' is not an eligible schema-governed Wiki Page.";
+            return false;
+        }
+
+        authoritativeId = matches[0].Id;
         return true;
     }
 
