@@ -21,6 +21,7 @@ public sealed partial class FileSystemResearchCatalog
     internal Action? BeforeRemovalOperationCleanupHook { get; set; }
     internal Action? BeforeRemovalJournalCleanupHook { get; set; }
     internal Action? BeforeAbsentLogGuardHook { get; set; }
+    internal Func<string, string>? TransformRemovalYamlForTest { get; set; }
 
     public ResearchRemovalRecoveryState? RemovalRecoveryState { get; private set; }
 
@@ -920,7 +921,7 @@ public sealed partial class FileSystemResearchCatalog
         public string RecoveryPath { get; } = recoveryPath;
     }
 
-    private static bool TryRemoveResearchMetadata(
+    private bool TryRemoveResearchMetadata(
         string content,
         System.Text.RegularExpressions.Group yamlGroup,
         out string updated,
@@ -980,11 +981,16 @@ public sealed partial class FileSystemResearchCatalog
         var updatedYaml = owner.Style == YamlDotNet.Core.Events.MappingStyle.Flow
             ? RemoveFlowMappingPair(yaml, owner, key)
             : RemoveBlockMappingPair(yaml, key);
-        if (ContainsResearchMetadata(updatedYaml))
+        if (TransformRemovalYamlForTest is { } transform)
+            updatedYaml = transform(updatedYaml);
+        if (!TryValidateResearchMetadataRemoval(
+                root,
+                updatedYaml,
+                out var validationError))
         {
             error = ResearchRemovalResult.Failure(
                 ResearchRemovalErrorCode.InvalidResearchMetadata,
-                "The Research metadata could not be removed without changing unrelated YAML.");
+                validationError);
             return false;
         }
 
@@ -1065,69 +1071,131 @@ public sealed partial class FileSystemResearchCatalog
         if (ownerEnd <= openingBrace)
             return yaml;
 
-        var pairDepth = 0;
-        var pairSingleQuote = false;
-        var pairDoubleQuote = false;
-        var pairEscaped = false;
-        for (var index = start; index < yaml.Length; index++)
+        var pair = FindFlowPairBounds(yaml, start, ownerEnd);
+        if (pair.ContentEnd <= start)
+            return yaml;
+
+        var previousComma = FindPreviousFlowComma(
+            yaml,
+            openingBrace + 1,
+            start);
+        var updated = yaml.Remove(start, pair.ContentEnd - start);
+        if (pair.NextComma >= 0)
+        {
+            var adjustedComma =
+                pair.NextComma - (pair.ContentEnd - start);
+            var separatorLength = 1;
+            while (pair.NextComma + separatorLength < ownerEnd
+                   && yaml[pair.NextComma + separatorLength] is ' ' or '\t')
+            {
+                separatorLength++;
+            }
+            return updated.Remove(adjustedComma, separatorLength);
+        }
+        return previousComma >= 0
+            ? updated.Remove(previousComma, 1)
+            : updated;
+    }
+
+    private static FlowPairBounds FindFlowPairBounds(
+        string yaml,
+        int start,
+        int ownerEnd)
+    {
+        var depth = 0;
+        var inSingleQuote = false;
+        var inDoubleQuote = false;
+        var inComment = false;
+        var escaped = false;
+        var contentEnd = start;
+        for (var index = start; index < ownerEnd; index++)
         {
             var character = yaml[index];
-            if (pairDoubleQuote)
+            if (inComment)
             {
-                if (pairEscaped) pairEscaped = false;
-                else if (character == '\\') pairEscaped = true;
-                else if (character == '"') pairDoubleQuote = false;
+                if (character is '\r' or '\n')
+                    inComment = false;
                 continue;
             }
-            if (pairSingleQuote)
+            if (inDoubleQuote)
             {
+                contentEnd = index + 1;
+                if (escaped) escaped = false;
+                else if (character == '\\') escaped = true;
+                else if (character == '"') inDoubleQuote = false;
+                continue;
+            }
+            if (inSingleQuote)
+            {
+                contentEnd = index + 1;
                 if (character != '\'') continue;
-                if (index + 1 < yaml.Length && yaml[index + 1] == '\'')
+                if (index + 1 < ownerEnd && yaml[index + 1] == '\'')
                 {
-                    index++;
+                    contentEnd = ++index + 1;
                     continue;
                 }
-                pairSingleQuote = false;
+                inSingleQuote = false;
+                continue;
+            }
+            if (IsYamlCommentStart(yaml, index))
+            {
+                inComment = true;
                 continue;
             }
 
             switch (character)
             {
                 case '"':
-                    pairDoubleQuote = true;
+                    inDoubleQuote = true;
+                    contentEnd = index + 1;
                     break;
                 case '\'':
-                    pairSingleQuote = true;
+                    inSingleQuote = true;
+                    contentEnd = index + 1;
                     break;
                 case '{':
                 case '[':
-                    pairDepth++;
+                    depth++;
+                    contentEnd = index + 1;
                     break;
+                case '}' when depth == 0:
+                    return new FlowPairBounds(contentEnd, -1);
                 case '}':
                 case ']':
-                    if (pairDepth > 0)
-                        pairDepth--;
-                    else
-                        index = yaml.Length;
+                    depth--;
+                    contentEnd = index + 1;
                     break;
-                case ',' when pairDepth == 0:
-                    var end = index + 1;
-                    while (end < yaml.Length && char.IsWhiteSpace(yaml[end]))
-                        end++;
-                    return yaml.Remove(start, end - start);
+                case ',' when depth == 0:
+                    return new FlowPairBounds(contentEnd, index);
+                default:
+                    if (!char.IsWhiteSpace(character))
+                        contentEnd = index + 1;
+                    break;
             }
         }
+        return new FlowPairBounds(contentEnd, -1);
+    }
 
+    private static int FindPreviousFlowComma(
+        string yaml,
+        int start,
+        int end)
+    {
         var depth = 0;
         var inSingleQuote = false;
         var inDoubleQuote = false;
+        var inComment = false;
         var escaped = false;
         var previousComma = -1;
-        var nextComma = -1;
-        var closingBrace = -1;
-        for (var index = openingBrace; index < ownerEnd; index++)
+        for (var index = start; index < end; index++)
         {
             var character = yaml[index];
+            if (inComment)
+            {
+                if (character is '\r' or '\n')
+                    inComment = false;
+                continue;
+            }
             if (inDoubleQuote)
             {
                 if (escaped) escaped = false;
@@ -1138,7 +1206,7 @@ public sealed partial class FileSystemResearchCatalog
             if (inSingleQuote)
             {
                 if (character != '\'') continue;
-                if (index + 1 < ownerEnd && yaml[index + 1] == '\'')
+                if (index + 1 < end && yaml[index + 1] == '\'')
                 {
                     index++;
                     continue;
@@ -1146,49 +1214,143 @@ public sealed partial class FileSystemResearchCatalog
                 inSingleQuote = false;
                 continue;
             }
+            if (IsYamlCommentStart(yaml, index))
+            {
+                inComment = true;
+                continue;
+            }
 
             switch (character)
             {
-                case '"':
-                    inDoubleQuote = true;
-                    break;
-                case '\'':
-                    inSingleQuote = true;
-                    break;
+                case '"': inDoubleQuote = true; break;
+                case '\'': inSingleQuote = true; break;
                 case '{':
-                case '[':
-                    depth++;
-                    break;
+                case '[': depth++; break;
                 case '}':
-                case ']':
-                    depth--;
-                    if (depth == 0)
-                        closingBrace = index;
-                    break;
-                case ',' when depth == 1:
-                    if (index < start)
-                        previousComma = index;
-                    else if (nextComma < 0)
-                        nextComma = index;
-                    break;
+                case ']': depth--; break;
+                case ',' when depth == 0: previousComma = index; break;
             }
         }
+        return previousComma;
+    }
 
-        if (nextComma >= 0)
+    private static bool IsYamlCommentStart(string yaml, int index) =>
+        yaml[index] == '#'
+        && (index == 0 || char.IsWhiteSpace(yaml[index - 1]));
+
+    private static bool TryValidateResearchMetadataRemoval(
+        YamlMappingNode originalRoot,
+        string updatedYaml,
+        out string error)
+    {
+        YamlMappingNode updatedRoot;
+        try
         {
-            var end = nextComma + 1;
-            while (end < ownerEnd && char.IsWhiteSpace(yaml[end]))
-                end++;
-            return yaml.Remove(start, end - start);
+            var stream = new YamlStream();
+            stream.Load(new StringReader(updatedYaml));
+            if (stream.Documents.Count != 1
+                || stream.Documents[0].RootNode is not YamlMappingNode mapping)
+            {
+                error = "Removing Research metadata did not produce one valid YAML mapping.";
+                return false;
+            }
+            updatedRoot = mapping;
+        }
+        catch (Exception ex) when (ex is YamlException or InvalidOperationException)
+        {
+            error =
+                $"Removing Research metadata did not produce valid YAML: {ex.Message}";
+            return false;
         }
 
-        if (previousComma >= 0 && closingBrace >= start)
-            return yaml.Remove(previousComma, closingBrace - previousComma);
+        if (ContainsResearchMetadata(updatedYaml)
+            || !string.Equals(
+                BuildFrontmatterSignatureWithoutResearch(originalRoot),
+                BuildNodeSignature(updatedRoot),
+                StringComparison.Ordinal))
+        {
+            error =
+                "Removing Research metadata changed unrelated YAML structure.";
+            return false;
+        }
 
-        return closingBrace >= start
-            ? yaml.Remove(start, closingBrace - start)
-            : yaml;
+        error = string.Empty;
+        return true;
     }
+
+    private static string BuildFrontmatterSignatureWithoutResearch(
+        YamlMappingNode root)
+    {
+        var builder = new StringBuilder();
+        builder.Append("map[");
+        foreach (var pair in root.Children)
+        {
+            if (pair.Key is YamlScalarNode { Value: "glasswork" }
+                && pair.Value is YamlMappingNode glasswork)
+            {
+                var remaining = glasswork.Children.Where(child =>
+                    child.Key is not YamlScalarNode { Value: "research" }).ToArray();
+                if (remaining.Length == 0)
+                    continue;
+                AppendNodeSignature(builder, pair.Key);
+                AppendMappingSignature(builder, remaining);
+                continue;
+            }
+            AppendNodeSignature(builder, pair.Key);
+            AppendNodeSignature(builder, pair.Value);
+        }
+        return builder.Append(']').ToString();
+    }
+
+    private static string BuildNodeSignature(YamlNode node)
+    {
+        var builder = new StringBuilder();
+        AppendNodeSignature(builder, node);
+        return builder.ToString();
+    }
+
+    private static void AppendNodeSignature(StringBuilder builder, YamlNode node)
+    {
+        switch (node)
+        {
+            case YamlScalarNode scalar:
+                builder.Append("scalar(")
+                    .Append(scalar.Tag)
+                    .Append(':')
+                    .Append(scalar.Value?.Length ?? -1)
+                    .Append(':')
+                    .Append(scalar.Value)
+                    .Append(')');
+                break;
+            case YamlSequenceNode sequence:
+                builder.Append("seq[");
+                foreach (var child in sequence.Children)
+                    AppendNodeSignature(builder, child);
+                builder.Append(']');
+                break;
+            case YamlMappingNode mapping:
+                AppendMappingSignature(builder, mapping.Children);
+                break;
+            default:
+                builder.Append(node.NodeType).Append(':').Append(node);
+                break;
+        }
+    }
+
+    private static void AppendMappingSignature(
+        StringBuilder builder,
+        IEnumerable<KeyValuePair<YamlNode, YamlNode>> children)
+    {
+        builder.Append("map[");
+        foreach (var pair in children)
+        {
+            AppendNodeSignature(builder, pair.Key);
+            AppendNodeSignature(builder, pair.Value);
+        }
+        builder.Append(']');
+    }
+
+    private readonly record struct FlowPairBounds(int ContentEnd, int NextComma);
 
     private static void WriteDurableRemovalFile(string path, byte[] bytes)
     {

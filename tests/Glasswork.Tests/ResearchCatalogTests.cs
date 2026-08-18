@@ -991,6 +991,86 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Remove_FlowStylePreservesCommentAndRemovesOnlyRequiredComma()
+    {
+        const string relativePath = "wiki/concepts/flow-comment-last.md";
+        const string original =
+            "---\nid: flow-comment-last\ntitle: Flow comment last\ntype: concept\nglasswork: { unrelated: keep, # Preserve, comma.\n  research: {} }\n---\nExact prose.";
+        WritePage(relativePath, original);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Remove("flow-comment-last");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual(
+            "---\nid: flow-comment-last\ntitle: Flow comment last\ntype: concept\nglasswork: { unrelated: keep # Preserve, comma.\n   }\n---\nExact prose."
+                .ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+    }
+
+    [TestMethod]
+    [DataRow(
+        "glasswork: { research: {}, # Preserve next, comma.\n  unrelated: keep }",
+        "glasswork: { # Preserve next, comma.\n  unrelated: keep }")]
+    [DataRow(
+        "glasswork: { first: keep, # Before Research, comma.\n  research: { include: [related] }, # Preserve after, comma.\n  last: keep }",
+        "glasswork: { first: keep, # Before Research, comma.\n  # Preserve after, comma.\n  last: keep }")]
+    [DataRow(
+        "glasswork: { unrelated: keep, # Preserve } and { braces, comma.\n  research: {}, other: keep }",
+        "glasswork: { unrelated: keep, # Preserve } and { braces, comma.\n  other: keep }")]
+    public void Remove_FlowStylePreservesMultilineSiblingComments(
+        string glassworkYaml,
+        string expectedGlassworkYaml)
+    {
+        const string relativePath = "wiki/concepts/flow-comment-variant.md";
+        var original =
+            $"---\nid: flow-comment-variant\ntitle: Flow comment variant\ntype: concept\n{glassworkYaml}\n---\nExact prose.";
+        WritePage(relativePath, original);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Remove("flow-comment-variant");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual(
+            $"---\nid: flow-comment-variant\ntitle: Flow comment variant\ntype: concept\n{expectedGlassworkYaml}\n---\nExact prose."
+                .ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+    }
+
+    [TestMethod]
+    public void Remove_InvalidEditedYamlFailsBeforeMutationOrRecoveryStaging()
+    {
+        const string relativePath = "wiki/concepts/invalid-edited-yaml.md";
+        const string original =
+            "---\nid: invalid-edited-yaml\ntitle: Invalid edited YAML\ntype: concept\nglasswork: { unrelated: keep, research: {} }\n---\nExact prose.";
+        WritePage(relativePath, original);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            TransformRemovalYamlForTest = yaml =>
+                yaml.Replace("unrelated: keep", "unrelated: [", StringComparison.Ordinal),
+        };
+
+        var result = catalog.Remove("invalid-edited-yaml");
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(
+            ResearchRemovalErrorCode.InvalidResearchMetadata,
+            result.ErrorCode);
+        StringAssert.Contains(result.Message, "valid YAML");
+        Assert.AreEqual(
+            original.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+        Assert.IsFalse(Directory.Exists(Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removals")));
+        Assert.IsFalse(File.Exists(Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removal-journal.json")));
+    }
+
+    [TestMethod]
     public void Remove_PreservesRootCommentAfterDeletedGlassworkBlock()
     {
         const string relativePath = "wiki/concepts/root-comment.md";

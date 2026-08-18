@@ -1647,10 +1647,17 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         var depth = 0;
         var inSingleQuote = false;
         var inDoubleQuote = false;
+        var inComment = false;
         var escaped = false;
         for (var index = openingBrace; index < yaml.Length; index++)
         {
             var character = yaml[index];
+            if (inComment)
+            {
+                if (character is '\r' or '\n')
+                    inComment = false;
+                continue;
+            }
             if (inDoubleQuote)
             {
                 if (escaped) escaped = false;
@@ -1667,6 +1674,11 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     continue;
                 }
                 inSingleQuote = false;
+                continue;
+            }
+            if (IsYamlCommentStart(yaml, index))
+            {
+                inComment = true;
                 continue;
             }
             switch (character)
