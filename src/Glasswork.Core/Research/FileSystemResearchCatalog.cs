@@ -61,6 +61,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private bool _disposed;
     private int _recoveryPending;
 
+    internal Action? AfterOptInReplacementHook { get; set; }
+    internal Action? BeforeOptInRollbackWriteHook { get; set; }
+
     public FileSystemResearchCatalog(
         string vaultRoot,
         Func<DateOnly>? today = null,
@@ -299,19 +302,22 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                                 $"Stable Wiki Page id '{optedInId}' is duplicated; resolve the duplicate before adding this Topic.");
                         }
 
-                        using var currentPath = new FileStream(
-                            fullPath,
-                            FileMode.Open,
-                            FileAccess.Read,
-                            FileShare.ReadWrite | FileShare.Delete);
-                        if (!IsOpenedFileExpected(currentPath, relativePath))
+                        byte[] currentBytes;
+                        using (var currentPath = new FileStream(
+                                   fullPath,
+                                   FileMode.Open,
+                                   FileAccess.Read,
+                                   FileShare.ReadWrite | FileShare.Delete))
                         {
-                            return ResearchOptInResult.Failure(
-                                ResearchOptInErrorCode.ConcurrentModification,
-                                $"Wiki Page '{relativePath}' changed location while it was being added. Try again.");
+                            if (!IsOpenedFileExpected(currentPath, relativePath))
+                            {
+                                return ResearchOptInResult.Failure(
+                                    ResearchOptInErrorCode.ConcurrentModification,
+                                    $"Wiki Page '{relativePath}' changed location while it was being added. Try again.");
+                            }
+                            currentBytes = new byte[currentPath.Length];
+                            currentPath.ReadExactly(currentBytes);
                         }
-                        var currentBytes = new byte[currentPath.Length];
-                        currentPath.ReadExactly(currentBytes);
                         if (!currentBytes.AsSpan().SequenceEqual(originalBytes))
                         {
                             return ResearchOptInResult.Failure(
@@ -319,6 +325,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                                 $"Wiki Page '{relativePath}' changed while it was being added. Review the latest file and try again.");
                         }
 
+                        writeGuard.Dispose();
                         _selfWrites?.RegisterWrite(fullPath);
                         File.Replace(tempPath, fullPath, backupPath);
                         replacementApplied = true;
@@ -334,32 +341,81 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                         }
                         if (!replacedBytes.AsSpan().SequenceEqual(originalBytes))
                         {
-                            _selfWrites?.RegisterWrite(fullPath);
-                            File.Replace(backupPath, fullPath, destinationBackupFileName: null);
+                            if (!TryRestoreOptInBackup(
+                                    fullPath,
+                                    backupPath,
+                                    updatedBytes,
+                                    out var rollbackError))
+                            {
+                                preserveBackup = true;
+                                return ResearchOptInResult.Failure(
+                                    ResearchOptInErrorCode.WriteFailed,
+                                    $"Wiki Page '{relativePath}' changed during the atomic update and could not be safely restored. Recovery copy preserved at '{backupPath}': {rollbackError}");
+                            }
                             replacementApplied = false;
                             return ResearchOptInResult.Failure(
                                 ResearchOptInErrorCode.ConcurrentModification,
                                 $"Wiki Page '{relativePath}' changed during the atomic update. The newer external content was restored; review it and try again.");
+                        }
+
+                        AfterOptInReplacementHook?.Invoke();
+                        if (!TryHasDuplicateIdOnDisk(
+                                optedInId,
+                                fullPath,
+                                out duplicateOnDisk,
+                                out duplicateCheckError))
+                        {
+                            if (!TryRestoreOptInBackup(
+                                    fullPath,
+                                    backupPath,
+                                    updatedBytes,
+                                    out var rollbackError))
+                            {
+                                preserveBackup = true;
+                                return ResearchOptInResult.Failure(
+                                    ResearchOptInErrorCode.WriteFailed,
+                                    $"Wiki Page '{relativePath}' could not verify unique stable IDs or safely restore the original. Recovery copy preserved at '{backupPath}': {rollbackError}");
+                            }
+                            replacementApplied = false;
+                            return ResearchOptInResult.Failure(
+                                ResearchOptInErrorCode.ConcurrentModification,
+                                $"Wiki Page '{relativePath}' could not verify unique stable IDs after update. The original page was restored: {duplicateCheckError}");
+                        }
+                        if (duplicateOnDisk)
+                        {
+                            if (!TryRestoreOptInBackup(
+                                    fullPath,
+                                    backupPath,
+                                    updatedBytes,
+                                    out var rollbackError))
+                            {
+                                preserveBackup = true;
+                                return ResearchOptInResult.Failure(
+                                    ResearchOptInErrorCode.WriteFailed,
+                                    $"Stable Wiki Page id '{optedInId}' became duplicated and the original could not be safely restored. Recovery copy preserved at '{backupPath}': {rollbackError}");
+                            }
+                            replacementApplied = false;
+                            return ResearchOptInResult.Failure(
+                                ResearchOptInErrorCode.DuplicateStableId,
+                                $"Stable Wiki Page id '{optedInId}' became duplicated during the update. The original page was restored; resolve the duplicate before adding this Topic.");
                         }
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     {
                         if (replacementApplied && File.Exists(backupPath))
                         {
-                            try
-                            {
-                                _selfWrites?.RegisterWrite(fullPath);
-                                File.Replace(backupPath, fullPath, destinationBackupFileName: null);
-                                replacementApplied = false;
-                            }
-                            catch (Exception rollbackException) when (
-                                rollbackException is IOException or UnauthorizedAccessException)
+                            if (!TryRestoreOptInBackup(
+                                    fullPath,
+                                    backupPath,
+                                    updatedBytes,
+                                    out var rollbackError))
                             {
                                 preserveBackup = true;
                                 return ResearchOptInResult.Failure(
                                     ResearchOptInErrorCode.WriteFailed,
-                                    $"Wiki Page '{relativePath}' could not finish its atomic update or restore the original. Recovery copy preserved at '{backupPath}': {rollbackException.Message}");
+                                    $"Wiki Page '{relativePath}' could not finish its atomic update or safely restore the original. Recovery copy preserved at '{backupPath}': {rollbackError}");
                             }
+                            replacementApplied = false;
                         }
 
                         return ResearchOptInResult.Failure(
@@ -1652,6 +1708,44 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         }
     }
 
+    private bool TryRestoreOptInBackup(
+        string fullPath,
+        string backupPath,
+        byte[] expectedReplacement,
+        out string? error)
+    {
+        error = null;
+        try
+        {
+            var originalBytes = File.ReadAllBytes(backupPath);
+            using var current = new FileStream(
+                fullPath,
+                FileMode.Open,
+                FileAccess.ReadWrite,
+                FileShare.Read);
+            var currentBytes = new byte[current.Length];
+            current.ReadExactly(currentBytes);
+            if (!currentBytes.AsSpan().SequenceEqual(expectedReplacement))
+            {
+                error = "The selected Wiki Page changed again after Glasswork wrote it.";
+                return false;
+            }
+
+            BeforeOptInRollbackWriteHook?.Invoke();
+            _selfWrites?.RegisterWrite(fullPath);
+            current.Position = 0;
+            current.SetLength(0);
+            current.Write(originalBytes);
+            current.Flush(flushToDisk: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
     private bool TryHasDuplicateIdOnDisk(
         string stableId,
         string selectedFullPath,
@@ -1685,7 +1779,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     Path.GetFullPath(path),
                     selectedFullPath,
                     StringComparison.OrdinalIgnoreCase)
-                || !TryGetEligibleRelativePath(path, out _))
+                || !TryGetEligibleRelativePath(path, out var relativePath)
+                || !IsEligibleLocation(relativePath))
             {
                 continue;
             }
@@ -1707,8 +1802,13 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             {
                 var page = YamlDeserializer.Deserialize<WikiPageFrontmatter>(
                     match.Groups[1].Value);
+                if (string.IsNullOrWhiteSpace(page?.Type)
+                    || !EligibleTypes.Contains(page.Type))
+                {
+                    continue;
+                }
                 if (string.Equals(
-                        page?.Id?.Trim(),
+                        page.Id?.Trim(),
                         stableId,
                         StringComparison.OrdinalIgnoreCase))
                 {

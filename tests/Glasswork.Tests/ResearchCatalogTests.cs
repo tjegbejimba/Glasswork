@@ -461,6 +461,24 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void OptIn_IgnoresMatchingIdsOnPagesThatAreNotResearchEligible()
+    {
+        const string selectedPath = "wiki/concepts/eligible.md";
+        WritePage(
+            selectedPath,
+            "---\nid: shared-id\ntitle: Eligible concept\ntype: concept\n---\nBody");
+        WritePage(
+            "wiki/todo/shared-id.md",
+            "---\nid: shared-id\ntitle: Task with shared id\ntype: task\n---\nBody");
+        var catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual("shared-id", result.Topic?.Id);
+    }
+
+    [TestMethod]
     public void OptIn_RechecksDuplicateIdsAddedAfterCachedSnapshot()
     {
         const string selectedPath = "wiki/concepts/cached.md";
@@ -478,6 +496,113 @@ public sealed class ResearchCatalogTests
         Assert.IsFalse(result.Succeeded);
         Assert.AreEqual(ResearchOptInErrorCode.DuplicateStableId, result.ErrorCode);
         Assert.IsEmpty(catalog.Capture().Topics);
+    }
+
+    [TestMethod]
+    public void OptIn_RestoresOriginalWhenDuplicateIdAppearsDuringAtomicUpdate()
+    {
+        const string selectedPath = "wiki/concepts/concurrent.md";
+        WritePage(
+            selectedPath,
+            "---\nid: concurrent\ntitle: Concurrent concept\ntype: concept\n---\nOriginal body");
+        var fullPath = FullPath(selectedPath);
+        var original = File.ReadAllBytes(fullPath);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            AfterOptInReplacementHook = () => WritePage(
+                "wiki/sources/concurrent-duplicate.md",
+                "---\nid: CONCURRENT\ntitle: Concurrent source\ntype: source\n---\nExternal body"),
+        };
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(
+            ResearchOptInErrorCode.DuplicateStableId,
+            result.ErrorCode,
+            result.Message);
+        StringAssert.Contains(result.Message, "became duplicated during the update");
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(fullPath));
+        Assert.IsEmpty(catalog.Capture().Topics);
+    }
+
+    [TestMethod]
+    public void OptIn_PreservesNewerExternalEditWhenPostWriteRollbackIsRequired()
+    {
+        const string selectedPath = "wiki/concepts/concurrent-edit.md";
+        const string external =
+            "---\nid: concurrent-edit\ntitle: External edit\ntype: concept\n---\nNewer external body";
+        WritePage(
+            selectedPath,
+            "---\nid: concurrent-edit\ntitle: Original concept\ntype: concept\n---\nOriginal body");
+        var fullPath = FullPath(selectedPath);
+        var original = File.ReadAllBytes(fullPath);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            AfterOptInReplacementHook = () =>
+            {
+                WritePage(selectedPath, external);
+                WritePage(
+                    "wiki/sources/concurrent-edit-duplicate.md",
+                    "---\nid: CONCURRENT-EDIT\ntitle: Duplicate source\ntype: source\n---\nExternal duplicate");
+            },
+        };
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
+        StringAssert.Contains(result.Message, "could not be safely restored");
+        Assert.AreEqual(external.ReplaceLineEndings(), File.ReadAllText(fullPath));
+        var recovery = Directory.GetFiles(
+            Path.GetDirectoryName(fullPath)!,
+            "*.bak",
+            SearchOption.TopDirectoryOnly);
+        Assert.HasCount(1, recovery);
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(recovery[0]));
+    }
+
+    [TestMethod]
+    public void OptIn_BlocksAtomicExternalSaveBetweenRollbackVerificationAndRestore()
+    {
+        const string selectedPath = "wiki/concepts/guarded-rollback.md";
+        WritePage(
+            selectedPath,
+            "---\nid: guarded-rollback\ntitle: Original concept\ntype: concept\n---\nOriginal body");
+        var fullPath = FullPath(selectedPath);
+        var original = File.ReadAllBytes(fullPath);
+        var externalPath = fullPath + ".external";
+        File.WriteAllText(
+            externalPath,
+            "---\nid: guarded-rollback\ntitle: External edit\ntype: concept\n---\nExternal body");
+        Exception? externalWriteError = null;
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            AfterOptInReplacementHook = () => WritePage(
+                "wiki/sources/guarded-rollback-duplicate.md",
+                "---\nid: GUARDED-ROLLBACK\ntitle: Duplicate source\ntype: source\n---\nDuplicate"),
+            BeforeOptInRollbackWriteHook = () =>
+            {
+                try
+                {
+                    File.Move(externalPath, fullPath, overwrite: true);
+                }
+                catch (Exception ex)
+                {
+                    externalWriteError = ex;
+                }
+            },
+        };
+
+        var result = catalog.OptIn(selectedPath);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchOptInErrorCode.DuplicateStableId, result.ErrorCode);
+        Assert.IsTrue(
+            externalWriteError is IOException or UnauthorizedAccessException,
+            externalWriteError?.ToString());
+        Assert.IsTrue(File.Exists(externalPath));
+        CollectionAssert.AreEqual(original, File.ReadAllBytes(fullPath));
     }
 
     [TestMethod]
