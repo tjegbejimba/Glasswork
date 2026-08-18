@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.InteropServices;
 using Glasswork.Controls;
 using Glasswork.Core.Research;
 using Glasswork.Services;
@@ -11,6 +12,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace Glasswork.Pages;
 
@@ -20,6 +22,7 @@ public sealed partial class ResearchPage : Page
     public ObservableCollection<ResearchRelatedGroupRow> RelatedGroups { get; } = [];
     public ObservableCollection<ResearchContextWarningRow> ContextWarnings { get; } = [];
     public ObservableCollection<ResearchContextSelectionRow> ContextSelectionRows { get; } = [];
+    public ObservableCollection<ResearchOpenQuestionRow> OpenQuestions { get; } = [];
 
     private ResearchTopic? _selectedTopic;
     private IReadOnlyList<ResearchContextPage> _previewPages = [];
@@ -41,6 +44,8 @@ public sealed partial class ResearchPage : Page
     private Button? _contextSelectionInvoker;
     private bool _suppressContextDrawerRefreshClose;
     private IReadOnlyList<ResearchCandidateProjection> _durableCandidateProjection = [];
+    private ResearchSessionAction _sessionAction = ResearchSessionAction.ContinueResearch;
+    private string? _sessionIntent;
 
     public ResearchPage()
     {
@@ -49,6 +54,7 @@ public sealed partial class ResearchPage : Page
         RelatedGroupsList.ItemsSource = RelatedGroups;
         ContextWarningsList.ItemsSource = ContextWarnings;
         ContextSelectionList.ItemsSource = ContextSelectionRows;
+        OpenQuestionsList.ItemsSource = OpenQuestions;
         TopicMarkdown.WikiLinkResolver = VaultPageHelper.BuildWikiLinkResolver();
         PreviewMarkdown.WikiLinkResolver = VaultPageHelper.BuildWikiLinkResolver();
         RootGrid.Children.Remove(PreviewDrawerOverlay);
@@ -281,8 +287,14 @@ public sealed partial class ResearchPage : Page
         ResearchTopic topic,
         IReadOnlyList<ResearchCatalogDiagnostic> diagnostics)
     {
+        var topicChanged = !string.Equals(
+            _selectedTopic?.Id,
+            topic.Id,
+            StringComparison.OrdinalIgnoreCase);
         _selectedTopic = topic;
         _selectedTopicId = topic.Id;
+        if (topicChanged)
+            SessionClipboardHint.IsOpen = false;
         TopicTitle.Text = topic.Title;
         TopicType.Text = CultureInfo.InvariantCulture.TextInfo.ToTitleCase(topic.WikiType);
         TopicConfidence.Text = $"Confidence: {topic.Confidence ?? "not set"}";
@@ -303,6 +315,12 @@ public sealed partial class ResearchPage : Page
             ResearchFreshness.Expired or ResearchFreshness.LowConfidence
                 ? "Refresh stale claims"
                 : "Continue research";
+        OpenQuestions.Clear();
+        foreach (var question in ExtractOpenQuestions(topic.Markdown))
+            OpenQuestions.Add(new ResearchOpenQuestionRow(question));
+        OpenQuestionsPanel.Visibility = OpenQuestions.Count == 0
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         var warning = diagnostics.FirstOrDefault(diagnostic =>
             diagnostic.Code is ResearchCatalogDiagnosticCode.MalformedFrontmatter
                 or ResearchCatalogDiagnosticCode.UnreadablePage
@@ -359,6 +377,99 @@ public sealed partial class ResearchPage : Page
             ? $" Showing the last valid Topic snapshot from {lastValid:MMM d, yyyy}."
             : string.Empty;
         return $"Detected {detected}.{preserved} Repair the Wiki Page in Obsidian; a later valid save will replace this snapshot.";
+    }
+
+    private static IReadOnlyList<string> ExtractOpenQuestions(string markdown)
+    {
+        var questions = new List<string>();
+        var inOpenQuestions = false;
+        int? topLevelIndent = null;
+        string? currentQuestion = null;
+        var insideNestedItem = false;
+        foreach (var rawLine in markdown.ReplaceLineEndings("\n").Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.StartsWith("## ", StringComparison.Ordinal))
+            {
+                if (!string.IsNullOrWhiteSpace(currentQuestion))
+                    questions.Add(currentQuestion);
+                currentQuestion = null;
+                topLevelIndent = null;
+                insideNestedItem = false;
+                inOpenQuestions = string.Equals(
+                    line[3..].Trim(),
+                    "Open Questions",
+                    StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
+            if (!inOpenQuestions || line.Length == 0)
+                continue;
+
+            if (TryReadListItem(rawLine, out var indent, out var item))
+            {
+                topLevelIndent ??= indent;
+                if (indent == topLevelIndent)
+                {
+                    if (!string.IsNullOrWhiteSpace(currentQuestion))
+                        questions.Add(currentQuestion);
+                    currentQuestion = item;
+                    insideNestedItem = false;
+                }
+                else if (indent > topLevelIndent)
+                {
+                    insideNestedItem = true;
+                }
+                continue;
+            }
+
+            if (currentQuestion is not null
+                && !insideNestedItem
+                && char.IsWhiteSpace(rawLine[0]))
+            {
+                currentQuestion = $"{currentQuestion} {line}";
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(currentQuestion))
+            questions.Add(currentQuestion);
+        return questions;
+    }
+
+    private static bool TryReadListItem(
+        string rawLine,
+        out int indentation,
+        out string item)
+    {
+        var index = 0;
+        indentation = 0;
+        while (index < rawLine.Length && char.IsWhiteSpace(rawLine[index]))
+        {
+            indentation += rawLine[index] == '\t' ? 4 : 1;
+            index++;
+        }
+
+        var remainder = rawLine[index..];
+        if (remainder.Length >= 2
+            && remainder[0] is '-' or '*' or '+'
+            && remainder[1] == ' ')
+        {
+            item = remainder[2..].Trim();
+            return item.Length > 0;
+        }
+
+        var digitCount = 0;
+        while (digitCount < remainder.Length && char.IsDigit(remainder[digitCount]))
+            digitCount++;
+        if (digitCount > 0
+            && remainder.Length > digitCount + 1
+            && remainder[digitCount] == '.'
+            && remainder[digitCount + 1] == ' ')
+        {
+            item = remainder[(digitCount + 2)..].Trim();
+            return item.Length > 0;
+        }
+
+        item = string.Empty;
+        return false;
     }
 
     private void RestoreReadingPosition(double verticalOffset, int attempts)
@@ -660,24 +771,80 @@ public sealed partial class ResearchPage : Page
     private async void PrimaryKnowledgeAction_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedTopic is not null && sender is Button button)
-            await OpenContextSelectionDrawer(ResearchDrawerMode.SessionSelection, button);
+        {
+            var action = _selectedTopic.Freshness is
+                ResearchFreshness.Expired or ResearchFreshness.LowConfidence
+                    ? ResearchSessionAction.RefreshStaleClaims
+                    : ResearchSessionAction.ContinueResearch;
+            await OpenContextSelectionDrawer(
+                ResearchDrawerMode.SessionSelection,
+                button,
+                action);
+        }
+    }
+
+    private async void AddSourcesAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedTopic is not null && sender is Button button)
+        {
+            await OpenContextSelectionDrawer(
+                ResearchDrawerMode.SessionSelection,
+                button,
+                ResearchSessionAction.AddSources);
+        }
+    }
+
+    private async void ImprovePageAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedTopic is not null && sender is Button button)
+        {
+            await OpenContextSelectionDrawer(
+                ResearchDrawerMode.SessionSelection,
+                button,
+                ResearchSessionAction.ImprovePage);
+        }
+    }
+
+    private async void OpenQuestionAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedTopic is not null
+            && sender is Button
+            {
+                Tag: ResearchOpenQuestionRow question,
+            } button)
+        {
+            await OpenContextSelectionDrawer(
+                ResearchDrawerMode.SessionSelection,
+                button,
+                ResearchSessionAction.OpenQuestion,
+                question.Question);
+        }
     }
 
     private async void CurateContextButton_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedTopic is not null && sender is Button button)
-            await OpenContextSelectionDrawer(ResearchDrawerMode.DurableCuration, button);
+        {
+            await OpenContextSelectionDrawer(
+                ResearchDrawerMode.DurableCuration,
+                button,
+                ResearchSessionAction.ContinueResearch);
+        }
     }
 
     private async System.Threading.Tasks.Task OpenContextSelectionDrawer(
         ResearchDrawerMode mode,
-        Button invoker)
+        Button invoker,
+        ResearchSessionAction action,
+        string? intent = null)
     {
         if (_selectedTopic is null)
             return;
 
         _drawerMode = mode;
         _contextSelectionInvoker = invoker;
+        _sessionAction = action;
+        _sessionIntent = intent;
         ContextSelectionRows.Clear();
         var contextIds = _selectedTopic.Context.RelatedPages
             .Select(page => page.Id)
@@ -685,16 +852,27 @@ public sealed partial class ResearchPage : Page
         ContextSelectionRows.Add(ResearchContextSelectionRow.Topic(_selectedTopic, mode));
         if (mode == ResearchDrawerMode.SessionSelection)
         {
+            SessionClipboardHint.IsOpen = false;
+            var prepared = App.Research.PreparedSessionContext;
+            var preparedIds = string.Equals(
+                    prepared?.TopicId,
+                    _selectedTopic.Id,
+                    StringComparison.OrdinalIgnoreCase)
+                ? prepared!.PageIds.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : null;
             foreach (var page in _selectedTopic.Context.RelatedPages)
             {
                 ContextSelectionRows.Add(
-                    ResearchContextSelectionRow.Related(page, isSelected: true, mode));
+                    ResearchContextSelectionRow.Related(
+                        page,
+                        preparedIds?.Contains(page.Id) ?? true,
+                        mode));
             }
             ContextSelectionEyebrow.Text = "Research Session";
             ContextSelectionTitle.Text = "Choose context for the next session";
             ContextSelectionExplanation.Text =
-                "All current context pages are selected. Deselect optional pages to narrow only the next Research Session; durable Research context will not change.";
-            ContextSelectionDoneButton.Content = "Keep for next session";
+                "Review the current selection before copying the command. Deselect optional pages to narrow only this Research Session; durable Research context will not change.";
+            ContextSelectionDoneButton.Content = "Copy command";
         }
         else
         {
@@ -802,6 +980,7 @@ public sealed partial class ResearchPage : Page
     {
         if (_selectedTopic is null)
             return;
+        var launchedSession = false;
         if (_drawerMode == ResearchDrawerMode.SessionSelection)
         {
             var selectedIds = ContextSelectionRows
@@ -815,9 +994,44 @@ public sealed partial class ResearchPage : Page
                 ContextSelectionError.IsOpen = true;
                 return;
             }
+            var context = result.Context;
+            if (context is null)
+            {
+                ContextSelectionError.Message =
+                    "The prepared Research Session context is unavailable.";
+                ContextSelectionError.IsOpen = true;
+                return;
+            }
+            var invocation = ResearchSessionInvocationFormatter.Format(
+                context,
+                _sessionAction,
+                _sessionIntent);
+            var package = new DataPackage();
+            package.SetText(invocation);
+            try
+            {
+                Clipboard.SetContent(package);
+            }
+            catch (COMException)
+            {
+                ContextSelectionError.Message =
+                    "Glasswork could not copy the Research Session command. Try again.";
+                ContextSelectionError.IsOpen = true;
+                return;
+            }
+            if (App.Research.ConsumePreparedSessionContext(_selectedTopic.Id) is null)
+            {
+                ContextSelectionError.Message =
+                    "The Research Session command was copied, but its temporary context could not be consumed.";
+                ContextSelectionError.IsOpen = true;
+                return;
+            }
+            launchedSession = true;
             UpdateContextSummary(_selectedTopic);
         }
         CloseContextSelectionDrawer(restoreFocus: true);
+        if (launchedSession)
+            SessionClipboardHint.IsOpen = true;
     }
 
     private void ContextSelectionCloseButton_Click(object sender, RoutedEventArgs e) =>
@@ -838,6 +1052,7 @@ public sealed partial class ResearchPage : Page
         ContextSelectionRows.Clear();
         _durableCandidateProjection = [];
         _contextSelectionInvoker = null;
+        _sessionIntent = null;
         _drawerMode = ResearchDrawerMode.None;
         if (restoreFocus && invoker is not null)
             _ = invoker.Focus(FocusState.Programmatic);
@@ -1062,6 +1277,14 @@ public sealed class ResearchTopicRow
     public string FreshnessLabel { get; }
     public string MetadataLine { get; }
     public string AccessibleStatus { get; }
+}
+
+public sealed class ResearchOpenQuestionRow
+{
+    public ResearchOpenQuestionRow(string question) => Question = question;
+
+    public string Question { get; }
+    public string AccessibleName => $"Research Open Question: {Question}";
 }
 
 public sealed class ResearchRelatedGroupRow

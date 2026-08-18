@@ -142,6 +142,13 @@ public sealed partial class VisualVerificationScenario
             {
                 throw new FormatException("assert-name requires value.");
             }
+            if (action.Type.Equals(
+                    "assert-clipboard-text",
+                    StringComparison.OrdinalIgnoreCase)
+                && action.Value is null)
+            {
+                throw new FormatException("assert-clipboard-text requires value.");
+            }
             if (action.Type.Equals("press-key", StringComparison.OrdinalIgnoreCase)
                 && action.Value is not ("Escape" or "Tab" or "Space"))
             {

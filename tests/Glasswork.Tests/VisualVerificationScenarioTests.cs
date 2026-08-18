@@ -201,6 +201,25 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void FromJson_ClipboardAssertionRequiresExpectedText()
+    {
+        const string json = """
+        {
+          "name": "clipboard",
+          "actions": [
+            { "type": "assert-clipboard-text" }
+          ],
+          "captures": [
+            { "name": "screen" }
+          ]
+        }
+        """;
+
+        Assert.ThrowsExactly<FormatException>(() =>
+            VisualVerificationScenario.FromJson(json));
+    }
+
+    [TestMethod]
     public void ToGlassworkTask_NormalizesType()
     {
         var today = new DateTime(2026, 6, 29);
