@@ -249,4 +249,147 @@ public class SelfWriteCoordinatorTests
 
         Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
     }
+
+    [TestMethod]
+    public void BeginWrite_DisposeWithoutCommitAbortsOwnProcessAndMarkerRegistration()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "aborted.md");
+
+        using (coord.BeginWrite(path))
+        {
+            Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        }
+
+        Assert.IsFalse(coord.IsOwnProcessWrite(path));
+        Assert.IsFalse(coord.IsSuppressed(path));
+        Assert.IsFalse(coord.TryConsumeOwnProcessWrite(path));
+    }
+
+    [TestMethod]
+    public void BeginWrite_CommitKeepsOwnProcessRegistration()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "committed.md");
+        using var registration = coord.BeginWrite(path);
+
+        registration.Commit();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
+
+    [TestMethod]
+    public void BeginWrite_DisposingOlderThenNewerDoesNotResurrectCancelledPredecessor()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "nested-cancel.md");
+        var older = coord.BeginWrite(path);
+        var newer = coord.BeginWrite(path);
+
+        older.Dispose();
+        newer.Dispose();
+
+        Assert.IsFalse(coord.IsOwnProcessWrite(path));
+        Assert.IsFalse(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
+
+    [TestMethod]
+    public void BeginWrite_NestedCommitAndCancelKeepsNewestCommittedRegistration()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "nested-mixed.md");
+        var older = coord.BeginWrite(path);
+        var newer = coord.BeginWrite(path);
+
+        newer.Commit();
+        older.Dispose();
+        newer.Dispose();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
+
+    [TestMethod]
+    public void BeginWrite_CancellingNewerRestoresCommittedPredecessor()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "nested-predecessor.md");
+        var older = coord.BeginWrite(path);
+        older.Commit();
+        var newer = coord.BeginWrite(path);
+
+        newer.Dispose();
+        older.Dispose();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+    }
+
+    [TestMethod]
+    public void BeginWrite_SupersededCancellationUnwindsInactiveCancelledChain()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "superseded-chain.md");
+        var registrationA = coord.BeginWrite(path);
+        var registrationB = coord.BeginWrite(path);
+        registrationA.Dispose();
+        var registrationC = coord.BeginWrite(path);
+        registrationC.Commit();
+
+        registrationB.Dispose();
+        registrationC.Dispose();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
+
+    [TestMethod]
+    public void BeginWrite_SupersededChainPermutationLeavesNoCancelledBookkeeping()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "superseded-permutation.md");
+        var registrationA = coord.BeginWrite(path);
+        var registrationB = coord.BeginWrite(path);
+        var registrationC = coord.BeginWrite(path);
+        registrationB.Dispose();
+        registrationA.Dispose();
+
+        registrationC.Commit();
+        registrationC.Dispose();
+
+        Assert.IsTrue(coord.IsOwnProcessWrite(path));
+        Assert.IsTrue(coord.TryConsumeOwnProcessWrite(path));
+        Assert.AreEqual(0, coord.PendingRegistrationCount);
+        Assert.AreEqual(0, coord.CancelledRegistrationCount);
+    }
+
+    [TestMethod]
+    public void BeginWrite_ExternalMarkerChangeDoesNotLeakCancelledBookkeeping()
+    {
+        var coord = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var external = new SelfWriteCoordinator(_tempDir, TimeSpan.FromSeconds(10));
+        var path = Path.Combine(_tempDir, "external-marker.md");
+
+        for (var index = 0; index < 25; index++)
+        {
+            var registration = coord.BeginWrite(path);
+            Thread.Sleep(1);
+            external.RegisterWrite(path);
+
+            registration.Dispose();
+
+            Assert.AreEqual(0, coord.PendingRegistrationCount);
+            Assert.AreEqual(0, coord.CancelledRegistrationCount);
+            Assert.IsTrue(external.IsSuppressed(path));
+        }
+    }
 }

@@ -194,13 +194,21 @@
                             FontSize="28"
                             FontWeight="SemiBold"
                             TextWrapping="Wrap" />
-                        <Button
-                            x:Name="OpenInObsidianButton"
+                        <StackPanel
                             Grid.Column="1"
-                            AutomationProperties.AutomationId="ResearchOpenInObsidian"
-                            Click="OpenInObsidianButton_Click"
-                            Content="Open in Obsidian"
-                            VerticalAlignment="Top" />
+                            Spacing="8"
+                            VerticalAlignment="Top">
+                            <Button
+                                x:Name="OpenInObsidianButton"
+                                AutomationProperties.AutomationId="ResearchOpenInObsidian"
+                                Click="OpenInObsidianButton_Click"
+                                Content="Open in Obsidian" />
+                            <Button
+                                x:Name="RemoveFromResearchButton"
+                                AutomationProperties.AutomationId="ResearchRemoveTopicButton"
+                                Click="RemoveFromResearchButton_Click"
+                                Content="Remove from Research" />
+                        </StackPanel>
                     </Grid>
                     <StackPanel Orientation="Horizontal" Spacing="16">
                         <TextBlock x:Name="TopicType" Opacity="0.72" />
@@ -594,6 +602,61 @@
                 </StackPanel>
             </Grid>
             </Grid>
+        </Border>
+    </ContentControl>
+    <ContentControl
+        x:Name="RemoveTopicOverlay"
+        AutomationProperties.AutomationId="ResearchRemoveTopicDialog"
+        Background="#66000000"
+        HorizontalContentAlignment="Center"
+        VerticalContentAlignment="Center"
+        Visibility="Collapsed">
+        <ContentControl.KeyboardAccelerators>
+            <KeyboardAccelerator
+                Invoked="RemoveTopicEscape_Invoked"
+                Key="Escape" />
+        </ContentControl.KeyboardAccelerators>
+        <Border
+            Width="520"
+            Padding="24"
+            Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            TabFocusNavigation="Cycle">
+            <StackPanel Spacing="16">
+                <TextBlock
+                    FontSize="24"
+                    FontWeight="SemiBold"
+                    Text="Remove from Research?" />
+                <TextBlock
+                    x:Name="RemoveTopicPreserveMessage"
+                    AutomationProperties.AutomationId="ResearchRemovePreserveWikiPageMessage"
+                    TextWrapping="Wrap" />
+                <TextBlock
+                    AutomationProperties.AutomationId="ResearchRemoveDeleteChangeLogMessage"
+                    Text="Its Research Change Log will be permanently deleted. This cannot be undone."
+                    TextWrapping="Wrap" />
+                <TextBlock
+                    Opacity="0.72"
+                    Text="Adding this Wiki Page to Research again will start a new Change Log."
+                    TextWrapping="Wrap" />
+                <StackPanel
+                    HorizontalAlignment="Right"
+                    Orientation="Horizontal"
+                    Spacing="8">
+                    <Button
+                        x:Name="RemoveTopicCancelButton"
+                        AutomationProperties.AutomationId="ResearchRemoveCancelButton"
+                        Click="RemoveTopicCancelButton_Click"
+                        Content="Keep Topic" />
+                    <Button
+                        AutomationProperties.AutomationId="ResearchRemoveConfirmButton"
+                        Click="RemoveTopicConfirmButton_Click"
+                        Content="Remove from Research"
+                        Style="{StaticResource AccentButtonStyle}" />
+                </StackPanel>
+            </StackPanel>
         </Border>
     </ContentControl>
     </Grid>

@@ -82,6 +82,18 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         Directory.CreateDirectory(_vaultRoot);
         _today = today ?? (() => DateOnly.FromDateTime(DateTime.Today));
         _selfWrites = selfWrites;
+        try
+        {
+            RecoverResearchRemoval();
+        }
+        catch (Exception ex) when (
+            ex is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or System.Text.Json.JsonException)
+        {
+            SetRemovalRecoveryBlocked(ex.Message);
+        }
         _quietPeriod = quietPeriod ?? TimeSpan.FromMilliseconds(250);
         _refreshDebouncer = new Debouncer(_quietPeriod, ApplyPendingPaths);
         _watcher = new FileSystemWatcher(_vaultRoot, "*.md")
@@ -2435,10 +2447,17 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         var depth = 0;
         var inSingleQuote = false;
         var inDoubleQuote = false;
+        var inComment = false;
         var escaped = false;
         for (var index = openingIndex; index < yaml.Length; index++)
         {
             var character = yaml[index];
+            if (inComment)
+            {
+                if (character is '\r' or '\n')
+                    inComment = false;
+                continue;
+            }
             if (inDoubleQuote)
             {
                 if (escaped) escaped = false;
@@ -2455,6 +2474,11 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     continue;
                 }
                 inSingleQuote = false;
+                continue;
+            }
+            if (IsYamlCommentStart(yaml, index))
+            {
+                inComment = true;
                 continue;
             }
             switch (character)
@@ -2831,6 +2855,24 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     }
 
     private bool IsOpenedFileExpected(FileStream openedFile, string vaultRelativePath)
+        => IsHandleExpected(openedFile.SafeFileHandle, vaultRelativePath);
+
+    private bool IsExistingDirectoryExpected(string vaultRelativePath)
+    {
+        if (!OperatingSystem.IsWindows()) return true;
+        var fullPath = Path.Combine(
+            _vaultRoot,
+            vaultRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        using var directoryHandle = CreateFile(
+            fullPath, 0, FileShareReadWriteDelete, IntPtr.Zero,
+            OpenExisting, FileFlagBackupSemantics, IntPtr.Zero);
+        return !directoryHandle.IsInvalid
+            && IsHandleExpected(directoryHandle, vaultRelativePath);
+    }
+
+    private bool IsHandleExpected(
+        SafeFileHandle openedHandle,
+        string vaultRelativePath)
     {
         if (!OperatingSystem.IsWindows()) return true;
         using var vaultHandle = CreateFile(
@@ -2838,7 +2880,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             OpenExisting, FileFlagBackupSemantics, IntPtr.Zero);
         if (vaultHandle.IsInvalid) return false;
         var resolvedVault = GetFinalPath(vaultHandle);
-        var resolvedFile = GetFinalPath(openedFile.SafeFileHandle);
+        var resolvedFile = GetFinalPath(openedHandle);
         if (resolvedVault is null || resolvedFile is null) return false;
         var expected = Path.GetFullPath(Path.Combine(
             resolvedVault,
