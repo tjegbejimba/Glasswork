@@ -1,0 +1,103 @@
+{
+  "name": "Research Session context ignores unrelated refresh",
+  "theme": "light",
+  "startUri": "glasswork://research/selected-topic",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/selected-topic.md",
+      "id": "selected-topic",
+      "title": "Selected Topic",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "markdown": "# Selected Topic\n\n[[wiki/sources/selected-evidence]] grounds this Topic."
+    },
+    {
+      "relativePath": "sources/selected-evidence.md",
+      "id": "selected-evidence",
+      "title": "Selected evidence",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Selected evidence"
+    },
+    {
+      "relativePath": "concepts/unrelated-topic.md",
+      "id": "unrelated-topic",
+      "title": "Unrelated Topic",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "markdown": "# Unrelated Topic\n\nUnrelated synthesis."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchPrimaryAction",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPrimaryAction"
+    },
+    {
+      "type": "focus",
+      "name": "Include Selected evidence in the next Research Session"
+    },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "concepts/unrelated-topic.md",
+      "oldValue": "Unrelated synthesis.",
+      "value": "Refreshed unrelated synthesis."
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 1400
+    },
+    {
+      "type": "assert-focused",
+      "name": "Include Selected evidence in the next Research Session"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSelectionSummary",
+      "value": "1 of 1 optional pages selected"
+    },
+    {
+      "type": "wait-for",
+      "name": "Refreshed unrelated synthesis.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-disabled",
+      "automationId": "ShellNavigation"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextDrawerClose"
+    },
+    {
+      "type": "select",
+      "name": "Unrelated Topic"
+    },
+    {
+      "type": "wait-for",
+      "name": "Refreshed unrelated synthesis.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-enabled",
+      "automationId": "ShellNavigation"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-session-context-unrelated-refresh",
+      "waitMilliseconds": 500
+    }
+  ]
+}

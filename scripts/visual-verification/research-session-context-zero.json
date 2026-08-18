@@ -1,0 +1,87 @@
+{
+  "name": "Research Session context zero optional selected",
+  "theme": "light",
+  "startUri": "glasswork://research/session-context-zero",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/session-context-zero.md",
+      "id": "session-context-zero",
+      "title": "Narrow the next session",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "markdown": "# Narrow the next session\n\n[[wiki/sources/optional-alpha]] and [[wiki/systems/optional-beta]] are durable context."
+    },
+    {
+      "relativePath": "sources/optional-alpha.md",
+      "id": "optional-alpha",
+      "title": "Optional alpha",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Optional alpha"
+    },
+    {
+      "relativePath": "systems/optional-beta.md",
+      "id": "optional-beta",
+      "title": "Optional beta",
+      "type": "system",
+      "confidence": "medium",
+      "updated": "2026-08-16",
+      "optedIn": false,
+      "markdown": "# Optional beta"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchPrimaryAction",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPrimaryAction"
+    },
+    {
+      "type": "focus",
+      "name": "Include Optional alpha in the next Research Session"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "focus",
+      "name": "Include Optional beta in the next Research Session"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSelectionSummary",
+      "value": "0 of 2 optional pages selected"
+    },
+    {
+      "type": "assert-disabled",
+      "name": "Narrow the next session, Research Topic, always included"
+    },
+    {
+      "type": "assert-focused",
+      "name": "Include Optional beta in the next Research Session"
+    },
+    {
+      "type": "assert-disabled",
+      "automationId": "ShellNavigation"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-session-context-zero",
+      "waitMilliseconds": 400
+    }
+  ]
+}

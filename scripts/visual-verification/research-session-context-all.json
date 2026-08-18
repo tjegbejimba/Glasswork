@@ -1,0 +1,130 @@
+{
+  "name": "Research Session context all selected",
+  "theme": "dark",
+  "startUri": "glasswork://research/session-context",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/session-context.md",
+      "id": "session-context",
+      "title": "Session context",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "sources": ["[[primary-evidence]]"],
+      "researchInclude": ["included-beyond-hop"],
+      "markdown": "# Session context\n\n[[wiki/systems/direct-system]] and [[wiki/decisions/direct-decision]] ground this Topic."
+    },
+    {
+      "relativePath": "systems/direct-system.md",
+      "id": "direct-system",
+      "title": "Direct system",
+      "type": "system",
+      "confidence": "high",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Direct system"
+    },
+    {
+      "relativePath": "decisions/direct-decision.md",
+      "id": "direct-decision",
+      "title": "Direct decision",
+      "type": "decision",
+      "confidence": "medium",
+      "updated": "2026-08-16",
+      "optedIn": false,
+      "markdown": "# Direct decision"
+    },
+    {
+      "relativePath": "sources/primary-evidence.md",
+      "id": "primary-evidence",
+      "title": "Primary evidence",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": false,
+      "markdown": "# Primary evidence"
+    },
+    {
+      "relativePath": "projects/included-beyond-hop.md",
+      "id": "included-beyond-hop",
+      "title": "Included beyond one hop",
+      "type": "project",
+      "confidence": "high",
+      "updated": "2026-08-15",
+      "optedIn": false,
+      "markdown": "# Included beyond one hop"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchContextSummary",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSummary",
+      "value": "5 of 5 context pages"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPrimaryAction"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchContextDrawerExplanation"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSelectionSummary",
+      "value": "4 of 4 optional pages selected"
+    },
+    {
+      "type": "assert-disabled",
+      "name": "Session context, Research Topic, always included"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchContextDrawerClose"
+    },
+    {
+      "type": "assert-disabled",
+      "automationId": "ShellNavigation"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-session-context-all",
+      "waitMilliseconds": 400
+    }
+  ]
+}

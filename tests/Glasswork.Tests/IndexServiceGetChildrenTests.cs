@@ -90,6 +90,54 @@ Other task");
     }
 
     [TestMethod]
+    public void GetChildren_ReturnsTaskWhoseParentMatchesParentsAdoId()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            File.WriteAllText(Path.Combine(tempDir, "parent-task.md"), """
+                ---
+                id: parent-task
+                title: Parent Task
+                status: todo
+                type: pbi
+                created: 2026-01-01
+                links:
+                  - type: ado
+                    value: 36083004
+                ---
+                """);
+
+            File.WriteAllText(Path.Combine(tempDir, "child-task.md"), """
+                ---
+                id: child-task
+                title: Child Task
+                status: todo
+                created: 2026-01-02
+                parent: 36083004
+                ---
+                """);
+
+            var coordinator = new SelfWriteCoordinator(tempDir);
+            var vault = new VaultService(tempDir, coordinator);
+            var index = new IndexService(vault);
+            index.EnsureLoaded();
+
+            var children = index.GetChildren("parent-task");
+
+            Assert.HasCount(1, children);
+            Assert.AreEqual("child-task", children[0].Id);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
+    [TestMethod]
     public void GetChildren_ReturnsEmptyListWhenNoChildren()
     {
         // Arrange

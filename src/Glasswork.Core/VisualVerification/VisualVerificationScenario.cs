@@ -106,6 +106,13 @@ public sealed partial class VisualVerificationScenario
                 if (action.Value is null)
                     throw new FormatException("replace-wiki-page-text requires value.");
             }
+            if (action.Type.Equals("delete-wiki-page", StringComparison.OrdinalIgnoreCase)
+                && (action.WikiPagePath is null
+                    || !IsSafeWikiPagePath(action.WikiPagePath)))
+            {
+                throw new FormatException(
+                    "delete-wiki-page requires a safe wikiPagePath relative to wiki/.");
+            }
             if (action.Type.Equals("scroll-percent", StringComparison.OrdinalIgnoreCase)
                 || action.Type.Equals(
                     "assert-vertical-scroll-at-least",
@@ -136,9 +143,9 @@ public sealed partial class VisualVerificationScenario
                 throw new FormatException("assert-name requires value.");
             }
             if (action.Type.Equals("press-key", StringComparison.OrdinalIgnoreCase)
-                && action.Value is not ("Escape" or "Tab"))
+                && action.Value is not ("Escape" or "Tab" or "Space"))
             {
-                throw new FormatException("press-key requires value Escape or Tab.");
+                throw new FormatException("press-key requires value Escape, Tab, or Space.");
             }
         }
 
@@ -194,6 +201,7 @@ public sealed class VisualVerificationTask
     public string? CancelledAt { get; init; }
     public string? CancellationReason { get; init; }
     public string? Parent { get; init; }
+    public int? AdoLink { get; init; }
     public List<VisualVerificationSubtask> Subtasks { get; init; } = [];
     public List<VisualVerificationArtifact> Artifacts { get; init; } = [];
 
@@ -213,6 +221,7 @@ public sealed class VisualVerificationTask
             CancelledAt = ParseScenarioDateTimeOffset(CancelledAt),
             CancellationReason = CancellationReason,
             Parent = Parent,
+            AdoLink = AdoLink,
             Description = Description ?? string.Empty,
             Notes = Notes ?? string.Empty,
         };
@@ -318,6 +327,8 @@ public sealed class VisualVerificationWikiPage
     public string? Expires { get; init; }
     public List<string> Sources { get; init; } = [];
     public bool OptedIn { get; init; } = true;
+    public List<string> ResearchInclude { get; init; } = [];
+    public List<string> ResearchExclude { get; init; } = [];
     public string Markdown { get; init; } = string.Empty;
 }
 

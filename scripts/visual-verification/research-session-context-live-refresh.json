@@ -1,0 +1,98 @@
+{
+  "name": "Research Session context live refresh",
+  "theme": "dark",
+  "startUri": "glasswork://research/live-context",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/live-context.md",
+      "id": "live-context",
+      "title": "Live context",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "markdown": "# Live context\n\n[[wiki/sources/alpha]] and [[wiki/systems/beta]] ground this Topic."
+    },
+    {
+      "relativePath": "sources/alpha.md",
+      "id": "alpha",
+      "title": "Alpha",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Alpha"
+    },
+    {
+      "relativePath": "systems/beta.md",
+      "id": "beta",
+      "title": "Beta",
+      "type": "system",
+      "confidence": "medium",
+      "updated": "2026-08-16",
+      "optedIn": false,
+      "markdown": "# Beta"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchPrimaryAction",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPrimaryAction"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSummary",
+      "value": "3 of 3 context pages"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPrimaryAction"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchContextDrawerClose"
+    },
+    {
+      "type": "delete-wiki-page",
+      "wikiPagePath": "sources/alpha.md"
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 1400
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "ResearchContextDrawerClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchPrimaryAction",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSummary",
+      "value": "2 of 2 context pages"
+    },
+    {
+      "type": "assert-enabled",
+      "automationId": "ShellNavigation"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-session-context-live-refresh",
+      "waitMilliseconds": 500
+    }
+  ]
+}

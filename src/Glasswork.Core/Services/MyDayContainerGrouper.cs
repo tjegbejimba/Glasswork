@@ -32,25 +32,15 @@ public static class MyDayContainerGrouper
         if (promoted is null) throw new ArgumentNullException(nameof(promoted));
         if (allTasks is null) throw new ArgumentNullException(nameof(allTasks));
 
-        var pbiIdByAdoId = BuildPbiAdoIdLookup(allTasks);
+        var parentResolver = new TaskParentResolver(allTasks);
 
         // First pass: bucket promoted children under their resolved PBI parent,
         // preserving promoted order within each bucket.
         var childrenByPbi = new Dictionary<string, List<GlassworkTask>>(StringComparer.Ordinal);
         foreach (var t in promoted)
         {
-            var parentId = t.Parent?.Trim();
-            if (string.IsNullOrEmpty(parentId)) continue;
-            if (!allTasks.TryGetValue(parentId, out var parent))
-            {
-                var adoParentId = AdoParentIdExtractor.TryExtractId(parentId);
-                if (!adoParentId.HasValue
-                    || !pbiIdByAdoId.TryGetValue(adoParentId.Value, out parentId)
-                    || !allTasks.TryGetValue(parentId, out parent))
-                {
-                    continue;
-                }
-            }
+            var parentId = parentResolver.ResolveTaskId(t.Parent);
+            if (parentId is null || !allTasks.TryGetValue(parentId, out var parent)) continue;
             if (parent.Type != GlassworkTask.Types.Pbi) continue;
 
             if (!childrenByPbi.TryGetValue(parentId, out var bucket))
@@ -111,32 +101,6 @@ public static class MyDayContainerGrouper
         rows.AddRange(standalone);
         rows.AddRange(containers);
         return rows;
-    }
-
-    private static IReadOnlyDictionary<int, string> BuildPbiAdoIdLookup(
-        IReadOnlyDictionary<string, GlassworkTask> allTasks)
-    {
-        var pbiIdByAdoId = new Dictionary<int, string>();
-        var ambiguousAdoIds = new HashSet<int>();
-
-        foreach (var (taskId, task) in allTasks)
-        {
-            if (task.Type != GlassworkTask.Types.Pbi || !task.AdoLink.HasValue) continue;
-
-            var adoId = task.AdoLink.Value;
-            if (!pbiIdByAdoId.TryAdd(adoId, taskId))
-            {
-                pbiIdByAdoId.Remove(adoId);
-                ambiguousAdoIds.Add(adoId);
-            }
-        }
-
-        foreach (var adoId in ambiguousAdoIds)
-        {
-            pbiIdByAdoId.Remove(adoId);
-        }
-
-        return pbiIdByAdoId;
     }
 
     private static GlassworkTask PullInHost(GlassworkTask pbi, DateOnly today)
