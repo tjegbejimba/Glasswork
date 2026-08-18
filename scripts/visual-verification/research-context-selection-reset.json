@@ -1,0 +1,96 @@
+{
+  "name": "Research Session selection resets after durable curation",
+  "theme": "light",
+  "startUri": "glasswork://research/context-reset",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/context-reset.md",
+      "id": "context-reset",
+      "title": "Context selection reset",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "markdown": "# Context selection reset\n\n[[wiki/sources/first-page]]"
+    },
+    {
+      "relativePath": "sources/first-page.md",
+      "id": "first-page",
+      "title": "First page",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# First page"
+    },
+    {
+      "relativePath": "systems/new-default.md",
+      "id": "new-default",
+      "title": "New default",
+      "type": "system",
+      "confidence": "medium",
+      "updated": "2026-08-16",
+      "optedIn": false,
+      "markdown": "# New default"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchPrimaryAction",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPrimaryAction"
+    },
+    {
+      "type": "focus",
+      "name": "Include First page in the next Research Session"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSummary",
+      "value": "1 of 2 context pages"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "focus",
+      "name": "Include New default in durable Research context"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSummary",
+      "value": "3 of 3 context pages"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchCurateContext"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-context-selection-reset",
+      "waitMilliseconds": 500
+    }
+  ]
+}

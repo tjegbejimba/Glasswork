@@ -5,11 +5,20 @@ public interface IResearchCatalog : IDisposable
     event EventHandler<ResearchTopicsChangedEventArgs>? TopicsChanged;
 
     bool IsWatching { get; }
+    ResearchSessionContext? PreparedSessionContext { get; }
 
     ResearchCatalogSnapshot Capture();
     ResearchCatalogSnapshot Capture(DateOnly queryDate);
     ResearchCatalogSearchResult Search(ResearchCatalogQuery query);
     ResearchOptInResult OptIn(string vaultRelativePath);
+    ResearchSessionContextResult PrepareSessionContext(
+        string topicId,
+        IReadOnlyCollection<string>? selectedPageIds = null);
+    ResearchSessionContext? ConsumePreparedSessionContext(string topicId);
+    ResearchContextUpdateResult SetContextPageIncluded(
+        string topicId,
+        string pageId,
+        bool included);
     void Start();
     void Stop();
 }
@@ -163,6 +172,52 @@ public enum ResearchOptInErrorCode
     ReloadFailed,
 }
 
+public sealed record ResearchContextUpdateResult(
+    bool Succeeded,
+    ResearchTopic? Topic,
+    ResearchContextUpdateErrorCode? ErrorCode,
+    string Message)
+{
+    public static ResearchContextUpdateResult Success(ResearchTopic topic) =>
+        new(true, topic, null, $"Updated Research context for '{topic.Title}'.");
+
+    public static ResearchContextUpdateResult Failure(
+        ResearchContextUpdateErrorCode errorCode,
+        string message) =>
+        new(false, null, errorCode, message);
+}
+
+public enum ResearchContextUpdateErrorCode
+{
+    TopicNotFound,
+    PageNotFound,
+    TopicLocked,
+    DuplicateStableId,
+    IneligiblePage,
+    InvalidResearchMetadata,
+    UnsupportedEncoding,
+    ConcurrentModification,
+    WriteFailed,
+    ReloadFailed,
+}
+
+public sealed record ResearchSessionContext(
+    string TopicId,
+    IReadOnlyList<string> PageIds,
+    int TotalPageCount);
+
+public sealed record ResearchSessionContextResult(
+    bool Succeeded,
+    ResearchSessionContext? Context,
+    string Message)
+{
+    public static ResearchSessionContextResult Success(ResearchSessionContext context) =>
+        new(true, context, "Research Session context is ready.");
+
+    public static ResearchSessionContextResult Failure(string message) =>
+        new(false, null, message);
+}
+
 public sealed record ResearchContext(
     IReadOnlyList<ResearchContextPage> RelatedPages,
     IReadOnlyList<ResearchContextWarning> Warnings)
@@ -191,6 +246,7 @@ public enum ResearchContextRelation
     Provenance = 2,
     Backlink = 4,
     IncludeOverride = 8,
+    ExcludeOverride = 16,
 }
 
 public sealed record ResearchContextWarning(
@@ -201,10 +257,13 @@ public sealed record ResearchContextWarning(
 
 public enum ResearchContextWarningCode
 {
+    InvalidOverride,
     MissingPage,
     MalformedPage,
     AmbiguousTarget,
     ConflictingOverride,
+    DuplicateOverride,
+    TopicLocked,
 }
 
 public enum ResearchFreshness

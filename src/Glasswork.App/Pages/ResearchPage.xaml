@@ -220,10 +220,9 @@
                     <Button
                         x:Name="PrimaryKnowledgeAction"
                         AutomationProperties.AutomationId="ResearchPrimaryAction"
+                        Click="PrimaryKnowledgeAction_Click"
                         HorizontalAlignment="Left"
-                        IsEnabled="False"
-                        Style="{StaticResource AccentButtonStyle}"
-                        ToolTipService.ToolTip="Research Sessions are delivered by a successor slice." />
+                        Style="{StaticResource AccentButtonStyle}" />
                     <controls:VaultMarkdownView
                         x:Name="TopicMarkdown"
                         AutomationProperties.AutomationId="ResearchTopicMarkdown"
@@ -246,11 +245,22 @@
                                     <TextBlock
                                         FontSize="16"
                                         FontWeight="SemiBold"
-                                        Text="Related knowledge" />
+                                        Text="Research context" />
+                                    <TextBlock
+                                        x:Name="ContextSummary"
+                                        AutomationProperties.AutomationId="ResearchContextSummary"
+                                        FontWeight="SemiBold"
+                                        TextWrapping="Wrap" />
                                     <TextBlock
                                         Opacity="0.68"
-                                        Text="One direct hop from this Topic."
+                                        Text="The Topic is always included. Curate the durable default or narrow only the next Research Session."
                                         TextWrapping="Wrap" />
+                                    <Button
+                                        x:Name="CurateContextButton"
+                                        AutomationProperties.AutomationId="ResearchCurateContext"
+                                        Click="CurateContextButton_Click"
+                                        Content="Curate context"
+                                        HorizontalAlignment="Left" />
                                 </StackPanel>
                                 <ItemsControl x:Name="RelatedGroupsList">
                                     <ItemsControl.ItemTemplate>
@@ -410,7 +420,11 @@
             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
             BorderThickness="1,0,0,0"
             TabFocusNavigation="Cycle">
-            <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16">
+            <Grid>
+            <Grid
+                x:Name="PreviewDrawerContent"
+                RowDefinitions="Auto,Auto,*"
+                RowSpacing="16">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                     <StackPanel Spacing="4">
                         <TextBlock
@@ -470,6 +484,115 @@
                         AutomationProperties.AutomationId="ResearchPreviewMarkdown"
                         LinkClicked="PreviewMarkdown_LinkClicked" />
                 </ScrollViewer>
+            </Grid>
+            <Grid
+                x:Name="ContextSelectionDrawerContent"
+                AutomationProperties.AutomationId="ResearchContextDrawer"
+                RowDefinitions="Auto,Auto,*,Auto"
+                RowSpacing="16"
+                Visibility="Collapsed">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                    <StackPanel Spacing="4">
+                        <TextBlock
+                            x:Name="ContextSelectionEyebrow"
+                            Opacity="0.68"
+                            Text="Research Session" />
+                        <TextBlock
+                            x:Name="ContextSelectionTitle"
+                            AutomationProperties.AutomationId="ResearchContextDrawerTitle"
+                            FontSize="24"
+                            FontWeight="SemiBold"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button
+                        x:Name="ContextSelectionCloseButton"
+                        Grid.Column="1"
+                        AutomationProperties.AutomationId="ResearchContextDrawerClose"
+                        AutomationProperties.Name="Close Research context drawer"
+                        Click="ContextSelectionCloseButton_Click"
+                        Content="&#xE711;"
+                        FontFamily="Segoe Fluent Icons"
+                        VerticalAlignment="Top" />
+                </Grid>
+
+                <TextBlock
+                    x:Name="ContextSelectionExplanation"
+                    Grid.Row="1"
+                    AutomationProperties.AutomationId="ResearchContextDrawerExplanation"
+                    Opacity="0.78"
+                    TextWrapping="Wrap" />
+
+                <ScrollViewer
+                    Grid.Row="2"
+                    HorizontalScrollMode="Disabled"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+                    <ItemsControl
+                        x:Name="ContextSelectionList"
+                        AutomationProperties.AutomationId="ResearchContextSelectionList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox
+                                    Margin="0,0,0,8"
+                                    Padding="10,8"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    AutomationProperties.AutomationId="ResearchContextPageSelection"
+                                    AutomationProperties.Name="{Binding AccessibleName}"
+                                    Click="ContextSelectionCheckBox_Click"
+                                    IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                    IsEnabled="{Binding IsEnabled}"
+                                    IsThreeState="False"
+                                    Tag="{Binding}">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                        <StackPanel Spacing="3">
+                                            <TextBlock
+                                                FontWeight="SemiBold"
+                                                Text="{Binding Title}"
+                                                TextWrapping="Wrap" />
+                                            <TextBlock
+                                                FontSize="11"
+                                                Opacity="0.68"
+                                                Text="{Binding Metadata}"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBlock
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            Opacity="0.72"
+                                            Text="{Binding StatusLabel}" />
+                                    </Grid>
+                                </CheckBox>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <StackPanel Grid.Row="3" Spacing="10">
+                    <InfoBar
+                        x:Name="ContextSelectionError"
+                        AutomationProperties.AutomationId="ResearchContextDrawerError"
+                        IsClosable="False"
+                        IsOpen="False"
+                        Severity="Error" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <TextBlock
+                            x:Name="ContextSelectionSummary"
+                            AutomationProperties.AutomationId="ResearchContextSelectionSummary"
+                            VerticalAlignment="Center"
+                            FontWeight="SemiBold"
+                            TextWrapping="Wrap" />
+                        <Button
+                            x:Name="ContextSelectionDoneButton"
+                            Grid.Column="1"
+                            AutomationProperties.AutomationId="ResearchContextSelectionDone"
+                            Click="ContextSelectionDoneButton_Click"
+                            Content="Keep for next session"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    </Grid>
+                </StackPanel>
+            </Grid>
             </Grid>
         </Border>
     </ContentControl>

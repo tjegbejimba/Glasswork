@@ -57,6 +57,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private readonly Debouncer _refreshDebouncer;
     private readonly FileSystemWatcher _watcher;
     private ResearchCatalogSnapshot _snapshot = EmptySnapshot();
+    private ResearchSessionContext? _preparedSessionContext;
     private bool _initialized;
     private bool _disposed;
     private int _recoveryPending;
@@ -67,6 +68,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     internal Action<string, string, string>? ReplaceOptInRollbackFileHook { get; set; }
     internal Action? BeforeOptInRollbackPreparationHook { get; set; }
     internal Action? BeforeOptInRollbackReplaceHook { get; set; }
+    internal Action? BeforeContextFileReplaceHook { get; set; }
 
     public FileSystemResearchCatalog(
         string vaultRoot,
@@ -101,6 +103,15 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
     public bool IsWatching => _watcher.EnableRaisingEvents;
 
+    public ResearchSessionContext? PreparedSessionContext
+    {
+        get
+        {
+            lock (_gate)
+                return _preparedSessionContext;
+        }
+    }
+
     public ResearchCatalogSnapshot Capture() => Capture(_today());
 
     public ResearchCatalogSnapshot Capture(DateOnly queryDate)
@@ -118,7 +129,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         }
     }
 
-        public ResearchCatalogSearchResult Search(ResearchCatalogQuery query)
+    public ResearchCatalogSearchResult Search(ResearchCatalogQuery query)
         {
             ArgumentNullException.ThrowIfNull(query);
             lock (_gate)
@@ -132,7 +143,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             }
         }
 
-        public ResearchOptInResult OptIn(string vaultRelativePath)
+    public ResearchOptInResult OptIn(string vaultRelativePath)
         {
             if (string.IsNullOrWhiteSpace(vaultRelativePath))
             {
@@ -466,6 +477,379 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     : ResearchOptInResult.Success(topic);
             }
         }
+
+    public ResearchSessionContextResult PrepareSessionContext(
+        string topicId,
+        IReadOnlyCollection<string>? selectedPageIds = null)
+    {
+        if (string.IsNullOrWhiteSpace(topicId))
+            return ResearchSessionContextResult.Failure("Select an existing Research Topic.");
+
+        lock (_gate)
+        {
+            var snapshot = Capture(_today());
+            var topic = snapshot.Topics.SingleOrDefault(candidate => string.Equals(
+                candidate.Id,
+                topicId.Trim(),
+                StringComparison.OrdinalIgnoreCase));
+            if (topic is null)
+            {
+                return ResearchSessionContextResult.Failure(
+                    $"Research Topic '{topicId}' was not found.");
+            }
+
+            var requestedIds = selectedPageIds?.Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var pageIds = new List<string> { topic.Id };
+            pageIds.AddRange(topic.Context.RelatedPages
+                .Where(page => requestedIds is null || requestedIds.Contains(page.Id))
+                .Select(page => page.Id));
+            _preparedSessionContext = new ResearchSessionContext(
+                topic.Id,
+                Array.AsReadOnly(pageIds.ToArray()),
+                topic.Context.RelatedPages.Count + 1);
+            return ResearchSessionContextResult.Success(_preparedSessionContext);
+        }
+    }
+
+    public ResearchSessionContext? ConsumePreparedSessionContext(string topicId)
+    {
+        if (string.IsNullOrWhiteSpace(topicId))
+            return null;
+        lock (_gate)
+        {
+            if (_preparedSessionContext is null
+                || !string.Equals(
+                    _preparedSessionContext.TopicId,
+                    topicId.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var context = _preparedSessionContext;
+            _preparedSessionContext = null;
+            return context;
+        }
+    }
+
+    public ResearchContextUpdateResult SetContextPageIncluded(
+        string topicId,
+        string pageId,
+        bool included)
+    {
+        if (string.IsNullOrWhiteSpace(topicId))
+        {
+            return ResearchContextUpdateResult.Failure(
+                ResearchContextUpdateErrorCode.TopicNotFound,
+                "Select an existing Research Topic.");
+        }
+        if (string.IsNullOrWhiteSpace(pageId))
+        {
+            return ResearchContextUpdateResult.Failure(
+                ResearchContextUpdateErrorCode.PageNotFound,
+                "Select an eligible Wiki Page.");
+        }
+
+        lock (_gate)
+        {
+            var queryDate = _today();
+            var snapshot = Capture(queryDate);
+            var topicMatches = snapshot.Topics
+                .Where(candidate => string.Equals(
+                    candidate.Id,
+                    topicId.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (topicMatches.Length != 1)
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.TopicNotFound,
+                    $"Research Topic '{topicId}' was not found.");
+            }
+
+            var topic = topicMatches[0];
+            if (string.Equals(topic.Id, pageId.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return included
+                    ? ResearchContextUpdateResult.Success(topic)
+                    : ResearchContextUpdateResult.Failure(
+                        ResearchContextUpdateErrorCode.TopicLocked,
+                        "The Research Topic is always included in its own context.");
+            }
+
+            if (!TryValidateContextCandidateOnDisk(
+                    pageId.Trim(),
+                    null,
+                    out var authoritativePageId,
+                    out var candidateErrorCode,
+                    out var candidateMessage))
+                return ResearchContextUpdateResult.Failure(candidateErrorCode, candidateMessage);
+
+            var relativePath = topic.VaultRelativePath
+                .Replace('\\', '/')
+                .TrimStart('/');
+            var fullPath = Path.GetFullPath(Path.Combine(
+                _vaultRoot,
+                relativePath.Replace('/', Path.DirectorySeparatorChar)));
+            var vaultPrefix = _vaultRoot
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            if (!fullPath.StartsWith(vaultPrefix, StringComparison.OrdinalIgnoreCase)
+                || !IsEligibleLocation(relativePath)
+                || ContainsReparsePoint(relativePath))
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.IneligiblePage,
+                    $"Research Topic '{topic.Title}' no longer resolves to an eligible Wiki Page.");
+            }
+            byte[] originalBytes;
+            string original;
+            TextEncodingInfo encoding;
+            FileStream? openedWriteGuard = null;
+            try
+            {
+                openedWriteGuard = new FileStream(
+                    fullPath,
+                    FileMode.Open,
+                    FileAccess.ReadWrite,
+                    FileShare.Read | FileShare.Delete);
+                if (!IsOpenedFileExpected(openedWriteGuard, relativePath))
+                {
+                    openedWriteGuard.Dispose();
+                    return ResearchContextUpdateResult.Failure(
+                        ResearchContextUpdateErrorCode.IneligiblePage,
+                        $"Research Topic '{topic.Title}' no longer resolves inside the Vault.");
+                }
+                originalBytes = new byte[openedWriteGuard.Length];
+                openedWriteGuard.ReadExactly(originalBytes);
+                original = DecodeText(originalBytes, out encoding);
+            }
+            catch (Exception ex) when (
+                ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
+            {
+                openedWriteGuard?.Dispose();
+                return ResearchContextUpdateResult.Failure(
+                    ex is DecoderFallbackException
+                        ? ResearchContextUpdateErrorCode.UnsupportedEncoding
+                        : ResearchContextUpdateErrorCode.WriteFailed,
+                    $"Research Topic '{topic.Title}' could not be read for update: {ex.Message}");
+            }
+            openedWriteGuard.Dispose();
+            openedWriteGuard = null;
+
+            var match = FrontmatterRegex().Match(original);
+            if (!match.Success)
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.InvalidResearchMetadata,
+                    $"Research Topic '{topic.Title}' has invalid Research metadata.");
+            }
+            WikiPageFrontmatter? authoritativeFrontmatter;
+            try
+            {
+                authoritativeFrontmatter = YamlDeserializer.Deserialize<WikiPageFrontmatter>(
+                    match.Groups[1].Value);
+            }
+            catch (Exception ex) when (ex is YamlException or InvalidOperationException)
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.InvalidResearchMetadata,
+                    $"Research Topic '{topic.Title}' has invalid frontmatter: {ex.Message}");
+            }
+            if (authoritativeFrontmatter is null
+                || !string.Equals(
+                    authoritativeFrontmatter.Id?.Trim(),
+                    topic.Id,
+                    StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(authoritativeFrontmatter.Type)
+                || !EligibleTypes.Contains(authoritativeFrontmatter.Type)
+                || !ContainsResearchMetadata(match.Groups[1].Value))
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.ConcurrentModification,
+                    $"Research Topic '{topic.Title}' changed identity or eligibility before its context was updated.");
+            }
+            var authoritativeMetadata = ParseResearchMetadata(
+                match.Groups[1].Value,
+                topic.Id);
+            var includeIds = authoritativeMetadata.IncludeIds
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var excludeIds = authoritativeMetadata.ExcludeIds
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (included)
+            {
+                includeIds.Add(authoritativePageId);
+                excludeIds.Remove(authoritativePageId);
+            }
+            else
+            {
+                includeIds.Remove(authoritativePageId);
+                excludeIds.Add(authoritativePageId);
+            }
+
+            if (!TrySetResearchOverrides(
+                    original,
+                    match.Groups[1],
+                    includeIds,
+                    excludeIds,
+                    out var updated))
+            {
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.InvalidResearchMetadata,
+                    $"Research Topic '{topic.Title}' has invalid Research metadata.");
+            }
+
+            var updatedBytes = EncodeText(updated, encoding);
+            var tempPath = fullPath + ".research-context-" + Guid.NewGuid().ToString("N") + ".tmp";
+            var backupPath = fullPath + ".research-context-" + Guid.NewGuid().ToString("N") + ".bak";
+            var replacementApplied = false;
+            var preserveTemp = false;
+            var preserveBackup = false;
+            try
+            {
+                using (var temp = new FileStream(
+                           tempPath,
+                           FileMode.CreateNew,
+                           FileAccess.Write,
+                           FileShare.None,
+                           bufferSize: 4096,
+                           FileOptions.WriteThrough))
+                {
+                    temp.Write(updatedBytes);
+                    temp.Flush(flushToDisk: true);
+                }
+
+                if (!TryValidateContextCandidateOnDisk(
+                        authoritativePageId,
+                        fullPath,
+                        out var revalidatedPageId,
+                        out candidateErrorCode,
+                        out candidateMessage)
+                    || !string.Equals(
+                        revalidatedPageId,
+                        authoritativePageId,
+                        StringComparison.Ordinal))
+                {
+                    return ResearchContextUpdateResult.Failure(
+                        candidateErrorCode,
+                        candidateMessage);
+                }
+                if (ContainsReparsePoint(relativePath))
+                {
+                    return ResearchContextUpdateResult.Failure(
+                        ResearchContextUpdateErrorCode.IneligiblePage,
+                        $"Research Topic '{topic.Title}' no longer resolves to an eligible Wiki Page.");
+                }
+                byte[] currentBytes;
+                using (var currentGuard = new FileStream(
+                           fullPath,
+                           FileMode.Open,
+                           FileAccess.ReadWrite,
+                           FileShare.Read | FileShare.Delete))
+                {
+                    if (!IsOpenedFileExpected(currentGuard, relativePath))
+                    {
+                        return ResearchContextUpdateResult.Failure(
+                            ResearchContextUpdateErrorCode.IneligiblePage,
+                            $"Research Topic '{topic.Title}' no longer resolves inside the Vault.");
+                    }
+                    currentBytes = new byte[currentGuard.Length];
+                    currentGuard.ReadExactly(currentBytes);
+                }
+                if (!currentBytes.AsSpan().SequenceEqual(originalBytes))
+                {
+                    return ResearchContextUpdateResult.Failure(
+                        ResearchContextUpdateErrorCode.ConcurrentModification,
+                        $"Research Topic '{topic.Title}' changed while its context was being updated.");
+                }
+
+                BeforeContextFileReplaceHook?.Invoke();
+                _selfWrites?.RegisterWrite(fullPath);
+                File.Replace(tempPath, fullPath, backupPath);
+                replacementApplied = true;
+                var displacedBytes = File.ReadAllBytes(backupPath);
+                if (!displacedBytes.AsSpan().SequenceEqual(originalBytes))
+                {
+                    if (!TryRestoreOptInBackup(
+                            fullPath,
+                            backupPath,
+                            updatedBytes,
+                            out var rollbackError))
+                    {
+                        preserveBackup = true;
+                        return ResearchContextUpdateResult.Failure(
+                            ResearchContextUpdateErrorCode.WriteFailed,
+                            $"Research Topic '{topic.Title}' changed during the atomic update and newer content could not be safely restored. Recovery copy preserved at '{backupPath}': {rollbackError}");
+                    }
+                    replacementApplied = false;
+                    return ResearchContextUpdateResult.Failure(
+                        ResearchContextUpdateErrorCode.ConcurrentModification,
+                        $"Research Topic '{topic.Title}' changed during the atomic update. The newer external content was restored.");
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (replacementApplied && File.Exists(backupPath))
+                {
+                    if (!TryRestoreOptInBackup(
+                            fullPath,
+                            backupPath,
+                            updatedBytes,
+                            out var rollbackError))
+                    {
+                        preserveBackup = true;
+                        return ResearchContextUpdateResult.Failure(
+                            ResearchContextUpdateErrorCode.WriteFailed,
+                            $"Research Topic '{topic.Title}' could not finish its atomic update or safely restore displaced content. Recovery copy preserved at '{backupPath}': {rollbackError}");
+                    }
+                    replacementApplied = false;
+                }
+                else if (!replacementApplied)
+                {
+                    preserveTemp = File.Exists(tempPath);
+                    preserveBackup = File.Exists(backupPath);
+                    if (preserveTemp || preserveBackup || !File.Exists(fullPath))
+                    {
+                        return ResearchContextUpdateResult.Failure(
+                            ResearchContextUpdateErrorCode.WriteFailed,
+                            $"Research Topic '{topic.Title}' encountered an ambiguous atomic-replace failure. Live exists: {File.Exists(fullPath)}; replacement preserved: {preserveTemp}; backup preserved: {preserveBackup}. Inspect recovery files before retrying: {ex.Message}");
+                    }
+                }
+                return ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.WriteFailed,
+                    $"Research Topic '{topic.Title}' could not be updated: {ex.Message}");
+            }
+            finally
+            {
+                if (!preserveTemp)
+                    TryDeleteRecoveryFile(tempPath);
+                if (!preserveBackup)
+                    TryDeleteRecoveryFile(backupPath);
+            }
+
+            var before = _snapshot;
+            var read = ReadPage(fullPath, topic.VaultRelativePath, queryDate, _pagesByPath);
+            ApplyReadResult(read, topic.VaultRelativePath, _pagesByPath, _diagnosticsByPath);
+            _snapshot = BuildSnapshot(queryDate, before);
+            if (string.Equals(
+                    _preparedSessionContext?.TopicId,
+                    topic.Id,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _preparedSessionContext = null;
+            }
+            var reloaded = _snapshot.Topics.SingleOrDefault(candidate =>
+                string.Equals(candidate.Id, topic.Id, StringComparison.OrdinalIgnoreCase));
+            return reloaded is null
+                ? ResearchContextUpdateResult.Failure(
+                    ResearchContextUpdateErrorCode.ReloadFailed,
+                    $"Research context was updated but Topic '{topic.Title}' could not be reloaded.")
+                : ResearchContextUpdateResult.Success(reloaded);
+        }
+    }
+
     public void Start()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -817,6 +1201,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             return PageReadResult.Removed();
         }
 
+        var researchMetadata = ParseResearchMetadata(
+            match.Groups[1].Value,
+            frontmatter.Id.Trim());
         var page = new WikiPageCandidate(
             frontmatter.Id.Trim(),
             ContainsResearchMetadata(match.Groups[1].Value),
@@ -833,16 +1220,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 .Select(source => source.Trim())
                 .ToArray()
                 ?? Array.Empty<string>(),
-            frontmatter.Glasswork?.Research?.Include?
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Select(id => id.Trim())
-                .ToArray()
-                ?? Array.Empty<string>(),
-            frontmatter.Glasswork?.Research?.Exclude?
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Select(id => id.Trim())
-                .ToArray()
-                ?? Array.Empty<string>(),
+            researchMetadata.IncludeIds,
+            researchMetadata.ExcludeIds,
+            researchMetadata.Warnings,
             relativePath,
             match.Groups[2].Value.TrimStart(),
             queryDate);
@@ -1043,10 +1423,45 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             .ThenBy(page => page.Id, StringComparer.Ordinal)
             .ToArray();
 
-        return new ResearchCatalogSnapshot(
+        var snapshot = new ResearchCatalogSnapshot(
             Array.AsReadOnly(topics),
             Array.AsReadOnly(eligiblePages),
             Array.AsReadOnly(diagnostics));
+        ReconcilePreparedSessionContext(snapshot);
+        return snapshot;
+    }
+
+    private void ReconcilePreparedSessionContext(ResearchCatalogSnapshot snapshot)
+    {
+        if (_preparedSessionContext is null)
+            return;
+        var topic = snapshot.Topics.SingleOrDefault(candidate => string.Equals(
+            candidate.Id,
+            _preparedSessionContext.TopicId,
+            StringComparison.OrdinalIgnoreCase));
+        if (topic is null)
+        {
+            _preparedSessionContext = null;
+            return;
+        }
+
+        var availableIds = topic.Context.RelatedPages
+            .Select(page => page.Id)
+            .Append(topic.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedIds = _preparedSessionContext.PageIds
+            .Where(availableIds.Contains)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        selectedIds.RemoveAll(id => string.Equals(
+            id,
+            topic.Id,
+            StringComparison.OrdinalIgnoreCase));
+        selectedIds.Insert(0, topic.Id);
+        _preparedSessionContext = new ResearchSessionContext(
+            topic.Id,
+            Array.AsReadOnly(selectedIds.ToArray()),
+            topic.Context.RelatedPages.Count + 1);
     }
 
     private ResearchContext BuildContext(
@@ -1061,11 +1476,11 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         var warnings = new Dictionary<string, ResearchContextWarning>(
             StringComparer.OrdinalIgnoreCase);
         var excludedIds = topic.ExcludeIds
-            .Select(NormalizeReference)
+            .Select(id => id.Trim())
             .Where(id => id.Length > 0)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var includedIds = topic.IncludeIds
-            .Select(NormalizeReference)
+            .Select(id => id.Trim())
             .Where(id => id.Length > 0)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -1075,7 +1490,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             ResearchContextWarningCode code,
             string message)
         {
-            var key = NormalizeReference(reference);
+            var key = $"{code}:{reference.Trim()}";
             if (warnings.TryGetValue(key, out var existing))
             {
                 warnings[key] = existing with
@@ -1090,6 +1505,67 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 relation,
                 code,
                 message);
+        }
+
+        foreach (var warning in topic.MetadataWarnings)
+        {
+            AddWarning(
+                warning.Reference,
+                warning.Relation,
+                warning.Code,
+                warning.Message);
+        }
+
+        foreach (var excludedId in excludedIds.ToArray())
+        {
+            if (string.Equals(excludedId, topic.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                excludedIds.Remove(excludedId);
+                AddWarning(
+                    excludedId,
+                    ResearchContextRelation.ExcludeOverride,
+                    ResearchContextWarningCode.TopicLocked,
+                    "The Research Topic is always included and cannot be excluded.");
+                continue;
+            }
+            if (duplicateIds.Contains(excludedId))
+            {
+                AddWarning(
+                    excludedId,
+                    ResearchContextRelation.ExcludeOverride,
+                    ResearchContextWarningCode.AmbiguousTarget,
+                    $"Wiki Page '{excludedId}' does not have a globally unique stable ID.");
+                continue;
+            }
+
+            var descriptor = referenceDescriptors.FirstOrDefault(candidate =>
+                string.Equals(
+                    candidate.StableId,
+                    excludedId,
+                    StringComparison.OrdinalIgnoreCase));
+            if (descriptor?.Status is WikiReferenceStatus.Malformed
+                or WikiReferenceStatus.Unreadable)
+            {
+                AddWarning(
+                    excludedId,
+                    ResearchContextRelation.ExcludeOverride,
+                    ResearchContextWarningCode.MalformedPage,
+                    $"Excluded Wiki Page '{excludedId}' is malformed or unreadable.");
+                continue;
+            }
+
+            var hasPage = pages.Any(page => string.Equals(
+                page.Id,
+                excludedId,
+                StringComparison.OrdinalIgnoreCase));
+            if (!hasPage)
+            {
+                AddWarning(
+                    excludedId,
+                    ResearchContextRelation.ExcludeOverride,
+                    ResearchContextWarningCode.MissingPage,
+                    $"Excluded Wiki Page '{excludedId}' is missing.");
+            }
         }
 
         void AddTarget(
@@ -1107,7 +1583,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 return;
             }
             if (string.Equals(target.Id, topic.Id, StringComparison.OrdinalIgnoreCase)
-                || excludedIds.Contains(NormalizeReference(target.Id)))
+                || excludedIds.Contains(target.Id.Trim()))
             {
                 return;
             }
@@ -1124,9 +1600,14 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             related[target.Id] = ToContextPage(target, queryDate, relation);
         }
 
-        void AddIdentityReference(string reference, ResearchContextRelation relation)
+        void AddIdentityReference(
+            string reference,
+            ResearchContextRelation relation,
+            bool exactStableId = false)
         {
-            var normalized = NormalizeReference(reference);
+            var normalized = exactStableId
+                ? reference.Trim()
+                : NormalizeReference(reference);
             if (normalized.Length == 0)
                 return;
             if (excludedIds.Contains(normalized))
@@ -1208,7 +1689,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 .ToArray();
             if (pathDescriptors.Any(descriptor =>
                     descriptor.StableId is not null
-                    && excludedIds.Contains(NormalizeReference(descriptor.StableId))))
+                    && excludedIds.Contains(descriptor.StableId.Trim())))
             {
                 return;
             }
@@ -1309,7 +1790,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     $"Wiki Page '{includedId}' appears in both include and exclude overrides; exclude wins.");
                 continue;
             }
-            AddIdentityReference(includedId, ResearchContextRelation.IncludeOverride);
+            AddIdentityReference(
+                includedId,
+                ResearchContextRelation.IncludeOverride,
+                exactStableId: true);
         }
 
         foreach (var excludedId in excludedIds)
@@ -1322,7 +1806,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 .ThenBy(page => page.Id, StringComparer.Ordinal)
                 .ToArray()),
             Array.AsReadOnly(warnings.Values
-                .OrderBy(warning => warning.Reference, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(warning => warning.Code)
+                .ThenBy(warning => warning.Reference, StringComparer.OrdinalIgnoreCase)
                 .ToArray()));
     }
 
@@ -1355,6 +1840,113 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         if (normalized.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
             normalized = normalized[..^3];
         return normalized.Trim('/');
+    }
+
+    private static ResearchMetadata ParseResearchMetadata(string yaml, string topicId)
+    {
+        var stream = new YamlStream();
+        try
+        {
+            stream.Load(new StringReader(yaml));
+        }
+        catch (Exception ex) when (ex is YamlException or InvalidOperationException)
+        {
+            return ResearchMetadata.Empty;
+        }
+        if (stream.Documents.Count != 1
+            || stream.Documents[0].RootNode is not YamlMappingNode root)
+        {
+            return ResearchMetadata.Empty;
+        }
+
+        var glassworkEntry = root.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, "glasswork", StringComparison.Ordinal));
+        if (glassworkEntry.Value is not YamlMappingNode glasswork)
+            return ResearchMetadata.Empty;
+        var researchEntry = glasswork.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, "research", StringComparison.Ordinal));
+        if (researchEntry.Key is null)
+            return ResearchMetadata.Empty;
+        if (researchEntry.Value is not YamlMappingNode research)
+        {
+            return new ResearchMetadata(
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                [new ResearchContextWarning(
+                    topicId,
+                    ResearchContextRelation.None,
+                    ResearchContextWarningCode.InvalidOverride,
+                    "Research metadata must be a YAML mapping.")]);
+        }
+
+        var warnings = new List<ResearchContextWarning>();
+        var includeIds = ReadOverrideIds(
+            research,
+            "include",
+            topicId,
+            ResearchContextRelation.IncludeOverride,
+            warnings);
+        var excludeIds = ReadOverrideIds(
+            research,
+            "exclude",
+            topicId,
+            ResearchContextRelation.ExcludeOverride,
+            warnings);
+        return new ResearchMetadata(includeIds, excludeIds, warnings);
+    }
+
+    private static IReadOnlyList<string> ReadOverrideIds(
+        YamlMappingNode research,
+        string name,
+        string topicId,
+        ResearchContextRelation relation,
+        ICollection<ResearchContextWarning> warnings)
+    {
+        var entry = research.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, name, StringComparison.Ordinal));
+        if (entry.Key is null)
+            return Array.Empty<string>();
+        if (entry.Value is not YamlSequenceNode sequence)
+        {
+            warnings.Add(new ResearchContextWarning(
+                $"{topicId}:{name}",
+                relation,
+                ResearchContextWarningCode.InvalidOverride,
+                $"Research '{name}' overrides must be a YAML sequence of stable Wiki Page IDs."));
+            return Array.Empty<string>();
+        }
+
+        var values = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in sequence.Children)
+        {
+            var value = node is YamlScalarNode scalar
+                ? scalar.Value?.Trim()
+                : null;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                warnings.Add(new ResearchContextWarning(
+                    $"{topicId}:{name}",
+                    relation,
+                    ResearchContextWarningCode.InvalidOverride,
+                    $"Research '{name}' overrides contain an invalid stable Wiki Page ID."));
+                continue;
+            }
+            if (!seen.Add(value))
+            {
+                warnings.Add(new ResearchContextWarning(
+                    value,
+                    relation,
+                    ResearchContextWarningCode.DuplicateOverride,
+                    $"Wiki Page '{value}' appears more than once in Research '{name}' overrides."));
+                continue;
+            }
+            values.Add(value);
+        }
+        return values;
     }
 
     private static void MarkReferenceMissing(
@@ -1416,13 +2008,37 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var topicId in pathTopicIds)
             affected.Add(topicId);
+        var candidateProjectionChanged = before.EligiblePages.Count != after.EligiblePages.Count
+            || before.EligiblePages
+                .Zip(after.EligiblePages)
+                .Any(pair => !CandidatesEquivalent(pair.First, pair.Second));
+        var diagnosticsChanged = !before.Diagnostics.SequenceEqual(after.Diagnostics);
         return affected.Count == 0
+            && !candidateProjectionChanged
+            && !diagnosticsChanged
             ? null
             : new ResearchTopicsChangedEventArgs(
                 Array.AsReadOnly(affected.Order(StringComparer.OrdinalIgnoreCase).ToArray()),
                 after,
                 origin);
     }
+
+    private static bool CandidatesEquivalent(
+        ResearchPageCandidate left,
+        ResearchPageCandidate right) =>
+        left.Id == right.Id
+        && left.Title == right.Title
+        && left.Summary == right.Summary
+        && left.Aliases.SequenceEqual(right.Aliases, StringComparer.Ordinal)
+        && left.WikiType == right.WikiType
+        && left.Tags.SequenceEqual(right.Tags, StringComparer.Ordinal)
+        && left.Confidence == right.Confidence
+        && left.Updated == right.Updated
+        && left.Expires == right.Expires
+        && left.Freshness == right.Freshness
+        && left.VaultRelativePath == right.VaultRelativePath
+        && left.IsOptedIn == right.IsOptedIn
+        && left.Eligibility == right.Eligibility;
 
     private void RaiseChange(ResearchTopicsChangedEventArgs? change)
     {
@@ -1574,6 +2190,180 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         return true;
     }
 
+    private static bool TrySetResearchOverrides(
+        string content,
+        Group yamlGroup,
+        IReadOnlyCollection<string> includeIds,
+        IReadOnlyCollection<string> excludeIds,
+        out string updated)
+    {
+        updated = content;
+        var orderedIncludes = includeIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var orderedExcludes = excludeIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (!TrySetResearchOverrideList(
+                yamlGroup.Value,
+                "include",
+                orderedIncludes,
+                out var updatedYaml)
+            || !TrySetResearchOverrideList(
+                updatedYaml,
+                "exclude",
+                orderedExcludes,
+                out updatedYaml))
+        {
+            return false;
+        }
+
+        updated = content[..yamlGroup.Index]
+            + updatedYaml
+            + content[(yamlGroup.Index + yamlGroup.Length)..];
+        return true;
+    }
+
+    private static bool TrySetResearchOverrideList(
+        string yaml,
+        string propertyName,
+        IReadOnlyCollection<string> values,
+        out string updatedYaml)
+    {
+        updatedYaml = yaml;
+        var stream = new YamlStream();
+        try
+        {
+            stream.Load(new StringReader(yaml));
+        }
+        catch (Exception ex) when (ex is YamlException or InvalidOperationException)
+        {
+            return false;
+        }
+
+        if (stream.Documents.Count != 1
+            || stream.Documents[0].RootNode is not YamlMappingNode root)
+        {
+            return false;
+        }
+
+        var glassworkEntry = root.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, "glasswork", StringComparison.Ordinal));
+        if (glassworkEntry.Value is not YamlMappingNode glasswork)
+            return false;
+        var researchEntry = glasswork.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, "research", StringComparison.Ordinal));
+        if (researchEntry.Key is null
+            || researchEntry.Value is not YamlMappingNode research)
+            return false;
+        var overrideEntry = research.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, propertyName, StringComparison.Ordinal));
+        var formatted = $"[{string.Join(", ", values.Select(FormatYamlScalar))}]";
+        if (overrideEntry.Key is not null)
+        {
+            if (overrideEntry.Value is not YamlSequenceNode sequence)
+                return false;
+            if (sequence.Style == YamlDotNet.Core.Events.SequenceStyle.Flow)
+            {
+                var valueStart = yaml.IndexOf(
+                    '[',
+                    checked((int)overrideEntry.Key.End.Index));
+                var closingBracket = FindFlowCollectionClosingCharacter(
+                    yaml,
+                    valueStart,
+                    '[',
+                    ']');
+                if (valueStart < 0 || closingBracket < 0)
+                    return false;
+                var valueEnd = closingBracket + 1;
+                updatedYaml = yaml[..valueStart] + formatted + yaml[valueEnd..];
+                return true;
+            }
+
+            var keyStart = checked((int)overrideEntry.Key.Start.Index);
+            var entryStart = yaml.LastIndexOf('\n', Math.Max(0, keyStart - 1)) + 1;
+            var entryEnd = checked((int)overrideEntry.Value.End.Index);
+            while (entryEnd < yaml.Length && yaml[entryEnd] is not '\r' and not '\n')
+                entryEnd++;
+            if (entryEnd < yaml.Length && yaml[entryEnd] == '\r')
+                entryEnd++;
+            if (entryEnd < yaml.Length && yaml[entryEnd] == '\n')
+                entryEnd++;
+            var indent = yaml[entryStart..keyStart];
+            var replacement = indent + propertyName + ": " + formatted;
+            if (entryEnd > entryStart && yaml[entryEnd - 1] == '\n')
+                replacement += yaml.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+            updatedYaml = yaml[..entryStart] + replacement + yaml[entryEnd..];
+            return true;
+        }
+
+        if (values.Count == 0)
+            return true;
+
+        if (research.Style == YamlDotNet.Core.Events.MappingStyle.Flow)
+        {
+            var closingBrace = FindFlowMappingClosingBrace(
+                yaml,
+                checked((int)researchEntry.Value.Start.Index));
+            if (closingBrace < 0)
+                return false;
+            var insertionIndex = closingBrace;
+            while (insertionIndex > 0 && char.IsWhiteSpace(yaml[insertionIndex - 1]))
+                insertionIndex--;
+            var flowInsertion = research.Children.Count == 0
+                ? " " + propertyName + ": " + formatted + " "
+                : ", " + propertyName + ": " + formatted;
+            updatedYaml = yaml.Insert(
+                insertionIndex,
+                flowInsertion);
+            return true;
+        }
+
+        if (research.Children.Count == 0)
+            return false;
+        var firstKey = research.Children.First().Key;
+        var firstKeyStart = checked((int)firstKey.Start.Index);
+        var childLineStart = yaml.LastIndexOf('\n', Math.Max(0, firstKeyStart - 1)) + 1;
+        var childIndent = yaml[childLineStart..firstKeyStart];
+        var lastValue = research.Children.Last().Value;
+        var insertionPoint = checked((int)lastValue.End.Index);
+        while (insertionPoint < yaml.Length
+               && yaml[insertionPoint] is not '\r' and not '\n')
+        {
+            insertionPoint++;
+        }
+        if (insertionPoint < yaml.Length && yaml[insertionPoint] == '\r')
+            insertionPoint++;
+        if (insertionPoint < yaml.Length && yaml[insertionPoint] == '\n')
+            insertionPoint++;
+        var newLine = yaml.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var insertion = childIndent + propertyName + ": " + formatted + newLine;
+        if (insertionPoint == yaml.Length
+            && insertionPoint > 0
+            && yaml[insertionPoint - 1] is not '\r' and not '\n')
+        {
+            insertion = newLine + insertion;
+        }
+        updatedYaml = yaml.Insert(insertionPoint, insertion);
+        return true;
+    }
+
+    private static string FormatYamlScalar(string value)
+    {
+        if (StableIdRegex().IsMatch(value))
+            return value;
+        return "\"" + value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
+    }
+
     private static bool ContainsResearchMetadata(string yaml)
     {
         try
@@ -1629,14 +2419,24 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     }
 
     private static int FindFlowMappingClosingBrace(string yaml, int startIndex)
+        => FindFlowCollectionClosingCharacter(yaml, startIndex, '{', '}');
+
+    private static int FindFlowCollectionClosingCharacter(
+        string yaml,
+        int startIndex,
+        char openingCharacter,
+        char closingCharacter)
     {
-        var openingBrace = yaml.IndexOf('{', startIndex);
-        if (openingBrace < 0) return -1;
+        if (startIndex < 0)
+            return -1;
+        var openingIndex = yaml.IndexOf(openingCharacter, startIndex);
+        if (openingIndex < 0)
+            return -1;
         var depth = 0;
         var inSingleQuote = false;
         var inDoubleQuote = false;
         var escaped = false;
-        for (var index = openingBrace; index < yaml.Length; index++)
+        for (var index = openingIndex; index < yaml.Length; index++)
         {
             var character = yaml[index];
             if (inDoubleQuote)
@@ -1661,10 +2461,15 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             {
                 case '"': inDoubleQuote = true; break;
                 case '\'': inSingleQuote = true; break;
-                case '{': depth++; break;
-                case '}':
-                    depth--;
-                    if (depth == 0) return index;
+                default:
+                    if (character == openingCharacter)
+                        depth++;
+                    else if (character == closingCharacter)
+                    {
+                        depth--;
+                        if (depth == 0)
+                            return index;
+                    }
                     break;
             }
         }
@@ -1894,6 +2699,115 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 continue;
             }
         }
+        return true;
+    }
+
+    private bool TryValidateContextCandidateOnDisk(
+        string stableId,
+        string? excludedFullPath,
+        out string authoritativeId,
+        out ResearchContextUpdateErrorCode errorCode,
+        out string message)
+    {
+        authoritativeId = stableId;
+        errorCode = ResearchContextUpdateErrorCode.PageNotFound;
+        message = $"Wiki Page '{stableId}' was not found.";
+        var wikiRoot = Path.Combine(_vaultRoot, "wiki");
+        string[] paths;
+        try
+        {
+            paths = Directory.GetFiles(
+                wikiRoot,
+                "*.md",
+                new EnumerationOptions
+                {
+                    RecurseSubdirectories = true,
+                    AttributesToSkip = FileAttributes.ReparsePoint,
+                });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            errorCode = ResearchContextUpdateErrorCode.ConcurrentModification;
+            message = $"Wiki Page '{stableId}' could not be revalidated against the Vault: {ex.Message}";
+            return false;
+        }
+
+        var matches = new List<string>();
+        var foundIneligibleMatch = false;
+        foreach (var path in paths)
+        {
+            if (excludedFullPath is not null
+                && string.Equals(
+                    Path.GetFullPath(path),
+                    excludedFullPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            var hasEligibleLocation = TryGetEligibleRelativePath(path, out var relativePath)
+                && IsEligibleLocation(relativePath)
+                && !ContainsReparsePoint(relativePath);
+
+            string content;
+            try
+            {
+                content = File.ReadAllText(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                errorCode = ResearchContextUpdateErrorCode.ConcurrentModification;
+                message = $"Wiki Page '{stableId}' could not be revalidated against the Vault: {ex.Message}";
+                return false;
+            }
+
+            var match = FrontmatterRegex().Match(content);
+            if (!match.Success)
+                continue;
+            WikiPageFrontmatter? page;
+            try
+            {
+                page = YamlDeserializer.Deserialize<WikiPageFrontmatter>(
+                    match.Groups[1].Value);
+            }
+            catch (Exception ex) when (ex is YamlException or InvalidOperationException)
+            {
+                continue;
+            }
+            var candidateId = page?.Id?.Trim();
+            if (!string.Equals(
+                    candidateId,
+                    stableId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var hasEligibleType = !string.IsNullOrWhiteSpace(page?.Type)
+                && EligibleTypes.Contains(page.Type);
+            if (!hasEligibleLocation || !hasEligibleType)
+            {
+                foundIneligibleMatch = true;
+                continue;
+            }
+            matches.Add(candidateId!);
+        }
+
+        if (matches.Count == 0)
+        {
+            if (foundIneligibleMatch)
+            {
+                errorCode = ResearchContextUpdateErrorCode.IneligiblePage;
+                message = $"Wiki Page '{stableId}' is not an eligible schema-governed Wiki Page.";
+            }
+            return false;
+        }
+        if (matches.Count > 1)
+        {
+            errorCode = ResearchContextUpdateErrorCode.DuplicateStableId;
+            message = $"Stable Wiki Page id '{stableId}' is duplicated.";
+            return false;
+        }
+        authoritativeId = matches[0];
         return true;
     }
 
@@ -2174,6 +3088,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     [GeneratedRegex(@"^(?:""glasswork""|'glasswork'|glasswork)[ \t]*:[ \t]*(.*)$", RegexOptions.Multiline)]
     private static partial Regex TopLevelGlassworkRegex();
 
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._-]*$")]
+    private static partial Regex StableIdRegex();
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFile(
         string fileName,
@@ -2202,18 +3119,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         public string? Updated { get; set; }
         public string? Expires { get; set; }
         public List<string>? Sources { get; set; }
-        public GlassworkFrontmatter? Glasswork { get; set; }
-    }
-
-    private sealed class GlassworkFrontmatter
-    {
-        public ResearchFrontmatter? Research { get; set; }
-    }
-
-    private sealed class ResearchFrontmatter
-    {
-        public List<string>? Include { get; set; }
-        public List<string>? Exclude { get; set; }
+        public object? Glasswork { get; set; }
     }
 
     private sealed record WikiPageCandidate(
@@ -2230,9 +3136,19 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         IReadOnlyList<string> Sources,
         IReadOnlyList<string> IncludeIds,
         IReadOnlyList<string> ExcludeIds,
+        IReadOnlyList<ResearchContextWarning> MetadataWarnings,
         string VaultRelativePath,
         string Markdown,
         DateOnly LastValidOn);
+
+    private sealed record ResearchMetadata(
+        IReadOnlyList<string> IncludeIds,
+        IReadOnlyList<string> ExcludeIds,
+        IReadOnlyList<ResearchContextWarning> Warnings)
+    {
+        public static ResearchMetadata Empty { get; } =
+            new(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<ResearchContextWarning>());
+    }
 
     private sealed record TextEncodingInfo(Encoding Encoding, byte[] Preamble);
 

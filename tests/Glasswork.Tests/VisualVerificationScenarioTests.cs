@@ -62,6 +62,8 @@ public class VisualVerificationScenarioTests
               "updated": "2026-08-10",
               "expires": "2026-12-31",
               "sources": ["https://example.test/source"],
+              "researchInclude": ["included-page"],
+              "researchExclude": ["excluded-page"],
               "markdown": "# Async callbacks\n\nSynthesis."
             }
           ],
@@ -79,6 +81,12 @@ public class VisualVerificationScenarioTests
         CollectionAssert.AreEqual(
             new[] { "https://example.test/source" },
             scenario.WikiPages[0].Sources);
+        CollectionAssert.AreEqual(
+            new[] { "included-page" },
+            scenario.WikiPages[0].ResearchInclude);
+        CollectionAssert.AreEqual(
+            new[] { "excluded-page" },
+            scenario.WikiPages[0].ResearchExclude);
         Assert.AreEqual("# Async callbacks\n\nSynthesis.", scenario.WikiPages[0].Markdown);
     }
 
@@ -94,6 +102,10 @@ public class VisualVerificationScenarioTests
               "wikiPagePath": "concepts/live.md",
               "oldValue": "title: Live",
               "value": "title: [unterminated"
+            },
+            {
+              "type": "delete-wiki-page",
+              "wikiPagePath": "sources/removed.md"
             },
             {
               "type": "scroll-percent",
@@ -119,9 +131,10 @@ public class VisualVerificationScenarioTests
         var actions = VisualVerificationScenario.FromJson(json).Actions;
 
         Assert.AreEqual("concepts/live.md", actions[0].WikiPagePath);
-        Assert.AreEqual("60", actions[1].Value);
-        Assert.AreEqual("assert-selected", actions[2].Type);
-        Assert.AreEqual("40", actions[3].Value);
+        Assert.AreEqual("sources/removed.md", actions[1].WikiPagePath);
+        Assert.AreEqual("60", actions[2].Value);
+        Assert.AreEqual("assert-selected", actions[3].Type);
+        Assert.AreEqual("40", actions[4].Value);
     }
 
     [TestMethod]
