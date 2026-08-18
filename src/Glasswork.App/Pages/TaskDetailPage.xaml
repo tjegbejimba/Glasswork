@@ -661,6 +661,7 @@
                                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                         BorderThickness="1"
+                                        AutomationProperties.AutomationId="{Binding Id}"
                                         Click="Child_Click">
                                     <Grid>
                                         <TextBlock Text="{Binding Title}"

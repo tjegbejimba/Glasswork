@@ -17,10 +17,10 @@ parent PBI, with the PBI acting as a container — even though the PBI and its c
 live in **separate vault files**.
 
 The parent link already exists: the `parent:` frontmatter field. Backlog "group by
-parent" and TaskDetail's Children section resolve it via `IndexService.GetChildren`; the
-My Day grouper resolves it directly through the in-memory index by parent id (a lookup
-over `IndexService.Tasks`). My Day cards already render *in-file* subtasks inline via
-`TodaysSubtasks` (ADR 0008). Phase 2 layers cross-file children onto that same card.
+parent" and Task Detail's Children section resolve it via `IndexService.GetChildren`;
+My Day and `IndexService` share the same Core parent resolver over the in-memory index.
+My Day cards already render *in-file* subtasks inline via `TodaysSubtasks` (ADR 0008).
+Phase 2 layers cross-file children onto that same card.
 
 ## Decision
 

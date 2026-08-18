@@ -175,9 +175,10 @@ public class IndexService
     }
 
     /// <summary>
-    /// Returns all tasks whose <c>parent</c> field matches the given task id,
-    /// sorted by title. Returns defensive clones; mutating elements does not
-    /// affect the canonical store. Returns an empty list when no children exist.
+    /// Returns all tasks whose <c>parent</c> field resolves to the given task id
+    /// through either its Glasswork id or unique PBI ADO identity, sorted by title.
+    /// Returns defensive clones; mutating elements does not affect the canonical
+    /// store. Returns an empty list when no children exist.
     /// </summary>
     public IReadOnlyList<GlassworkTask> GetChildren(string taskId)
     {
@@ -188,9 +189,12 @@ public class IndexService
         
         lock (_gate)
         {
+            var resolver = new TaskParentResolver(_store);
             var children = _store.Values
-                .Where(t => !string.IsNullOrWhiteSpace(t.Parent) && 
-                           t.Parent.Trim().Equals(trimmedId, StringComparison.Ordinal))
+                .Where(t => string.Equals(
+                    resolver.ResolveTaskId(t.Parent),
+                    trimmedId,
+                    StringComparison.Ordinal))
                 .OrderBy(t => t.Title, StringComparer.Ordinal)
                 .Select(t => t.Clone())
                 .ToList();

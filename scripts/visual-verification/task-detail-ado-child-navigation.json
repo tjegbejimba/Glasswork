@@ -1,0 +1,62 @@
+{
+  "name": "Task Detail ADO child navigation",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "vv-ado-parent",
+      "title": "Remove resource hydration code from ARM",
+      "status": "doing",
+      "type": "pbi",
+      "adoLink": 36083004
+    },
+    {
+      "id": "vv-ado-child",
+      "title": "Remove all Resource Hydration code",
+      "status": "doing",
+      "parent": "36083004"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Remove resource hydration code from ARM",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Remove resource hydration code from ARM",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskTitleBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "vv-ado-child",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "vv-ado-child",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskTitleBox",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-detail-opened-ado-child",
+      "waitMilliseconds": 800
+    }
+  ]
+}
