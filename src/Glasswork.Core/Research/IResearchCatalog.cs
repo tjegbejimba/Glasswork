@@ -10,6 +10,7 @@ public interface IResearchCatalog : IDisposable
     ResearchCatalogSnapshot Capture(DateOnly queryDate);
     ResearchCatalogSearchResult Search(ResearchCatalogQuery query);
     ResearchOptInResult OptIn(string vaultRelativePath);
+    ResearchRemovalResult Remove(string topicId);
     void Start();
     void Stop();
 }
@@ -161,6 +162,31 @@ public enum ResearchOptInErrorCode
     ConcurrentModification,
     WriteFailed,
     ReloadFailed,
+}
+
+public sealed record ResearchRemovalResult(
+    bool Succeeded,
+    string? RemovedTopicId,
+    ResearchRemovalErrorCode? ErrorCode,
+    string Message)
+{
+    public static ResearchRemovalResult Success(ResearchTopic topic) =>
+        new(true, topic.Id, null, $"Removed '{topic.Title}' from Research.");
+
+    public static ResearchRemovalResult Failure(
+        ResearchRemovalErrorCode errorCode,
+        string message) =>
+        new(false, null, errorCode, message);
+}
+
+public enum ResearchRemovalErrorCode
+{
+    TopicNotFound,
+    InvalidResearchMetadata,
+    UnsupportedEncoding,
+    ConcurrentModification,
+    WriteFailed,
+    RecoveryRequired,
 }
 
 public sealed record ResearchContext(

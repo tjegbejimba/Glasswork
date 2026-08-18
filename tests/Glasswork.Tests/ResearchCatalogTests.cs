@@ -407,6 +407,275 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Remove_NoChangeLogRemovesOnlyResearchMetadataAndPreservesWikiPage()
+    {
+        const string relativePath = "wiki/concepts/removable.md";
+        WritePage(
+            relativePath,
+            """
+            ---
+            id: removable
+            title: Removable
+            type: concept
+            aliases: [Keep this alias]
+            glasswork:
+              research:
+                include: [related-page]
+                exclude: [excluded-page]
+              unrelated: keep-this-value
+            custom:
+              nested: untouched
+            ---
+            # Durable synthesis
+
+            Keep this prose exactly.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Remove("removable");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual(
+            """
+            ---
+            id: removable
+            title: Removable
+            type: concept
+            aliases: [Keep this alias]
+            glasswork:
+              unrelated: keep-this-value
+            custom:
+              nested: untouched
+            ---
+            # Durable synthesis
+
+            Keep this prose exactly.
+            """.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+        Assert.IsEmpty(catalog.Capture().Topics);
+    }
+
+    [TestMethod]
+    public void Remove_ExistingChangeLogDeletesItWithTheResearchMetadata()
+    {
+        const string relativePath = "wiki/concepts/with-history.md";
+        WriteOptedInPage(relativePath, "with-history", "concept");
+        const string logPath = "wiki/research-logs/with-history.md";
+        WritePage(logPath, "# Research Change Log\n\nPrior durable learning.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Remove("with-history");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.IsFalse(File.Exists(FullPath(logPath)));
+        Assert.DoesNotContain("research:", File.ReadAllText(FullPath(relativePath)));
+    }
+
+    [TestMethod]
+    public void Remove_FailureAfterMetadataWriteRollsBackPageAndChangeLog()
+    {
+        const string relativePath = "wiki/concepts/rollback.md";
+        const string originalPage =
+            "---\nid: rollback\ntitle: Rollback\ntype: concept\nglasswork:\n  research: {}\n---\nOriginal synthesis.";
+        const string logPath = "wiki/research-logs/rollback.md";
+        const string originalLog = "# Research Change Log\n\nOriginal history.";
+        WritePage(relativePath, originalPage);
+        WritePage(logPath, originalLog);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            AfterRemovalPageReplacementHook = () =>
+                throw new IOException("Injected failure after metadata replacement."),
+        };
+
+        var result = catalog.Remove("rollback");
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchRemovalErrorCode.WriteFailed, result.ErrorCode);
+        StringAssert.Contains(result.Message, "rolled back");
+        Assert.AreEqual(
+            originalPage.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+        Assert.AreEqual(
+            originalLog.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(logPath)));
+        Assert.HasCount(1, catalog.Capture().Topics);
+    }
+
+    [TestMethod]
+    public void Remove_ThenOptInAgainStartsWithNoPriorChangeLog()
+    {
+        const string relativePath = "wiki/concepts/restart-history.md";
+        const string logPath = "wiki/research-logs/restart-history.md";
+        WriteOptedInPage(relativePath, "restart-history", "concept");
+        WritePage(logPath, "# Research Change Log\n\nHistory that must not return.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var removed = catalog.Remove("restart-history");
+        var added = catalog.OptIn(relativePath);
+
+        Assert.IsTrue(removed.Succeeded, removed.Message);
+        Assert.IsTrue(added.Succeeded, added.Message);
+        Assert.IsFalse(File.Exists(FullPath(logPath)));
+        Assert.HasCount(1, catalog.Capture().Topics);
+    }
+
+    [TestMethod]
+    public void Remove_RollbackFailureRetainsJournalForStartupRecovery()
+    {
+        const string relativePath = "wiki/concepts/recover-removal.md";
+        const string originalPage =
+            "---\nid: recover-removal\ntitle: Recover removal\ntype: concept\nglasswork:\n  research: {}\n---\nOriginal synthesis.";
+        const string logPath = "wiki/research-logs/recover-removal.md";
+        const string originalLog = "# Research Change Log\n\nOriginal history.";
+        WritePage(relativePath, originalPage);
+        WritePage(logPath, originalLog);
+        using (var catalog = new FileSystemResearchCatalog(_vaultRoot)
+               {
+                   AfterRemovalPageReplacementHook = () =>
+                       throw new IOException("Injected apply failure."),
+                   BeforeRemovalRollbackHook = () =>
+                       throw new IOException("Injected rollback failure."),
+               })
+        {
+            var result = catalog.Remove("recover-removal");
+
+            Assert.IsFalse(result.Succeeded);
+            Assert.AreEqual(ResearchRemovalErrorCode.RecoveryRequired, result.ErrorCode);
+            Assert.IsTrue(File.Exists(Path.Combine(
+                _vaultRoot,
+                ".glasswork",
+                "research-removal-journal.json")));
+        }
+
+        using IResearchCatalog recovered = new FileSystemResearchCatalog(_vaultRoot);
+
+        Assert.AreEqual(
+            originalPage.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+        Assert.AreEqual(
+            originalLog.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(logPath)));
+        Assert.HasCount(1, recovered.Capture().Topics);
+        Assert.IsFalse(File.Exists(Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removal-journal.json")));
+    }
+
+    [TestMethod]
+    public void Remove_InitialJournalFailureCleansStagedRecoveryFiles()
+    {
+        const string relativePath = "wiki/concepts/journal-failure.md";
+        const string originalPage =
+            "---\nid: journal-failure\ntitle: Journal failure\ntype: concept\nglasswork:\n  research: {}\n---\nOriginal synthesis.";
+        const string logPath = "wiki/research-logs/journal-failure.md";
+        WritePage(relativePath, originalPage);
+        WritePage(logPath, "# Research Change Log\n\nOriginal history.");
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            BeforeRemovalJournalWriteHook = () =>
+                throw new IOException("Injected initial journal failure."),
+        };
+
+        var result = catalog.Remove("journal-failure");
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchRemovalErrorCode.WriteFailed, result.ErrorCode);
+        Assert.AreEqual(
+            originalPage.ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+        Assert.IsTrue(File.Exists(FullPath(logPath)));
+        var operationsPath = Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removals");
+        Assert.IsFalse(Directory.Exists(operationsPath)
+            && Directory.EnumerateFileSystemEntries(operationsPath).Any());
+        Assert.IsFalse(File.Exists(Path.Combine(
+            _vaultRoot,
+            ".glasswork",
+            "research-removal-journal.json.tmp")));
+    }
+
+    [TestMethod]
+    public void Remove_PreservesUnrelatedFlowStyleGlassworkMetadata()
+    {
+        const string relativePath = "wiki/concepts/flow-removal.md";
+        WritePage(
+            relativePath,
+            "---\nid: flow-removal\ntitle: Flow removal\ntype: concept\nglasswork: { unrelated: keep, research: { include: [related] }, another: value }\n---\nExact prose.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Remove("flow-removal");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual(
+            "---\nid: flow-removal\ntitle: Flow removal\ntype: concept\nglasswork: { unrelated: keep, another: value }\n---\nExact prose."
+                .ReplaceLineEndings(),
+            File.ReadAllText(FullPath(relativePath)));
+    }
+
+    [TestMethod]
+    public void Remove_RegistersWikiPageAndChangeLogAsSelfWrites()
+    {
+        const string relativePath = "wiki/concepts/self-write-removal.md";
+        const string logPath = "wiki/research-logs/self-write-removal.md";
+        WriteOptedInPage(relativePath, "self-write-removal", "concept");
+        WritePage(logPath, "# Research Change Log\n\nHistory.");
+        var selfWrites = new SelfWriteCoordinator(_vaultRoot, TimeSpan.FromSeconds(10));
+        IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            selfWrites: selfWrites);
+
+        var result = catalog.Remove("self-write-removal");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.IsTrue(selfWrites.IsOwnProcessWrite(FullPath(relativePath)));
+        Assert.IsTrue(selfWrites.IsOwnProcessWrite(FullPath(logPath)));
+    }
+
+    [TestMethod]
+    public void Remove_EmitsLiveSelfWriteDeltaAndLaterExternalEditRemainsVisible()
+    {
+        const string relativePath = "wiki/concepts/live-removal.md";
+        WriteOptedInPage(relativePath, "live-removal", "concept");
+        var selfWrites = new SelfWriteCoordinator(_vaultRoot, TimeSpan.FromSeconds(10));
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 18),
+            selfWrites,
+            TimeSpan.FromMilliseconds(50));
+        _ = catalog.Capture();
+        using var signal = new AutoResetEvent(false);
+        ResearchTopicsChangedEventArgs? observed = null;
+        catalog.TopicsChanged += (_, args) =>
+        {
+            observed = args;
+            signal.Set();
+        };
+        catalog.Start();
+
+        var result = catalog.Remove("live-removal");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.IsNotNull(observed);
+        Assert.AreEqual(ResearchCatalogChangeOrigin.SelfWrite, observed.Origin);
+        Assert.IsEmpty(observed.Snapshot.Topics);
+        var settleDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (DateTime.UtcNow < settleDeadline && signal.WaitOne(200))
+        {
+        }
+        observed = null;
+
+        WriteOptedInPage(relativePath, "live-removal", "concept");
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
+        Assert.IsNotNull(observed);
+        Assert.AreNotEqual(ResearchCatalogChangeOrigin.SelfWrite, observed.Origin);
+        Assert.HasCount(1, observed.Snapshot.Topics);
+    }
+
+    [TestMethod]
     public void OptIn_MissingPageReturnsPreciseFailure()
     {
         IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);

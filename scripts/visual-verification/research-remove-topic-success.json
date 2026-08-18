@@ -1,0 +1,97 @@
+{
+  "name": "Research remove Topic cancellation and success",
+  "theme": "light",
+  "startUri": "glasswork://research",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/remove-me.md",
+      "id": "remove-me",
+      "title": "Remove me",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-17",
+      "optedIn": true,
+      "markdown": "# Remove me\n\nThis Wiki Page must remain after its Research metadata is removed."
+    },
+    {
+      "relativePath": "concepts/stay-selected.md",
+      "id": "stay-selected",
+      "title": "Stay selected",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": true,
+      "markdown": "# Stay selected\n\nThis Topic becomes selected after removal."
+    },
+    {
+      "relativePath": "research-logs/remove-me.md",
+      "id": "remove-me-log",
+      "title": "Remove me Research Change Log",
+      "type": "source",
+      "optedIn": false,
+      "markdown": "# Research Change Log\n\nPrior history is permanently deleted."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "Remove me",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRemoveTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Keep Topic",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "This Wiki Page must remain after its Research metadata is removed.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-selected",
+      "automationId": "ResearchTopicList",
+      "name": "Remove me"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRemoveTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchRemoveDeleteChangeLogMessage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRemoveConfirmButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "This Topic becomes selected after removal.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-selected",
+      "automationId": "ResearchTopicList",
+      "name": "Stay selected"
+    },
+    {
+      "type": "assert-single-selection",
+      "automationId": "ResearchTopicList"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-remove-topic-success",
+      "waitMilliseconds": 700
+    }
+  ]
+}

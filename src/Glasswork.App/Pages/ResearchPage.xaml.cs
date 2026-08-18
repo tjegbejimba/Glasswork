@@ -32,6 +32,7 @@ public sealed partial class ResearchPage : Page
         new(Array.Empty<ResearchTopic>(), Array.Empty<ResearchCatalogDiagnostic>());
     private bool _isReconciling;
     private string? _selectedTopicId;
+    private string? _pendingRemovalTopicId;
     private bool _suppressCatalogRefresh;
 
     public ResearchPage()
@@ -43,6 +44,7 @@ public sealed partial class ResearchPage : Page
         TopicMarkdown.WikiLinkResolver = VaultPageHelper.BuildWikiLinkResolver();
         PreviewMarkdown.WikiLinkResolver = VaultPageHelper.BuildWikiLinkResolver();
         RootGrid.Children.Remove(PreviewDrawerOverlay);
+        RootGrid.Children.Remove(RemoveTopicOverlay);
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -55,6 +57,7 @@ public sealed partial class ResearchPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        CloseRemoveTopicOverlay();
         ClosePreviewDrawer(restoreFocus: false);
         App.Research.TopicsChanged -= OnResearchTopicsChanged;
         base.OnNavigatedFrom(e);
@@ -604,6 +607,75 @@ public sealed partial class ResearchPage : Page
     {
         if (_selectedTopic is not null)
             await App.ObsidianLauncher.Open(_selectedTopic.VaultRelativePath);
+    }
+
+    private void RemoveFromResearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedTopic is not { } topic)
+            return;
+
+        _pendingRemovalTopicId = topic.Id;
+        RemoveTopicPreserveMessage.Text =
+            $"\"{topic.Title}\" will remain as a Wiki Page in your Vault.";
+        RemoveTopicOverlay.Visibility = Visibility.Visible;
+        var window = App.MainWindow as MainWindow
+            ?? throw new InvalidOperationException("Research removal requires the app window.");
+        window.ShowModalOverlay(RemoveTopicOverlay, RemoveTopicCancelButton);
+        RemoveTopicOverlay.UpdateLayout();
+        _ = FocusManager.TryFocusAsync(
+            RemoveTopicCancelButton,
+            FocusState.Programmatic);
+    }
+
+    private void RemoveTopicCancelButton_Click(object sender, RoutedEventArgs e) =>
+        CloseRemoveTopicOverlay();
+
+    private void RemoveTopicEscape_Invoked(
+        KeyboardAccelerator sender,
+        KeyboardAcceleratorInvokedEventArgs e)
+    {
+        if (RemoveTopicOverlay.Visibility != Visibility.Visible)
+            return;
+        CloseRemoveTopicOverlay();
+        e.Handled = true;
+    }
+
+    private async void RemoveTopicConfirmButton_Click(object sender, RoutedEventArgs e)
+    {
+        var topicId = _pendingRemovalTopicId;
+        CloseRemoveTopicOverlay();
+        if (string.IsNullOrWhiteSpace(topicId))
+            return;
+
+        var result = App.Research.Remove(topicId);
+        if (!result.Succeeded)
+        {
+            var error = new ContentDialog
+            {
+                Title = "Unable to remove Research Topic",
+                Content = result.Message,
+                CloseButtonText = "OK",
+                XamlRoot = XamlRoot,
+            };
+            error.WithAppTheme(this);
+            await error.ShowAsync();
+            return;
+        }
+
+        RefreshCatalog(requestedTopicId: null, preserveCurrentState: true);
+    }
+
+    private void CloseRemoveTopicOverlay()
+    {
+        if (RemoveTopicOverlay.Visibility != Visibility.Visible)
+        {
+            _pendingRemovalTopicId = null;
+            return;
+        }
+
+        RemoveTopicOverlay.Visibility = Visibility.Collapsed;
+        (App.MainWindow as MainWindow)?.HideModalOverlay(RemoveTopicOverlay);
+        _pendingRemovalTopicId = null;
     }
 
     private async void AddTopicButton_Click(object sender, RoutedEventArgs e)
