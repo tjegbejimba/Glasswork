@@ -831,6 +831,7 @@
         <Border
             x:Name="PreviewDrawerPanel"
             Width="520"
+            Margin="0,48,0,0"
             Padding="24"
             HorizontalAlignment="Right"
             Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"

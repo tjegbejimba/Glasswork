@@ -367,6 +367,18 @@ internal static partial class VisualVerificationRunner
             case "assert-enabled":
                 AssertEnabled(WaitForElement(hwnd, action));
                 return;
+            case "assert-below":
+                AssertBelow(
+                    WaitForElement(hwnd, action),
+                    WaitForElement(
+                        hwnd,
+                        new VisualVerificationAction
+                        {
+                            Type = "wait-for",
+                            AutomationId = action.Value,
+                            TimeoutMilliseconds = action.TimeoutMilliseconds,
+                        }));
+                return;
             case "assert-invoke-blocked":
                 AssertInvokeBlocked(WaitForElement(hwnd, action));
                 return;
@@ -783,6 +795,21 @@ internal static partial class VisualVerificationRunner
         {
             throw new InvalidOperationException(
                 $"Element '{element.Current.Name}' remained disabled.");
+        }
+    }
+
+    private static void AssertBelow(
+        AutomationElement element,
+        AutomationElement reference)
+    {
+        var elementBounds = element.Current.BoundingRectangle;
+        var referenceBounds = reference.Current.BoundingRectangle;
+        if (elementBounds.Top < referenceBounds.Bottom)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' starts at {elementBounds.Top:0.##}, "
+                + $"above the bottom of '{reference.Current.Name}' at "
+                + $"{referenceBounds.Bottom:0.##}.");
         }
     }
 

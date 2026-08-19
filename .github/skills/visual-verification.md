@@ -100,9 +100,10 @@ Action types: `wait-for` (asserts an element appears), `select`
 (SelectionItem/Invoke), `invoke` (InvokePattern), `set-value` (ValuePattern),
 `focus` (sets and verifies keyboard focus), and `assert-single-selection`
 (verifies the target exposes exactly one accessible selection and disallows
-multiple selection). `assert-clipboard-text` compares the clipboard's plain text
-with `value`, which verifies copy-driven launch contracts without exposing them
-in the UI.
+multiple selection). `assert-below` verifies that the target's top edge is at or
+below the bottom edge of the element whose AutomationId is supplied in `value`.
+`assert-clipboard-text` compares the clipboard's plain text with `value`, which
+verifies copy-driven launch contracts without exposing them in the UI.
 Target by `automationId` (preferred — stable) or `name`.
 
 ---
