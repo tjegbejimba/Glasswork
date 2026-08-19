@@ -3016,6 +3016,287 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Capture_ResearchContextResolvesRawProvenanceThroughSourceSummary()
+    {
+        WritePage(
+            "wiki/concepts/arm-batch-api.md",
+            """
+            ---
+            id: arm-batch-api
+            title: ARM Batch API
+            type: concept
+            sources:
+              - raw/meeting-notes/2025-09-23-mingzhe-batch-api-handover.md
+            glasswork:
+              research: {}
+            ---
+            # ARM Batch API
+
+            [[mingzhe-batch-api-handover-2025-09-23]]
+            """);
+        WritePage(
+            "wiki/sources/mingzhe-batch-api-handover-2025-09-23.md",
+            """
+            ---
+            id: mingzhe-batch-api-handover-2025-09-23
+            title: Mingzhe Batch API handover
+            type: source
+            source_path: raw/meeting-notes/2025-09-23-mingzhe-batch-api-handover.md
+            ---
+            Source summary.
+            """);
+        WritePage(
+            "raw/meeting-notes/2025-09-23-mingzhe-batch-api-handover.md",
+            "Raw meeting notes.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.HasCount(1, context.RelatedPages);
+        var sourceSummary = context.RelatedPages.Single();
+        Assert.AreEqual("mingzhe-batch-api-handover-2025-09-23", sourceSummary.Id);
+        Assert.AreEqual(
+            ResearchContextRelation.OutgoingWikiLink | ResearchContextRelation.Provenance,
+            sourceSummary.Relations);
+        Assert.IsEmpty(context.Warnings);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextMatchesRawProvenanceAcrossSourcePathListCaseAndSeparators()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            sources:
+              - RAW\Meeting-Notes\handover.MD
+            glasswork:
+              research: {}
+            ---
+            Topic synthesis.
+            """);
+        WritePage(
+            "wiki/sources/handover.md",
+            """
+            ---
+            id: handover
+            title: Handover
+            type: source
+            source_path:
+              - raw/meeting-notes/other.md
+              - raw/meeting-notes/handover.md
+            ---
+            Source summary.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.HasCount(1, context.RelatedPages);
+        Assert.AreEqual("handover", context.RelatedPages.Single().Id);
+        Assert.AreEqual(
+            ResearchContextRelation.Provenance,
+            context.RelatedPages.Single().Relations);
+        Assert.IsEmpty(context.Warnings);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextWarnsWhenRawProvenanceHasMultipleSourceSummaries()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            sources:
+              - raw/meeting-notes/shared.md
+            glasswork:
+              research: {}
+            ---
+            Topic synthesis.
+            """);
+        WritePage(
+            "wiki/sources/alpha.md",
+            "---\nid: alpha\ntitle: Alpha\ntype: source\nsource_path: raw/meeting-notes/shared.md\n---\nAlpha.");
+        WritePage(
+            "wiki/sources/beta.md",
+            "---\nid: beta\ntitle: Beta\ntype: source\nsource_path: RAW\\MEETING-NOTES\\SHARED.MD\n---\nBeta.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.IsEmpty(context.RelatedPages);
+        Assert.HasCount(1, context.Warnings);
+        Assert.AreEqual(
+            new ResearchContextWarning(
+                "raw/meeting-notes/shared.md",
+                ResearchContextRelation.Provenance,
+                ResearchContextWarningCode.AmbiguousTarget,
+                "Raw source path 'raw/meeting-notes/shared.md' is declared by more than one eligible source summary."),
+            context.Warnings.Single());
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextRejectsUnsafeRawProvenanceWithoutTreatingItAsAStableId()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            sources:
+              - raw/meeting-notes/../secret.md
+            glasswork:
+              research: {}
+            ---
+            Topic synthesis.
+            """);
+        WritePage(
+            "wiki/sources/unsafe.md",
+            "---\nid: unsafe\ntitle: Unsafe\ntype: source\nsource_path: raw/meeting-notes/../secret.md\n---\nUnsafe.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.IsEmpty(context.RelatedPages);
+        Assert.HasCount(1, context.Warnings);
+        Assert.AreEqual(
+            new ResearchContextWarning(
+                "raw/meeting-notes/../secret.md",
+                ResearchContextRelation.Provenance,
+                ResearchContextWarningCode.MissingPage,
+                "Raw source path 'raw/meeting-notes/../secret.md' is not a safe vault-relative path and cannot be mapped to an eligible source summary."),
+            context.Warnings.Single());
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextRejectsRootedRawProvenance()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            sources:
+              - /raw/meeting-notes/secret.md
+            glasswork:
+              research: {}
+            ---
+            Topic synthesis.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.IsEmpty(context.RelatedPages);
+        Assert.AreEqual(
+            "Raw source path '/raw/meeting-notes/secret.md' is not a safe vault-relative path and cannot be mapped to an eligible source summary.",
+            context.Warnings.Single().Message);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextKeepsAbsoluteUrisOutsideRawPathMapping()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            sources:
+              - raw://archive/evidence
+              - https://example.test/evidence
+            glasswork:
+              research: {}
+            ---
+            Topic synthesis.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.IsEmpty(context.RelatedPages);
+        Assert.IsEmpty(context.Warnings);
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextReportsMissingSourceSummaryWhenRawFileExists()
+    {
+        const string rawPath = "raw/meeting-notes/unmapped.md";
+        WritePage(
+            "wiki/concepts/topic.md",
+            $"---\nid: topic\ntitle: Topic\ntype: concept\nsources:\n  - {rawPath}\nglasswork:\n  research: {{}}\n---\nTopic.");
+        WritePage(rawPath, "Existing raw evidence.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.IsEmpty(context.RelatedPages);
+        Assert.AreEqual(
+            new ResearchContextWarning(
+                rawPath,
+                ResearchContextRelation.Provenance,
+                ResearchContextWarningCode.MissingPage,
+                $"No eligible source summary in 'wiki/sources' declares raw source path '{rawPath}'."),
+            context.Warnings.Single());
+    }
+
+    [TestMethod]
+    public void Capture_ResearchContextIgnoresIneligibleAndUnsafeSourcePathMappings()
+    {
+        WritePage(
+            "wiki/concepts/topic.md",
+            """
+            ---
+            id: topic
+            title: Topic
+            type: concept
+            sources:
+              - raw/evidence.md
+              - raw/rooted.md
+            glasswork:
+              research: {}
+            ---
+            Topic synthesis.
+            """);
+        WritePage(
+            "wiki/concepts/wrong-folder.md",
+            "---\nid: wrong-folder\ntitle: Wrong folder\ntype: source\nsource_path: raw/evidence.md\n---\nWrong folder.");
+        WritePage(
+            "wiki/sources/wrong-type.md",
+            "---\nid: wrong-type\ntitle: Wrong type\ntype: concept\nsource_path: raw/evidence.md\n---\nWrong type.");
+        WritePage(
+            "wiki/sources/traversal.md",
+            "---\nid: traversal\ntitle: Traversal\ntype: source\nsource_path: raw/folder/../evidence.md\n---\nTraversal.");
+        WritePage(
+            "wiki/sources/rooted.md",
+            "---\nid: rooted\ntitle: Rooted\ntype: source\nsource_path: C:\\vault\\raw\\rooted.md\n---\nRooted.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.IsEmpty(context.RelatedPages);
+        CollectionAssert.AreEqual(
+            new[] { "raw/evidence.md", "raw/rooted.md" },
+            context.Warnings.Select(warning => warning.Reference).ToArray());
+        Assert.IsTrue(context.Warnings.All(warning =>
+            warning.Code == ResearchContextWarningCode.MissingPage
+            && warning.Message.StartsWith(
+                "No eligible source summary",
+                StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public void Capture_ResearchContextCombinesProvenanceAndBacklinksByStableId()
     {
         WritePage(
@@ -3455,6 +3736,78 @@ public sealed class ResearchCatalogTests
         Assert.AreSame(
             untouched,
             observed.Snapshot.Topics.Single(topic => topic.Id == "untouched"));
+    }
+
+    [TestMethod]
+    public void SourceSummaryLifecycle_RefreshesRawProvenanceMappingLive()
+    {
+        const string topicPath = "wiki/concepts/topic.md";
+        const string sourcePath = "wiki/sources/summary.md";
+        const string movedPath = "wiki/concepts/summary.md";
+        const string rawPath = "raw/meeting-notes/evidence.md";
+        WritePage(
+            topicPath,
+            $"---\nid: topic\ntitle: Topic\ntype: concept\nsources:\n  - {rawPath}\nglasswork:\n  research: {{}}\n---\nTopic.");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            quietPeriod: TimeSpan.FromMilliseconds(50));
+        var initial = catalog.Capture();
+        Assert.IsEmpty(initial.Topics.Single().Context.RelatedPages);
+        using var signal = new AutoResetEvent(false);
+        ResearchTopicsChangedEventArgs? observed = null;
+        catalog.TopicsChanged += (_, args) =>
+        {
+            observed = args;
+            signal.Set();
+        };
+        catalog.Start();
+
+        void AssertLiveMapping(bool expected, string operation)
+        {
+            Assert.IsTrue(
+                signal.WaitOne(TimeSpan.FromSeconds(5)),
+                $"Raw provenance mapping should refresh after the source summary is {operation}.");
+            Assert.IsNotNull(observed);
+            CollectionAssert.Contains(observed.AffectedTopicIds.ToArray(), "topic");
+            var context = observed.Snapshot.Topics.Single().Context;
+            Assert.HasCount(expected ? 1 : 0, context.RelatedPages);
+            Assert.HasCount(expected ? 0 : 1, context.Warnings);
+        }
+
+        WritePage(
+            sourcePath,
+            $"---\nid: summary\ntitle: Summary\ntype: source\nsource_path: {rawPath}\n---\nSummary.");
+        AssertLiveMapping(expected: true, "created");
+
+        WritePage(
+            sourcePath,
+            "---\nid: summary\ntitle: Summary\ntype: source\nsource_path: raw/meeting-notes/other.md\n---\nSummary.");
+        AssertLiveMapping(expected: false, "edited");
+
+        WritePage(
+            sourcePath,
+            $"---\nid: summary\ntitle: Summary\ntype: source\nsource_path: {rawPath}\n---\nSummary.");
+        AssertLiveMapping(expected: true, "edited back");
+
+        WritePage(
+            sourcePath,
+            $"---\nid: summary\ntitle: Summary\ntype: concept\nsource_path: {rawPath}\n---\nSummary.");
+        AssertLiveMapping(expected: false, "retyped");
+
+        WritePage(
+            sourcePath,
+            $"---\nid: summary\ntitle: Summary\ntype: source\nsource_path: {rawPath}\n---\nSummary.");
+        AssertLiveMapping(expected: true, "restored to source type");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(FullPath(movedPath))!);
+        File.Move(FullPath(sourcePath), FullPath(movedPath));
+        AssertLiveMapping(expected: false, "moved out of wiki/sources");
+
+        File.Move(FullPath(movedPath), FullPath(sourcePath));
+        AssertLiveMapping(expected: true, "moved back into wiki/sources");
+
+        File.Delete(FullPath(sourcePath));
+        AssertLiveMapping(expected: false, "deleted");
     }
 
     [TestMethod]

@@ -1255,6 +1255,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         var researchMetadata = ParseResearchMetadata(
             match.Groups[1].Value,
             frontmatter.Id.Trim());
+        var sourcePaths = ReadSourcePaths(match.Groups[1].Value);
         var page = new WikiPageCandidate(
             frontmatter.Id.Trim(),
             ContainsResearchMetadata(match.Groups[1].Value),
@@ -1271,6 +1272,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 .Select(source => source.Trim())
                 .ToArray()
                 ?? Array.Empty<string>(),
+            sourcePaths,
             researchMetadata.IncludeIds,
             researchMetadata.ExcludeIds,
             researchMetadata.Warnings,
@@ -1530,6 +1532,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             StringComparer.OrdinalIgnoreCase);
         var warnings = new Dictionary<string, ResearchContextWarning>(
             StringComparer.OrdinalIgnoreCase);
+        var rawProvenanceTargetIds = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase);
         var excludedIds = topic.ExcludeIds
             .Select(id => id.Trim())
             .Where(id => id.Length > 0)
@@ -1755,6 +1759,18 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
             if (resolution is not WikiLinkResolution.VaultPage resolved)
             {
+                var rawProvenanceTarget = pages.SingleOrDefault(page =>
+                    rawProvenanceTargetIds.Contains(page.Id)
+                    && string.Equals(
+                        page.Id,
+                        normalized,
+                        StringComparison.OrdinalIgnoreCase));
+                if (rawProvenanceTarget is not null)
+                {
+                    AddTarget(rawProvenanceTarget, reference, relation);
+                    return;
+                }
+
                 AddWarning(
                     reference,
                     relation,
@@ -1801,8 +1817,41 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 $"Related Wiki Page '{reference}' is missing.");
         }
 
-        foreach (var link in WikiLinkParser.Find(topic.Markdown))
-            AddWikiLinkReference(link.Stem, ResearchContextRelation.OutgoingWikiLink);
+        void AddRawProvenanceReference(string reference, string normalizedPath)
+        {
+            var targets = pages
+                .Where(page =>
+                    page.WikiType.Equals("source", StringComparison.OrdinalIgnoreCase)
+                    && page.VaultRelativePath.StartsWith(
+                        "wiki/sources/",
+                        StringComparison.OrdinalIgnoreCase)
+                    && page.SourcePaths.Contains(
+                        normalizedPath,
+                        StringComparer.OrdinalIgnoreCase))
+                .ToArray();
+            if (targets.Length > 1)
+            {
+                AddWarning(
+                    reference,
+                    ResearchContextRelation.Provenance,
+                    ResearchContextWarningCode.AmbiguousTarget,
+                    $"Raw source path '{reference}' is declared by more than one eligible source summary.");
+                return;
+            }
+            if (targets.Length == 0)
+            {
+                AddWarning(
+                    reference,
+                    ResearchContextRelation.Provenance,
+                    ResearchContextWarningCode.MissingPage,
+                    $"No eligible source summary in 'wiki/sources' declares raw source path '{reference}'.");
+                return;
+            }
+
+            if (!duplicateIds.Contains(targets[0].Id))
+                rawProvenanceTargetIds.Add(targets[0].Id);
+            AddTarget(targets[0], reference, ResearchContextRelation.Provenance);
+        }
 
         foreach (var source in topic.Sources)
         {
@@ -1812,11 +1861,29 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 foreach (var link in links)
                     AddIdentityReference(link.Stem, ResearchContextRelation.Provenance);
             }
+            else if (IsRawPathReference(source))
+            {
+                if (TryNormalizeRawPath(source, out var normalizedPath))
+                {
+                    AddRawProvenanceReference(source, normalizedPath);
+                }
+                else
+                {
+                    AddWarning(
+                        source,
+                        ResearchContextRelation.Provenance,
+                        ResearchContextWarningCode.MissingPage,
+                        $"Raw source path '{source}' is not a safe vault-relative path and cannot be mapped to an eligible source summary.");
+                }
+            }
             else if (!Uri.TryCreate(source, UriKind.Absolute, out _))
             {
                 AddIdentityReference(source, ResearchContextRelation.Provenance);
             }
         }
+
+        foreach (var link in WikiLinkParser.Find(topic.Markdown))
+            AddWikiLinkReference(link.Stem, ResearchContextRelation.OutgoingWikiLink);
 
         foreach (var page in pages)
         {
@@ -1992,6 +2059,51 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             relatedTaskIds,
             relatedWayfinderReferences,
             relatedWorkWarnings);
+    }
+
+    private static IReadOnlyList<string> ReadSourcePaths(string yaml)
+    {
+        var stream = new YamlStream();
+        try
+        {
+            stream.Load(new StringReader(yaml));
+        }
+        catch (Exception ex) when (ex is YamlException or InvalidOperationException)
+        {
+            return Array.Empty<string>();
+        }
+        if (stream.Documents.Count != 1
+            || stream.Documents[0].RootNode is not YamlMappingNode root)
+        {
+            return Array.Empty<string>();
+        }
+
+        var entry = root.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, "source_path", StringComparison.Ordinal));
+        var values = entry.Value switch
+        {
+            YamlScalarNode scalar => new[] { scalar.Value },
+            YamlSequenceNode sequence => sequence.Children
+                .OfType<YamlScalarNode>()
+                .Select(node => node.Value)
+                .ToArray(),
+            _ => Array.Empty<string?>(),
+        };
+        var normalizedPaths = values
+            .Select(value => TryNormalizeRawPath(value, out var normalizedPath)
+                ? normalizedPath
+                : null)
+            .Where(path => path is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedPaths.Length == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        return Array.AsReadOnly(normalizedPaths);
     }
 
     private static IReadOnlyList<string> ReadRelatedWayfinderReferences(
@@ -3326,6 +3438,43 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private static string? NullIfWhiteSpace(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    private static bool TryNormalizeRawPath(string? value, out string normalizedPath)
+    {
+        normalizedPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        var candidate = value.Trim().Replace('\\', '/');
+        if (Path.IsPathRooted(candidate))
+            return false;
+
+        var segments = candidate.Split('/');
+        if (segments.Length < 2
+            || !segments[0].Equals("raw", StringComparison.OrdinalIgnoreCase)
+            || segments.Any(segment =>
+                segment.Length == 0
+                || segment is "." or ".."))
+        {
+            return false;
+        }
+
+        normalizedPath = string.Join('/', segments);
+        return true;
+    }
+
+    private static bool IsRawPathReference(string value)
+    {
+        var candidate = value.Trim().Replace('\\', '/');
+        return candidate.StartsWith("raw/", StringComparison.OrdinalIgnoreCase)
+            || candidate.StartsWith("/raw/", StringComparison.OrdinalIgnoreCase)
+            || (candidate.Length > 7
+                && char.IsAsciiLetter(candidate[0])
+                && candidate[1] == ':'
+                && candidate.AsSpan(2).StartsWith(
+                    "/raw/",
+                    StringComparison.OrdinalIgnoreCase));
+    }
+
     private static IReadOnlyList<string> NormalizeValues(IEnumerable<string>? values) =>
         Array.AsReadOnly((values ?? [])
             .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -3438,6 +3587,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         DateOnly? Updated,
         DateOnly? Expires,
         IReadOnlyList<string> Sources,
+        IReadOnlyList<string> SourcePaths,
         IReadOnlyList<string> IncludeIds,
         IReadOnlyList<string> ExcludeIds,
         IReadOnlyList<ResearchContextWarning> MetadataWarnings,
