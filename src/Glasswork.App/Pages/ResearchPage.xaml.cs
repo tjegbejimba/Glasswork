@@ -26,6 +26,7 @@ public sealed partial class ResearchPage : Page
     public ObservableCollection<ResearchRelatedGroupRow> RelatedGroups { get; } = [];
     public ObservableCollection<ResearchContextWarningRow> ContextWarnings { get; } = [];
     public ObservableCollection<ResearchContextSelectionRow> ContextSelectionRows { get; } = [];
+    public ObservableCollection<ResearchContextSelectionRow> VisibleContextSelectionRows { get; } = [];
     public ObservableCollection<ResearchRelatedTaskRow> ActiveRelatedTasks { get; } = [];
     public ObservableCollection<ResearchRelatedTaskRow> CompletedRelatedTasks { get; } = [];
     public ObservableCollection<ResearchRelatedWayfinderRow> ActiveRelatedWayfinder { get; } = [];
@@ -53,6 +54,7 @@ public sealed partial class ResearchPage : Page
     private Button? _contextSelectionInvoker;
     private bool _suppressContextDrawerRefreshClose;
     private IReadOnlyList<ResearchCandidateProjection> _durableCandidateProjection = [];
+    private IReadOnlyList<ResearchPageCandidate> _durableCandidates = [];
     private ResearchSessionAction _sessionAction = ResearchSessionAction.ContinueResearch;
     private string? _sessionIntent;
     private readonly HashSet<string> _wayfinderRefreshInFlight =
@@ -66,7 +68,7 @@ public sealed partial class ResearchPage : Page
         TopicList.ItemsSource = Topics;
         RelatedGroupsList.ItemsSource = RelatedGroups;
         ContextWarningsList.ItemsSource = ContextWarnings;
-        ContextSelectionList.ItemsSource = ContextSelectionRows;
+        ContextSelectionList.ItemsSource = VisibleContextSelectionRows;
         ActiveRelatedWorkList.ItemsSource = ActiveRelatedTasks;
         CompletedRelatedWorkList.ItemsSource = CompletedRelatedTasks;
         ActiveRelatedWayfinderList.ItemsSource = ActiveRelatedWayfinder;
@@ -1045,17 +1047,12 @@ public sealed partial class ResearchPage : Page
         }
         else
         {
-            var durableCandidates = App.Research.Capture().EligiblePages
-                .Where(page =>
-                    page.Eligibility == ResearchPageEligibility.Eligible
-                    && !string.Equals(
-                        page.Id,
-                        _selectedTopic.Id,
-                        StringComparison.OrdinalIgnoreCase))
-                .OrderBy(page => page.WikiType, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(page => page.Title, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(page => page.Id, StringComparer.Ordinal)
-                .ToArray();
+            var durableCandidates =
+                ResearchContextSelectionPolicy.FilterEligiblePages(
+                    App.Research.Capture().EligiblePages,
+                    _selectedTopic.Id,
+                    query: null);
+            _durableCandidates = durableCandidates;
             _durableCandidateProjection = durableCandidates
                 .Select(ResearchCandidateProjection.From)
                 .ToArray();
@@ -1068,13 +1065,19 @@ public sealed partial class ResearchPage : Page
                         mode));
             }
             ContextSelectionEyebrow.Text = "Durable Research context";
-            ContextSelectionTitle.Text = "Curate default context";
+            ContextSelectionTitle.Text = "Choose context pages";
             ContextSelectionExplanation.Text =
-                "Choose the eligible Wiki Pages that normally ground this Topic. Changes update only glasswork.research metadata; Wiki links and page prose remain unchanged.";
+                "Choose the eligible Wiki Pages that normally ground this Topic. Search uses page titles and stable IDs. Changes update only glasswork.research metadata; Wiki links and page prose remain unchanged.";
             ContextSelectionDoneButton.Content = "Done";
         }
+        ContextSelectionSearchBox.Text = string.Empty;
+        ContextSelectionSearchBox.Visibility =
+            mode == ResearchDrawerMode.DurableCuration
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         ContextSelectionError.IsOpen = false;
         UpdateContextSelectionSummary();
+        ApplyContextSelectionFilter();
         PreviewDrawerContent.Visibility = Visibility.Collapsed;
         ContextSelectionDrawerContent.Visibility = Visibility.Visible;
         var window = App.MainWindow as MainWindow
@@ -1090,6 +1093,68 @@ public sealed partial class ResearchPage : Page
         await FocusManager.TryFocusAsync(
             ContextSelectionCloseButton,
             FocusState.Programmatic);
+    }
+
+    private void ContextSelectionSearchBox_TextChanged(
+        object sender,
+        TextChangedEventArgs e)
+    {
+        if (ContextSelectionList is not null)
+            ApplyContextSelectionFilter();
+    }
+
+    private void ApplyContextSelectionFilter()
+    {
+        IReadOnlyList<ResearchContextSelectionRow> visibleRows;
+        if (_drawerMode != ResearchDrawerMode.DurableCuration
+            || _selectedTopic is null)
+        {
+            visibleRows = ContextSelectionRows.ToArray();
+            ReconcileVisibleContextSelectionRows(visibleRows);
+            if (ContextSelectionNoResults is not null)
+                ContextSelectionNoResults.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var matchingIds = ResearchContextSelectionPolicy.FilterEligiblePages(
+                _durableCandidates,
+                _selectedTopic.Id,
+                ContextSelectionSearchBox?.Text)
+            .Select(page => page.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        visibleRows = ContextSelectionRows
+            .Where(row => row.IsTopic || matchingIds.Contains(row.Id))
+            .ToArray();
+        ReconcileVisibleContextSelectionRows(visibleRows);
+
+        var hasQuery = !string.IsNullOrWhiteSpace(ContextSelectionSearchBox?.Text);
+        ContextSelectionNoResults.Visibility =
+            hasQuery && matchingIds.Count == 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+    }
+
+    private void ReconcileVisibleContextSelectionRows(
+        IReadOnlyList<ResearchContextSelectionRow> rows)
+    {
+        for (var targetIndex = 0; targetIndex < rows.Count; targetIndex++)
+        {
+            var row = rows[targetIndex];
+            if (targetIndex < VisibleContextSelectionRows.Count
+                && ReferenceEquals(VisibleContextSelectionRows[targetIndex], row))
+            {
+                continue;
+            }
+
+            var currentIndex = VisibleContextSelectionRows.IndexOf(row);
+            if (currentIndex >= 0)
+                VisibleContextSelectionRows.Move(currentIndex, targetIndex);
+            else
+                VisibleContextSelectionRows.Insert(targetIndex, row);
+        }
+
+        while (VisibleContextSelectionRows.Count > rows.Count)
+            VisibleContextSelectionRows.RemoveAt(VisibleContextSelectionRows.Count - 1);
     }
 
     private void ContextSelectionCheckBox_Click(object sender, RoutedEventArgs e)
@@ -1142,7 +1207,11 @@ public sealed partial class ResearchPage : Page
         var selected = optional.Count(row => row.IsSelected == true);
         ContextSelectionSummary.Text = IsTransientContextSelection(_drawerMode)
             ? $"{selected} of {optional.Length} optional pages selected"
-            : $"{selected} of {optional.Length} eligible pages included";
+            : ResearchContextSelectionPolicy.BuildDurableSummary(
+                _durableCandidates,
+                optional
+                    .Where(row => row.IsSelected == true)
+                    .Select(row => row.Id));
     }
 
     private void ContextSelectionDoneButton_Click(object sender, RoutedEventArgs e)
@@ -1230,7 +1299,9 @@ public sealed partial class ResearchPage : Page
         (App.MainWindow as MainWindow)?.HideModalOverlay(PreviewDrawerOverlay);
         ContextSelectionDrawerContent.Visibility = Visibility.Collapsed;
         ContextSelectionRows.Clear();
+        VisibleContextSelectionRows.Clear();
         _durableCandidateProjection = [];
+        _durableCandidates = [];
         _contextSelectionInvoker = null;
         _sessionIntent = null;
         _drawerMode = ResearchDrawerMode.None;
@@ -1240,8 +1311,13 @@ public sealed partial class ResearchPage : Page
 
     private void ReconcileOpenContextSelectionDrawer()
     {
-        if (_suppressContextDrawerRefreshClose
-            || _drawerMode is not (ResearchDrawerMode.SessionSelection
+        if (_suppressContextDrawerRefreshClose)
+        {
+            if (_drawerMode == ResearchDrawerMode.DurableCuration)
+                ApplyContextSelectionFilter();
+            return;
+        }
+        if (_drawerMode is not (ResearchDrawerMode.SessionSelection
                 or ResearchDrawerMode.WayfinderSelection
                 or ResearchDrawerMode.DurableCuration))
         {
@@ -1942,7 +2018,7 @@ public sealed class ResearchContextSelectionRow : INotifyPropertyChanged
                 ? $"Include {title} in the next Research Session"
                 : mode == ResearchDrawerMode.WayfinderSelection
                     ? $"Include {title} in the Wayfinder handoff"
-                : $"Include {title} in durable Research context";
+                : $"Include {title}, stable ID {id}, in durable Research context";
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -2007,7 +2083,7 @@ public sealed class ResearchContextSelectionRow : INotifyPropertyChanged
         new(
             page.Id,
             page.Title,
-            CultureInfo.InvariantCulture.TextInfo.ToTitleCase(page.WikiType),
+            $"{CultureInfo.InvariantCulture.TextInfo.ToTitleCase(page.WikiType)} · Stable ID: {page.Id}",
             isTopic: false,
             isSelected,
             mode);

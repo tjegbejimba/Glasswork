@@ -397,6 +397,28 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Search_EligiblePageProjectionMatchesTitleAndStableIdCaseInsensitively()
+    {
+        WritePage(
+            "wiki/sources/callback-contract.md",
+            "---\nid: source-async-callbacks\ntitle: Callback Contract\ntype: source\n---\nBody");
+        WritePage(
+            "wiki/sources/polling.md",
+            "---\nid: source-polling\ntitle: Polling Semantics\ntype: source\n---\nBody");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var titleResult = catalog.Search(new ResearchCatalogQuery(Text: "cALLBack"));
+        var idResult = catalog.Search(new ResearchCatalogQuery(Text: "ASYNC-CALLBACKS"));
+
+        Assert.AreEqual(
+            "source-async-callbacks",
+            titleResult.EligiblePages.Single().Id);
+        Assert.AreEqual(
+            "source-async-callbacks",
+            idResult.EligiblePages.Single().Id);
+    }
+
+    [TestMethod]
     public void Search_NoMatchesRetainsUnfilteredTopicCount()
     {
         WriteOptedInPage("wiki/concepts/alpha.md", "alpha", "concept");

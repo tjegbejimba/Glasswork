@@ -669,13 +669,14 @@
                                         TextWrapping="Wrap" />
                                     <TextBlock
                                         Opacity="0.68"
-                                        Text="The Topic is always included. Curate the durable default or narrow only the next Research Session."
+                                        Text="The Topic is always included. Choose durable context pages or narrow only the next Research Session."
                                         TextWrapping="Wrap" />
                                     <Button
                                         x:Name="CurateContextButton"
                                         AutomationProperties.AutomationId="ResearchCurateContext"
+                                        AutomationProperties.Name="Choose context pages"
                                         Click="CurateContextButton_Click"
-                                        Content="Curate context"
+                                        Content="Choose context pages"
                                         HorizontalAlignment="Left" />
                                 </StackPanel>
                                 <ItemsControl x:Name="RelatedGroupsList">
@@ -927,7 +928,7 @@
             <Grid
                 x:Name="ContextSelectionDrawerContent"
                 AutomationProperties.AutomationId="ResearchContextDrawer"
-                RowDefinitions="Auto,Auto,*,Auto"
+                RowDefinitions="Auto,Auto,Auto,*,Auto"
                 RowSpacing="16"
                 Visibility="Collapsed">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
@@ -961,54 +962,81 @@
                     Opacity="0.78"
                     TextWrapping="Wrap" />
 
-                <ScrollViewer
+                <TextBox
+                    x:Name="ContextSelectionSearchBox"
                     Grid.Row="2"
+                    AutomationProperties.AutomationId="ResearchContextPageSearchBox"
+                    AutomationProperties.Name="Search context pages"
+                    Header="Search context pages"
+                    PlaceholderText="Search by page title or stable ID"
+                    TextChanged="ContextSelectionSearchBox_TextChanged"
+                    Visibility="Collapsed" />
+
+                <ScrollViewer
+                    Grid.Row="3"
                     HorizontalScrollMode="Disabled"
                     HorizontalScrollBarVisibility="Disabled"
                     VerticalScrollBarVisibility="Auto">
-                    <ItemsControl
-                        x:Name="ContextSelectionList"
-                        AutomationProperties.AutomationId="ResearchContextSelectionList">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <CheckBox
-                                    Margin="0,0,0,8"
-                                    Padding="10,8"
-                                    HorizontalAlignment="Stretch"
-                                    HorizontalContentAlignment="Stretch"
-                                    AutomationProperties.AutomationId="ResearchContextPageSelection"
-                                    AutomationProperties.Name="{Binding AccessibleName}"
-                                    Click="ContextSelectionCheckBox_Click"
-                                    IsChecked="{Binding IsSelected, Mode=OneWay}"
-                                    IsEnabled="{Binding IsEnabled}"
-                                    IsThreeState="False"
-                                    Tag="{Binding}">
-                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                                        <StackPanel Spacing="3">
+                    <StackPanel>
+                        <ItemsControl
+                            x:Name="ContextSelectionList"
+                            AutomationProperties.AutomationId="ResearchContextSelectionList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <CheckBox
+                                        Margin="0,0,0,8"
+                                        Padding="10,8"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        AutomationProperties.AutomationId="ResearchContextPageSelection"
+                                        AutomationProperties.Name="{Binding AccessibleName}"
+                                        Click="ContextSelectionCheckBox_Click"
+                                        IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                        IsEnabled="{Binding IsEnabled}"
+                                        IsThreeState="False"
+                                        Tag="{Binding}">
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                            <StackPanel Spacing="3">
+                                                <TextBlock
+                                                    FontWeight="SemiBold"
+                                                    Text="{Binding Title}"
+                                                    TextWrapping="Wrap" />
+                                                <TextBlock
+                                                    FontSize="11"
+                                                    Opacity="0.68"
+                                                    Text="{Binding Metadata}"
+                                                    TextWrapping="Wrap" />
+                                            </StackPanel>
                                             <TextBlock
-                                                FontWeight="SemiBold"
-                                                Text="{Binding Title}"
-                                                TextWrapping="Wrap" />
-                                            <TextBlock
+                                                Grid.Column="1"
+                                                VerticalAlignment="Center"
                                                 FontSize="11"
-                                                Opacity="0.68"
-                                                Text="{Binding Metadata}"
-                                                TextWrapping="Wrap" />
-                                        </StackPanel>
-                                        <TextBlock
-                                            Grid.Column="1"
-                                            VerticalAlignment="Center"
-                                            FontSize="11"
-                                            Opacity="0.72"
-                                            Text="{Binding StatusLabel}" />
-                                    </Grid>
-                                </CheckBox>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                                                Opacity="0.72"
+                                                Text="{Binding StatusLabel}" />
+                                        </Grid>
+                                    </CheckBox>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <StackPanel
+                            x:Name="ContextSelectionNoResults"
+                            AutomationProperties.AutomationId="ResearchContextSearchNoResults"
+                            Margin="10,16"
+                            Spacing="4"
+                            Visibility="Collapsed">
+                            <TextBlock
+                                FontWeight="SemiBold"
+                                Text="No context pages match your search"
+                                TextWrapping="Wrap" />
+                            <TextBlock
+                                Opacity="0.68"
+                                Text="Try another page title or stable ID."
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </StackPanel>
                 </ScrollViewer>
 
-                <StackPanel Grid.Row="3" Spacing="10">
+                <StackPanel Grid.Row="4" Spacing="10">
                     <InfoBar
                         x:Name="ContextSelectionError"
                         AutomationProperties.AutomationId="ResearchContextDrawerError"

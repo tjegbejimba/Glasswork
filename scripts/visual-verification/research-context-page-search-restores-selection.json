@@ -1,0 +1,95 @@
+{
+  "name": "Research context search restores checked selection",
+  "theme": "light",
+  "windowWidth": 900,
+  "windowHeight": 900,
+  "startUri": "glasswork://research/search-topic",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/search-topic.md",
+      "id": "search-topic",
+      "title": "Context search",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-19",
+      "expires": "2027-08-19",
+      "markdown": "# Context search\n\n[[wiki/sources/source-callback-contracts]]"
+    },
+    {
+      "relativePath": "sources/source-callback-contracts.md",
+      "id": "source-callback-contracts",
+      "title": "Callback Contracts",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": false,
+      "markdown": "# Callback Contracts"
+    },
+    {
+      "relativePath": "systems/stable-beta-42.md",
+      "id": "stable-beta-42",
+      "title": "Polling Semantics",
+      "type": "system",
+      "confidence": "medium",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Polling Semantics"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "ResearchCurateContext",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchCurateContext"
+    },
+    {
+      "type": "focus",
+      "name": "Include Polling Semantics, stable ID stable-beta-42, in durable Research context"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchContextPageSearchBox",
+      "value": "Callbacks"
+    },
+    {
+      "type": "assert-not-present",
+      "name": "Include Polling Semantics, stable ID stable-beta-42, in durable Research context"
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchContextPageSearchBox",
+      "value": ""
+    },
+    {
+      "type": "wait-for",
+      "name": "Include Polling Semantics, stable ID stable-beta-42, in durable Research context"
+    },
+    {
+      "type": "assert-checked",
+      "name": "Include Polling Semantics, stable ID stable-beta-42, in durable Research context"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSelectionSummary",
+      "value": "2 of 2 eligible pages included"
+    },
+    {
+      "type": "assert-disabled",
+      "automationId": "ShellNavigation"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-context-page-search-restores-selection",
+      "waitMilliseconds": 500
+    }
+  ]
+}

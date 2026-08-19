@@ -56,7 +56,7 @@
     },
     {
       "type": "focus",
-      "name": "Include Linked but excluded in durable Research context"
+      "name": "Include Linked but excluded, stable ID linked-but-excluded, in durable Research context"
     },
     {
       "type": "press-key",
@@ -69,7 +69,7 @@
     },
     {
       "type": "assert-focused",
-      "name": "Include Linked but excluded in durable Research context"
+      "name": "Include Linked but excluded, stable ID linked-but-excluded, in durable Research context"
     },
     {
       "type": "assert-disabled",
