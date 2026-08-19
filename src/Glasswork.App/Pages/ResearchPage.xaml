@@ -187,7 +187,7 @@
                         HorizontalAlignment="Left"
                         MaxWidth="780"
                         Spacing="14">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                    <Grid RowDefinitions="Auto,Auto" RowSpacing="10">
                         <TextBlock
                             x:Name="TopicTitle"
                             AutomationProperties.AutomationId="ResearchTopicTitle"
@@ -195,7 +195,8 @@
                             FontWeight="SemiBold"
                             TextWrapping="Wrap" />
                         <StackPanel
-                            Grid.Column="1"
+                            Grid.Row="1"
+                            Orientation="Horizontal"
                             Spacing="8"
                             VerticalAlignment="Top">
                             <Button
@@ -242,6 +243,185 @@
                     HorizontalScrollMode="Disabled"
                     HorizontalScrollBarVisibility="Disabled"
                     VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="16">
+                        <Border
+                            x:Name="RelatedWorkPanel"
+                            AutomationProperties.AutomationId="ResearchRelatedWorkPanel"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14">
+                            <StackPanel Spacing="12">
+                                <StackPanel Spacing="3">
+                                    <TextBlock
+                                        FontSize="16"
+                                        FontWeight="SemiBold"
+                                        Text="Related Work" />
+                                    <TextBlock
+                                        Opacity="0.68"
+                                        Text="Tasks stay independent from this Topic and keep their own live workflow state."
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button
+                                        x:Name="CreateRelatedTaskButton"
+                                        AutomationProperties.AutomationId="ResearchCreateTaskButton"
+                                        Click="CreateRelatedTaskButton_Click"
+                                        Content="Create Task" />
+                                    <Button
+                                        x:Name="LinkExistingTaskButton"
+                                        AutomationProperties.AutomationId="ResearchLinkExistingTaskButton"
+                                        Click="LinkExistingTaskButton_Click"
+                                        Content="Link existing" />
+                                </StackPanel>
+                                <TextBlock
+                                    x:Name="RelatedWorkEmpty"
+                                    AutomationProperties.AutomationId="ResearchRelatedWorkEmpty"
+                                    Opacity="0.68"
+                                    Text="No Tasks are linked to this Topic yet."
+                                    TextWrapping="Wrap" />
+                                <StackPanel
+                                    x:Name="ActiveRelatedWorkSection"
+                                    Spacing="6"
+                                    Visibility="Collapsed">
+                                    <TextBlock
+                                        FontSize="12"
+                                        FontWeight="SemiBold"
+                                        Opacity="0.72"
+                                        Text="Active" />
+                                    <ItemsControl
+                                        x:Name="ActiveRelatedWorkList"
+                                        AutomationProperties.AutomationId="ResearchActiveTaskList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid
+                                                    Margin="0,0,0,6"
+                                                    ColumnDefinitions="*,Auto"
+                                                    ColumnSpacing="6">
+                                                    <Button
+                                                        AutomationProperties.AutomationId="ResearchRelatedTask"
+                                                        AutomationProperties.Name="{Binding AccessibleName}"
+                                                        Click="RelatedTaskButton_Click"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        IsEnabled="{Binding CanNavigate}"
+                                                        Padding="10,8"
+                                                        Tag="{Binding}">
+                                                        <StackPanel Spacing="3">
+                                                            <TextBlock
+                                                                FontWeight="SemiBold"
+                                                                MaxLines="2"
+                                                                Text="{Binding Title}"
+                                                                TextTrimming="CharacterEllipsis"
+                                                                TextWrapping="Wrap"
+                                                                ToolTipService.ToolTip="{Binding Title}" />
+                                                            <TextBlock
+                                                                FontSize="11"
+                                                                Opacity="0.68"
+                                                                Text="{Binding StatusLabel}"
+                                                                TextWrapping="Wrap" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button
+                                                        Grid.Column="1"
+                                                        AutomationProperties.AutomationId="ResearchRepairTaskLink"
+                                                        AutomationProperties.Name="{Binding RepairAccessibleName}"
+                                                        Click="RepairRelatedTaskButton_Click"
+                                                        Content="Repair"
+                                                        Tag="{Binding}"
+                                                        VerticalAlignment="Center"
+                                                        Visibility="{Binding RepairVisibility}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                                <Expander
+                                    x:Name="CompletedRelatedWorkExpander"
+                                    AutomationProperties.AutomationId="ResearchCompletedTasksExpander"
+                                    IsExpanded="False"
+                                    Visibility="Collapsed">
+                                    <Expander.Header>
+                                        <TextBlock
+                                            x:Name="CompletedRelatedWorkHeader"
+                                            FontWeight="SemiBold"
+                                            Text="Completed" />
+                                    </Expander.Header>
+                                    <ItemsControl
+                                        x:Name="CompletedRelatedWorkList"
+                                        AutomationProperties.AutomationId="ResearchCompletedTaskList"
+                                        Margin="0,8,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid
+                                                    Margin="0,0,0,6"
+                                                    ColumnDefinitions="*,Auto"
+                                                    ColumnSpacing="6">
+                                                    <Button
+                                                        AutomationProperties.AutomationId="ResearchRelatedCompletedTask"
+                                                        AutomationProperties.Name="{Binding AccessibleName}"
+                                                        Click="RelatedTaskButton_Click"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        IsEnabled="{Binding CanNavigate}"
+                                                        Padding="10,8"
+                                                        Tag="{Binding}">
+                                                        <StackPanel Spacing="3">
+                                                            <TextBlock
+                                                                FontWeight="SemiBold"
+                                                                MaxLines="2"
+                                                                Text="{Binding Title}"
+                                                                TextTrimming="CharacterEllipsis"
+                                                                TextWrapping="Wrap"
+                                                                ToolTipService.ToolTip="{Binding Title}" />
+                                                            <TextBlock
+                                                                FontSize="11"
+                                                                Opacity="0.68"
+                                                                Text="{Binding StatusLabel}" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button
+                                                        Grid.Column="1"
+                                                        AutomationProperties.AutomationId="ResearchRepairTaskLink"
+                                                        AutomationProperties.Name="{Binding RepairAccessibleName}"
+                                                        Click="RepairRelatedTaskButton_Click"
+                                                        Content="Repair"
+                                                        Tag="{Binding}"
+                                                        VerticalAlignment="Center"
+                                                        Visibility="{Binding RepairVisibility}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Expander>
+                                <ItemsControl
+                                    x:Name="RelatedWorkWarningsList"
+                                    AutomationProperties.AutomationId="ResearchRelatedWorkWarnings">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border
+                                                Margin="0,0,0,6"
+                                                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                                CornerRadius="6"
+                                                Padding="10,8">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock
+                                                        FontWeight="SemiBold"
+                                                        Text="{Binding Title}"
+                                                        TextWrapping="Wrap" />
+                                                    <TextBlock
+                                                        FontSize="11"
+                                                        Opacity="0.78"
+                                                        Text="{Binding Message}"
+                                                        TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
                         <Border
                             x:Name="RelatedContextPanel"
                             Background="{ThemeResource SubtleFillColorSecondaryBrush}"
@@ -343,6 +523,7 @@
                                 </ItemsControl>
                             </StackPanel>
                         </Border>
+                    </StackPanel>
                 </ScrollViewer>
                 </Grid>
             </Grid>

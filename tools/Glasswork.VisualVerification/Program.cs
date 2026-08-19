@@ -241,7 +241,9 @@ internal static partial class VisualVerificationRunner
             if (page.OptedIn)
             {
                 lines.Add("glasswork:");
-                if (page.ResearchInclude.Count == 0 && page.ResearchExclude.Count == 0)
+                if (page.ResearchInclude.Count == 0
+                    && page.ResearchExclude.Count == 0
+                    && page.ResearchRelatedWork.Count == 0)
                 {
                     lines.Add("  research: {}");
                 }
@@ -257,6 +259,11 @@ internal static partial class VisualVerificationRunner
                     {
                         lines.Add(
                             $"    exclude: [{string.Join(", ", page.ResearchExclude.Select(YamlScalar))}]");
+                    }
+                    if (page.ResearchRelatedWork.Count > 0)
+                    {
+                        lines.Add(
+                            $"    related_work: [{string.Join(", ", page.ResearchRelatedWork.Select(YamlScalar))}]");
                     }
                 }
             }

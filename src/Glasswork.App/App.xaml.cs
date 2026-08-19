@@ -441,11 +441,6 @@ public partial class App : Application
 
         SelfWrites = new SelfWriteCoordinator(vaultPath);
         Vault = new VaultService(vaultPath, SelfWrites);
-        Research = new FileSystemResearchCatalog(
-            VaultRoot,
-            selfWrites: SelfWrites);
-        Research.Start();
-        _ = Research.Capture(DateOnly.FromDateTime(DateTime.Today));
 
         Artifacts = new FileSystemArtifactStore(VaultRoot);
         ObsidianLauncher = new ObsidianLauncher(VaultRoot);
@@ -504,6 +499,14 @@ public partial class App : Application
         }
         TaskQuery = new WarmIndexTaskQuery(Index, BacklinkIndex);
         Tasks = new TaskService(Vault, Index);
+        Research = new FileSystemResearchCatalog(
+            VaultRoot,
+            selfWrites: SelfWrites,
+            taskVault: Vault,
+            taskIndex: Index,
+            taskService: Tasks);
+        Research.Start();
+        _ = Research.Capture(DateOnly.FromDateTime(DateTime.Today));
 
         // Issue #186: the IndexMarkdownWriter is the new owner of _index.md /
         // _today.md generation. It subscribes to Index.Changed, owns its own

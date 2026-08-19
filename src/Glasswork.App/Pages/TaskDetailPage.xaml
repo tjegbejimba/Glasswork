@@ -625,6 +625,7 @@
                                         HorizontalContentAlignment="Stretch"
                                         Margin="0,2,0,2"
                                         Padding="12,8"
+                                        AutomationProperties.AutomationId="TaskRelatedWikiLink"
                                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                         BorderThickness="1"

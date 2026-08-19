@@ -1,5 +1,6 @@
 using System;
 using Glasswork.Core.Models;
+using Glasswork.Core.Research;
 using Glasswork.Core.Services;
 using Microsoft.UI.Xaml.Controls;
 
@@ -8,12 +9,26 @@ namespace Glasswork.Pages;
 public sealed partial class CreateTaskDialog : ContentDialog
 {
     private readonly TaskService _taskService;
+    private readonly IResearchCatalog? _researchCatalog;
+    private readonly string? _researchTopicId;
     public GlassworkTask? CreatedTask { get; private set; }
 
     public CreateTaskDialog(TaskService taskService)
     {
         _taskService = taskService;
         InitializeComponent();
+    }
+
+    public CreateTaskDialog(
+        TaskService taskService,
+        IResearchCatalog researchCatalog,
+        string researchTopicId)
+    {
+        _taskService = taskService;
+        _researchCatalog = researchCatalog;
+        _researchTopicId = researchTopicId;
+        InitializeComponent();
+        Title = "Create related Task";
     }
 
     private void OnCreate(ContentDialog sender, ContentDialogButtonClickEventArgs args)
@@ -33,19 +48,37 @@ public sealed partial class CreateTaskDialog : ContentDialog
             adoLink = parsed;
         var adoTitle = string.IsNullOrWhiteSpace(AdoTitleBox.Text) ? null : AdoTitleBox.Text.Trim();
 
-        var task = _taskService.CreateTask(title, priority, adoLink: adoLink, adoTitle: adoTitle);
-
-        if (!string.IsNullOrWhiteSpace(NotesBox.Text))
+        var description = string.IsNullOrWhiteSpace(NotesBox.Text)
+            ? null
+            : NotesBox.Text;
+        if (_researchCatalog is not null && _researchTopicId is not null)
         {
-            task.Description = NotesBox.Text;
-            App.Vault.Save(task);
+            var result = _researchCatalog.CreateRelatedTask(
+                _researchTopicId,
+                new ResearchTaskDraft(
+                    title,
+                    priority,
+                    description,
+                    AddToMyDayBox.IsChecked == true,
+                    adoLink,
+                    adoTitle));
+            if (!result.Succeeded)
+            {
+                args.Cancel = true;
+                CreateError.Message = result.Message;
+                CreateError.IsOpen = true;
+                return;
+            }
+            CreatedTask = App.Index.ById(result.Task!.TaskId);
+            return;
         }
 
-        if (AddToMyDayBox.IsChecked == true)
-        {
-            _taskService.ToggleMyDay(task);
-        }
-
-        CreatedTask = task;
+        CreatedTask = _taskService.CreateTask(
+            title,
+            priority,
+            adoLink: adoLink,
+            adoTitle: adoTitle,
+            description: description,
+            addToMyDay: AddToMyDayBox.IsChecked == true);
     }
 }

@@ -672,6 +672,27 @@ public sealed partial class TaskDetailPage : Page
     private async void RelatedLink_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement fe || fe.DataContext is not HydratedRelatedLink link) return;
+        var normalizedTopicSlug = link.Slug.Trim().Replace('\\', '/');
+        var aliasIndex = normalizedTopicSlug.IndexOf('|');
+        if (aliasIndex >= 0)
+            normalizedTopicSlug = normalizedTopicSlug[..aliasIndex];
+        var anchorIndex = normalizedTopicSlug.IndexOf('#');
+        if (anchorIndex >= 0)
+            normalizedTopicSlug = normalizedTopicSlug[..anchorIndex];
+        if (normalizedTopicSlug.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            normalizedTopicSlug = normalizedTopicSlug[..^3];
+        var topicPath = "wiki/" + normalizedTopicSlug.Trim('/') + ".md";
+        var researchTopic = App.Research.Capture().Topics.FirstOrDefault(topic =>
+            string.Equals(
+                topic.VaultRelativePath,
+                topicPath,
+                StringComparison.OrdinalIgnoreCase));
+        if (researchTopic is not null)
+        {
+            (App.MainWindow as MainWindow)?.NavigateTo(
+                new GlassworkUri.ResearchTopic(researchTopic.Id));
+            return;
+        }
         var wikiRoot = Path.GetDirectoryName(App.Vault.VaultPath) ?? App.Vault.VaultPath;
         var absolutePath = Path.Combine(wikiRoot, link.Slug.Replace('/', Path.DirectorySeparatorChar));
         var vaultRelative = ToVaultRelativePath(absolutePath);

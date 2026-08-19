@@ -20,6 +20,7 @@ public class VisualVerificationScenarioTests
               "description": "Shows up in Backlog.",
               "status": "todo",
               "priority": "high",
+              "related": ["concepts/async-callbacks"],
               "subtasks": [
                 { "text": "First visible subtask", "status": "in_progress" }
               ]
@@ -40,6 +41,9 @@ public class VisualVerificationScenarioTests
         Assert.AreEqual("glasswork://backlog", scenario.StartUri);
         Assert.AreEqual(1, scenario.Tasks.Count);
         Assert.AreEqual("verify-backlog-task", scenario.Tasks[0].Id);
+        CollectionAssert.AreEqual(
+            new[] { "concepts/async-callbacks" },
+            scenario.Tasks[0].Related);
         Assert.AreEqual("First visible subtask", scenario.Tasks[0].Subtasks[0].Text);
         Assert.AreEqual("wait-for", scenario.Actions[0].Type);
         Assert.AreEqual("backlog", scenario.Captures[0].Name);
@@ -64,6 +68,7 @@ public class VisualVerificationScenarioTests
               "sources": ["https://example.test/source"],
               "researchInclude": ["included-page"],
               "researchExclude": ["excluded-page"],
+              "researchRelatedWork": ["verify-backlog-task"],
               "markdown": "# Async callbacks\n\nSynthesis."
             }
           ],
@@ -87,6 +92,9 @@ public class VisualVerificationScenarioTests
         CollectionAssert.AreEqual(
             new[] { "excluded-page" },
             scenario.WikiPages[0].ResearchExclude);
+        CollectionAssert.AreEqual(
+            new[] { "verify-backlog-task" },
+            scenario.WikiPages[0].ResearchRelatedWork);
         Assert.AreEqual("# Async callbacks\n\nSynthesis.", scenario.WikiPages[0].Markdown);
     }
 

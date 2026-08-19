@@ -25,8 +25,15 @@ public class TaskService
     /// <summary>
     /// Create a new task with auto-generated ID, save to vault.
     /// </summary>
-    public GlassworkTask CreateTask(string title, string priority = "medium", string? parent = null,
-        int? adoLink = null, string? adoTitle = null)
+    public GlassworkTask CreateTask(
+        string title,
+        string priority = "medium",
+        string? parent = null,
+        int? adoLink = null,
+        string? adoTitle = null,
+        string? description = null,
+        bool addToMyDay = false,
+        IReadOnlyCollection<RelatedLink>? relatedLinks = null)
     {
         var id = VaultService.GenerateId(title);
         var suffix = 1;
@@ -43,6 +50,17 @@ public class TaskService
             Parent = parent,
             AdoLink = adoLink,
             AdoTitle = adoTitle,
+            Description = description?.Trim() ?? string.Empty,
+            MyDay = addToMyDay ? DateTime.Today : null,
+            RelatedLinks = relatedLinks is null
+                ? []
+                : relatedLinks
+                    .Select(link => new RelatedLink
+                    {
+                        Slug = link.Slug,
+                        DisplayName = link.DisplayName,
+                    })
+                    .ToList(),
         };
 
         _vault.Save(task, ifAbsent: true);
