@@ -9,6 +9,7 @@ using Glasswork.Controls;
 using Glasswork.Core.Research;
 using Glasswork.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
@@ -66,6 +67,7 @@ public sealed partial class ResearchPage : Page
         base.OnNavigatedTo(e);
         var navigation = e.Parameter as ResearchPageNavigation;
         App.Research.TopicsChanged += OnResearchTopicsChanged;
+        App.Research.ChangeLogsChanged += OnResearchChangeLogsChanged;
         RefreshCatalog(navigation?.TopicId, preserveCurrentState: false);
     }
 
@@ -74,7 +76,16 @@ public sealed partial class ResearchPage : Page
         CloseRemoveTopicOverlay();
         CloseOpenDrawer(restoreFocus: false);
         App.Research.TopicsChanged -= OnResearchTopicsChanged;
+        App.Research.ChangeLogsChanged -= OnResearchChangeLogsChanged;
         base.OnNavigatedFrom(e);
+    }
+
+    private void OnResearchChangeLogsChanged(
+        object? sender,
+        ResearchChangeLogsChangedEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+            RefreshCatalog(requestedTopicId: null, preserveCurrentState: true));
     }
 
     private void OnResearchTopicsChanged(
@@ -333,6 +344,7 @@ public sealed partial class ResearchPage : Page
             ? string.Empty
             : BuildWarningMessage(warning);
         TopicMarkdown.Markdown = topic.Markdown;
+        ResearchHistoryButton.IsEnabled = true;
         ShowRelatedContext(topic.Context);
         UpdateContextSummary(topic);
     }
@@ -570,9 +582,16 @@ public sealed partial class ResearchPage : Page
             || _previewSelectedIndex >= _previewPages.Count)
             return;
         _previewPage = _previewPages[_previewSelectedIndex];
+        PreviewEyebrow.Text = "Related Wiki Page";
         PreviewTitle.Text = _previewPage.Title;
         PreviewMetadata.Text = ResearchRelatedPageRow.BuildMetadataLine(_previewPage);
         PreviewMarkdown.Markdown = _previewPage.Markdown;
+        PreviewMarkdownScroll.Visibility = Visibility.Visible;
+        PreviewStatePanel.Visibility = Visibility.Collapsed;
+        PreviewPreviousButton.Visibility = Visibility.Visible;
+        PreviewNextButton.Visibility = Visibility.Visible;
+        PreviewOpenInObsidianButton.Visibility = Visibility.Visible;
+        AutomationProperties.SetName(PreviewCloseButton, "Close related page preview");
         PreviewPreviousButton.IsEnabled = _previewSelectedIndex > 0;
         PreviewNextButton.IsEnabled = _previewSelectedIndex < _previewPages.Count - 1;
     }
@@ -585,13 +604,14 @@ public sealed partial class ResearchPage : Page
         bool restoreReadingPosition = true,
         Control? focusTarget = null)
     {
-        if (_drawerMode != ResearchDrawerMode.Preview || _previewSelectedIndex < 0)
+        if (_drawerMode is not (ResearchDrawerMode.Preview or ResearchDrawerMode.History))
             return;
 
         var focusRestoreGeneration = ++_focusRestoreGeneration;
         _focusRestoreTimer?.Stop();
         _focusRestoreTimer = null;
         var readingPosition = _previewSynthesisVerticalOffset;
+        var wasHistory = _drawerMode == ResearchDrawerMode.History;
         var invokerPageId = _previewInvokerPageId;
         PreviewDrawerOverlay.Visibility = Visibility.Collapsed;
         (App.MainWindow as MainWindow)?.HideModalOverlay(PreviewDrawerOverlay);
@@ -613,7 +633,7 @@ public sealed partial class ResearchPage : Page
         if (restoreFocus)
         {
             var invoker = focusTarget
-                ?? FindCurrentPreviewInvoker(invokerPageId)
+                ?? (wasHistory ? ResearchHistoryButton : FindCurrentPreviewInvoker(invokerPageId))
                 ?? (EmptyStateView.Visibility == Visibility.Visible
                     ? ResearchEmptyAddTopicButton
                     : TopicList);
@@ -626,6 +646,11 @@ public sealed partial class ResearchPage : Page
 
     private void ReconcileOpenPreview()
     {
+        if (_drawerMode == ResearchDrawerMode.History)
+        {
+            ReconcileOpenHistory();
+            return;
+        }
         if (_previewSelectedIndex < 0)
             return;
 
@@ -756,7 +781,7 @@ public sealed partial class ResearchPage : Page
 
     private void CloseOpenDrawer(bool restoreFocus)
     {
-        if (_drawerMode == ResearchDrawerMode.Preview)
+        if (_drawerMode is ResearchDrawerMode.Preview or ResearchDrawerMode.History)
         {
             ClosePreviewDrawer(restoreFocus);
             return;
@@ -1090,7 +1115,12 @@ public sealed partial class ResearchPage : Page
         object sender,
         RoutedEventArgs e)
     {
-        if (_previewPage is not null)
+        if (_drawerMode == ResearchDrawerMode.History
+            && _selectedTopic?.ChangeLog.State is not ResearchChangeLogState.Missing)
+        {
+            await App.ObsidianLauncher.Open(_selectedTopic!.ChangeLog.VaultRelativePath);
+        }
+        else if (_previewPage is not null)
             await App.ObsidianLauncher.Open(_previewPage.VaultRelativePath);
     }
 
@@ -1105,6 +1135,92 @@ public sealed partial class ResearchPage : Page
     {
         if (_selectedTopic is not null)
             await App.ObsidianLauncher.Open(_selectedTopic.VaultRelativePath);
+    }
+
+    private async void ResearchHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedTopic is null)
+            return;
+        if (_drawerMode != ResearchDrawerMode.None)
+            CloseOpenDrawer(restoreFocus: false);
+
+        _focusRestoreGeneration++;
+        _focusRestoreTimer?.Stop();
+        _focusRestoreTimer = null;
+        _previewSynthesisVerticalOffset = TopicDetailScroll.VerticalOffset;
+        _previewTopicId = _selectedTopic.Id;
+        _previewInvokerPageId = null;
+        _drawerMode = ResearchDrawerMode.History;
+        ShowHistory();
+        PreviewDrawerContent.Visibility = Visibility.Visible;
+        ContextSelectionDrawerContent.Visibility = Visibility.Collapsed;
+        var window = App.MainWindow as MainWindow
+            ?? throw new InvalidOperationException("Research history requires the app window.");
+        PreviewDrawerOverlay.Visibility = Visibility.Visible;
+        window.ShowModalOverlay(PreviewDrawerOverlay, PreviewCloseButton);
+        PreviewDrawerOverlay.UpdateLayout();
+        await FocusManager.TryFocusAsync(PreviewCloseButton, FocusState.Programmatic);
+    }
+
+    private void ShowHistory()
+    {
+        if (_selectedTopic is null)
+            return;
+        var log = _selectedTopic.ChangeLog;
+        PreviewEyebrow.Text = "Research Change Log";
+        PreviewTitle.Text = $"{_selectedTopic.Title} history";
+        PreviewMetadata.Text = log.State == ResearchChangeLogState.Available
+            ? $"{log.Entries.Count} knowledge-changing session{(log.Entries.Count == 1 ? string.Empty : "s")}"
+            : string.Empty;
+        PreviewPreviousButton.Visibility = Visibility.Collapsed;
+        PreviewNextButton.Visibility = Visibility.Collapsed;
+        AutomationProperties.SetName(PreviewCloseButton, "Close Research history");
+        PreviewOpenInObsidianButton.Visibility =
+            log.State == ResearchChangeLogState.Missing
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        if (log.State == ResearchChangeLogState.Available)
+        {
+            PreviewMarkdown.Markdown = log.DisplayMarkdown;
+            PreviewMarkdownScroll.Visibility = Visibility.Visible;
+            PreviewStatePanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        PreviewMarkdown.Markdown = string.Empty;
+        PreviewMarkdownScroll.Visibility = Visibility.Collapsed;
+        PreviewStatePanel.Visibility = Visibility.Visible;
+        (PreviewStateTitle.Text, PreviewStateMessage.Text) = log.State switch
+        {
+            ResearchChangeLogState.Malformed => (
+                "History needs repair",
+                $"{log.Message} Repair the Markdown file in Obsidian; a later valid save will refresh this drawer."),
+            ResearchChangeLogState.Empty => (
+                "No history entries",
+                "The Change Log exists but has no knowledge-changing Research Sessions yet."),
+            _ => (
+                "No Research history yet",
+                "A knowledge-changing Research Session will create this Topic's Change Log. Read-only sessions are not recorded."),
+        };
+    }
+
+    private void ReconcileOpenHistory()
+    {
+        if (_selectedTopic is null
+            || !string.Equals(
+                _previewTopicId,
+                _selectedTopic.Id,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            ClosePreviewDrawer(
+                restoreFocus: true,
+                restoreReadingPosition: false,
+                focusTarget: EmptyStateView.Visibility == Visibility.Visible
+                    ? ResearchEmptyAddTopicButton
+                    : TopicList);
+            return;
+        }
+        ShowHistory();
     }
 
     private void RemoveFromResearchButton_Click(object sender, RoutedEventArgs e)
@@ -1473,6 +1589,7 @@ public enum ResearchDrawerMode
 {
     None,
     Preview,
+    History,
     SessionSelection,
     DurableCuration,
 }

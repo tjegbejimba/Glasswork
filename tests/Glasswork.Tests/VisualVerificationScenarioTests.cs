@@ -91,6 +91,33 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void FromJson_LoadsResearchChangeLogsForDrawerStates()
+    {
+        const string json = """
+        {
+          "name": "research history",
+          "researchChangeLogs": [
+            {
+              "topicId": "async-callbacks",
+              "markdown": "---\ntopic_id: async-callbacks\n---\n# Research Change Log"
+            }
+          ],
+          "captures": [
+            { "name": "research-history" }
+          ]
+        }
+        """;
+
+        var scenario = VisualVerificationScenario.FromJson(json);
+
+        Assert.HasCount(1, scenario.ResearchChangeLogs);
+        Assert.AreEqual("async-callbacks", scenario.ResearchChangeLogs[0].TopicId);
+        StringAssert.Contains(
+            scenario.ResearchChangeLogs[0].Markdown,
+            "# Research Change Log");
+    }
+
+    [TestMethod]
     public void FromJson_LoadsSafeWikiMutationAndScrollAssertions()
     {
         const string json = """
