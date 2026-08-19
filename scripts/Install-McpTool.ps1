@@ -18,6 +18,9 @@ function Get-McpPublishedMetadata {
         "X-GitHub-Api-Version" = "2022-11-28"
         "User-Agent"           = "Glasswork-Mcp-Installer"
     }
+    if (-not [string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+        $headers.Authorization = "Bearer $env:GH_TOKEN"
+    }
     $tagName = "mcp-v$Version"
     $releaseUrl = "https://api.github.com/repos/tjegbejimba/Glasswork/releases/tags/$tagName"
     $release = Invoke-RestMethod -Uri $releaseUrl -Headers $headers
