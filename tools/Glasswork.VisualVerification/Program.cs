@@ -417,6 +417,9 @@ internal static partial class VisualVerificationRunner
             case "assert-selected":
                 AssertSelected(hwnd, action);
                 return;
+            case "assert-checked":
+                AssertChecked(WaitForElement(hwnd, action));
+                return;
             case "scroll-percent":
                 ScrollToPercent(WaitForElement(hwnd, action), action);
                 return;
@@ -1082,6 +1085,21 @@ internal static partial class VisualVerificationRunner
 
         throw new InvalidOperationException(
             $"No selected accessible item named '{action.Name}' was found.");
+    }
+
+    private static void AssertChecked(AutomationElement element)
+    {
+        if (!element.TryGetCurrentPattern(TogglePattern.Pattern, out var pattern)
+            || pattern is not TogglePattern toggle)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' does not support checked state.");
+        }
+        if (toggle.Current.ToggleState != ToggleState.On)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' is not checked.");
+        }
     }
 
     private static void ScrollToPercent(

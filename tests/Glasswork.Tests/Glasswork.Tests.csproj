@@ -25,6 +25,8 @@
              Link="TestInfrastructure\UnreadableDirectoryScope.cs" />
     <Compile Include="..\..\src\Glasswork.App\Pages\ResearchPageRefreshPolicy.cs"
              Link="ResearchPageRefreshPolicy.cs" />
+    <Compile Include="..\..\src\Glasswork.App\Pages\ResearchContextSelectionPolicy.cs"
+             Link="ResearchContextSelectionPolicy.cs" />
   </ItemGroup>
 
 </Project>
