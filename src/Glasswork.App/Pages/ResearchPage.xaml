@@ -326,23 +326,46 @@
                                         Text="Tasks stay independent from this Topic and keep their own live workflow state."
                                         TextWrapping="Wrap" />
                                 </StackPanel>
-                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button
+                                    x:Name="ExploreWithWayfinderButton"
+                                    AutomationProperties.AutomationId="ResearchExploreWithWayfinderButton"
+                                    AutomationProperties.HelpText="Optional planning handoff for unclear outcomes, alternatives, or decisions."
+                                    Click="ExploreWithWayfinderButton_Click"
+                                    Content="Explore with Wayfinder"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    Style="{StaticResource AccentButtonStyle}" />
+                                <TextBlock
+                                    FontSize="11"
+                                    Opacity="0.68"
+                                    Text="Optional when ambiguity benefits from planning; Topics do not require a map."
+                                    TextWrapping="Wrap" />
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                                     <Button
                                         x:Name="CreateRelatedTaskButton"
                                         AutomationProperties.AutomationId="ResearchCreateTaskButton"
                                         Click="CreateRelatedTaskButton_Click"
-                                        Content="Create Task" />
+                                        Content="Create Task"
+                                        HorizontalAlignment="Stretch" />
                                     <Button
                                         x:Name="LinkExistingTaskButton"
+                                        Grid.Column="1"
                                         AutomationProperties.AutomationId="ResearchLinkExistingTaskButton"
                                         Click="LinkExistingTaskButton_Click"
-                                        Content="Link existing" />
-                                </StackPanel>
+                                        Content="Link Task"
+                                        HorizontalAlignment="Stretch" />
+                                </Grid>
+                                <Button
+                                    x:Name="LinkExistingWayfinderButton"
+                                    AutomationProperties.AutomationId="ResearchLinkExistingWayfinderButton"
+                                    Click="LinkExistingWayfinderButton_Click"
+                                    Content="Link Wayfinder issue"
+                                    HorizontalAlignment="Stretch" />
                                 <TextBlock
                                     x:Name="RelatedWorkEmpty"
                                     AutomationProperties.AutomationId="ResearchRelatedWorkEmpty"
                                     Opacity="0.68"
-                                    Text="No Tasks are linked to this Topic yet."
+                                    Text="No Tasks or Wayfinder issues are linked to this Topic yet."
                                     TextWrapping="Wrap" />
                                 <StackPanel
                                     x:Name="ActiveRelatedWorkSection"
@@ -399,6 +422,57 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
+                                    <ItemsControl
+                                        x:Name="ActiveRelatedWayfinderList"
+                                        AutomationProperties.AutomationId="ResearchActiveWayfinderList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid
+                                                    Margin="0,0,0,6"
+                                                    ColumnDefinitions="*,Auto"
+                                                    ColumnSpacing="6">
+                                                    <Button
+                                                        AutomationProperties.AutomationId="ResearchRelatedWayfinder"
+                                                        AutomationProperties.Name="{Binding AccessibleName}"
+                                                        Click="RelatedWayfinderButton_Click"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        IsEnabled="{Binding CanNavigate}"
+                                                        Padding="10,8"
+                                                        Tag="{Binding}">
+                                                        <StackPanel Spacing="3">
+                                                            <TextBlock
+                                                                FontSize="11"
+                                                                FontWeight="SemiBold"
+                                                                Opacity="0.72"
+                                                                Text="Wayfinder" />
+                                                            <TextBlock
+                                                                FontWeight="SemiBold"
+                                                                MaxLines="2"
+                                                                Text="{Binding Title}"
+                                                                TextTrimming="CharacterEllipsis"
+                                                                TextWrapping="Wrap"
+                                                                ToolTipService.ToolTip="{Binding Title}" />
+                                                            <TextBlock
+                                                                FontSize="11"
+                                                                Opacity="0.68"
+                                                                Text="{Binding StatusLabel}"
+                                                                TextWrapping="Wrap" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button
+                                                        Grid.Column="1"
+                                                        AutomationProperties.AutomationId="ResearchRepairWayfinderLink"
+                                                        AutomationProperties.Name="{Binding RepairAccessibleName}"
+                                                        Click="RepairRelatedWayfinderButton_Click"
+                                                        Content="Repair"
+                                                        Tag="{Binding}"
+                                                        VerticalAlignment="Center"
+                                                        Visibility="{Binding RepairVisibility}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                 </StackPanel>
                                 <Expander
                                     x:Name="CompletedRelatedWorkExpander"
@@ -411,6 +485,7 @@
                                             FontWeight="SemiBold"
                                             Text="Completed" />
                                     </Expander.Header>
+                                    <StackPanel>
                                     <ItemsControl
                                         x:Name="CompletedRelatedWorkList"
                                         AutomationProperties.AutomationId="ResearchCompletedTaskList"
@@ -457,6 +532,58 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
+                                    <ItemsControl
+                                        x:Name="CompletedRelatedWayfinderList"
+                                        AutomationProperties.AutomationId="ResearchCompletedWayfinderList"
+                                        Margin="0,8,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid
+                                                    Margin="0,0,0,6"
+                                                    ColumnDefinitions="*,Auto"
+                                                    ColumnSpacing="6">
+                                                    <Button
+                                                        AutomationProperties.AutomationId="ResearchRelatedCompletedWayfinder"
+                                                        AutomationProperties.Name="{Binding AccessibleName}"
+                                                        Click="RelatedWayfinderButton_Click"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        IsEnabled="{Binding CanNavigate}"
+                                                        Padding="10,8"
+                                                        Tag="{Binding}">
+                                                        <StackPanel Spacing="3">
+                                                            <TextBlock
+                                                                FontSize="11"
+                                                                FontWeight="SemiBold"
+                                                                Opacity="0.72"
+                                                                Text="Wayfinder" />
+                                                            <TextBlock
+                                                                FontWeight="SemiBold"
+                                                                MaxLines="2"
+                                                                Text="{Binding Title}"
+                                                                TextTrimming="CharacterEllipsis"
+                                                                TextWrapping="Wrap"
+                                                                ToolTipService.ToolTip="{Binding Title}" />
+                                                            <TextBlock
+                                                                FontSize="11"
+                                                                Opacity="0.68"
+                                                                Text="{Binding StatusLabel}" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button
+                                                        Grid.Column="1"
+                                                        AutomationProperties.AutomationId="ResearchRepairWayfinderLink"
+                                                        AutomationProperties.Name="{Binding RepairAccessibleName}"
+                                                        Click="RepairRelatedWayfinderButton_Click"
+                                                        Content="Repair"
+                                                        Tag="{Binding}"
+                                                        VerticalAlignment="Center"
+                                                        Visibility="{Binding RepairVisibility}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    </StackPanel>
                                 </Expander>
                                 <ItemsControl
                                     x:Name="RelatedWorkWarningsList"

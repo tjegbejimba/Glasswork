@@ -44,8 +44,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private readonly VaultService? _taskVault;
     private readonly IndexService? _taskIndex;
     private readonly TaskService? _taskService;
+    private readonly IWayfinderGateway? _wayfinderGateway;
     private readonly TimeSpan _quietPeriod;
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _wayfinderMutationGate = new(1, 1);
     private readonly object _processingGate = new();
     private readonly Dictionary<string, WikiPageCandidate> _pagesByPath =
         new(StringComparer.OrdinalIgnoreCase);
@@ -57,6 +59,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private readonly Dictionary<string, ResearchCatalogChangeOrigin> _pendingPaths =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTime> _selfWriteBursts =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, WayfinderProjectionState> _wayfinderByReference =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Debouncer _refreshDebouncer;
     private readonly FileSystemWatcher _watcher;
@@ -81,7 +85,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         TimeSpan? quietPeriod = null,
         VaultService? taskVault = null,
         IndexService? taskIndex = null,
-        TaskService? taskService = null)
+        TaskService? taskService = null,
+        IWayfinderGateway? wayfinderGateway = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(vaultRoot);
         _vaultRoot = Path.GetFullPath(vaultRoot);
@@ -93,6 +98,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         _taskVault = taskVault;
         _taskIndex = taskIndex;
         _taskService = taskService;
+        _wayfinderGateway = wayfinderGateway;
         try
         {
             RecoverResearchRemoval();
@@ -1269,6 +1275,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             researchMetadata.ExcludeIds,
             researchMetadata.Warnings,
             researchMetadata.RelatedTaskIds,
+            researchMetadata.RelatedWayfinderReferences,
             researchMetadata.RelatedWorkWarnings,
             relativePath,
             match.Groups[2].Value.TrimStart(),
@@ -1883,6 +1890,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         && left.Context.Warnings.SequenceEqual(right.Context.Warnings)
         && left.RelatedWork.ActiveTasks.SequenceEqual(right.RelatedWork.ActiveTasks)
         && left.RelatedWork.CompletedTasks.SequenceEqual(right.RelatedWork.CompletedTasks)
+        && left.RelatedWork.ActiveWayfinder.SequenceEqual(right.RelatedWork.ActiveWayfinder)
+        && left.RelatedWork.CompletedWayfinder.SequenceEqual(right.RelatedWork.CompletedWayfinder)
         && left.RelatedWork.Warnings.SequenceEqual(right.RelatedWork.Warnings);
 
     private static bool ChangeLogsEquivalent(
@@ -1946,6 +1955,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     ResearchContextWarningCode.InvalidOverride,
                     "Research metadata must be a YAML mapping.")],
                 Array.Empty<string>(),
+                Array.Empty<string>(),
                 [new ResearchRelatedWorkWarning(
                     topicId,
                     ResearchRelatedWorkWarningCode.InvalidMetadata,
@@ -1971,12 +1981,67 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             research,
             topicId,
             relatedWorkWarnings);
+        var relatedWayfinderReferences = ReadRelatedWayfinderReferences(
+            research,
+            topicId,
+            relatedWorkWarnings);
         return new ResearchMetadata(
             includeIds,
             excludeIds,
             warnings,
             relatedTaskIds,
+            relatedWayfinderReferences,
             relatedWorkWarnings);
+    }
+
+    private static IReadOnlyList<string> ReadRelatedWayfinderReferences(
+        YamlMappingNode research,
+        string topicId,
+        ICollection<ResearchRelatedWorkWarning> warnings)
+    {
+        var entry = research.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, "related_wayfinder", StringComparison.Ordinal));
+        if (entry.Key is null)
+            return Array.Empty<string>();
+        if (entry.Value is not YamlSequenceNode sequence)
+        {
+            warnings.Add(new ResearchRelatedWorkWarning(
+                $"{topicId}:related_wayfinder",
+                ResearchRelatedWorkWarningCode.InvalidMetadata,
+                "Research 'related_wayfinder' must be a YAML sequence of GitHub issue identities.",
+                CanRepair: false));
+            return Array.Empty<string>();
+        }
+
+        var values = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in sequence.Children)
+        {
+            var value = node is YamlScalarNode scalar
+                ? scalar.Value?.Trim()
+                : null;
+            if (!WayfinderIssueIdentity.TryParse(value, out var identity))
+            {
+                warnings.Add(new ResearchRelatedWorkWarning(
+                    value ?? $"{topicId}:related_wayfinder",
+                    ResearchRelatedWorkWarningCode.InvalidWayfinderReference,
+                    "Research 'related_wayfinder' contains an invalid owner/repository#issue identity.",
+                    CanRepair: false));
+                continue;
+            }
+            if (!seen.Add(identity.Canonical))
+            {
+                warnings.Add(new ResearchRelatedWorkWarning(
+                    identity.Canonical,
+                    ResearchRelatedWorkWarningCode.DuplicateWayfinderReference,
+                    $"Wayfinder issue '{identity.Canonical}' appears more than once. Repair removes the duplicate.",
+                    CanRepair: true));
+                continue;
+            }
+            values.Add(identity.Canonical);
+        }
+        return values;
     }
 
     private static IReadOnlyList<string> ReadRelatedTaskIds(
@@ -3312,6 +3377,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         _disposed = true;
         _watcher.Dispose();
         _refreshDebouncer.Dispose();
+        _wayfinderMutationGate.Dispose();
         lock (_pendingGate)
             _pendingPaths.Clear();
         _selfWriteBursts.Clear();
@@ -3376,6 +3442,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         IReadOnlyList<string> ExcludeIds,
         IReadOnlyList<ResearchContextWarning> MetadataWarnings,
         IReadOnlyList<string> RelatedTaskIds,
+        IReadOnlyList<string> RelatedWayfinderReferences,
         IReadOnlyList<ResearchRelatedWorkWarning> RelatedWorkWarnings,
         string VaultRelativePath,
         string Markdown,
@@ -3386,6 +3453,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         IReadOnlyList<string> ExcludeIds,
         IReadOnlyList<ResearchContextWarning> Warnings,
         IReadOnlyList<string> RelatedTaskIds,
+        IReadOnlyList<string> RelatedWayfinderReferences,
         IReadOnlyList<ResearchRelatedWorkWarning> RelatedWorkWarnings)
     {
         public static ResearchMetadata Empty { get; } =
@@ -3393,6 +3461,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 Array.Empty<string>(),
                 Array.Empty<string>(),
                 Array.Empty<ResearchContextWarning>(),
+                Array.Empty<string>(),
                 Array.Empty<string>(),
                 Array.Empty<ResearchRelatedWorkWarning>());
     }

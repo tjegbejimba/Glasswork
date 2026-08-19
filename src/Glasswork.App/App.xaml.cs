@@ -504,7 +504,8 @@ public partial class App : Application
             selfWrites: SelfWrites,
             taskVault: Vault,
             taskIndex: Index,
-            taskService: Tasks);
+            taskService: Tasks,
+            wayfinderGateway: WayfinderGatewayFactory.Create());
         Research.Start();
         _ = Research.Capture(DateOnly.FromDateTime(DateTime.Today));
 

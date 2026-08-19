@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="Glasswork.Pages.LinkWayfinderDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Link Wayfinder issue"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnLink"
+    PrimaryButtonText="Link issue">
+    <StackPanel MinWidth="460" Spacing="12">
+        <TextBlock
+            Text="Enter the GitHub issue that owns this Wayfinder map or ticket."
+            TextWrapping="Wrap" />
+        <TextBox
+            x:Name="IssueReference"
+            AutomationProperties.AutomationId="ResearchWayfinderIssueReference"
+            AutomationProperties.Name="Wayfinder GitHub issue"
+            Header="GitHub issue"
+            PlaceholderText="owner/repository#123 or GitHub issue URL" />
+        <InfoBar
+            x:Name="LinkError"
+            AutomationProperties.AutomationId="ResearchWayfinderLinkError"
+            IsClosable="False"
+            IsOpen="False"
+            Severity="Error" />
+    </StackPanel>
+</ContentDialog>

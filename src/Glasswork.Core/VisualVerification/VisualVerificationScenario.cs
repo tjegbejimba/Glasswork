@@ -5,6 +5,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Glasswork.Core.Models;
+using Glasswork.Core.Research;
 
 namespace Glasswork.Core.VisualVerification;
 
@@ -24,6 +25,7 @@ public sealed partial class VisualVerificationScenario
     public string Theme { get; init; } = "system";
     public List<VisualVerificationTask> Tasks { get; init; } = [];
     public List<VisualVerificationWikiPage> WikiPages { get; init; } = [];
+    public List<VisualVerificationWayfinderIssue> WayfinderIssues { get; init; } = [];
     public List<VisualVerificationResearchChangeLog> ResearchChangeLogs { get; init; } = [];
     public List<VisualVerificationAction> Actions { get; init; } = [];
     public List<VisualVerificationCapture> Captures { get; init; } = [];
@@ -85,6 +87,21 @@ public sealed partial class VisualVerificationScenario
             if (!IsSafeWikiPagePath(page.RelativePath))
                 throw new FormatException(
                     $"Scenario Wiki Page '{page.Id}' requires a safe .md path relative to wiki/.");
+        }
+
+        foreach (var issue in WayfinderIssues)
+        {
+            if (!WayfinderIssueIdentity.TryParse(issue.Reference, out _))
+            {
+                throw new FormatException(
+                    $"Scenario Wayfinder issue '{issue.Reference}' requires a canonical owner/repository#number identity.");
+            }
+            if (issue.State is not (
+                "open" or "closed" or "unknown" or "inaccessible" or "not-found"))
+            {
+                throw new FormatException(
+                    $"Scenario Wayfinder issue '{issue.Reference}' has unsupported state '{issue.State}'.");
+            }
         }
 
         foreach (var log in ResearchChangeLogs)
@@ -358,7 +375,16 @@ public sealed class VisualVerificationWikiPage
     public List<string> ResearchInclude { get; init; } = [];
     public List<string> ResearchExclude { get; init; } = [];
     public List<string> ResearchRelatedWork { get; init; } = [];
+    public List<string> ResearchRelatedWayfinder { get; init; } = [];
     public string Markdown { get; init; } = string.Empty;
+}
+
+public sealed class VisualVerificationWayfinderIssue
+{
+    public string Reference { get; init; } = string.Empty;
+    public string Title { get; init; } = string.Empty;
+    public string State { get; init; } = "unknown";
+    public bool HasReciprocalReference { get; init; }
 }
 
 public sealed class VisualVerificationResearchChangeLog

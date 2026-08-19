@@ -80,9 +80,13 @@ internal static partial class VisualVerificationRunner
         var uiStatePath = Path.Combine(workDir, "ui-state.json");
         var captureRequestPath = Path.Combine(workDir, "capture.request");
         var captureOutputPath = Path.Combine(workDir, "capture.png");
+        var wayfinderFixturePath = Path.Combine(workDir, "wayfinder-fixture.json");
         Directory.CreateDirectory(todoPath);
 
         MaterializeVault(scenario, vaultRoot, todoPath);
+        File.WriteAllText(
+            wayfinderFixturePath,
+            JsonSerializer.Serialize(scenario.WayfinderIssues));
         File.WriteAllText(
             uiStatePath,
             JsonSerializer.Serialize(new Dictionary<string, string>
@@ -98,7 +102,8 @@ internal static partial class VisualVerificationRunner
             uiStatePath,
             instanceKey,
             captureRequestPath,
-            captureOutputPath);
+            captureOutputPath,
+            wayfinderFixturePath);
 
         try
         {
@@ -243,7 +248,8 @@ internal static partial class VisualVerificationRunner
                 lines.Add("glasswork:");
                 if (page.ResearchInclude.Count == 0
                     && page.ResearchExclude.Count == 0
-                    && page.ResearchRelatedWork.Count == 0)
+                    && page.ResearchRelatedWork.Count == 0
+                    && page.ResearchRelatedWayfinder.Count == 0)
                 {
                     lines.Add("  research: {}");
                 }
@@ -264,6 +270,11 @@ internal static partial class VisualVerificationRunner
                     {
                         lines.Add(
                             $"    related_work: [{string.Join(", ", page.ResearchRelatedWork.Select(YamlScalar))}]");
+                    }
+                    if (page.ResearchRelatedWayfinder.Count > 0)
+                    {
+                        lines.Add(
+                            $"    related_wayfinder: [{string.Join(", ", page.ResearchRelatedWayfinder.Select(YamlScalar))}]");
                     }
                 }
             }
@@ -291,7 +302,8 @@ internal static partial class VisualVerificationRunner
         string uiStatePath,
         string instanceKey,
         string captureRequestPath,
-        string captureOutputPath)
+        string captureOutputPath,
+        string wayfinderFixturePath)
     {
         var psi = new ProcessStartInfo(appExe)
         {
@@ -309,6 +321,7 @@ internal static partial class VisualVerificationRunner
         psi.Environment[VerificationLaunchOptions.SkipUpdateCheckVariable] = "1";
         psi.Environment[VerificationLaunchOptions.CaptureRequestPathVariable] = captureRequestPath;
         psi.Environment[VerificationLaunchOptions.CaptureOutputPathVariable] = captureOutputPath;
+        psi.Environment["GLASSWORK_VISUAL_WAYFINDER_FIXTURE"] = wayfinderFixturePath;
 
         return Process.Start(psi) ?? throw new InvalidOperationException("Failed to launch Glasswork.");
     }

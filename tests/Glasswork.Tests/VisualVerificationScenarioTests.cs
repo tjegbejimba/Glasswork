@@ -69,7 +69,22 @@ public class VisualVerificationScenarioTests
               "researchInclude": ["included-page"],
               "researchExclude": ["excluded-page"],
               "researchRelatedWork": ["verify-backlog-task"],
+              "researchRelatedWayfinder": ["tjegbejimba/Glasswork#369"],
               "markdown": "# Async callbacks\n\nSynthesis."
+            }
+          ],
+          "wayfinderIssues": [
+            {
+              "reference": "tjegbejimba/Glasswork#369",
+              "title": "Choose the architecture",
+              "state": "open",
+              "hasReciprocalReference": true
+            }
+          ],
+          "researchChangeLogs": [
+            {
+              "topicId": "async-callbacks",
+              "markdown": "# Research Change Log"
             }
           ],
           "captures": [
@@ -95,6 +110,13 @@ public class VisualVerificationScenarioTests
         CollectionAssert.AreEqual(
             new[] { "verify-backlog-task" },
             scenario.WikiPages[0].ResearchRelatedWork);
+        CollectionAssert.AreEqual(
+            new[] { "tjegbejimba/Glasswork#369" },
+            scenario.WikiPages[0].ResearchRelatedWayfinder);
+        Assert.AreEqual("open", scenario.WayfinderIssues.Single().State);
+        Assert.AreEqual(
+            "async-callbacks",
+            scenario.ResearchChangeLogs.Single().TopicId);
         Assert.AreEqual("# Async callbacks\n\nSynthesis.", scenario.WikiPages[0].Markdown);
     }
 

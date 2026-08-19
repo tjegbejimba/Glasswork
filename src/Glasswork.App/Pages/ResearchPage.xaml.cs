@@ -16,6 +16,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.System;
 
 namespace Glasswork.Pages;
 
@@ -27,6 +28,8 @@ public sealed partial class ResearchPage : Page
     public ObservableCollection<ResearchContextSelectionRow> ContextSelectionRows { get; } = [];
     public ObservableCollection<ResearchRelatedTaskRow> ActiveRelatedTasks { get; } = [];
     public ObservableCollection<ResearchRelatedTaskRow> CompletedRelatedTasks { get; } = [];
+    public ObservableCollection<ResearchRelatedWayfinderRow> ActiveRelatedWayfinder { get; } = [];
+    public ObservableCollection<ResearchRelatedWayfinderRow> CompletedRelatedWayfinder { get; } = [];
     public ObservableCollection<ResearchRelatedWorkWarningRow> RelatedWorkWarnings { get; } = [];
     public ObservableCollection<ResearchOpenQuestionRow> OpenQuestions { get; } = [];
 
@@ -52,6 +55,10 @@ public sealed partial class ResearchPage : Page
     private IReadOnlyList<ResearchCandidateProjection> _durableCandidateProjection = [];
     private ResearchSessionAction _sessionAction = ResearchSessionAction.ContinueResearch;
     private string? _sessionIntent;
+    private readonly HashSet<string> _wayfinderRefreshInFlight =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _wayfinderRefreshedTopics =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public ResearchPage()
     {
@@ -62,6 +69,8 @@ public sealed partial class ResearchPage : Page
         ContextSelectionList.ItemsSource = ContextSelectionRows;
         ActiveRelatedWorkList.ItemsSource = ActiveRelatedTasks;
         CompletedRelatedWorkList.ItemsSource = CompletedRelatedTasks;
+        ActiveRelatedWayfinderList.ItemsSource = ActiveRelatedWayfinder;
+        CompletedRelatedWayfinderList.ItemsSource = CompletedRelatedWayfinder;
         RelatedWorkWarningsList.ItemsSource = RelatedWorkWarnings;
         OpenQuestionsList.ItemsSource = OpenQuestions;
         TopicMarkdown.WikiLinkResolver = VaultPageHelper.BuildWikiLinkResolver();
@@ -124,6 +133,7 @@ public sealed partial class ResearchPage : Page
                        e.Snapshot.EligiblePages,
                        _selectedTopic.Id));
             var preserveOpenDrawer = (_drawerMode is ResearchDrawerMode.SessionSelection
+                    or ResearchDrawerMode.WayfinderSelection
                     or ResearchDrawerMode.DurableCuration)
                 && selectedTopicUnchanged
                 && durableProjectionUnchanged;
@@ -365,6 +375,37 @@ public sealed partial class ResearchPage : Page
         ShowRelatedContext(topic.Context);
         ShowRelatedWork(topic.RelatedWork, topicChanged);
         UpdateContextSummary(topic);
+        if ((topic.RelatedWork.ActiveWayfinder.Count > 0
+                || topic.RelatedWork.CompletedWayfinder.Count > 0)
+            && !_wayfinderRefreshedTopics.Contains(topic.Id)
+            && _wayfinderRefreshInFlight.Add(topic.Id))
+        {
+            _ = RefreshWayfinderForTopicAsync(topic.Id);
+        }
+    }
+
+    private async System.Threading.Tasks.Task RefreshWayfinderForTopicAsync(
+        string topicId)
+    {
+        try
+        {
+            var result = await App.Research.RefreshWayfinderAsync(topicId);
+            _wayfinderRefreshedTopics.Add(topicId);
+            if (result.Succeeded
+                && result.Topic is not null
+                && string.Equals(
+                    _selectedTopicId,
+                    topicId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedTopic = result.Topic;
+                ShowRelatedWork(result.Topic.RelatedWork, resetCompletedExpansion: false);
+            }
+        }
+        finally
+        {
+            _wayfinderRefreshInFlight.Remove(topicId);
+        }
     }
 
     private void ShowRelatedWork(
@@ -391,22 +432,44 @@ public sealed partial class ResearchPage : Page
                 repairableReferences.Contains(task.TaskId)));
         }
 
+        ActiveRelatedWayfinder.Clear();
+        foreach (var wayfinder in relatedWork.ActiveWayfinder)
+        {
+            ActiveRelatedWayfinder.Add(new ResearchRelatedWayfinderRow(
+                wayfinder,
+                repairableReferences.Contains(wayfinder.Identity.Canonical)));
+        }
+
+        CompletedRelatedWayfinder.Clear();
+        foreach (var wayfinder in relatedWork.CompletedWayfinder)
+        {
+            CompletedRelatedWayfinder.Add(new ResearchRelatedWayfinderRow(
+                wayfinder,
+                repairableReferences.Contains(wayfinder.Identity.Canonical)));
+        }
+
         RelatedWorkWarnings.Clear();
         foreach (var warning in relatedWork.Warnings)
             RelatedWorkWarnings.Add(new ResearchRelatedWorkWarningRow(warning));
 
         RelatedWorkEmpty.Visibility =
-            ActiveRelatedTasks.Count == 0 && CompletedRelatedTasks.Count == 0
+            ActiveRelatedTasks.Count == 0
+                && CompletedRelatedTasks.Count == 0
+                && ActiveRelatedWayfinder.Count == 0
+                && CompletedRelatedWayfinder.Count == 0
                 ? Visibility.Visible
                 : Visibility.Collapsed;
-        ActiveRelatedWorkSection.Visibility = ActiveRelatedTasks.Count > 0
+        ActiveRelatedWorkSection.Visibility =
+            ActiveRelatedTasks.Count > 0 || ActiveRelatedWayfinder.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
-        CompletedRelatedWorkExpander.Visibility = CompletedRelatedTasks.Count > 0
+        var completedCount =
+            CompletedRelatedTasks.Count + CompletedRelatedWayfinder.Count;
+        CompletedRelatedWorkExpander.Visibility = completedCount > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
         CompletedRelatedWorkHeader.Text =
-            $"Completed or closed ({CompletedRelatedTasks.Count})";
+            $"Completed or closed ({completedCount})";
         if (resetCompletedExpansion)
             CompletedRelatedWorkExpander.IsExpanded = false;
     }
@@ -849,6 +912,7 @@ public sealed partial class ResearchPage : Page
             return;
         }
         if (_drawerMode is ResearchDrawerMode.SessionSelection
+            or ResearchDrawerMode.WayfinderSelection
             or ResearchDrawerMode.DurableCuration)
         {
             CloseContextSelectionDrawer(restoreFocus);
@@ -919,6 +983,19 @@ public sealed partial class ResearchPage : Page
         }
     }
 
+    private async void ExploreWithWayfinderButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_selectedTopic is not null && sender is Button button)
+        {
+            await OpenContextSelectionDrawer(
+                ResearchDrawerMode.WayfinderSelection,
+                button,
+                ResearchSessionAction.ContinueResearch);
+        }
+    }
+
     private async System.Threading.Tasks.Task OpenContextSelectionDrawer(
         ResearchDrawerMode mode,
         Button invoker,
@@ -937,7 +1014,7 @@ public sealed partial class ResearchPage : Page
             .Select(page => page.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         ContextSelectionRows.Add(ResearchContextSelectionRow.Topic(_selectedTopic, mode));
-        if (mode == ResearchDrawerMode.SessionSelection)
+        if (IsTransientContextSelection(mode))
         {
             SessionClipboardHint.IsOpen = false;
             var prepared = App.Research.PreparedSessionContext;
@@ -955,10 +1032,15 @@ public sealed partial class ResearchPage : Page
                         preparedIds?.Contains(page.Id) ?? true,
                         mode));
             }
-            ContextSelectionEyebrow.Text = "Research Session";
-            ContextSelectionTitle.Text = "Choose context for the next session";
-            ContextSelectionExplanation.Text =
-                "Review the current selection before copying the command. Deselect optional pages to narrow only this Research Session; durable Research context will not change.";
+            var isWayfinder = mode == ResearchDrawerMode.WayfinderSelection;
+            ContextSelectionEyebrow.Text =
+                isWayfinder ? "Related Work handoff" : "Research Session";
+            ContextSelectionTitle.Text = isWayfinder
+                ? "Choose context for Wayfinder"
+                : "Choose context for the next session";
+            ContextSelectionExplanation.Text = isWayfinder
+                ? "Deselect optional pages to pass the exact context this exploration needs. Wayfinder is optional ambiguity resolution for unclear outcomes, alternatives, or decisions; this Topic does not require a map."
+                : "Review the current selection before copying the command. Deselect optional pages to narrow only this Research Session; durable Research context will not change.";
             ContextSelectionDoneButton.Content = "Copy command";
         }
         else
@@ -1058,7 +1140,7 @@ public sealed partial class ResearchPage : Page
     {
         var optional = ContextSelectionRows.Where(row => !row.IsTopic).ToArray();
         var selected = optional.Count(row => row.IsSelected == true);
-        ContextSelectionSummary.Text = _drawerMode == ResearchDrawerMode.SessionSelection
+        ContextSelectionSummary.Text = IsTransientContextSelection(_drawerMode)
             ? $"{selected} of {optional.Length} optional pages selected"
             : $"{selected} of {optional.Length} eligible pages included";
     }
@@ -1068,7 +1150,7 @@ public sealed partial class ResearchPage : Page
         if (_selectedTopic is null)
             return;
         var launchedSession = false;
-        if (_drawerMode == ResearchDrawerMode.SessionSelection)
+        if (IsTransientContextSelection(_drawerMode))
         {
             var selectedIds = ContextSelectionRows
                 .Where(row => !row.IsTopic && row.IsSelected == true)
@@ -1089,10 +1171,14 @@ public sealed partial class ResearchPage : Page
                 ContextSelectionError.IsOpen = true;
                 return;
             }
-            var invocation = ResearchSessionInvocationFormatter.Format(
-                context,
-                _sessionAction,
-                _sessionIntent);
+            var isWayfinder =
+                _drawerMode == ResearchDrawerMode.WayfinderSelection;
+            var invocation = isWayfinder
+                ? WayfinderInvocationFormatter.Format(context)
+                : ResearchSessionInvocationFormatter.Format(
+                    context,
+                    _sessionAction,
+                    _sessionIntent);
             var package = new DataPackage();
             package.SetText(invocation);
             try
@@ -1114,6 +1200,12 @@ public sealed partial class ResearchPage : Page
                 return;
             }
             launchedSession = true;
+            SessionClipboardHint.Title = isWayfinder
+                ? "Wayfinder command copied"
+                : "Research Session command copied";
+            SessionClipboardHint.Message = isWayfinder
+                ? "Paste into Copilot CLI to explore this ambiguity with the selected Topic context."
+                : "Paste into Copilot CLI to begin the governed Research Session.";
             UpdateContextSummary(_selectedTopic);
         }
         CloseContextSelectionDrawer(restoreFocus: true);
@@ -1127,6 +1219,7 @@ public sealed partial class ResearchPage : Page
     private void CloseContextSelectionDrawer(bool restoreFocus)
     {
         if (_drawerMode is not (ResearchDrawerMode.SessionSelection
+            or ResearchDrawerMode.WayfinderSelection
             or ResearchDrawerMode.DurableCuration))
         {
             return;
@@ -1149,6 +1242,7 @@ public sealed partial class ResearchPage : Page
     {
         if (_suppressContextDrawerRefreshClose
             || _drawerMode is not (ResearchDrawerMode.SessionSelection
+                or ResearchDrawerMode.WayfinderSelection
                 or ResearchDrawerMode.DurableCuration))
         {
             return;
@@ -1156,6 +1250,10 @@ public sealed partial class ResearchPage : Page
 
         CloseContextSelectionDrawer(restoreFocus: true);
     }
+
+    private static bool IsTransientContextSelection(ResearchDrawerMode mode) =>
+        mode is ResearchDrawerMode.SessionSelection
+            or ResearchDrawerMode.WayfinderSelection;
 
     private static IReadOnlyList<ResearchCandidateProjection> BuildCandidateProjection(
         IReadOnlyList<ResearchPageCandidate> candidates,
@@ -1329,6 +1427,28 @@ public sealed partial class ResearchPage : Page
         }
     }
 
+    private async void LinkExistingWayfinderButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_selectedTopic is null)
+            return;
+        var dialog = new LinkWayfinderDialog(
+            App.Research,
+            _selectedTopic.Id)
+        {
+            XamlRoot = XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary
+            && dialog.LinkedWayfinder is not null)
+        {
+            _wayfinderRefreshedTopics.Add(_selectedTopic.Id);
+            RefreshCatalog(_selectedTopic.Id, preserveCurrentState: true);
+        }
+    }
+
     private void RelatedTaskButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: ResearchRelatedTaskRow row })
@@ -1364,6 +1484,47 @@ public sealed partial class ResearchPage : Page
             await error.ShowAsync();
             return;
         }
+        RefreshCatalog(_selectedTopic.Id, preserveCurrentState: true);
+    }
+
+    private async void RelatedWayfinderButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ResearchRelatedWayfinderRow row })
+            return;
+        var uri = WayfinderNavigationPolicy.Resolve(row.Wayfinder.Identity);
+        if (uri is not null)
+            await Launcher.LaunchUriAsync(uri);
+    }
+
+    private async void RepairRelatedWayfinderButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_selectedTopic is null
+            || sender is not Button { Tag: ResearchRelatedWayfinderRow row })
+        {
+            return;
+        }
+
+        var result = await App.Research.RepairRelatedWayfinderAsync(
+            _selectedTopic.Id,
+            row.Wayfinder.Identity.Canonical);
+        if (!result.Succeeded)
+        {
+            var error = new ContentDialog
+            {
+                Title = "Unable to repair Wayfinder link",
+                Content = result.Message,
+                CloseButtonText = "OK",
+                XamlRoot = XamlRoot,
+            };
+            error.WithAppTheme(this);
+            await error.ShowAsync();
+            return;
+        }
+        _wayfinderRefreshedTopics.Add(_selectedTopic.Id);
         RefreshCatalog(_selectedTopic.Id, preserveCurrentState: true);
     }
 
@@ -1552,6 +1713,50 @@ public sealed class ResearchRelatedTaskRow
         : Visibility.Collapsed;
 }
 
+public sealed class ResearchRelatedWayfinderRow
+{
+    private readonly bool _canRepair;
+
+    public ResearchRelatedWayfinderRow(
+        ResearchRelatedWayfinder wayfinder,
+        bool canRepair = false)
+    {
+        Wayfinder = wayfinder;
+        _canRepair = wayfinder.CanRepair || canRepair;
+        Title = wayfinder.Title;
+        var status = wayfinder.Status switch
+        {
+            WayfinderIssueStatus.Open => "Open",
+            WayfinderIssueStatus.Closed => "Closed",
+            WayfinderIssueStatus.Inaccessible => "Status inaccessible",
+            _ => "Status unknown",
+        };
+        var relation = wayfinder.RelationState switch
+        {
+            WayfinderRelationState.MissingReciprocalReference =>
+                "GitHub issue is missing the Topic reference",
+            WayfinderRelationState.BrokenReference =>
+                "GitHub issue no longer exists",
+            _ => null,
+        };
+        StatusLabel = relation is null ? status : $"{status} · {relation}";
+        AccessibleName =
+            $"{Title}, Wayfinder issue {wayfinder.Identity.Canonical}, {StatusLabel}";
+        RepairAccessibleName =
+            $"Repair Wayfinder Related Work link for {Title}";
+    }
+
+    public ResearchRelatedWayfinder Wayfinder { get; }
+    public string Title { get; }
+    public string StatusLabel { get; }
+    public string AccessibleName { get; }
+    public string RepairAccessibleName { get; }
+    public bool CanNavigate => Wayfinder.CanNavigate;
+    public Visibility RepairVisibility => _canRepair
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+}
+
 public sealed class ResearchRelatedWorkWarningRow
 {
     public ResearchRelatedWorkWarningRow(ResearchRelatedWorkWarning warning)
@@ -1568,6 +1773,14 @@ public sealed class ResearchRelatedWorkWarningRow
                 $"Missing Task: {warning.Reference}",
             ResearchRelatedWorkWarningCode.MissingTaskReciprocalLink =>
                 $"Task reference needs repair: {warning.Reference}",
+            ResearchRelatedWorkWarningCode.InvalidWayfinderReference =>
+                "Invalid Wayfinder issue reference",
+            ResearchRelatedWorkWarningCode.DuplicateWayfinderReference =>
+                $"Duplicate Wayfinder issue: {warning.Reference}",
+            ResearchRelatedWorkWarningCode.MissingWayfinderReciprocalReference =>
+                $"Wayfinder reference needs repair: {warning.Reference}",
+            ResearchRelatedWorkWarningCode.BrokenWayfinderReference =>
+                $"Broken Wayfinder issue: {warning.Reference}",
             _ => $"Topic reference needs repair: {warning.Reference}",
         };
         Message = warning.Message;
@@ -1727,6 +1940,8 @@ public sealed class ResearchContextSelectionRow : INotifyPropertyChanged
             ? $"{title}, Research Topic, always included"
             : mode == ResearchDrawerMode.SessionSelection
                 ? $"Include {title} in the next Research Session"
+                : mode == ResearchDrawerMode.WayfinderSelection
+                    ? $"Include {title} in the Wayfinder handoff"
                 : $"Include {title} in durable Research context";
     }
 
@@ -1740,7 +1955,8 @@ public sealed class ResearchContextSelectionRow : INotifyPropertyChanged
     public string AccessibleName { get; }
     public string StatusLabel => IsTopic
         ? "Always included"
-        : _mode == ResearchDrawerMode.SessionSelection
+        : _mode is ResearchDrawerMode.SessionSelection
+            or ResearchDrawerMode.WayfinderSelection
             ? IsSelected ? "Selected" : "Not selected"
             : IsSelected ? "Included" : "Excluded";
 
@@ -1803,5 +2019,6 @@ public enum ResearchDrawerMode
     Preview,
     History,
     SessionSelection,
+    WayfinderSelection,
     DurableCuration,
 }

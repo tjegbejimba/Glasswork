@@ -77,7 +77,12 @@ commas allowed.
       "title": "Example", "type": "concept", "confidence": "high",
       "updated": "2026-08-15", "expires": "2027-01-01",
       "researchRelatedWork": ["safe-slug"],
+      "researchRelatedWayfinder": ["owner/repository#123"],
       "markdown": "# Example\n\nSynthesis." }
+  ],
+  "wayfinderIssues": [
+    { "reference": "owner/repository#123", "title": "Explore options",
+      "state": "open", "hasReciprocalReference": true }
   ],
   "actions": [                        // UI Automation driven, in order
     { "type": "select",     "automationId": "NavBacklog", "timeoutMilliseconds": 10000 },
