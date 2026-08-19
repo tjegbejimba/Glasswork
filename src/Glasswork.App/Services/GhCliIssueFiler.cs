@@ -23,7 +23,7 @@ public sealed class GhCliIssueFiler
     /// WinUI packaged apps often launch without inheriting the user PATH that contains the
     /// GitHub CLI shim, so we try common MSI/winget install locations before falling back to PATH.
     /// </summary>
-    private static string ResolveGhPath()
+    internal static string ResolveGhPath()
     {
         if (!OperatingSystem.IsWindows()) return "gh";
 

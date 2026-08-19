@@ -1,0 +1,90 @@
+{
+  "name": "Research Wayfinder active closed unknown inaccessible and trusted navigation",
+  "theme": "light",
+  "startUri": "glasswork://research/wayfinder-status",
+  "wayfinderIssues": [
+    {
+      "reference": "tjegbejimba/Glasswork#101",
+      "title": "Explore the exceptionally long callback delivery path with alternatives, ownership boundaries, migration decisions, and a safe rollout plan",
+      "state": "open",
+      "hasReciprocalReference": true
+    },
+    {
+      "reference": "tjegbejimba/Glasswork#102",
+      "title": "Choose callback ownership",
+      "state": "closed",
+      "hasReciprocalReference": true
+    },
+    {
+      "reference": "tjegbejimba/Glasswork#103",
+      "title": "Unknown status fixture",
+      "state": "unknown",
+      "hasReciprocalReference": false
+    },
+    {
+      "reference": "tjegbejimba/Glasswork#104",
+      "title": "Inaccessible status fixture",
+      "state": "inaccessible",
+      "hasReciprocalReference": false
+    }
+  ],
+  "wikiPages": [
+    {
+      "relativePath": "concepts/wayfinder-status.md",
+      "id": "wayfinder-status",
+      "title": "Wayfinder status projection",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "researchRelatedWayfinder": [
+        "tjegbejimba/Glasswork#101",
+        "tjegbejimba/Glasswork#102",
+        "tjegbejimba/Glasswork#103",
+        "tjegbejimba/Glasswork#104"
+      ],
+      "markdown": "# Wayfinder status projection\n\nOwning-system lifecycle stays outside Research."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "Explore the exceptionally long callback delivery path with alternatives, ownership boundaries, migration decisions, and a safe rollout plan, Wayfinder issue tjegbejimba/Glasswork#101, Open",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "tjegbejimba/Glasswork#103, Wayfinder issue tjegbejimba/Glasswork#103, Status unknown"
+    },
+    {
+      "type": "wait-for",
+      "name": "tjegbejimba/Glasswork#104, Wayfinder issue tjegbejimba/Glasswork#104, Status inaccessible"
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchRelatedWayfinder"
+    },
+    {
+      "type": "assert-enabled",
+      "automationId": "ResearchRelatedWayfinder"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchHeader"
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchCompletedTasksExpander"
+    },
+    {
+      "type": "wait-for",
+      "name": "Choose callback ownership, Wayfinder issue tjegbejimba/Glasswork#102, Closed"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-wayfinder-active-closed-unknown",
+      "waitMilliseconds": 400
+    }
+  ]
+}

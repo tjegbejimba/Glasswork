@@ -1,0 +1,56 @@
+{
+  "name": "Research Wayfinder reciprocal and broken-link repair states",
+  "theme": "dark",
+  "startUri": "glasswork://research/wayfinder-repair",
+  "wayfinderIssues": [
+    {
+      "reference": "tjegbejimba/Glasswork#201",
+      "title": "Issue missing its Topic reference",
+      "state": "open",
+      "hasReciprocalReference": false
+    },
+    {
+      "reference": "tjegbejimba/Glasswork#202",
+      "title": "Deleted issue",
+      "state": "not-found",
+      "hasReciprocalReference": false
+    }
+  ],
+  "wikiPages": [
+    {
+      "relativePath": "concepts/wayfinder-repair.md",
+      "id": "wayfinder-repair",
+      "title": "Wayfinder repair",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "researchRelatedWayfinder": [
+        "tjegbejimba/Glasswork#201",
+        "tjegbejimba/Glasswork#202"
+      ],
+      "markdown": "# Wayfinder repair\n\nBroken relationships remain visible and repairable."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "Issue missing its Topic reference, Wayfinder issue tjegbejimba/Glasswork#201, Open · GitHub issue is missing the Topic reference",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Missing Wayfinder issue: tjegbejimba/Glasswork#202, Wayfinder issue tjegbejimba/Glasswork#202, Status unknown · GitHub issue no longer exists"
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchRepairWayfinderLink"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-wayfinder-repair",
+      "waitMilliseconds": 400
+    }
+  ]
+}

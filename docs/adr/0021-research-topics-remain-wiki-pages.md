@@ -29,6 +29,7 @@ glasswork:
     include: [optional-wiki-page-id]
     exclude: [optional-wiki-page-id]
     related_work: [optional-task-id]
+    related_wayfinder: [optional-owner/repository#issue]
 ```
 
 The Topic's live **Research context** contains the Topic itself plus
@@ -63,6 +64,15 @@ each Task keeps the Topic Wiki link in its existing `## Related` section.
 Glasswork resolves Task title and status live from the Task Index. Missing,
 malformed, or one-sided references remain visible as repairable relationship
 state rather than being treated as healthy or silently removed.
+
+Wayfinder Related Work stores only canonical GitHub issue identities in
+`glasswork.research.related_wayfinder`. Glasswork resolves the issue title and
+open/closed state from GitHub when available, keeps inaccessible or unknown
+state explicit, and never copies that lifecycle into Research metadata. Linking
+an issue adds a guarded reciprocal comment containing the Topic deep link when
+GitHub permits it. Missing issues and one-sided references remain visible and
+repairable; external navigation is restricted to the trusted canonical GitHub
+issue URI.
 
 ## Considered options
 

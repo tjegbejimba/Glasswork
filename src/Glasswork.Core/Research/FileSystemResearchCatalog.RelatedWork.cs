@@ -279,15 +279,7 @@ public sealed partial class FileSystemResearchCatalog
     private ResearchRelatedWork BuildRelatedWork(WikiPageCandidate topic)
     {
         var warnings = new List<ResearchRelatedWorkWarning>(topic.RelatedWorkWarnings);
-        if (_taskIndex is null)
-        {
-            return new ResearchRelatedWork(
-                Array.Empty<ResearchRelatedTask>(),
-                Array.Empty<ResearchRelatedTask>(),
-                Array.AsReadOnly(warnings.ToArray()));
-        }
-
-        var tasks = _taskIndex.All;
+        var tasks = _taskIndex?.All ?? Array.Empty<GlassworkTask>();
         var tasksById = tasks.ToDictionary(task => task.Id, StringComparer.Ordinal);
         var declaredIds = topic.RelatedTaskIds
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -364,6 +356,7 @@ public sealed partial class FileSystemResearchCatalog
             .OrderBy(task => task.Title, StringComparer.OrdinalIgnoreCase)
             .ThenBy(task => task.TaskId, StringComparer.Ordinal)
             .ToArray();
+        var wayfinder = BuildRelatedWayfinder(topic, warnings);
         return new ResearchRelatedWork(
             Array.AsReadOnly(active),
             Array.AsReadOnly(completed),
@@ -373,7 +366,11 @@ public sealed partial class FileSystemResearchCatalog
                     StringComparer.OrdinalIgnoreCase)
                 .OrderBy(warning => warning.Code)
                 .ThenBy(warning => warning.Reference, StringComparer.OrdinalIgnoreCase)
-                .ToArray()));
+                .ToArray()))
+        {
+            ActiveWayfinder = wayfinder.Active,
+            CompletedWayfinder = wayfinder.Completed,
+        };
     }
 
     private bool TryGetRelatedWorkServices(
@@ -448,7 +445,28 @@ public sealed partial class FileSystemResearchCatalog
     private ResearchRelatedWorkResult WriteRelatedTaskIds(
         WikiPageCandidate topic,
         string taskId,
-        bool included)
+        bool included) =>
+        WriteResearchReferences(
+            topic,
+            taskId,
+            included,
+            ResearchReferenceKind.Task);
+
+    private ResearchRelatedWorkResult WriteRelatedWayfinderReferences(
+        WikiPageCandidate topic,
+        string issueReference,
+        bool included) =>
+        WriteResearchReferences(
+            topic,
+            issueReference,
+            included,
+            ResearchReferenceKind.Wayfinder);
+
+    private ResearchRelatedWorkResult WriteResearchReferences(
+        WikiPageCandidate topic,
+        string reference,
+        bool included,
+        ResearchReferenceKind kind)
     {
         var fullPath = Path.Combine(
             _vaultRoot,
@@ -502,20 +520,26 @@ public sealed partial class FileSystemResearchCatalog
         }
 
         var metadata = ParseResearchMetadata(match.Groups[1].Value, topic.Id);
-        if (metadata.RelatedWorkWarnings.Any(warning =>
-                warning.Code is ResearchRelatedWorkWarningCode.InvalidMetadata
-                    or ResearchRelatedWorkWarningCode.InvalidTaskId))
+        var invalidMetadata = metadata.RelatedWorkWarnings.Any(warning =>
+            warning.Code == ResearchRelatedWorkWarningCode.InvalidMetadata
+            || kind == ResearchReferenceKind.Task
+                && warning.Code == ResearchRelatedWorkWarningCode.InvalidTaskId
+            || kind == ResearchReferenceKind.Wayfinder
+                && warning.Code == ResearchRelatedWorkWarningCode.InvalidWayfinderReference);
+        if (invalidMetadata)
         {
             return ResearchRelatedWorkResult.Failure(
                 ResearchRelatedWorkErrorCode.InvalidResearchMetadata,
                 $"Research Topic '{topic.Title}' has malformed Related Work metadata. Repair it in Obsidian before retrying.");
         }
-        var currentIds = metadata.RelatedTaskIds
+        var currentIds = (kind == ResearchReferenceKind.Task
+                ? metadata.RelatedTaskIds
+                : metadata.RelatedWayfinderReferences)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (included)
-            currentIds.Add(taskId);
+            currentIds.Add(reference);
         else
-            currentIds.Remove(taskId);
+            currentIds.Remove(reference);
         var orderedIds = currentIds
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Select(id => id.Trim())
@@ -524,7 +548,9 @@ public sealed partial class FileSystemResearchCatalog
             .ToArray();
         if (!TrySetResearchOverrideList(
                 match.Groups[1].Value,
-                "related_work",
+                kind == ResearchReferenceKind.Task
+                    ? "related_work"
+                    : "related_wayfinder",
                 orderedIds,
                 out var updatedYaml))
         {
@@ -532,6 +558,7 @@ public sealed partial class FileSystemResearchCatalog
                 ResearchRelatedWorkErrorCode.InvalidResearchMetadata,
                 $"Research Topic '{topic.Title}' has Related Work metadata that cannot be updated safely.");
         }
+
         var updated = original[..match.Groups[1].Index]
             + updatedYaml
             + original[(match.Groups[1].Index + match.Groups[1].Length)..];
@@ -631,6 +658,12 @@ public sealed partial class FileSystemResearchCatalog
             if (!preserveBackup)
                 TryDeleteRecoveryFile(backupPath);
         }
+    }
+
+    private enum ResearchReferenceKind
+    {
+        Task,
+        Wayfinder,
     }
 
     private static RelatedLink CreateTopicLink(WikiPageCandidate topic) =>

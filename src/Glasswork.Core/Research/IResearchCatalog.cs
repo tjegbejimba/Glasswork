@@ -32,6 +32,17 @@ public interface IResearchCatalog : IDisposable
     ResearchRelatedWorkResult RepairRelatedTask(
         string topicId,
         string taskId);
+    Task<ResearchWayfinderResult> LinkExistingWayfinderAsync(
+        string topicId,
+        string issueReference,
+        CancellationToken cancellationToken = default);
+    Task<ResearchWayfinderResult> RepairRelatedWayfinderAsync(
+        string topicId,
+        string issueReference,
+        CancellationToken cancellationToken = default);
+    Task<ResearchWayfinderRefreshResult> RefreshWayfinderAsync(
+        string topicId,
+        CancellationToken cancellationToken = default);
     void Start();
     void Stop();
 }
@@ -141,6 +152,31 @@ public sealed record ResearchRelatedWork(
             Array.Empty<ResearchRelatedTask>(),
             Array.Empty<ResearchRelatedTask>(),
             Array.Empty<ResearchRelatedWorkWarning>());
+
+    public IReadOnlyList<ResearchRelatedWayfinder> ActiveWayfinder { get; init; } =
+        Array.Empty<ResearchRelatedWayfinder>();
+    public IReadOnlyList<ResearchRelatedWayfinder> CompletedWayfinder { get; init; } =
+        Array.Empty<ResearchRelatedWayfinder>();
+}
+
+public sealed record ResearchRelatedWayfinder(
+    WayfinderIssueIdentity Identity,
+    string Title,
+    WayfinderIssueStatus Status,
+    WayfinderRelationState RelationState)
+{
+    public bool CanNavigate => WayfinderNavigationPolicy.Resolve(Identity) is not null;
+    public bool CanRepair => RelationState is
+        WayfinderRelationState.MissingReciprocalReference
+        or WayfinderRelationState.BrokenReference;
+}
+
+public enum WayfinderRelationState
+{
+    Healthy,
+    MissingReciprocalReference,
+    BrokenReference,
+    Unknown,
 }
 
 public sealed record ResearchRelatedTask(
@@ -182,6 +218,55 @@ public enum ResearchRelatedWorkWarningCode
     MissingTask,
     MissingTaskReciprocalLink,
     MissingTopicReciprocalLink,
+    InvalidWayfinderReference,
+    DuplicateWayfinderReference,
+    MissingWayfinderReciprocalReference,
+    BrokenWayfinderReference,
+}
+
+public sealed record ResearchWayfinderResult(
+    bool Succeeded,
+    ResearchTopic? Topic,
+    ResearchRelatedWayfinder? Wayfinder,
+    ResearchWayfinderErrorCode? ErrorCode,
+    string Message)
+{
+    public static ResearchWayfinderResult Success(
+        ResearchTopic topic,
+        ResearchRelatedWayfinder wayfinder,
+        string message) =>
+        new(true, topic, wayfinder, null, message);
+
+    public static ResearchWayfinderResult Failure(
+        ResearchWayfinderErrorCode errorCode,
+        string message) =>
+        new(false, null, null, errorCode, message);
+}
+
+public enum ResearchWayfinderErrorCode
+{
+    ServicesUnavailable,
+    TopicNotFound,
+    InvalidIdentity,
+    IssueNotFound,
+    Inaccessible,
+    UnknownStatus,
+    DuplicateRelationship,
+    InvalidResearchMetadata,
+    ConcurrentModification,
+    WriteFailed,
+}
+
+public sealed record ResearchWayfinderRefreshResult(
+    bool Succeeded,
+    ResearchTopic? Topic,
+    string Message)
+{
+    public static ResearchWayfinderRefreshResult Success(ResearchTopic topic) =>
+        new(true, topic, "Wayfinder status refreshed.");
+
+    public static ResearchWayfinderRefreshResult Failure(string message) =>
+        new(false, null, message);
 }
 
 public sealed record ResearchRelatedWorkResult(

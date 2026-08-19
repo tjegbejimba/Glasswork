@@ -214,6 +214,8 @@ glasswork:
   research:
     include: [optional-wiki-page-id]
     exclude: [optional-wiki-page-id]
+    related_work: [optional-task-id]
+    related_wayfinder: [optional-owner/repository#issue]
 ```
 
 The `glasswork.research` block's presence opts the page in and leaves room for
@@ -279,6 +281,12 @@ time. A clear next behavior or deliverable creates a Task directly; an important
 outcome whose path or decisions remain unclear goes through Wayfinder first.
 Creating or linking work leaves reciprocal references. Closing the resulting
 work never archives or completes the Research Topic.
+
+Wayfinder references use canonical `owner/repository#issue` identity. Their
+title and open/closed state are projected live from GitHub; inaccessible,
+unknown, missing, and one-sided relationships stay visible instead of being
+silently removed. The Topic stores the identity only, while GitHub receives a
+reciprocal Topic deep-link comment when repository permissions allow it.
 
 ### Why this is the deeper module
 

@@ -1,0 +1,91 @@
+{
+  "name": "Research Explore with Wayfinder exact context and keyboard focus",
+  "theme": "dark",
+  "startUri": "glasswork://research/wayfinder-handoff",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/wayfinder-handoff.md",
+      "id": "wayfinder-handoff",
+      "title": "Async callback ambiguity",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "markdown": "# Async callback ambiguity\n\n[[wiki/sources/callback-rfc]] [[wiki/decisions/callback-boundary]]"
+    },
+    {
+      "relativePath": "sources/callback-rfc.md",
+      "id": "callback-rfc",
+      "title": "Callback RFC",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": false,
+      "markdown": "# Callback RFC"
+    },
+    {
+      "relativePath": "decisions/callback-boundary.md",
+      "id": "callback-boundary",
+      "title": "Callback boundary",
+      "type": "decision",
+      "confidence": "medium",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Callback boundary"
+    }
+  ],
+  "actions": [
+    {
+      "type": "focus",
+      "automationId": "ResearchExploreWithWayfinderButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "wait-for",
+      "name": "Include Callback boundary in the Wayfinder handoff"
+    },
+    {
+      "type": "focus",
+      "name": "Include Callback boundary in the Wayfinder handoff"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSelectionSummary",
+      "value": "1 of 2 optional pages selected"
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchSessionClipboardFeedback"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchExploreWithWayfinderButton"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Start Wayfinder exploration: {\"topicId\":\"wayfinder-handoff\",\"contextPageIds\":[\"wayfinder-handoff\",\"callback-rfc\"],\"intent\":\"Use Wayfinder only if ambiguity in outcomes, alternatives, or decisions benefits from planning; a map is not required.\",\"wikiGovernance\":\"AGENTS.md\"}"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-wayfinder-explore",
+      "waitMilliseconds": 400
+    }
+  ]
+}
