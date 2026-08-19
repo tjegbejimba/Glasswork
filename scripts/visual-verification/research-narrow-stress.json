@@ -1,0 +1,111 @@
+{
+  "name": "Research narrow stress",
+  "theme": "light",
+  "windowWidth": 900,
+  "windowHeight": 900,
+  "startUri": "glasswork://research/narrow-stress",
+  "tasks": [
+    {
+      "id": "narrow-active-task",
+      "title": "Active work with a long title that remains reachable",
+      "status": "in-progress",
+      "priority": "high",
+      "related": [
+        "concepts/narrow-stress"
+      ]
+    },
+    {
+      "id": "narrow-completed-task",
+      "title": "Completed work retained as Topic history",
+      "status": "done",
+      "priority": "medium",
+      "completedAt": "today",
+      "related": [
+        "concepts/narrow-stress"
+      ]
+    }
+  ],
+  "wikiPages": [
+    {
+      "relativePath": "concepts/narrow-stress.md",
+      "id": "narrow-stress",
+      "title": "A broad Research Topic with a very long title that remains readable and accessible in a supported narrow window",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "researchRelatedWork": [
+        "narrow-active-task",
+        "narrow-completed-task"
+      ],
+      "markdown": "# Narrow stress\n\nThe synthesis remains readable at the supported narrow width.\n\n[[wiki/sources/narrow-source-one]] [[wiki/sources/narrow-source-two]] [[wiki/systems/narrow-system]]"
+    },
+    {
+      "relativePath": "sources/narrow-source-one.md",
+      "id": "narrow-source-one",
+      "title": "First narrow source with a long descriptive title",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": false,
+      "markdown": "# First source"
+    },
+    {
+      "relativePath": "sources/narrow-source-two.md",
+      "id": "narrow-source-two",
+      "title": "Second narrow source with another long descriptive title",
+      "type": "source",
+      "confidence": "medium",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Second source"
+    },
+    {
+      "relativePath": "systems/narrow-system.md",
+      "id": "narrow-system",
+      "title": "Supporting system",
+      "type": "system",
+      "confidence": "low",
+      "updated": "2026-08-16",
+      "optedIn": false,
+      "markdown": "# Supporting system"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "The synthesis remains readable at the supported narrow width.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchPrimaryAction"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchCreateTaskButton"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchRemoveTopicButton"
+    },
+    {
+      "type": "wait-for",
+      "name": "Active work with a long title that remains reachable, In Progress"
+    },
+    {
+      "type": "expand",
+      "automationId": "ResearchCompletedTasksExpander"
+    },
+    {
+      "type": "wait-for",
+      "name": "Completed work retained as Topic history, Done"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-narrow-stress",
+      "waitMilliseconds": 500
+    }
+  ]
+}

@@ -65,6 +65,8 @@ commas allowed.
   "name": "Backlog smoke",            // required, non-empty
   "startUri": "glasswork://backlog",  // optional deep link passed as argv[0]
   "theme": "dark",                    // optional: system (default), light, dark
+  "windowWidth": 900,                 // optional XAML DIPs; set with windowHeight
+  "windowHeight": 900,                // optional XAML DIPs; DPI-scaled by runner
   "launchTimeoutSeconds": 20,
   "initialWaitMilliseconds": 800,
   "tasks": [                          // seeded into the isolated Vault

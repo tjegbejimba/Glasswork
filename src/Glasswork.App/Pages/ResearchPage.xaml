@@ -9,6 +9,34 @@
     mc:Ignorable="d">
 
     <Grid x:Name="RootGrid">
+    <VisualStateManager.VisualStateGroups>
+        <VisualStateGroup x:Name="ResearchWidthStates">
+            <VisualState x:Name="NarrowResearch">
+                <VisualState.StateTriggers>
+                    <AdaptiveTrigger MinWindowWidth="0" />
+                </VisualState.StateTriggers>
+                <VisualState.Setters>
+                    <Setter Target="ResearchCatalogColumn.Width" Value="27*" />
+                    <Setter Target="ResearchDetailColumn.Width" Value="73*" />
+                    <Setter Target="ResearchRelatedWorkColumn.Width" Value="200" />
+                    <Setter Target="ResearchTopicHeaderActions.Orientation" Value="Vertical" />
+                    <Setter Target="ResearchTopicMetadata.Orientation" Value="Vertical" />
+                </VisualState.Setters>
+            </VisualState>
+            <VisualState x:Name="WideResearch">
+                <VisualState.StateTriggers>
+                    <AdaptiveTrigger MinWindowWidth="1000" />
+                </VisualState.StateTriggers>
+                <VisualState.Setters>
+                    <Setter Target="ResearchCatalogColumn.Width" Value="3*" />
+                    <Setter Target="ResearchDetailColumn.Width" Value="7*" />
+                    <Setter Target="ResearchRelatedWorkColumn.Width" Value="280" />
+                    <Setter Target="ResearchTopicHeaderActions.Orientation" Value="Horizontal" />
+                    <Setter Target="ResearchTopicMetadata.Orientation" Value="Horizontal" />
+                </VisualState.Setters>
+            </VisualState>
+        </VisualStateGroup>
+    </VisualStateManager.VisualStateGroups>
     <Grid
         x:Name="BackgroundContent"
         Padding="28"
@@ -36,9 +64,12 @@
             x:Name="PopulatedView"
             Grid.Row="1"
             Margin="0,20,0,0"
-            ColumnDefinitions="3*,7*"
             ColumnSpacing="20"
             Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="ResearchCatalogColumn" Width="3*" />
+                <ColumnDefinition x:Name="ResearchDetailColumn" Width="7*" />
+            </Grid.ColumnDefinitions>
             <Border
                 Grid.Column="0"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -175,8 +206,11 @@
                 </InfoBar>
                 <Grid
                     Grid.Row="1"
-                    ColumnDefinitions="*,280"
                     ColumnSpacing="24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition x:Name="ResearchRelatedWorkColumn" Width="280" />
+                </Grid.ColumnDefinitions>
                 <ScrollViewer
                     x:Name="TopicDetailScroll"
                     AutomationProperties.AutomationId="ResearchTopicDetail"
@@ -195,6 +229,7 @@
                             FontWeight="SemiBold"
                             TextWrapping="Wrap" />
                         <StackPanel
+                            x:Name="ResearchTopicHeaderActions"
                             Grid.Row="1"
                             Orientation="Horizontal"
                             Spacing="8"
@@ -216,7 +251,10 @@
                                 Content="Remove from Research" />
                         </StackPanel>
                     </Grid>
-                    <StackPanel Orientation="Horizontal" Spacing="16">
+                    <StackPanel
+                        x:Name="ResearchTopicMetadata"
+                        Orientation="Horizontal"
+                        Spacing="16">
                         <TextBlock x:Name="TopicType" Opacity="0.72" />
                         <TextBlock x:Name="TopicConfidence" Opacity="0.72" />
                         <TextBlock x:Name="TopicUpdated" Opacity="0.72" />

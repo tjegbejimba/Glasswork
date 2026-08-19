@@ -56,6 +56,8 @@ public class VisualVerificationScenarioTests
         {
           "name": "research populated",
           "theme": "dark",
+          "windowWidth": 1100,
+          "windowHeight": 900,
           "wikiPages": [
             {
               "relativePath": "concepts/async-callbacks.md",
@@ -96,6 +98,8 @@ public class VisualVerificationScenarioTests
         var scenario = VisualVerificationScenario.FromJson(json);
 
         Assert.AreEqual("dark", scenario.Theme);
+        Assert.AreEqual(1100, scenario.WindowWidth);
+        Assert.AreEqual(900, scenario.WindowHeight);
         Assert.HasCount(1, scenario.WikiPages);
         Assert.AreEqual("async-callbacks", scenario.WikiPages[0].Id);
         CollectionAssert.AreEqual(

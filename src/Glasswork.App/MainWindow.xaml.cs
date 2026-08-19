@@ -458,6 +458,8 @@ public sealed partial class MainWindow : Window
                     string.Equals(candidate.Id, research.TopicId, StringComparison.OrdinalIgnoreCase));
                 if (topic is null)
                 {
+                    SelectNavigationItem(NavResearch);
+                    NavigateToTopLevel(typeof(ResearchPage));
                     DeepLinkErrorBar.Title = "Research Topic not found";
                     DeepLinkErrorBar.Message =
                         $"No opted-in Research Topic with id \"{research.TopicId}\" was found in the vault.";

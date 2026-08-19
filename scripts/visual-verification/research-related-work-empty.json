@@ -23,7 +23,7 @@
     },
     {
       "type": "wait-for",
-      "name": "No Tasks are linked to this Topic yet.",
+      "name": "No Tasks or Wayfinder issues are linked to this Topic yet.",
       "timeoutMilliseconds": 10000
     },
     {

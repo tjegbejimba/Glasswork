@@ -23,6 +23,8 @@ public sealed partial class VisualVerificationScenario
     public int LaunchTimeoutSeconds { get; init; } = 20;
     public int InitialWaitMilliseconds { get; init; } = 800;
     public string Theme { get; init; } = "system";
+    public int? WindowWidth { get; init; }
+    public int? WindowHeight { get; init; }
     public List<VisualVerificationTask> Tasks { get; init; } = [];
     public List<VisualVerificationWikiPage> WikiPages { get; init; } = [];
     public List<VisualVerificationWayfinderIssue> WayfinderIssues { get; init; } = [];
@@ -54,6 +56,10 @@ public sealed partial class VisualVerificationScenario
             throw new FormatException("initialWaitMilliseconds must not be negative.");
         if (Theme is not ("system" or "light" or "dark"))
             throw new FormatException("theme must be system, light, or dark.");
+        if (WindowWidth.HasValue != WindowHeight.HasValue)
+            throw new FormatException("windowWidth and windowHeight must be specified together.");
+        if (WindowWidth is <= 0 || WindowHeight is <= 0)
+            throw new FormatException("windowWidth and windowHeight must be greater than zero.");
 
         foreach (var task in Tasks)
         {
