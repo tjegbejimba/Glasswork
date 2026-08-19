@@ -108,7 +108,7 @@ internal static partial class VisualVerificationRunner
         try
         {
             var hwnd = WaitForWindow(process, TimeSpan.FromSeconds(scenario.LaunchTimeoutSeconds));
-            ResizeWindowTall(hwnd);
+            ResizeWindow(hwnd, scenario.WindowWidth, scenario.WindowHeight);
             await Task.Delay(scenario.InitialWaitMilliseconds);
 
             foreach (var action in scenario.Actions)
@@ -1287,19 +1287,36 @@ internal static partial class VisualVerificationRunner
         return true;
     }
 
-    private static void ResizeWindowTall(IntPtr hwnd)
+    private static void ResizeWindow(IntPtr hwnd, int? width, int? height)
     {
         // Long pages (e.g. a task with an Artifacts section near the bottom) lay
         // their lower content out below the page ScrollViewer's viewport, where it
         // is scroll-clipped and never gets a UI Automation peer. Growing the window
         // so the whole page fits without scrolling brings that content into the
         // live visual tree so both the UIA walk and screen capture can see it.
+        // Explicit dimensions are XAML DIPs so responsive breakpoints remain stable
+        // across display scaling; omitted dimensions retain the legacy tall default.
         try
         {
             if (IsIconic(hwnd))
                 ShowWindow(hwnd, ShowWindowRestore);
 
-            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 1500, 2400, SwpShowWindow);
+            var physicalWidth = 1500;
+            var physicalHeight = 2400;
+            if (width is { } widthDips && height is { } heightDips)
+            {
+                var dpiScale = GetDpiForWindow(hwnd) / 96d;
+                physicalWidth = checked((int)Math.Round(widthDips * dpiScale));
+                physicalHeight = checked((int)Math.Round(heightDips * dpiScale));
+            }
+            SetWindowPos(
+                hwnd,
+                IntPtr.Zero,
+                0,
+                0,
+                physicalWidth,
+                physicalHeight,
+                SwpShowWindow);
         }
         catch
         {

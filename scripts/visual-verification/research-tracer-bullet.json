@@ -1,0 +1,294 @@
+{
+  "name": "Complete Research tracer bullet",
+  "theme": "dark",
+  "windowWidth": 1280,
+  "windowHeight": 1000,
+  "startUri": "glasswork://research",
+  "tasks": [
+    {
+      "id": "existing-research-task",
+      "title": "Integrated existing task",
+      "status": "todo",
+      "priority": "high"
+    }
+  ],
+  "wikiPages": [
+    {
+      "relativePath": "concepts/integrated-research.md",
+      "id": "integrated-research",
+      "title": "Integrated Research tracer bullet",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "optedIn": false,
+      "markdown": "# Integrated Research tracer bullet\n\nThis synthesis remains the durable source of truth.\n\n[[wiki/sources/integrated-source]] [[wiki/systems/integrated-system]]"
+    },
+    {
+      "relativePath": "sources/integrated-source.md",
+      "id": "integrated-source",
+      "title": "Integrated primary source",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": false,
+      "markdown": "# Integrated primary source\n\nPrimary evidence for the complete walkthrough."
+    },
+    {
+      "relativePath": "systems/integrated-system.md",
+      "id": "integrated-system",
+      "title": "Integrated supporting system",
+      "type": "system",
+      "confidence": "medium",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Integrated supporting system\n\nOptional context that is narrowed for one session."
+    }
+  ],
+  "wayfinderIssues": [
+    {
+      "reference": "tjegbejimba/Glasswork#469",
+      "title": "Integrated Wayfinder exploration",
+      "state": "open",
+      "hasReciprocalReference": false
+    }
+  ],
+  "researchChangeLogs": [
+    {
+      "topicId": "integrated-research",
+      "markdown": "---\ntopic_id: integrated-research\n---\n# Research Change Log\n\n## 2026-08-18T20:00:00.000Z\n\nCreated the integrated verification baseline.\n\nChanged Wiki Pages:\n- [[integrated-research]]"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "No Research Topics yet",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchEmptyAddTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchPickerSearchBox",
+      "value": "integrated-research"
+    },
+    {
+      "type": "select",
+      "automationId": "ResearchEligiblePageRow",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Add selected Topic",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "This synthesis remains the durable source of truth.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchRelatedPage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRelatedPage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchPreviewClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "press-key",
+      "value": "Escape"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchRelatedPage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPrimaryAction",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "focus",
+      "name": "Include Integrated supporting system in the next Research Session"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSelectionSummary",
+      "value": "1 of 2 optional pages selected"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Start Glasswork Research Session: {\"topicId\":\"integrated-research\",\"contextPageIds\":[\"integrated-research\",\"integrated-source\"],\"action\":\"continue-research\",\"wikiGovernance\":\"AGENTS.md\"}"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchHistoryButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "research-logs/integrated-research.md",
+      "oldValue": "- [[integrated-research]]",
+      "value": "- [[integrated-research]]\n\n## 2026-08-18T20:30:00.000Z\n\nAdded integrated primary evidence.\n\nChanged Wiki Pages:\n- [[integrated-research]]\n- [[integrated-source]]"
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 1200
+    },
+    {
+      "type": "wait-for",
+      "name": "2 knowledge-changing sessions",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPreviewClose"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchCreateTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "CreateTaskTitleBox",
+      "value": "Integrated created task"
+    },
+    {
+      "type": "invoke",
+      "name": "Create"
+    },
+    {
+      "type": "wait-for",
+      "name": "Integrated created task, Todo",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchLinkExistingTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchLinkTaskSearchBox",
+      "value": "existing-research-task"
+    },
+    {
+      "type": "select",
+      "automationId": "ResearchLinkTaskRow"
+    },
+    {
+      "type": "invoke",
+      "name": "Link selected Task"
+    },
+    {
+      "type": "wait-for",
+      "name": "Integrated existing task, Todo",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Integrated existing task, Todo",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskTitleBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "NavResearch",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Integrated Research tracer bullet",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchExploreWithWayfinderButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "wait-for",
+      "name": "Wayfinder command copied",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchLinkExistingWayfinderButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "ResearchWayfinderIssueReference",
+      "value": "tjegbejimba/Glasswork#469"
+    },
+    {
+      "type": "invoke",
+      "name": "Link issue"
+    },
+    {
+      "type": "wait-for",
+      "name": "Integrated Wayfinder exploration, Wayfinder issue tjegbejimba/Glasswork#469, Open",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRemoveTopicButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchRemoveDeleteChangeLogMessage",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRemoveConfirmButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "No Research Topics yet",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchEmptyAddTopicButton",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-tracer-bullet-complete",
+      "waitMilliseconds": 500
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "name": "Research missing Topic deep link",
+  "theme": "system",
+  "windowWidth": 1100,
+  "windowHeight": 900,
+  "startUri": "glasswork://research/missing-topic",
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "DeepLinkErrorBar",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Research Topic not found",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "No opted-in Research Topic with id \"missing-topic\" was found in the vault.",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-deep-link-missing-topic",
+      "waitMilliseconds": 500
+    }
+  ]
+}
