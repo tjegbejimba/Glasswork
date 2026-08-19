@@ -56,6 +56,7 @@ public sealed partial class MainWindow : Window
         // ResultChanged covers the fire-and-forget startup check landing after construction.
         NavView.Loaded += (_, _) => RefreshUpdateBadge();
         App.Updater.ResultChanged += OnUpdaterResultChanged;
+        App.McpUpdater.ResultChanged += OnUpdaterResultChanged;
 
         // Status bar: vault path + task count + watcher dot + last-reload time.
         InitStatusBar();
@@ -387,12 +388,18 @@ public sealed partial class MainWindow : Window
     {
         if (NavView?.SettingsItem is not NavigationViewItem settingsItem) return;
 
-        var result = App.Updater.LastResult;
-        // A transient check failure must not retract a prior "update available" cue — the
-        // spec clears the dot only when we positively learn we're up to date (issue #241).
-        if (result?.IsCheckFailed == true) return;
+        var appResult = App.Updater.LastResult;
+        var mcpResult = App.McpUpdater.LastResult;
+        if (appResult?.IsUpdateAvailable == true || mcpResult?.IsUpdateAvailable == true)
+        {
+            settingsItem.InfoBadge = CreateDotBadge();
+            return;
+        }
 
-        settingsItem.InfoBadge = result?.IsUpdateAvailable == true ? CreateDotBadge() : null;
+        // A transient check failure must not retract a prior "update available" cue.
+        // Clear only after both independent release streams are positively current.
+        if (appResult?.IsUpToDate == true && mcpResult?.IsUpToDate == true)
+            settingsItem.InfoBadge = null;
     }
 
     private static InfoBadge CreateDotBadge()

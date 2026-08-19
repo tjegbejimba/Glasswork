@@ -140,6 +140,83 @@ Describe "Get-McpInstallPackage" {
         $package.PackagePath | Should -Exist
         $package.PackagePath | Should -Not -Be $packagePath
     }
+
+    It "downloads and verifies exact GitHub Release assets" {
+        $sourcePackage = Join-Path $TestDrive "source-glasswork-mcp.0.11.0.nupkg"
+        $workingDirectory = Join-Path $TestDrive "github-work"
+        New-Item -ItemType Directory -Path $workingDirectory | Out-Null
+        New-TestInstallPackage -Path $sourcePackage
+        $sha256 = (Get-FileHash -Algorithm SHA256 $sourcePackage).Hash.ToLowerInvariant()
+
+        Mock Get-McpPublishedMetadata {
+            [pscustomobject]@{
+                Version             = "0.11.0"
+                SourceRevision      = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                Sha256             = $sha256
+                PackageDownloadUrl  = "https://github.test/package"
+                ChecksumDownloadUrl = "https://github.test/checksum"
+            }
+        }
+        Mock Invoke-WebRequest {
+            param($Uri, $OutFile)
+            if ($Uri -eq "https://github.test/package") {
+                Copy-Item $sourcePackage $OutFile
+            }
+            else {
+                "$sha256  glasswork-mcp.0.11.0.nupkg" | Set-Content $OutFile
+            }
+        }
+
+        $package = Get-McpInstallPackage `
+            -Version "0.11.0" `
+            -WorkingDirectory $workingDirectory
+
+        $package.SourceRevision | Should -Be "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        $package.Sha256 | Should -Be $sha256
+        Should -Invoke Invoke-WebRequest -Times 2 -Exactly
+    }
+}
+
+Describe "Get-McpPublishedMetadata" {
+    It "anchors GitHub Release assets to annotated tag checksum metadata" {
+        $revision = "b" * 40
+        $sha256 = "c" * 64
+        Mock Invoke-RestMethod {
+            param($Uri)
+            if ($Uri -like "*/releases/tags/*") {
+                return [pscustomobject]@{
+                    tag_name = "mcp-v0.11.0"
+                    draft = $false
+                    prerelease = $false
+                    assets = @(
+                        [pscustomobject]@{
+                            name = "glasswork-mcp.0.11.0.nupkg"
+                            browser_download_url = "https://github.test/package"
+                        },
+                        [pscustomobject]@{
+                            name = "glasswork-mcp.0.11.0.nupkg.sha256"
+                            browser_download_url = "https://github.test/checksum"
+                        })
+                }
+            }
+            if ($Uri -like "*/git/ref/tags/*") {
+                return [pscustomobject]@{
+                    object = [pscustomobject]@{ type = "tag"; sha = ("d" * 40) }
+                }
+            }
+            return [pscustomobject]@{
+                message = "version: 0.11.0`ncommit: $revision`nsha256: $sha256"
+                object = [pscustomobject]@{ type = "commit"; sha = $revision }
+            }
+        }
+
+        $metadata = Get-McpPublishedMetadata -Version "0.11.0"
+
+        $metadata.SourceRevision | Should -Be $revision
+        $metadata.Sha256 | Should -Be $sha256
+        $metadata.PackageDownloadUrl | Should -Be "https://github.test/package"
+        Should -Invoke Invoke-RestMethod -Times 3 -Exactly
+    }
 }
 
 Describe "Install-GlassworkMcp integration" {

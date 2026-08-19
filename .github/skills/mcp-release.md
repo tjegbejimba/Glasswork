@@ -1,12 +1,12 @@
 ---
 name: mcp-release
-description: Prepare and publish an independently versioned glasswork-mcp release through NuGet.org. Use for MCP tool release, package publication, exact MCP install, or mcp-v tags.
+description: Prepare and publish an independently versioned glasswork-mcp GitHub Release. Use for MCP tool release, package publication, exact MCP install, or mcp-v tags.
 ---
 
 # glasswork-mcp release
 
 MCP publication is separate from Glasswork app Release publication. Read ADR
-0022 before changing this flow.
+0023 before changing this flow.
 
 ## Prepare
 
@@ -35,15 +35,15 @@ changelog entry and all available gates pass.
 
 After the MCP Release PR lands on `main`:
 
-1. Confirm repository variable `NUGET_USER` and the nuget.org trusted-publishing
-   policy for `publish-mcp.yml` exist.
-2. Dispatch `Publish MCP` on `main` with input `version=X.Y.Z`.
-3. Monitor the run to completion.
-4. Verify the exact NuGet.org package and annotated `mcp-vX.Y.Z` tag exist.
-5. Run `scripts\install-mcp.ps1 -Version X.Y.Z` and verify
+1. Dispatch `Publish MCP` on `main` with input `version=X.Y.Z`.
+2. Monitor the run to completion.
+3. Verify the `mcp-vX.Y.Z` GitHub Release contains the exact `.nupkg` and
+   `.nupkg.sha256` assets.
+4. Run `scripts\install-mcp.ps1 -Version X.Y.Z` and verify
    `glasswork-mcp --version` reports `X.Y.Z+<tag-commit>`.
 
-Only the workflow publishes packages or creates MCP tags. A package or tag
-collision, missing trusted-publisher configuration, failed gate, or partial
-state blocks publication. MCP publication never creates a GitHub Release,
-changes `vX.Y.Z` app tags, or edits app release notes.
+Only the workflow creates MCP tags and GitHub Releases. Failed gates leave a
+resumable draft; after the annotated integrity tag exists, reruns reuse its
+verified assets. A published-version collision or orphaned tag blocks
+publication. MCP publication never changes `vX.Y.Z` app tags, app release
+assets, or app release notes.

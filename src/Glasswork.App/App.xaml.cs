@@ -64,6 +64,7 @@ public partial class App : Application
     public static IObsidianLauncher ObsidianLauncher { get; private set; } = null!;
     public static AzCliAdoWorkItemFetcher AdoFetcher { get; } = new();
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
+    public static Glasswork.Core.AppUpdate.McpUpdateCheckService McpUpdater { get; private set; } = null!;
     public static IPerformanceTracer Performance { get; private set; } = PerformanceTracer.Disabled;
 
     // Coalesces a burst of watcher-overflow events into a single full rehydrate.
@@ -277,13 +278,21 @@ public partial class App : Application
         var detector = new Glasswork.Core.AppUpdate.GitHubReleaseDetector();
         var repoPathProvider = new Services.UiStateRepoPathProvider(_uiStateImpl, RepoPathKey);
         Updater = new Glasswork.Core.AppUpdate.UpdateCheckService(detector, installedVersion, repoPathProvider);
+        McpUpdater = new Glasswork.Core.AppUpdate.McpUpdateCheckService(
+            detector,
+            new Services.GlobalMcpInstalledVersionProvider());
 
         if (!launchOptions.SkipUpdateCheck)
         {
             // Fire-and-forget startup check: runs in background, failures cached/never surfaced at startup (ADR 0011).
             _ = System.Threading.Tasks.Task.Run(async () =>
             {
-                try { await Updater.CheckForUpdatesAsync(); }
+                try
+                {
+                    await System.Threading.Tasks.Task.WhenAll(
+                        Updater.CheckForUpdatesAsync(),
+                        McpUpdater.CheckForUpdatesAsync());
+                }
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Startup update check failed: {ex.Message}"); }
             });
         }

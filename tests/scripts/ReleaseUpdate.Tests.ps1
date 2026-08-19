@@ -7,9 +7,13 @@ BeforeAll {
         param($PublishDirectory, $OutputDirectory)
 
         $updaterDirectory = Join-Path $PublishDirectory "Updater"
-        New-Item -ItemType Directory -Path $updaterDirectory | Out-Null
+        $mcpUpdaterDirectory = Join-Path $PublishDirectory "McpUpdater"
+        New-Item -ItemType Directory -Path $updaterDirectory, $mcpUpdaterDirectory | Out-Null
         Set-Content -Path (Join-Path $updaterDirectory "release-update.ps1") -Value "wrapper"
         Set-Content -Path (Join-Path $updaterDirectory "Invoke-ReleaseUpdate.ps1") -Value "updater"
+        Set-Content -Path (Join-Path $mcpUpdaterDirectory "install-mcp.ps1") -Value "wrapper"
+        Set-Content -Path (Join-Path $mcpUpdaterDirectory "Install-McpTool.ps1") -Value "installer"
+        Set-Content -Path (Join-Path $mcpUpdaterDirectory "Validate-McpReleasePublication.ps1") -Value "validation"
         New-ReleasePackage `
             -PublishDirectory $PublishDirectory `
             -OutputDirectory $OutputDirectory

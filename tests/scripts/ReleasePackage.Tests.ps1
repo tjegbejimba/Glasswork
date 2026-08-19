@@ -8,10 +8,14 @@ Describe "New-ReleasePackage" {
         $publishDirectory = Join-Path $TestDrive "publish"
         $outputDirectory = Join-Path $TestDrive "release"
         $updaterDirectory = Join-Path $publishDirectory "Updater"
-        New-Item -ItemType Directory -Path $publishDirectory, $updaterDirectory | Out-Null
+        $mcpUpdaterDirectory = Join-Path $publishDirectory "McpUpdater"
+        New-Item -ItemType Directory -Path $publishDirectory, $updaterDirectory, $mcpUpdaterDirectory | Out-Null
         Set-Content -Path (Join-Path $publishDirectory "Glasswork.exe") -Value "release binary"
         Set-Content -Path (Join-Path $updaterDirectory "release-update.ps1") -Value "wrapper"
         Set-Content -Path (Join-Path $updaterDirectory "Invoke-ReleaseUpdate.ps1") -Value "updater"
+        Set-Content -Path (Join-Path $mcpUpdaterDirectory "install-mcp.ps1") -Value "wrapper"
+        Set-Content -Path (Join-Path $mcpUpdaterDirectory "Install-McpTool.ps1") -Value "installer"
+        Set-Content -Path (Join-Path $mcpUpdaterDirectory "Validate-McpReleasePublication.ps1") -Value "validation"
 
         $result = New-ReleasePackage `
             -PublishDirectory $publishDirectory `
@@ -30,6 +34,9 @@ Describe "New-ReleasePackage" {
             $entries | Should -Contain "Glasswork.exe"
             $entries | Should -Contain "Updater/release-update.ps1"
             $entries | Should -Contain "Updater/Invoke-ReleaseUpdate.ps1"
+            $entries | Should -Contain "McpUpdater/install-mcp.ps1"
+            $entries | Should -Contain "McpUpdater/Install-McpTool.ps1"
+            $entries | Should -Contain "McpUpdater/Validate-McpReleasePublication.ps1"
         }
         finally {
             $archive.Dispose()
@@ -46,5 +53,20 @@ Describe "New-ReleasePackage" {
                 -PublishDirectory $publishDirectory `
                 -OutputDirectory (Join-Path $TestDrive "release-missing-updater")
         } | Should -Throw "*Updater*"
+    }
+
+    It "Rejects a publish output without the bundled MCP updater" {
+        $publishDirectory = Join-Path $TestDrive "publish-missing-mcp-updater"
+        $updaterDirectory = Join-Path $publishDirectory "Updater"
+        New-Item -ItemType Directory -Path $publishDirectory, $updaterDirectory | Out-Null
+        Set-Content -Path (Join-Path $publishDirectory "Glasswork.exe") -Value "release binary"
+        Set-Content -Path (Join-Path $updaterDirectory "release-update.ps1") -Value "wrapper"
+        Set-Content -Path (Join-Path $updaterDirectory "Invoke-ReleaseUpdate.ps1") -Value "updater"
+
+        {
+            New-ReleasePackage `
+                -PublishDirectory $publishDirectory `
+                -OutputDirectory (Join-Path $TestDrive "release-missing-mcp-updater")
+        } | Should -Throw "*McpUpdater*"
     }
 }

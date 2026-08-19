@@ -73,19 +73,12 @@ Sources:
 
 ## Decision support
 
-Use NuGet.org with trusted publishing. Publish through a dedicated workflow
-that creates an annotated `mcp-vX.Y.Z` integrity tag but no GitHub Release.
-Installers should select an exact version, verify the published package against
-the tag's checksum and source commit, stage it in an isolated cache, and verify
-the executable build identity before replacing an installed tool.
+The initial recommendation was NuGet.org because the app consumed
+`/releases/latest` without filtering. ADR 0023 changed that premise: App Update
+now selects only stable `vX.Y.Z` releases, while MCP Update selects only stable
+`mcp-vX.Y.Z` releases. With explicit streams, GitHub Releases preserve
+independent cadence while letting the app own both verified update paths.
 
-This leaves ADR 0012's app Release workflow and `/releases/latest` signal
-unchanged. Ephemeral Actions artifacts may retain publication evidence, but are
-not the distribution channel.
-
-## Setup blocker
-
-The first real publication requires a nuget.org owner with a trusted-publishing
-policy for `tjegbejimba/Glasswork` and workflow `publish-mcp.yml`, plus the
-repository variable `NUGET_USER`. Package publication remains blocked until
-that external account configuration exists.
+The selected channel is therefore an MCP-prefixed GitHub Release with exact
+package and checksum assets. The NuGet findings above remain valid background,
+but no external package-registry account is required.

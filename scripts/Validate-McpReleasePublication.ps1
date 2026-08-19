@@ -55,26 +55,55 @@ function Test-McpReleasePublicationInputs {
 function Resolve-McpPublicationState {
     param(
         [Parameter(Mandatory = $true)]
-        [bool]$PackageExists,
+        [bool]$ReleaseExists,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$ReleaseIsDraft,
 
         [Parameter(Mandatory = $true)]
         [bool]$TagExists
     )
 
-    if (-not $PackageExists -and -not $TagExists) {
+    if (-not $ReleaseExists -and -not $TagExists) {
         return "New"
     }
-    if ($PackageExists -and -not $TagExists) {
-        return "RecoverTag"
+    if ($ReleaseExists -and $ReleaseIsDraft) {
+        return "ResumeDraft"
     }
-    if ($PackageExists -and $TagExists) {
-        throw "MCP package and tag already exist for this version."
-    }
-    if (-not $PackageExists -and $TagExists) {
-        throw "MCP tag exists without its package; publication cannot continue safely."
+    if (-not $ReleaseExists -and $TagExists) {
+        throw "MCP integrity tag exists without its draft release."
     }
 
-    throw "Unsupported MCP publication state."
+    throw "MCP GitHub Release is already published for this version."
+}
+
+function ConvertFrom-McpTagMessage {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    $versionMatch = [regex]::Match($Message, '(?m)^version: (?<value>0\.\d+\.\d+)\s*$')
+    $revisionMatch = [regex]::Match($Message, '(?m)^commit: (?<value>[0-9a-f]{40})\s*$')
+    $shaMatch = [regex]::Match($Message, '(?m)^sha256: (?<value>[0-9a-f]{64})\s*$')
+    if (-not $versionMatch.Success -or $versionMatch.Groups["value"].Value -ne $Version) {
+        throw "MCP tag metadata does not match requested version '$Version'."
+    }
+    if (-not $revisionMatch.Success) {
+        throw "MCP tag metadata is missing a valid source revision."
+    }
+    if (-not $shaMatch.Success) {
+        throw "MCP tag metadata is missing a valid SHA-256 checksum."
+    }
+
+    [pscustomobject]@{
+        Version        = $Version
+        SourceRevision = $revisionMatch.Groups["value"].Value
+        Sha256         = $shaMatch.Groups["value"].Value
+    }
 }
 
 function Get-McpPackageMetadata {
@@ -161,6 +190,7 @@ function Test-McpPackageArtifact {
     if ($metadata.Version -ne $Version) {
         throw "MCP package version '$($metadata.Version)' does not match requested version '$Version'."
     }
+
     if ($metadata.SourceRevision -ne $SourceRevision) {
         throw "MCP package source revision '$($metadata.SourceRevision)' does not match '$SourceRevision'."
     }
@@ -174,5 +204,53 @@ function Test-McpPackageArtifact {
         ChecksumPath  = $checksumPath
         Sha256        = $sha256
         SourceRevision = $SourceRevision
+    }
+}
+
+function Test-McpPackageIntegrity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackagePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ChecksumPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Version,
+
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRevision,
+
+        [string]$ExpectedSha256
+    )
+
+    $metadata = Get-McpPackageMetadata -PackagePath $PackagePath
+    if ($metadata.Version -ne $Version) {
+        throw "MCP package version '$($metadata.Version)' does not match requested version '$Version'."
+    }
+    if ($metadata.SourceRevision -ne $SourceRevision) {
+        throw "MCP package source revision '$($metadata.SourceRevision)' does not match '$SourceRevision'."
+    }
+    if (-not (Test-Path $ChecksumPath -PathType Leaf)) {
+        throw "MCP checksum not found: $ChecksumPath"
+    }
+
+    $sha256 = (Get-FileHash -Algorithm SHA256 -Path $PackagePath).Hash.ToLowerInvariant()
+    $checksum = (Get-Content $ChecksumPath -Raw).Trim()
+    $packageName = Split-Path $PackagePath -Leaf
+    if ($checksum -ne "$sha256  $packageName") {
+        throw "MCP package checksum does not match the downloaded package."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSha256) -and
+        $sha256 -ne $ExpectedSha256) {
+        throw "MCP package checksum does not match the independent integrity anchor."
+    }
+
+    [pscustomobject]@{
+        PackagePath    = $PackagePath
+        ChecksumPath   = $ChecksumPath
+        Version        = $metadata.Version
+        SourceRevision = $metadata.SourceRevision
+        Sha256         = $sha256
     }
 }

@@ -24,20 +24,11 @@
 .\scripts\install-mcp.ps1 -Version 0.11.0
 ```
 
-The script downloads that exact immutable NuGet.org package, verifies its
-annotated `mcp-v0.11.0` tag checksum and source revision, stages and executes
-the replacement, then installs it globally only after the staged build reports
-the expected `0.11.0+<commit>` identity. Re-running the command replaces a stale
-same-version local build instead of trusting the version string alone.
-
-### Direct NuGet install
-
-```powershell
-dotnet tool install -g glasswork-mcp --version 0.11.0
-```
-
-The verification script is preferred because `dotnet tool update` can reuse a
-cached package when different local bits were packed under the same version.
+The script downloads the exact package and checksum assets from the
+`mcp-v0.11.0` GitHub Release, verifies the tag source revision, stages and
+executes the replacement, then installs it globally only after the staged build
+reports the expected `0.11.0+<commit>` identity. Re-running the command replaces
+a stale same-version local build instead of trusting the version string alone.
 
 ### Development package install
 

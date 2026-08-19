@@ -1,6 +1,6 @@
 # ADR 0022: Publish `glasswork-mcp` immutably through NuGet.org
 
-**Status**: Accepted
+**Status**: Superseded by ADR 0023
 
 ## Context
 

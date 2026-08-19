@@ -2,6 +2,8 @@
 
 **Status**: Accepted
 **Context slice**: App Update apply path; supersedes ADR 0011's source-build mechanism
+**Amended**: ADR 0023 adds a separate MCP Update path that uses verified
+`mcp-vX.Y.Z` package assets without restarting or replacing the app.
 
 ## Context
 
