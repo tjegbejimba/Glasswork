@@ -28,6 +28,7 @@ glasswork:
   research:
     include: [optional-wiki-page-id]
     exclude: [optional-wiki-page-id]
+    related_work: [optional-task-id]
 ```
 
 The Topic's live **Research context** contains the Topic itself plus
@@ -55,6 +56,13 @@ Existing Wiki `confidence`, `updated`, `expires`, and `sources` fields express
 trust and freshness. Open Questions remain prose. Tasks and Wayfinder
 maps/tickets are explicitly linked **Related Work** whose lifecycle never
 changes the Topic.
+
+Task Related Work uses reciprocal references without copying workflow state.
+The Topic keeps only canonical Task IDs in `glasswork.research.related_work`;
+each Task keeps the Topic Wiki link in its existing `## Related` section.
+Glasswork resolves Task title and status live from the Task Index. Missing,
+malformed, or one-sided references remain visible as repairable relationship
+state rather than being treated as healthy or silently removed.
 
 ## Considered options
 

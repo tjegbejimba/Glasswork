@@ -10,23 +10,41 @@
     PrimaryButtonClick="OnCreate">
 
     <StackPanel Spacing="16" MinWidth="400">
-        <TextBox x:Name="TitleBox" Header="Title" PlaceholderText="What needs to be done?" />
+        <InfoBar
+            x:Name="CreateError"
+            IsClosable="False"
+            IsOpen="False"
+            Severity="Error"
+            Title="Unable to create Task" />
+        <TextBox
+            x:Name="TitleBox"
+            AutomationProperties.AutomationId="CreateTaskTitleBox"
+            Header="Title"
+            PlaceholderText="What needs to be done?" />
 
-        <ComboBox x:Name="PriorityBox" Header="Priority" SelectedIndex="1" HorizontalAlignment="Stretch">
+        <ComboBox
+            x:Name="PriorityBox"
+            AutomationProperties.AutomationId="CreateTaskPriorityBox"
+            Header="Priority"
+            SelectedIndex="1"
+            HorizontalAlignment="Stretch">
             <ComboBoxItem Tag="low" Content="Low" />
             <ComboBoxItem Tag="medium" Content="Medium" />
             <ComboBoxItem Tag="high" Content="High" />
             <ComboBoxItem Tag="urgent" Content="Urgent" />
         </ComboBox>
 
-        <CheckBox x:Name="AddToMyDayBox" Content="Add to My Day" />
+        <CheckBox
+            x:Name="AddToMyDayBox"
+            AutomationProperties.AutomationId="CreateTaskAddToMyDay"
+            Content="Add to My Day" />
 
         <TextBox x:Name="AdoLinkBox" Header="ADO work item ID (optional)"
                  PlaceholderText="e.g. 12345" InputScope="Number" />
         <TextBox x:Name="AdoTitleBox" Header="ADO title (optional)"
                  PlaceholderText="Short label shown on the task" />
 
-        <TextBox x:Name="NotesBox" Header="Notes (optional)" AcceptsReturn="True" Height="80"
+        <TextBox x:Name="NotesBox" AutomationProperties.AutomationId="CreateTaskNotesBox" Header="Notes (optional)" AcceptsReturn="True" Height="80"
                  PlaceholderText="Additional context..." />
     </StackPanel>
 </ContentDialog>

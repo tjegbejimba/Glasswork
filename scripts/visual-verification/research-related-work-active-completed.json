@@ -1,0 +1,99 @@
+{
+  "name": "Research Related Work active completed and long title",
+  "theme": "dark",
+  "startUri": "glasswork://research/async-callbacks",
+  "tasks": [
+    {
+      "id": "active-callback-task",
+      "title": "Prototype callback telemetry",
+      "status": "in-progress",
+      "priority": "high",
+      "related": ["concepts/async-callbacks"]
+    },
+    {
+      "id": "long-callback-task",
+      "title": "Investigate the exceptionally long callback migration title that must wrap cleanly without obscuring live workflow status or keyboard focus",
+      "status": "todo",
+      "priority": "medium",
+      "related": ["concepts/async-callbacks"]
+    },
+    {
+      "id": "completed-callback-task",
+      "title": "Document callback ownership",
+      "status": "done",
+      "priority": "medium",
+      "completedAt": "2026-08-17",
+      "related": ["concepts/async-callbacks"]
+    },
+    {
+      "id": "cancelled-callback-task",
+      "title": "Retire obsolete callback experiment",
+      "status": "cancelled",
+      "priority": "low",
+      "cancelledAt": "2026-08-17T18:00:00Z",
+      "cancellationReason": "Superseded",
+      "related": ["concepts/async-callbacks"]
+    }
+  ],
+  "wikiPages": [
+    {
+      "relativePath": "concepts/async-callbacks.md",
+      "id": "async-callbacks",
+      "title": "Async callbacks",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "sources": ["https://example.test/async-callbacks"],
+      "researchRelatedWork": [
+        "active-callback-task",
+        "long-callback-task",
+        "completed-callback-task",
+        "cancelled-callback-task"
+      ],
+      "markdown": "# Async callbacks\n\nThe Topic remains durable while its Related Work changes state."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "Investigate the exceptionally long callback migration title that must wrap cleanly without obscuring live workflow status or keyboard focus, Todo"
+    },
+    {
+      "type": "wait-for",
+      "name": "Completed or closed (2)"
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchRelatedTask"
+    },
+    {
+      "type": "press-key",
+      "value": "Tab"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchRelatedTask"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskTitleBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "TaskRelatedWikiLink"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchCreateTaskButton",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-related-work-active-completed",
+      "waitMilliseconds": 300
+    }
+  ]
+}

@@ -40,6 +40,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private readonly IWikiLinkResolver _wikiLinkResolver;
     private readonly Func<DateOnly> _today;
     private readonly SelfWriteCoordinator? _selfWrites;
+    private readonly VaultService? _taskVault;
+    private readonly IndexService? _taskIndex;
+    private readonly TaskService? _taskService;
     private readonly TimeSpan _quietPeriod;
     private readonly object _gate = new();
     private readonly object _processingGate = new();
@@ -74,7 +77,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         string vaultRoot,
         Func<DateOnly>? today = null,
         SelfWriteCoordinator? selfWrites = null,
-        TimeSpan? quietPeriod = null)
+        TimeSpan? quietPeriod = null,
+        VaultService? taskVault = null,
+        IndexService? taskIndex = null,
+        TaskService? taskService = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(vaultRoot);
         _vaultRoot = Path.GetFullPath(vaultRoot);
@@ -82,6 +88,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         Directory.CreateDirectory(_vaultRoot);
         _today = today ?? (() => DateOnly.FromDateTime(DateTime.Today));
         _selfWrites = selfWrites;
+        _taskVault = taskVault;
+        _taskIndex = taskIndex;
+        _taskService = taskService;
         try
         {
             RecoverResearchRemoval();
@@ -1235,6 +1244,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             researchMetadata.IncludeIds,
             researchMetadata.ExcludeIds,
             researchMetadata.Warnings,
+            researchMetadata.RelatedTaskIds,
+            researchMetadata.RelatedWorkWarnings,
             relativePath,
             match.Groups[2].Value.TrimStart(),
             queryDate);
@@ -1415,6 +1426,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                         duplicateIds,
                         queryDate,
                         _referencesByPath.Values),
+                    RelatedWork = BuildRelatedWork(page),
                 };
                 return previousById.TryGetValue(candidate.Id, out var previous)
                     && TopicsEquivalent(previous, candidate)
@@ -1838,7 +1850,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         && left.Markdown == right.Markdown
         && left.Sources.SequenceEqual(right.Sources, StringComparer.Ordinal)
         && left.Context.RelatedPages.SequenceEqual(right.Context.RelatedPages)
-        && left.Context.Warnings.SequenceEqual(right.Context.Warnings);
+        && left.Context.Warnings.SequenceEqual(right.Context.Warnings)
+        && left.RelatedWork.ActiveTasks.SequenceEqual(right.RelatedWork.ActiveTasks)
+        && left.RelatedWork.CompletedTasks.SequenceEqual(right.RelatedWork.CompletedTasks)
+        && left.RelatedWork.Warnings.SequenceEqual(right.RelatedWork.Warnings);
 
     private static string NormalizeReference(string reference)
     {
@@ -1890,7 +1905,13 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     topicId,
                     ResearchContextRelation.None,
                     ResearchContextWarningCode.InvalidOverride,
-                    "Research metadata must be a YAML mapping.")]);
+                    "Research metadata must be a YAML mapping.")],
+                Array.Empty<string>(),
+                [new ResearchRelatedWorkWarning(
+                    topicId,
+                    ResearchRelatedWorkWarningCode.InvalidMetadata,
+                    "Research metadata must be a YAML mapping. Repair the Topic metadata in Obsidian.",
+                    CanRepair: false)]);
         }
 
         var warnings = new List<ResearchContextWarning>();
@@ -1906,7 +1927,67 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             topicId,
             ResearchContextRelation.ExcludeOverride,
             warnings);
-        return new ResearchMetadata(includeIds, excludeIds, warnings);
+        var relatedWorkWarnings = new List<ResearchRelatedWorkWarning>();
+        var relatedTaskIds = ReadRelatedTaskIds(
+            research,
+            topicId,
+            relatedWorkWarnings);
+        return new ResearchMetadata(
+            includeIds,
+            excludeIds,
+            warnings,
+            relatedTaskIds,
+            relatedWorkWarnings);
+    }
+
+    private static IReadOnlyList<string> ReadRelatedTaskIds(
+        YamlMappingNode research,
+        string topicId,
+        ICollection<ResearchRelatedWorkWarning> warnings)
+    {
+        var entry = research.Children.FirstOrDefault(pair =>
+            pair.Key is YamlScalarNode key
+            && string.Equals(key.Value, "related_work", StringComparison.Ordinal));
+        if (entry.Key is null)
+            return Array.Empty<string>();
+        if (entry.Value is not YamlSequenceNode sequence)
+        {
+            warnings.Add(new ResearchRelatedWorkWarning(
+                $"{topicId}:related_work",
+                ResearchRelatedWorkWarningCode.InvalidMetadata,
+                "Research 'related_work' must be a YAML sequence of Task IDs. Repair the Topic metadata in Obsidian.",
+                CanRepair: false));
+            return Array.Empty<string>();
+        }
+
+        var values = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in sequence.Children)
+        {
+            var value = node is YamlScalarNode scalar
+                ? scalar.Value?.Trim()
+                : null;
+            if (string.IsNullOrWhiteSpace(value) || !SafeTaskIdRegex().IsMatch(value))
+            {
+                warnings.Add(new ResearchRelatedWorkWarning(
+                    value ?? $"{topicId}:related_work",
+                    ResearchRelatedWorkWarningCode.InvalidTaskId,
+                    "Research 'related_work' contains an invalid Task ID. Repair the Topic metadata in Obsidian.",
+                    CanRepair: false));
+                continue;
+            }
+            if (!seen.Add(value))
+            {
+                warnings.Add(new ResearchRelatedWorkWarning(
+                    value,
+                    ResearchRelatedWorkWarningCode.DuplicateTaskId,
+                    $"Task '{value}' appears more than once in Research 'related_work'. Repair removes the duplicate.",
+                    CanRepair: true));
+                continue;
+            }
+            values.Add(value);
+        }
+        return values;
     }
 
     private static IReadOnlyList<string> ReadOverrideIds(
@@ -3133,6 +3214,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._-]*$")]
     private static partial Regex StableIdRegex();
 
+    [GeneratedRegex(@"^[a-z0-9][a-z0-9-]*$")]
+    private static partial Regex SafeTaskIdRegex();
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFile(
         string fileName,
@@ -3179,6 +3263,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         IReadOnlyList<string> IncludeIds,
         IReadOnlyList<string> ExcludeIds,
         IReadOnlyList<ResearchContextWarning> MetadataWarnings,
+        IReadOnlyList<string> RelatedTaskIds,
+        IReadOnlyList<ResearchRelatedWorkWarning> RelatedWorkWarnings,
         string VaultRelativePath,
         string Markdown,
         DateOnly LastValidOn);
@@ -3186,10 +3272,17 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private sealed record ResearchMetadata(
         IReadOnlyList<string> IncludeIds,
         IReadOnlyList<string> ExcludeIds,
-        IReadOnlyList<ResearchContextWarning> Warnings)
+        IReadOnlyList<ResearchContextWarning> Warnings,
+        IReadOnlyList<string> RelatedTaskIds,
+        IReadOnlyList<ResearchRelatedWorkWarning> RelatedWorkWarnings)
     {
         public static ResearchMetadata Empty { get; } =
-            new(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<ResearchContextWarning>());
+            new(
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                Array.Empty<ResearchContextWarning>(),
+                Array.Empty<string>(),
+                Array.Empty<ResearchRelatedWorkWarning>());
     }
 
     private sealed record TextEncodingInfo(Encoding Encoding, byte[] Preamble);
