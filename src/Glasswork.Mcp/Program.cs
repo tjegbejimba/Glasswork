@@ -5,6 +5,12 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
+if (args is ["--version"])
+{
+    Console.Out.WriteLine(Glasswork.Mcp.McpBuildIdentity.Current);
+    return;
+}
+
 // Vault discovery is allowed to fail: the precondition pipeline filters
 // vault-dependent tools out of ListTools so the server can still boot.
 var vaultPath = Glasswork.Mcp.VaultDiscovery.TryDiscover(out var vaultDiscoveryDiagnostic);

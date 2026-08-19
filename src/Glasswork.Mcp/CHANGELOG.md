@@ -5,10 +5,26 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.10.0] — Unreleased
+## [0.11.0] — 2026-08-19
+
+Version `0.10.0` remained a development-only local build. Version `0.11.0` is
+the first package prepared for immutable NuGet.org publication and includes all
+of its changes.
 
 ### Added
 
+- **Immutable MCP publication**: a dedicated `Publish MCP` workflow validates
+  the committed version and changelog, runs serial MCP tests plus Release
+  build/pack gates, publishes through NuGet.org trusted publishing, and records
+  the source revision and published package SHA-256 in an annotated
+  `mcp-vX.Y.Z` tag without creating an app-visible GitHub Release.
+- **Exact install verification**: `scripts/install-mcp.ps1 -Version X.Y.Z`
+  downloads an exact published package, checks its tag-backed checksum and
+  source revision, stages the tool in an isolated NuGet cache, and verifies the
+  `X.Y.Z+commit` build identity before replacing an existing global install.
+- **Build identity switch**: `glasswork-mcp --version` reports the package
+  version plus source commit, allowing same-version stale local builds to be
+  detected and replaced.
 - **Authoritative ADO reconciliation**: `reconcile_ado_task` validates the
   matching imported ADO identity and applies only exact `Removed` Cancellation
   or exact resumed-active restoration directly to `doing`. The named

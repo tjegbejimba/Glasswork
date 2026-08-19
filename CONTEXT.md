@@ -292,6 +292,25 @@ App Update consumes as the **Available version**.
   short summary, grouped `Changes`, and `Validation`; raw commit dumps are
   avoided.
 
+### 9. MCP publication
+
+Turns an intentionally chosen commit on `main` into an immutable, independently
+versioned `glasswork-mcp` package without changing App Update's Available
+version. See ADR 0022.
+
+- **Owns**: the MCP Release PR's committed semantic version and dated MCP
+  changelog entry, the MCP publication workflow, the immutable NuGet.org MCP
+  package, its annotated `mcp-vX.Y.Z` integrity tag, and exact-version install
+  verification through the MCP build identity.
+- **Speaks to**: the MCP transport process by packaging its executable, and
+  agent environments by installing the verified global tool.
+- **Does not own**: Glasswork app Release publication, GitHub Releases, App
+  Update, the Vault, or any Task data.
+- **Boundary rule**: every changed published MCP binary has a new `0.x` semantic
+  version. Public tool/CLI shape changes bump minor; compatible implementation
+  changes bump patch. Publication runs only from current reviewed `main`, and
+  MCP tags never become GitHub Releases.
+
 ## Cross-cutting
 
 - **Service locator pattern** — `App.Vault`, `App.Tasks`, `App.Index`,
