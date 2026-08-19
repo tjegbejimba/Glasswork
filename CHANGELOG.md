@@ -14,6 +14,20 @@ Each component is versioned independently. Entries below note the component when
 
 ## [Unreleased]
 
+### Changed
+
+#### App
+- **Independent app/MCP updates** — GitHub Release detection now filters stable
+  `vX.Y.Z` app releases separately from `mcp-vX.Y.Z` MCP releases. Settings can
+  install a verified MCP-only update without restarting Glasswork, and app
+  Release packages bundle the exact-version MCP updater.
+
+#### Mcp
+- **GitHub Release distribution** — `Publish MCP` now attaches the immutable
+  `.nupkg` and SHA-256 assets to an `mcp-vX.Y.Z` GitHub Release. The installer
+  verifies those assets and the release tag commit before replacing the global
+  tool.
+
 ## [App 1.3.0 / Mcp 0.5.0] — 2026-05-26
 
 First versioned release since `v1.2.0` (2026-04-20). This release covers ~35 merged PRs across the

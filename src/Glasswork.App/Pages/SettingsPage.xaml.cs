@@ -4,6 +4,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using Glasswork.Core.AppUpdate;
 using Glasswork.Core.Services;
 using Glasswork.Services;
@@ -180,6 +181,15 @@ public sealed partial class SettingsPage : Page
         InstalledVersionText.Text = $"Installed version: {App.Updater.InstalledVersion}";
         UpdateStatusText.Text = UpdateStatusPresenter.Describe(App.Updater.LastResult);
         RestartToUpdateButton.IsEnabled = App.Updater.LastResult?.IsUpdateAvailable == true;
+
+        var mcpResult = App.McpUpdater.LastResult;
+        InstalledMcpVersionText.Text = mcpResult?.InstalledVersion is not null
+            ? $"Installed version: {mcpResult.InstalledVersion}"
+            : mcpResult?.IsInstalled == true
+            ? "Installed version: Legacy build"
+            : "Installed version: Not installed";
+        McpUpdateStatusText.Text = DescribeMcpUpdate(mcpResult);
+        UpdateMcpButton.IsEnabled = mcpResult?.IsUpdateAvailable == true;
     }
 
     private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
@@ -189,8 +199,10 @@ public sealed partial class SettingsPage : Page
 
         try
         {
-            var result = await App.Updater.CheckForUpdatesAsync();
-            UpdateStatusText.Text = UpdateStatusPresenter.Describe(result);
+            var appCheck = App.Updater.CheckForUpdatesAsync();
+            var mcpCheck = App.McpUpdater.CheckForUpdatesAsync();
+            await Task.WhenAll(appCheck, mcpCheck);
+            UpdateStatusText.Text = UpdateStatusPresenter.Describe(appCheck.Result);
             // Re-evaluate the restart button so it lights up once an update is found.
             RefreshUpdateInfo();
         }
@@ -202,6 +214,95 @@ public sealed partial class SettingsPage : Page
         finally
         {
             CheckForUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    private async void UpdateMcpButton_Click(object sender, RoutedEventArgs e)
+    {
+        string? updaterDirectory = null;
+        UpdateMcpButton.IsEnabled = false;
+        McpUpdateStatusText.Text = "Installing verified MCP update…";
+
+        try
+        {
+            var bundledUpdaterDirectory = Path.Combine(AppContext.BaseDirectory, "McpUpdater");
+            updaterDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "Glasswork",
+                $"mcp-updater-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(updaterDirectory);
+
+            foreach (var fileName in new[]
+                     {
+                         "install-mcp.ps1",
+                         "Install-McpTool.ps1",
+                         "Validate-McpReleasePublication.ps1",
+                     })
+            {
+                File.Copy(
+                    Path.Combine(bundledUpdaterDirectory, fileName),
+                    Path.Combine(updaterDirectory, fileName));
+            }
+
+            var installerScriptPath = Path.Combine(updaterDirectory, "install-mcp.ps1");
+            var plan = new McpUpdateLauncher().CreatePlan(
+                isUpdateAvailable: App.McpUpdater.LastResult?.IsUpdateAvailable == true,
+                availableVersion: App.McpUpdater.LastResult?.AvailableVersion?.ToString(),
+                installerScriptPath: installerScriptPath,
+                executableResolver: new PwshExecutableResolver(),
+                fileExists: File.Exists,
+                workingDirectory: updaterDirectory);
+            if (plan.IsOpenReleasePage || plan.ProcessSpec is null)
+            {
+                OpenMcpReleasePage(App.McpUpdater.LastResult?.AvailableVersion?.ToString());
+                return;
+            }
+
+            var spec = plan.ProcessSpec;
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = spec.FileName,
+                    CreateNoWindow = spec.CreateNoWindow,
+                    UseShellExecute = spec.UseShellExecute,
+                    WorkingDirectory = spec.WorkingDirectory,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                },
+            };
+            foreach (var arg in spec.ArgumentList)
+                process.StartInfo.ArgumentList.Add(arg);
+
+            if (!process.Start())
+                throw new InvalidOperationException("The MCP updater process did not start.");
+
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            var output = (await outputTask).Trim();
+            var error = (await errorTask).Trim();
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    string.IsNullOrWhiteSpace(error) ? "MCP update failed." : error);
+            }
+
+            await App.McpUpdater.CheckForUpdatesAsync();
+            RefreshUpdateInfo();
+            if (!string.IsNullOrWhiteSpace(output))
+                McpUpdateStatusText.Text = output;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"MCP update failed: {ex.Message}");
+            McpUpdateStatusText.Text = $"MCP update failed: {ex.Message}";
+        }
+        finally
+        {
+            if (updaterDirectory is not null)
+                DeleteUpdaterDirectory(updaterDirectory);
+            UpdateMcpButton.IsEnabled = App.McpUpdater.LastResult?.IsUpdateAvailable == true;
         }
     }
 
@@ -241,7 +342,7 @@ public sealed partial class SettingsPage : Page
             {
                 DeleteUpdaterDirectory(updaterDirectory);
                 updaterDirectory = null;
-                OpenReleasePage();
+                OpenReleasePage(App.Updater.LastResult?.AvailableVersion?.ToString());
                 return;
             }
 
@@ -268,7 +369,7 @@ public sealed partial class SettingsPage : Page
             System.Diagnostics.Debug.WriteLine($"Self-update spawn failed: {ex.Message}");
             if (updaterDirectory is not null)
                 DeleteUpdaterDirectory(updaterDirectory);
-            OpenReleasePage();
+            OpenReleasePage(App.Updater.LastResult?.AvailableVersion?.ToString());
         }
     }
 
@@ -285,9 +386,11 @@ public sealed partial class SettingsPage : Page
         }
     }
 
-    private static void OpenReleasePage()
+    private static void OpenReleasePage(string? version)
     {
-        const string url = "https://github.com/tjegbejimba/Glasswork/releases/latest";
+        var url = string.IsNullOrWhiteSpace(version)
+            ? "https://github.com/tjegbejimba/Glasswork/releases"
+            : $"https://github.com/tjegbejimba/Glasswork/releases/tag/v{version}";
         try
         {
             Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
@@ -295,6 +398,34 @@ public sealed partial class SettingsPage : Page
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Failed to open release page: {ex.Message}");
+        }
+    }
+
+    private static string DescribeMcpUpdate(McpUpdateCheckResult? result)
+    {
+        if (result is null)
+            return "Not checked yet.";
+        if (result.IsCheckFailed)
+            return "Unable to check glasswork-mcp releases.";
+        if (result.IsUpdateAvailable && !result.IsInstalled)
+            return $"Version {result.AvailableVersion} is available to install.";
+        if (result.IsUpdateAvailable)
+            return $"Version {result.AvailableVersion} is available.";
+        return "glasswork-mcp is up to date.";
+    }
+
+    private static void OpenMcpReleasePage(string? version)
+    {
+        var url = string.IsNullOrWhiteSpace(version)
+            ? "https://github.com/tjegbejimba/Glasswork/releases"
+            : $"https://github.com/tjegbejimba/Glasswork/releases/tag/mcp-v{version}";
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to open MCP release page: {ex.Message}");
         }
     }
 }

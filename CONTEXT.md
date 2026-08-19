@@ -232,10 +232,10 @@ spans Core (pure version logic) and App (network, process orchestration, UI).
 See ADR 0020 (supersedes ADR 0011's apply mechanism).
 
 - **Owns**:
-  - **Detection** — an unauthenticated HTTPS client that reads the latest
-    release `tag_name` from the public GitHub API, plus the pure SemVer
-    comparison in `Glasswork.Core` that yields whether an **Update Check**
-    found a newer **Available Version** than the **Installed Version**.
+  - **Detection** — an unauthenticated HTTPS client that enumerates public
+    GitHub Releases and selects the highest stable app `vX.Y.Z` tag, plus the
+    pure SemVer comparison in `Glasswork.Core` that yields whether an **Update
+    Check** found a newer **Available Version** than the **Installed Version**.
   - **Apply** — the **Self-Update** orchestration: spawn the bundled detached
     **Updater** (`Updater\release-update.ps1`), self-close, and let the updater
     download the matching Windows **Release package**, verify its SHA-256
@@ -269,7 +269,7 @@ App Update consumes as the **Available version**.
   Release for the current `main` HEAD with those notes, a stable-named
   `Glasswork-win-x64.zip` asset, and its SHA-256 sidecar.
   The workflow also runs Core tests and a Windows Release x64 app publish before
-  tagging, so `/releases/latest` never advertises a version that cannot build.
+  tagging, so the app release stream never advertises a version that cannot build.
 - **Speaks to**: App Update by publishing the release tag and Release package
   consumed by an **Update check** and **Self-update**.
 - **Does not own**: installing the app on the user's machine; that remains
@@ -295,21 +295,22 @@ App Update consumes as the **Available version**.
 ### 9. MCP publication
 
 Turns an intentionally chosen commit on `main` into an immutable, independently
-versioned `glasswork-mcp` package without changing App Update's Available
-version. See ADR 0022.
+versioned `glasswork-mcp` GitHub Release without changing App Update's Available
+version. See ADR 0023.
 
 - **Owns**: the MCP Release PR's committed semantic version and dated MCP
-  changelog entry, the MCP publication workflow, the immutable NuGet.org MCP
-  package, its annotated `mcp-vX.Y.Z` integrity tag, and exact-version install
-  verification through the MCP build identity.
-- **Speaks to**: the MCP transport process by packaging its executable, and
-  agent environments by installing the verified global tool.
+  changelog entry, the MCP publication workflow, the `mcp-vX.Y.Z` GitHub
+  Release, its package/checksum assets, and exact-version install verification
+  through the MCP build identity.
+- **Speaks to**: the MCP transport process by packaging its executable, App
+  Update through the separate MCP release stream, and agent environments by
+  installing the verified global tool.
 - **Does not own**: Glasswork app Release publication, GitHub Releases, App
   Update, the Vault, or any Task data.
 - **Boundary rule**: every changed published MCP binary has a new `0.x` semantic
   version. Public tool/CLI shape changes bump minor; compatible implementation
   changes bump patch. Publication runs only from current reviewed `main`, and
-  MCP tags never become GitHub Releases.
+  MCP releases never participate in the app `vX.Y.Z` stream.
 
 ## Cross-cutting
 

@@ -7,35 +7,6 @@
 
 . (Join-Path $PSScriptRoot "Validate-McpReleasePublication.ps1")
 
-function ConvertFrom-McpTagMessage {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Message,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Version
-    )
-
-    $versionMatch = [regex]::Match($Message, '(?m)^version: (?<value>0\.\d+\.\d+)\s*$')
-    $revisionMatch = [regex]::Match($Message, '(?m)^commit: (?<value>[0-9a-f]{40})\s*$')
-    $shaMatch = [regex]::Match($Message, '(?m)^sha256: (?<value>[0-9a-f]{64})\s*$')
-    if (-not $versionMatch.Success -or $versionMatch.Groups["value"].Value -ne $Version) {
-        throw "MCP tag metadata does not match requested version '$Version'."
-    }
-    if (-not $revisionMatch.Success) {
-        throw "MCP tag metadata is missing a valid source revision."
-    }
-    if (-not $shaMatch.Success) {
-        throw "MCP tag metadata is missing a valid SHA-256 checksum."
-    }
-
-    [pscustomobject]@{
-        Version        = $Version
-        SourceRevision = $revisionMatch.Groups["value"].Value
-        Sha256         = $shaMatch.Groups["value"].Value
-    }
-}
-
 function Get-McpPublishedMetadata {
     param(
         [Parameter(Mandatory = $true)]
@@ -47,25 +18,46 @@ function Get-McpPublishedMetadata {
         "X-GitHub-Api-Version" = "2022-11-28"
         "User-Agent"           = "Glasswork-Mcp-Installer"
     }
+    $tagName = "mcp-v$Version"
+    $releaseUrl = "https://api.github.com/repos/tjegbejimba/Glasswork/releases/tags/$tagName"
+    $release = Invoke-RestMethod -Uri $releaseUrl -Headers $headers
+    if ($release.tag_name -ne $tagName -or $release.draft -or $release.prerelease) {
+        throw "MCP GitHub Release '$tagName' is not a published stable release."
+    }
+
+    $packageName = "glasswork-mcp.$Version.nupkg"
+    $checksumName = "$packageName.sha256"
+    $packageAssets = @($release.assets | Where-Object { $_.name -eq $packageName })
+    $checksumAssets = @($release.assets | Where-Object { $_.name -eq $checksumName })
+    if ($packageAssets.Count -ne 1 -or $checksumAssets.Count -ne 1) {
+        throw "MCP GitHub Release '$tagName' must contain exactly one package and checksum asset."
+    }
+
     $refUrl = "https://api.github.com/repos/tjegbejimba/Glasswork/git/ref/tags/mcp-v$Version"
     $ref = Invoke-RestMethod -Uri $refUrl -Headers $headers
     if ($ref.object.type -ne "tag") {
-        throw "MCP publication tag 'mcp-v$Version' must be annotated."
+        throw "MCP publication tag '$tagName' must be annotated."
     }
 
     $tag = Invoke-RestMethod `
         -Uri "https://api.github.com/repos/tjegbejimba/Glasswork/git/tags/$($ref.object.sha)" `
         -Headers $headers
     if ($tag.object.type -ne "commit") {
-        throw "MCP publication tag 'mcp-v$Version' does not target a commit."
+        throw "MCP publication tag '$tagName' does not target a commit."
     }
-
-    $metadata = ConvertFrom-McpTagMessage -Message $tag.message -Version $Version
-    if ($metadata.SourceRevision -ne $tag.object.sha) {
-        throw "MCP tag source revision does not match its target commit."
+    $tagMetadata = ConvertFrom-McpTagMessage -Message $tag.message -Version $Version
+    if ($tagMetadata.SourceRevision -ne $tag.object.sha) {
+        throw "MCP integrity tag source revision does not match its target commit."
     }
+    $sourceRevision = $tag.object.sha
 
-    $metadata
+    [pscustomobject]@{
+        Version             = $Version
+        SourceRevision      = $sourceRevision
+        Sha256              = $tagMetadata.Sha256
+        PackageDownloadUrl  = $packageAssets[0].browser_download_url
+        ChecksumDownloadUrl = $checksumAssets[0].browser_download_url
+    }
 }
 
 function Get-McpInstallPackage {
@@ -88,8 +80,13 @@ function Get-McpInstallPackage {
     $publishedMetadata = $null
     if ([string]::IsNullOrWhiteSpace($PackagePath)) {
         $publishedMetadata = Get-McpPublishedMetadata -Version $Version
-        $packageUrl = "https://api.nuget.org/v3-flatcontainer/glasswork-mcp/$Version/glasswork-mcp.$Version.nupkg"
-        Invoke-WebRequest -Uri $packageUrl -OutFile $verifiedPackagePath
+        $checksumPath = "$verifiedPackagePath.sha256"
+        Invoke-WebRequest `
+            -Uri $publishedMetadata.PackageDownloadUrl `
+            -OutFile $verifiedPackagePath
+        Invoke-WebRequest `
+            -Uri $publishedMetadata.ChecksumDownloadUrl `
+            -OutFile $checksumPath
     }
     else {
         if (-not (Test-Path $PackagePath -PathType Leaf)) {
@@ -105,11 +102,19 @@ function Get-McpInstallPackage {
 
     $sha256 = (Get-FileHash -Algorithm SHA256 -Path $verifiedPackagePath).Hash.ToLowerInvariant()
     if ($null -ne $publishedMetadata) {
+        $checksum = (Get-Content $checksumPath -Raw).Trim()
+        $expectedChecksumPattern = "^([0-9a-f]{64})  $([regex]::Escape((Split-Path $verifiedPackagePath -Leaf)))$"
+        if ($checksum -notmatch $expectedChecksumPattern) {
+            throw "MCP GitHub Release checksum is malformed or names the wrong package."
+        }
         if ($metadata.SourceRevision -ne $publishedMetadata.SourceRevision) {
             throw "MCP package source revision does not match the publication tag."
         }
+        if ($Matches[1] -ne $publishedMetadata.Sha256) {
+            throw "MCP GitHub Release checksum does not match the annotated integrity tag."
+        }
         if ($sha256 -ne $publishedMetadata.Sha256) {
-            throw "MCP package SHA-256 does not match the publication tag."
+            throw "MCP package SHA-256 does not match the GitHub Release checksum."
         }
     }
 

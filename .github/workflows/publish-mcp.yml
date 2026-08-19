@@ -13,7 +13,6 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
-      id-token: write
 
     steps:
       - name: Checkout current main
@@ -27,10 +26,11 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Validate release inputs and publication state
+      - name: Resolve publication state
         id: preflight
         shell: pwsh
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MCP_VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -45,6 +45,7 @@ jobs:
           if ($head -ne $remoteMain) {
               throw "Publication checkout '$head' is not current origin/main '$remoteMain'."
           }
+
           $tag = "mcp-v$env:MCP_VERSION"
           $matchingRefs = & git ls-remote --tags origin "refs/tags/$tag"
           if ($LASTEXITCODE -ne 0) {
@@ -52,29 +53,59 @@ jobs:
           }
           $tagExists = -not [string]::IsNullOrWhiteSpace($matchingRefs)
 
-          $versionsUrl = "https://api.nuget.org/v3-flatcontainer/glasswork-mcp/index.json"
-          $response = Invoke-WebRequest -Uri $versionsUrl -SkipHttpErrorCheck
-          if ($response.StatusCode -eq 200) {
-              $versions = ($response.Content | ConvertFrom-Json).versions
-              $packageExists = $versions -contains $env:MCP_VERSION
+          $releasesJson = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to enumerate GitHub Releases."
           }
-          elseif ($response.StatusCode -eq 404) {
-              $packageExists = $false
+          $matchingReleases = @(
+              $releasesJson |
+                  ConvertFrom-Json |
+                  Where-Object { $_.tag_name -eq $tag }
+          )
+          if ($matchingReleases.Count -gt 1) {
+              throw "Multiple GitHub Releases use MCP tag '$tag'."
           }
-          else {
-              throw "Unable to check NuGet package versions (HTTP $($response.StatusCode))."
-          }
+          $releaseExists = $matchingReleases.Count -eq 1
+          $releaseIsDraft = $releaseExists -and [bool]$matchingReleases[0].draft
 
           . .\scripts\Validate-McpReleasePublication.ps1
           $state = Resolve-McpPublicationState `
-              -PackageExists $packageExists `
+              -ReleaseExists $releaseExists `
+              -ReleaseIsDraft $releaseIsDraft `
               -TagExists $tagExists
-          if ($state -eq "New") {
-              Test-McpReleasePublicationInputs -RepoRoot $PWD -Version $env:MCP_VERSION
+
+          $sourceRevision = $head
+          if ($tagExists) {
+              $sourceRevision = (& git rev-parse "$tag^{}").Trim()
+          }
+          elseif ($releaseIsDraft) {
+              $sourceRevision = [string]$matchingReleases[0].target_commitish
+          }
+          if ($sourceRevision -notmatch '^[0-9a-f]{40}$') {
+              throw "MCP publication source revision is invalid: '$sourceRevision'."
+          }
+          & git merge-base --is-ancestor $sourceRevision origin/main
+          if ($LASTEXITCODE -ne 0) {
+              throw "MCP publication source '$sourceRevision' is not in current main history."
           }
 
-          "current_main_revision=$head" >> $env:GITHUB_OUTPUT
           "state=$state" >> $env:GITHUB_OUTPUT
+          "source_revision=$sourceRevision" >> $env:GITHUB_OUTPUT
+          "tag_exists=$($tagExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Checkout publication source
+        shell: pwsh
+        env:
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
+        run: git checkout --detach $env:SOURCE_REVISION
+
+      - name: Validate committed release inputs
+        shell: pwsh
+        env:
+          MCP_VERSION: ${{ inputs.version }}
+        run: |
+          . .\scripts\Validate-McpReleasePublication.ps1
+          Test-McpReleasePublicationInputs -RepoRoot $PWD -Version $env:MCP_VERSION
 
       - name: Run release script tests
         shell: pwsh
@@ -87,16 +118,14 @@ jobs:
           Invoke-Pester -Path tests\scripts -Output Detailed -CI
 
       - name: Run serial MCP tests
-        if: steps.preflight.outputs.state == 'New'
         run: dotnet test tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj --configuration Release --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1
 
       - name: Build and pack MCP
-        if: steps.preflight.outputs.state == 'New'
         id: package
         shell: pwsh
         env:
           MCP_VERSION: ${{ inputs.version }}
-          SOURCE_REVISION: ${{ steps.preflight.outputs.current_main_revision }}
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
         run: |
           $ErrorActionPreference = "Stop"
           $outputDirectory = "artifacts\mcp-release"
@@ -136,124 +165,190 @@ jobs:
               -Version $env:MCP_VERSION `
               -SourceRevision $env:SOURCE_REVISION
           "package_path=$($artifact.PackagePath)" >> $env:GITHUB_OUTPUT
-
-      - name: Validate NuGet trusted publisher configuration
-        if: steps.preflight.outputs.state == 'New'
-        shell: pwsh
-        env:
-          NUGET_USER: ${{ vars.NUGET_USER }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:NUGET_USER)) {
-              throw "Repository variable NUGET_USER must name the configured nuget.org trusted publisher."
-          }
-
-      - name: NuGet login
-        if: steps.preflight.outputs.state == 'New'
-        id: login
-        uses: NuGet/login@v1
-        with:
-          user: ${{ vars.NUGET_USER }}
-
-      - name: Publish immutable package
-        if: steps.preflight.outputs.state == 'New'
-        shell: pwsh
-        env:
-          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
-          PACKAGE_PATH: ${{ steps.package.outputs.package_path }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          dotnet nuget push $env:PACKAGE_PATH `
-              --api-key $env:NUGET_API_KEY `
-              --source https://api.nuget.org/v3/index.json
-          if ($LASTEXITCODE -ne 0) {
-              throw "NuGet package publication failed."
-          }
-
-      - name: Verify published package and checksum
-        id: published
-        shell: pwsh
-        env:
-          MCP_VERSION: ${{ inputs.version }}
-          PUBLICATION_STATE: ${{ steps.preflight.outputs.state }}
-          CURRENT_MAIN_REVISION: ${{ steps.preflight.outputs.current_main_revision }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $false
-          $packageUrl = "https://api.nuget.org/v3-flatcontainer/glasswork-mcp/$env:MCP_VERSION/glasswork-mcp.$env:MCP_VERSION.nupkg"
-          $outputDirectory = "artifacts\mcp-published"
-          New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
-          $packagePath = Join-Path $outputDirectory "glasswork-mcp.$env:MCP_VERSION.nupkg"
-
-          for ($attempt = 1; $attempt -le 120; $attempt++) {
-              $response = Invoke-WebRequest `
-                  -Uri $packageUrl `
-                  -OutFile $packagePath `
-                  -PassThru `
-                  -SkipHttpErrorCheck
-              if ($response.StatusCode -eq 200) {
-                  break
-              }
-              if ($response.StatusCode -ne 404) {
-                  throw "Unable to download published MCP package (HTTP $($response.StatusCode))."
-              }
-              if ($attempt -eq 120) {
-                  throw "Published MCP package was not available after twenty minutes."
-              }
-              Start-Sleep -Seconds 10
-          }
-
-          . .\scripts\Validate-McpReleasePublication.ps1
-          $metadata = Get-McpPackageMetadata -PackagePath $packagePath
-          $expectedRevision = if ($env:PUBLICATION_STATE -eq "New") {
-              $env:CURRENT_MAIN_REVISION
-          }
-          else {
-              $metadata.SourceRevision
-          }
-
-          if ($env:PUBLICATION_STATE -eq "RecoverTag") {
-              & git merge-base --is-ancestor $expectedRevision origin/main
-              if ($LASTEXITCODE -ne 0) {
-                  throw "Published MCP source revision '$expectedRevision' is not in current main history."
-              }
-          }
-
-          $artifact = Test-McpPackageArtifact `
-              -PackagePath $packagePath `
-              -Version $env:MCP_VERSION `
-              -SourceRevision $expectedRevision
-          "package_path=$($artifact.PackagePath)" >> $env:GITHUB_OUTPUT
           "checksum_path=$($artifact.ChecksumPath)" >> $env:GITHUB_OUTPUT
           "sha256=$($artifact.Sha256)" >> $env:GITHUB_OUTPUT
-          "source_revision=$($metadata.SourceRevision)" >> $env:GITHUB_OUTPUT
 
-      - name: Create immutable MCP publication tag
+      - name: Create or resume draft MCP Release
         shell: pwsh
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MCP_VERSION: ${{ inputs.version }}
-          PACKAGE_SHA256: ${{ steps.published.outputs.sha256 }}
-          SOURCE_REVISION: ${{ steps.published.outputs.source_revision }}
+          PUBLICATION_STATE: ${{ steps.preflight.outputs.state }}
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
         run: |
           $ErrorActionPreference = "Stop"
           $tag = "mcp-v$env:MCP_VERSION"
-          $message = @"
-          glasswork-mcp publication
-          version: $env:MCP_VERSION
-          commit: $env:SOURCE_REVISION
-          sha256: $env:PACKAGE_SHA256
-          package: https://www.nuget.org/packages/glasswork-mcp/$env:MCP_VERSION
-          "@
+          $notesPath = "artifacts\mcp-release-notes.md"
+          @(
+              "# glasswork-mcp v$env:MCP_VERSION",
+              "",
+              "This release publishes the independently versioned Glasswork MCP global tool.",
+              "See src/Glasswork.Mcp/CHANGELOG.md at commit $env:SOURCE_REVISION for changes."
+          ) -join "`n" | Set-Content $notesPath
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a $tag $env:SOURCE_REVISION -m $message
-          git push origin "refs/tags/$tag"
+          if ($env:PUBLICATION_STATE -ne "ResumeDraft") {
+              $createArgs = @(
+                  "release", "create", $tag,
+                  "--repo", $env:GITHUB_REPOSITORY,
+                  "--draft",
+                  "--target", $env:SOURCE_REVISION,
+                  "--title", "glasswork-mcp v$env:MCP_VERSION",
+                  "--notes-file", $notesPath
+              )
+              & gh @createArgs
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Unable to create draft MCP GitHub Release."
+              }
+          }
+          else {
+              gh release edit $tag `
+                  --repo $env:GITHUB_REPOSITORY `
+                  --draft `
+                  --title "glasswork-mcp v$env:MCP_VERSION" `
+                  --notes-file $notesPath
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Unable to refresh draft MCP GitHub Release."
+              }
+          }
 
-      - name: Upload publication evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: glasswork-mcp-${{ inputs.version }}
-          path: |
-            ${{ steps.published.outputs.package_path }}
-            ${{ steps.published.outputs.checksum_path }}
-          if-no-files-found: error
+      - name: Upload and verify draft assets
+        id: assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MCP_VERSION: ${{ inputs.version }}
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
+          TAG_EXISTS: ${{ steps.preflight.outputs.tag_exists }}
+          LOCAL_PACKAGE_SHA256: ${{ steps.package.outputs.sha256 }}
+          PACKAGE_PATH: ${{ steps.package.outputs.package_path }}
+          CHECKSUM_PATH: ${{ steps.package.outputs.checksum_path }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "mcp-v$env:MCP_VERSION"
+          if ($env:TAG_EXISTS -ne "true") {
+              gh release upload $tag `
+                  --repo $env:GITHUB_REPOSITORY `
+                  --clobber `
+                  $env:PACKAGE_PATH `
+                  $env:CHECKSUM_PATH
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Unable to upload MCP Release assets."
+              }
+          }
+
+          $verificationDirectory = "artifacts\mcp-release-verification"
+          New-Item -ItemType Directory -Force -Path $verificationDirectory | Out-Null
+          gh release download $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --clobber `
+              --dir $verificationDirectory `
+              --pattern "glasswork-mcp.$env:MCP_VERSION.nupkg" `
+              --pattern "glasswork-mcp.$env:MCP_VERSION.nupkg.sha256"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to download MCP Release assets for verification."
+          }
+
+          . .\scripts\Validate-McpReleasePublication.ps1
+          $packagePath = Join-Path $verificationDirectory "glasswork-mcp.$env:MCP_VERSION.nupkg"
+          $checksumPath = "$packagePath.sha256"
+          $expectedSha256 = $env:LOCAL_PACKAGE_SHA256
+          if ($env:TAG_EXISTS -eq "true") {
+              $tagMetadata = ConvertFrom-McpTagMessage `
+                  -Message ((& git tag -l $tag --format="%(contents)") -join "`n") `
+                  -Version $env:MCP_VERSION
+              if ($tagMetadata.SourceRevision -ne $env:SOURCE_REVISION) {
+                  throw "Existing MCP integrity tag targets different package source."
+              }
+              $expectedSha256 = $tagMetadata.Sha256
+          }
+          $artifact = Test-McpPackageIntegrity `
+              -PackagePath $packagePath `
+              -ChecksumPath $checksumPath `
+              -Version $env:MCP_VERSION `
+              -SourceRevision $env:SOURCE_REVISION `
+              -ExpectedSha256 $expectedSha256
+          "sha256=$($artifact.Sha256)" >> $env:GITHUB_OUTPUT
+
+      - name: Create or verify annotated MCP integrity tag
+        shell: pwsh
+        env:
+          MCP_VERSION: ${{ inputs.version }}
+          PACKAGE_SHA256: ${{ steps.assets.outputs.sha256 }}
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
+          TAG_EXISTS: ${{ steps.preflight.outputs.tag_exists }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "mcp-v$env:MCP_VERSION"
+          if ($env:TAG_EXISTS -eq "true") {
+              if ((& git cat-file -t $tag).Trim() -ne "tag") {
+                  throw "Existing MCP tag '$tag' is not annotated."
+              }
+              $target = (& git rev-parse "$tag^{}").Trim()
+              if ($target -ne $env:SOURCE_REVISION) {
+                  throw "Existing MCP tag targets '$target', not '$env:SOURCE_REVISION'."
+              }
+              . .\scripts\Validate-McpReleasePublication.ps1
+              $metadata = ConvertFrom-McpTagMessage `
+                  -Message ((& git tag -l $tag --format="%(contents)") -join "`n") `
+                  -Version $env:MCP_VERSION
+              if ($metadata.SourceRevision -ne $env:SOURCE_REVISION -or
+                  $metadata.Sha256 -ne $env:PACKAGE_SHA256) {
+                  throw "Existing MCP tag metadata does not match the package."
+              }
+          }
+          else {
+              $message = @(
+                  "glasswork-mcp publication",
+                  "version: $env:MCP_VERSION",
+                  "commit: $env:SOURCE_REVISION",
+                  "sha256: $env:PACKAGE_SHA256"
+              ) -join "`n"
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag -a $tag $env:SOURCE_REVISION -m $message
+              git push origin "refs/tags/$tag"
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Unable to push annotated MCP integrity tag."
+              }
+          }
+
+      - name: Publish verified MCP Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MCP_VERSION: ${{ inputs.version }}
+        run: |
+          $tag = "mcp-v$env:MCP_VERSION"
+          gh release edit $tag --draft=false --verify-tag --latest=false `
+              --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to publish verified MCP GitHub Release."
+          }
+
+      - name: Verify published MCP Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MCP_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "mcp-v$env:MCP_VERSION"
+          $release = gh release view $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --json tagName,isDraft,isPrerelease,assets |
+              ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to verify MCP GitHub Release '$tag'."
+          }
+          if ($release.tagName -ne $tag -or $release.isDraft -or $release.isPrerelease) {
+              throw "MCP GitHub Release metadata is invalid."
+          }
+
+          $assetNames = @($release.assets | ForEach-Object { $_.name })
+          foreach ($requiredAsset in @(
+                  "glasswork-mcp.$env:MCP_VERSION.nupkg",
+                  "glasswork-mcp.$env:MCP_VERSION.nupkg.sha256")) {
+              if ($assetNames -notcontains $requiredAsset) {
+                  throw "MCP GitHub Release is missing asset '$requiredAsset'."
+              }
+          }

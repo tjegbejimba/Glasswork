@@ -7,7 +7,8 @@
 [Why Glasswork](#what-makes-glasswork-different) · [Agent contract](#agent-friendly-by-design) · [Architecture](#architecture) · [Getting started](#getting-started)
 
 [![Release workflow](https://github.com/tjegbejimba/Glasswork/actions/workflows/release.yml/badge.svg)](https://github.com/tjegbejimba/Glasswork/actions/workflows/release.yml)
-[![Latest release](https://img.shields.io/github/v/release/tjegbejimba/Glasswork?label=latest%20release)](https://github.com/tjegbejimba/Glasswork/releases/latest)
+[![App release](https://img.shields.io/github/v/tag/tjegbejimba/Glasswork?filter=v%2A&label=app)](https://github.com/tjegbejimba/Glasswork/releases)
+[![MCP release](https://img.shields.io/github/v/tag/tjegbejimba/Glasswork?filter=mcp-v%2A&label=mcp)](https://github.com/tjegbejimba/Glasswork/releases)
 ![Platform: Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4)
 ![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)
 ![License: source-visible personal project](https://img.shields.io/badge/license-source--visible-lightgrey)

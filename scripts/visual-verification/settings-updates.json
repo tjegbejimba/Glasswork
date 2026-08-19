@@ -15,6 +15,11 @@
       "type": "wait-for",
       "automationId": "RestartToUpdateButton",
       "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "UpdateMcpButton",
+      "timeoutMilliseconds": 10000
     }
   ],
   "captures": [

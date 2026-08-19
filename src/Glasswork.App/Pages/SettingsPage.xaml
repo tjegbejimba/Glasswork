@@ -104,10 +104,13 @@
                     Text="Updates"
                     Style="{ThemeResource SubtitleTextBlockStyle}" />
                 <TextBlock
-                    Text="Glasswork checks GitHub for new releases. Restart to update downloads the verified Windows release, installs it, and reopens Glasswork."
+                    Text="Glasswork checks separate GitHub release streams for the desktop app and glasswork-mcp. Each update is verified before installation."
                     TextWrapping="Wrap"
                     Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
+                <TextBlock
+                    Text="Glasswork app"
+                    FontWeight="SemiBold" />
                 <TextBlock
                     x:Name="InstalledVersionText"
                     Text="Installed version: …" />
@@ -130,6 +133,25 @@
                         Click="RestartToUpdateButton_Click"
                         ToolTipService.ToolTip="Install the latest release and restart" />
                 </StackPanel>
+
+                <TextBlock
+                    Margin="0,8,0,0"
+                    Text="glasswork-mcp"
+                    FontWeight="SemiBold" />
+                <TextBlock
+                    x:Name="InstalledMcpVersionText"
+                    Text="Installed version: …" />
+                <TextBlock
+                    x:Name="McpUpdateStatusText"
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <Button
+                    x:Name="UpdateMcpButton"
+                    AutomationProperties.AutomationId="UpdateMcpButton"
+                    Content="Install MCP update"
+                    IsEnabled="False"
+                    Click="UpdateMcpButton_Click"
+                    ToolTipService.ToolTip="Install the latest verified glasswork-mcp release" />
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

@@ -1,6 +1,8 @@
 # ADR 0012: Release publication is explicit, agent-prepared, and tag-immutable
 
 **Status**: Accepted
+**Amended**: ADR 0023 replaces `/releases/latest` selection with explicit
+`vX.Y.Z` app-stream filtering so MCP GitHub Releases cannot become App updates.
 **Context slice**: Release publication for App Update
 
 ## Context
@@ -89,8 +91,8 @@ One short summary paragraph.
 
 ## Consequences
 
-- App Update can keep treating the latest GitHub Release tag as the sole
-  Available version signal.
+- App Update treats the highest stable `vX.Y.Z` GitHub Release as the app
+  Available version and ignores the independent `mcp-vX.Y.Z` stream.
 - Agents can run the release flow end-to-end without mandatory human prose
   input, while still leaving an auditable Release PR and committed Release notes.
 - Release publication produces the deterministic Windows package consumed by

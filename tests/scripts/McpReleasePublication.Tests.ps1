@@ -101,24 +101,38 @@ Describe "Test-McpReleasePublicationInputs" {
 }
 
 Describe "Resolve-McpPublicationState" {
-    It "returns New when neither the package nor MCP tag exists" {
-        Resolve-McpPublicationState -PackageExists $false -TagExists $false |
+    It "returns New when neither the GitHub Release nor MCP tag exists" {
+        Resolve-McpPublicationState `
+            -ReleaseExists $false `
+            -ReleaseIsDraft $false `
+            -TagExists $false |
             Should -Be "New"
     }
 
-    It "returns RecoverTag when the immutable package exists without its MCP tag" {
-        Resolve-McpPublicationState -PackageExists $true -TagExists $false |
-            Should -Be "RecoverTag"
-    }
-
     It "rejects an already-published version" {
-        { Resolve-McpPublicationState -PackageExists $true -TagExists $true } |
-            Should -Throw "*package and tag already exist*"
+        {
+            Resolve-McpPublicationState `
+                -ReleaseExists $true `
+                -ReleaseIsDraft $false `
+                -TagExists $true
+        } | Should -Throw "*already published*"
     }
 
-    It "rejects a tag with no matching immutable package" {
-        { Resolve-McpPublicationState -PackageExists $false -TagExists $true } |
-            Should -Throw "*tag exists without its package*"
+    It "resumes an existing draft release" {
+        Resolve-McpPublicationState `
+            -ReleaseExists $true `
+            -ReleaseIsDraft $true `
+            -TagExists $false |
+            Should -Be "ResumeDraft"
+    }
+
+    It "rejects an orphaned tag without its draft release" {
+        {
+            Resolve-McpPublicationState `
+                -ReleaseExists $false `
+                -ReleaseIsDraft $false `
+                -TagExists $true
+        } | Should -Throw "*tag exists without its draft release*"
     }
 }
 
@@ -138,5 +152,40 @@ Describe "Test-McpPackageArtifact" {
         $result.ChecksumPath | Should -Be "$packagePath.sha256"
         Get-Content $result.ChecksumPath -Raw |
             Should -Match "^[0-9a-f]{64}  glasswork-mcp\.0\.11\.0\.nupkg\r?\n?$"
+    }
+}
+
+Describe "ConvertFrom-McpTagMessage" {
+    It "reads version, source revision, and checksum from the annotated tag" {
+        $revision = "0123456789abcdef0123456789abcdef01234567"
+        $sha256 = "a" * 64
+
+        $metadata = ConvertFrom-McpTagMessage -Message @"
+glasswork-mcp publication
+version: 0.11.0
+commit: $revision
+sha256: $sha256
+"@ -Version "0.11.0"
+
+        $metadata.SourceRevision | Should -Be $revision
+        $metadata.Sha256 | Should -Be $sha256
+    }
+}
+
+Describe "Test-McpPackageIntegrity" {
+    It "rejects a downloaded checksum that does not match the package" {
+        $packagePath = Join-Path $TestDrive "glasswork-mcp.0.11.0.nupkg"
+        $revision = "0123456789abcdef0123456789abcdef01234567"
+        New-TestMcpPackage -Path $packagePath -SourceRevision $revision
+        $checksumPath = "$packagePath.sha256"
+        ("0" * 64) + "  glasswork-mcp.0.11.0.nupkg" | Set-Content $checksumPath
+
+        {
+            Test-McpPackageIntegrity `
+                -PackagePath $packagePath `
+                -ChecksumPath $checksumPath `
+                -Version "0.11.0" `
+                -SourceRevision $revision
+        } | Should -Throw "*checksum does not match*"
     }
 }
