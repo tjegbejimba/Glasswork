@@ -67,7 +67,7 @@
     },
     {
       "type": "focus",
-      "name": "Include New default in durable Research context"
+      "name": "Include New default, stable ID new-default, in durable Research context"
     },
     {
       "type": "press-key",

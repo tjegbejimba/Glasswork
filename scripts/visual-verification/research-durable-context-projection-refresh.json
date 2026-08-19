@@ -94,7 +94,7 @@
     },
     {
       "type": "wait-for",
-      "name": "Include Candidate delete in durable Research context"
+      "name": "Include Candidate delete, stable ID candidate-delete, in durable Research context"
     },
     {
       "type": "delete-wiki-page",
@@ -118,7 +118,7 @@
     },
     {
       "type": "assert-not-present",
-      "name": "Include Candidate delete in durable Research context"
+      "name": "Include Candidate delete, stable ID candidate-delete, in durable Research context"
     },
     {
       "type": "replace-wiki-page-text",
@@ -140,7 +140,7 @@
     },
     {
       "type": "assert-not-present",
-      "name": "Include Candidate retype in durable Research context"
+      "name": "Include Candidate retype, stable ID candidate-retype, in durable Research context"
     },
     {
       "type": "replace-wiki-page-text",
@@ -162,7 +162,7 @@
     },
     {
       "type": "wait-for",
-      "name": "Include Candidate renamed in durable Research context"
+      "name": "Include Candidate renamed, stable ID candidate-rename, in durable Research context"
     },
     {
       "type": "replace-wiki-page-text",
@@ -184,7 +184,7 @@
     },
     {
       "type": "wait-for",
-      "name": "Include Candidate newly eligible in durable Research context"
+      "name": "Include Candidate newly eligible, stable ID candidate-new, in durable Research context"
     },
     {
       "type": "assert-disabled",
