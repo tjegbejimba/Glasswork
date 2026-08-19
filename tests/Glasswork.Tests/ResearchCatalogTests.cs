@@ -3274,6 +3274,37 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Capture_ResearchContextPreservesMalformedSourceSummaryWithWarning()
+    {
+        const string rawPath = "raw/meeting-notes/evidence.md";
+        const string summaryPath = "wiki/sources/evidence.md";
+        WritePage(
+            "wiki/concepts/topic.md",
+            $"---\nid: topic\ntitle: Topic\ntype: concept\nsources:\n  - {rawPath}\nglasswork:\n  research: {{}}\n---\nTopic.");
+        WritePage(
+            summaryPath,
+            $"---\nid: evidence\ntitle: Evidence\ntype: source\nsource_path: {rawPath}\n---\nEvidence.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        Assert.IsEmpty(catalog.Capture().Topics.Single().Context.Warnings);
+
+        WritePage(
+            summaryPath,
+            "---\nid: evidence\ntitle: [unterminated\ntype: source\n---\nPartial.");
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        Assert.HasCount(1, context.RelatedPages);
+        Assert.AreEqual("evidence", context.RelatedPages.Single().Id);
+        Assert.AreEqual(
+            new ResearchContextWarning(
+                rawPath,
+                ResearchContextRelation.Provenance,
+                ResearchContextWarningCode.MalformedPage,
+                $"Eligible source summary for raw source path '{rawPath}' is malformed or unreadable; showing its last valid snapshot."),
+            context.Warnings.Single());
+    }
+
+    [TestMethod]
     public void Capture_ResearchContextIgnoresIneligibleAndUnsafeSourcePathMappings()
     {
         WritePage(

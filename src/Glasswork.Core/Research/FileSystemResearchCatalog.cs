@@ -1848,6 +1848,21 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 return;
             }
 
+            var descriptor = referenceDescriptors.FirstOrDefault(candidate =>
+                string.Equals(
+                    candidate.VaultRelativePath,
+                    targets[0].VaultRelativePath,
+                    StringComparison.OrdinalIgnoreCase));
+            if (descriptor?.Status is WikiReferenceStatus.Malformed
+                or WikiReferenceStatus.Unreadable)
+            {
+                AddWarning(
+                    reference,
+                    ResearchContextRelation.Provenance,
+                    ResearchContextWarningCode.MalformedPage,
+                    $"Eligible source summary for raw source path '{reference}' is malformed or unreadable; showing its last valid snapshot.");
+            }
+
             if (!duplicateIds.Contains(targets[0].Id))
                 rawProvenanceTargetIds.Add(targets[0].Id);
             AddTarget(targets[0], reference, ResearchContextRelation.Provenance);
