@@ -1,0 +1,259 @@
+name: Publish MCP
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "glasswork-mcp version in X.Y.Z form"
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Validate release inputs and publication state
+        id: preflight
+        shell: pwsh
+        env:
+          MCP_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          git fetch origin main --tags --force
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to fetch current origin/main and tags."
+          }
+          $head = (& git rev-parse HEAD).Trim()
+          $remoteMain = (& git rev-parse origin/main).Trim()
+          if ($head -ne $remoteMain) {
+              throw "Publication checkout '$head' is not current origin/main '$remoteMain'."
+          }
+          $tag = "mcp-v$env:MCP_VERSION"
+          $matchingRefs = & git ls-remote --tags origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to check MCP tag '$tag'."
+          }
+          $tagExists = -not [string]::IsNullOrWhiteSpace($matchingRefs)
+
+          $versionsUrl = "https://api.nuget.org/v3-flatcontainer/glasswork-mcp/index.json"
+          $response = Invoke-WebRequest -Uri $versionsUrl -SkipHttpErrorCheck
+          if ($response.StatusCode -eq 200) {
+              $versions = ($response.Content | ConvertFrom-Json).versions
+              $packageExists = $versions -contains $env:MCP_VERSION
+          }
+          elseif ($response.StatusCode -eq 404) {
+              $packageExists = $false
+          }
+          else {
+              throw "Unable to check NuGet package versions (HTTP $($response.StatusCode))."
+          }
+
+          . .\scripts\Validate-McpReleasePublication.ps1
+          $state = Resolve-McpPublicationState `
+              -PackageExists $packageExists `
+              -TagExists $tagExists
+          if ($state -eq "New") {
+              Test-McpReleasePublicationInputs -RepoRoot $PWD -Version $env:MCP_VERSION
+          }
+
+          "current_main_revision=$head" >> $env:GITHUB_OUTPUT
+          "state=$state" >> $env:GITHUB_OUTPUT
+
+      - name: Run release script tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pesterVersion = "5.7.1"
+          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [version]$pesterVersion })) {
+              Install-Module Pester -RequiredVersion $pesterVersion -Scope CurrentUser -Force
+          }
+          Invoke-Pester -Path tests\scripts -Output Detailed -CI
+
+      - name: Run serial MCP tests
+        if: steps.preflight.outputs.state == 'New'
+        run: dotnet test tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj --configuration Release --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1
+
+      - name: Build and pack MCP
+        if: steps.preflight.outputs.state == 'New'
+        id: package
+        shell: pwsh
+        env:
+          MCP_VERSION: ${{ inputs.version }}
+          SOURCE_REVISION: ${{ steps.preflight.outputs.current_main_revision }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $outputDirectory = "artifacts\mcp-release"
+          if (Test-Path $outputDirectory) {
+              Remove-Item -Recurse -Force $outputDirectory
+          }
+          New-Item -ItemType Directory -Path $outputDirectory | Out-Null
+
+          dotnet build src\Glasswork.Mcp\Glasswork.Mcp.csproj `
+              --configuration Release `
+              --nologo `
+              --verbosity minimal `
+              "-p:RepositoryCommit=$env:SOURCE_REVISION"
+          if ($LASTEXITCODE -ne 0) {
+              throw "MCP Release build failed."
+          }
+
+          dotnet pack src\Glasswork.Mcp\Glasswork.Mcp.csproj `
+              --configuration Release `
+              --no-build `
+              --output $outputDirectory `
+              --nologo `
+              --verbosity minimal `
+              "-p:RepositoryCommit=$env:SOURCE_REVISION"
+          if ($LASTEXITCODE -ne 0) {
+              throw "MCP pack failed."
+          }
+
+          $packages = @(Get-ChildItem $outputDirectory -Filter "*.nupkg" -File)
+          if ($packages.Count -ne 1) {
+              throw "MCP pack must produce exactly one .nupkg; found $($packages.Count)."
+          }
+
+          . .\scripts\Validate-McpReleasePublication.ps1
+          $artifact = Test-McpPackageArtifact `
+              -PackagePath $packages[0].FullName `
+              -Version $env:MCP_VERSION `
+              -SourceRevision $env:SOURCE_REVISION
+          "package_path=$($artifact.PackagePath)" >> $env:GITHUB_OUTPUT
+
+      - name: Validate NuGet trusted publisher configuration
+        if: steps.preflight.outputs.state == 'New'
+        shell: pwsh
+        env:
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NUGET_USER)) {
+              throw "Repository variable NUGET_USER must name the configured nuget.org trusted publisher."
+          }
+
+      - name: NuGet login
+        if: steps.preflight.outputs.state == 'New'
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Publish immutable package
+        if: steps.preflight.outputs.state == 'New'
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+          PACKAGE_PATH: ${{ steps.package.outputs.package_path }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          dotnet nuget push $env:PACKAGE_PATH `
+              --api-key $env:NUGET_API_KEY `
+              --source https://api.nuget.org/v3/index.json
+          if ($LASTEXITCODE -ne 0) {
+              throw "NuGet package publication failed."
+          }
+
+      - name: Verify published package and checksum
+        id: published
+        shell: pwsh
+        env:
+          MCP_VERSION: ${{ inputs.version }}
+          PUBLICATION_STATE: ${{ steps.preflight.outputs.state }}
+          CURRENT_MAIN_REVISION: ${{ steps.preflight.outputs.current_main_revision }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+          $packageUrl = "https://api.nuget.org/v3-flatcontainer/glasswork-mcp/$env:MCP_VERSION/glasswork-mcp.$env:MCP_VERSION.nupkg"
+          $outputDirectory = "artifacts\mcp-published"
+          New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
+          $packagePath = Join-Path $outputDirectory "glasswork-mcp.$env:MCP_VERSION.nupkg"
+
+          for ($attempt = 1; $attempt -le 120; $attempt++) {
+              $response = Invoke-WebRequest `
+                  -Uri $packageUrl `
+                  -OutFile $packagePath `
+                  -PassThru `
+                  -SkipHttpErrorCheck
+              if ($response.StatusCode -eq 200) {
+                  break
+              }
+              if ($response.StatusCode -ne 404) {
+                  throw "Unable to download published MCP package (HTTP $($response.StatusCode))."
+              }
+              if ($attempt -eq 120) {
+                  throw "Published MCP package was not available after twenty minutes."
+              }
+              Start-Sleep -Seconds 10
+          }
+
+          . .\scripts\Validate-McpReleasePublication.ps1
+          $metadata = Get-McpPackageMetadata -PackagePath $packagePath
+          $expectedRevision = if ($env:PUBLICATION_STATE -eq "New") {
+              $env:CURRENT_MAIN_REVISION
+          }
+          else {
+              $metadata.SourceRevision
+          }
+
+          if ($env:PUBLICATION_STATE -eq "RecoverTag") {
+              & git merge-base --is-ancestor $expectedRevision origin/main
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Published MCP source revision '$expectedRevision' is not in current main history."
+              }
+          }
+
+          $artifact = Test-McpPackageArtifact `
+              -PackagePath $packagePath `
+              -Version $env:MCP_VERSION `
+              -SourceRevision $expectedRevision
+          "package_path=$($artifact.PackagePath)" >> $env:GITHUB_OUTPUT
+          "checksum_path=$($artifact.ChecksumPath)" >> $env:GITHUB_OUTPUT
+          "sha256=$($artifact.Sha256)" >> $env:GITHUB_OUTPUT
+          "source_revision=$($metadata.SourceRevision)" >> $env:GITHUB_OUTPUT
+
+      - name: Create immutable MCP publication tag
+        shell: pwsh
+        env:
+          MCP_VERSION: ${{ inputs.version }}
+          PACKAGE_SHA256: ${{ steps.published.outputs.sha256 }}
+          SOURCE_REVISION: ${{ steps.published.outputs.source_revision }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "mcp-v$env:MCP_VERSION"
+          $message = @"
+          glasswork-mcp publication
+          version: $env:MCP_VERSION
+          commit: $env:SOURCE_REVISION
+          sha256: $env:PACKAGE_SHA256
+          package: https://www.nuget.org/packages/glasswork-mcp/$env:MCP_VERSION
+          "@
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a $tag $env:SOURCE_REVISION -m $message
+          git push origin "refs/tags/$tag"
+
+      - name: Upload publication evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: glasswork-mcp-${{ inputs.version }}
+          path: |
+            ${{ steps.published.outputs.package_path }}
+            ${{ steps.published.outputs.checksum_path }}
+          if-no-files-found: error

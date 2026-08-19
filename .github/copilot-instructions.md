@@ -27,6 +27,8 @@ this content, it does not own it.
   - Backlinks → ADR 0005
   - Task prose fields (Description / Notes / Artifacts split) → ADR 0002
   - UI state storage → ADR 0001
+  - App Release publication → ADR 0012
+  - MCP publication and exact-version installation → ADR 0022
 
 ### WinUI 3 internals (when chasing platform behavior)
 
@@ -68,6 +70,10 @@ that public docs don't explain — they're not required reading:
   red-green-refactor, not horizontal slices.
 - **.NET SDK** — 10.x. Preinstalled in cloud agent via
   `.github/workflows/copilot-setup-steps.yml`.
+- **MCP publication** — follow
+  [`.github/skills/mcp-release.md`](skills/mcp-release.md). NuGet packages and
+  `mcp-vX.Y.Z` tags are created only by the `Publish MCP` workflow from `main`;
+  MCP publication never creates a GitHub Release.
 
 ## Running Ralph (TDD loop) from PowerShell on Windows
 

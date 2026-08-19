@@ -7,6 +7,8 @@ The shipped tool surface has grown well beyond the v1 four; see the
 [2026-07-06 Amendment](#amendment--2026-07-06-shipped-tool-surface).
 Task-bearing MCP queries now translate to the stateless fresh-Vault Task Query
 adapter recorded by ADR 0010.
+The local-only distribution and binary-version rules in §§7–8 are superseded
+by ADR 0022.
 **Context slice**: resolves issue #67 (MCP server); depends on a new prerequisite issue (file-based `SelfWriteCoordinator`); loosely related to #84 (vault settings) and #69 (quick-capture).
 
 ## Context
@@ -113,9 +115,17 @@ If profiling later shows `list_tasks` is hot, a short TTL cache can be added wit
 - No NuGet.org publish required for v1. If shareable distribution is wanted later, `dotnet nuget push` is one command and the package is already in the right shape.
 - Agent MCP config references the tool by name (`glasswork-mcp` on PATH) — no absolute paths, no install-dir brittleness.
 
+**Superseded by ADR 0022:** NuGet.org is now the durable public channel.
+Publication occurs only through the MCP publication workflow, and installation
+selects and verifies an exact immutable version.
+
 ### 8. Schema versioning: semver on binary, stay in 0.x
 
 `glasswork-mcp` follows semver. The project remains in `0.x` indefinitely; breaking tool-shape changes require a minor bump and a `CHANGELOG.md` entry. Tool input/output JSON shapes are documented in `src/Glasswork.Mcp/README.md`.
+
+**Superseded by ADR 0022:** additive public tool/CLI shape changes also require
+a minor bump; implementation-only fixes use a patch bump. Every changed
+published binary requires a new version and dated changelog entry.
 
 **Amended by #404/#405/#413:** `get_capabilities` is the read-only contract
 handshake. It reports contract version `1.0` and the complete stable capability

@@ -2,7 +2,7 @@
 
 `glasswork-mcp` is a standalone [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that gives AI agents typed read/write access to a [Glasswork](https://github.com/tjegbejimba/Glasswork) task vault. It communicates over stdio and requires no running Glasswork app instance.
 
-> **v0.10.0**: adds capability-gated Authoritative ADO reconciliation while
+> **v0.11.0**: adds capability-gated Authoritative ADO reconciliation while
 > preserving the fail-closed mutation contract. Clients must provide a
 > `mutation_id` and an applicable `if_absent` or Resource Revision precondition
 > on every Task and task-owned-file mutation. See [CHANGELOG](./CHANGELOG.md)
@@ -15,27 +15,48 @@
 ### Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell)
 - A Glasswork vault directory (Obsidian-backed markdown task files)
 
-### One-command install (PowerShell)
+### Exact published install (PowerShell)
 
 ```powershell
-.\scripts\install-mcp.ps1
+.\scripts\install-mcp.ps1 -Version 0.11.0
 ```
 
-This script runs `dotnet pack` on the `Glasswork.Mcp` project and installs the resulting package as a global .NET tool named `glasswork-mcp`.
+The script downloads that exact immutable NuGet.org package, verifies its
+annotated `mcp-v0.11.0` tag checksum and source revision, stages and executes
+the replacement, then installs it globally only after the staged build reports
+the expected `0.11.0+<commit>` identity. Re-running the command replaces a stale
+same-version local build instead of trusting the version string alone.
 
-### Manual install
+### Direct NuGet install
 
 ```powershell
-dotnet pack src/Glasswork.Mcp -c Release -o nupkg
-dotnet tool install -g glasswork-mcp --add-source ./nupkg
+dotnet tool install -g glasswork-mcp --version 0.11.0
 ```
 
-To update an existing install:
+The verification script is preferred because `dotnet tool update` can reuse a
+cached package when different local bits were packed under the same version.
+
+### Development package install
 
 ```powershell
-dotnet tool update -g glasswork-mcp --add-source ./nupkg
+$revision = (git rev-parse HEAD).Trim()
+dotnet pack src\Glasswork.Mcp -c Release -o nupkg "-p:RepositoryCommit=$revision"
+.\scripts\install-mcp.ps1 `
+    -Version 0.11.0 `
+    -PackagePath .\nupkg\glasswork-mcp.0.11.0.nupkg
+```
+
+Development packages still require an exact semantic version and source
+revision. Change the project version whenever the binary changes; never reuse a
+published version.
+
+To inspect the installed build:
+
+```powershell
+glasswork-mcp --version
 ```
 
 ---
