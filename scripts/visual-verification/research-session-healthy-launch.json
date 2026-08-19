@@ -1,0 +1,62 @@
+{
+  "name": "Healthy Research Session launch",
+  "theme": "dark",
+  "startUri": "glasswork://research/healthy-launch",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/healthy-launch.md",
+      "id": "healthy-launch",
+      "title": "Healthy launch",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "9999-12-31",
+      "sources": ["[[healthy-source]]"],
+      "markdown": "# Healthy launch\n\n[[wiki/sources/healthy-source]]"
+    },
+    {
+      "relativePath": "sources/healthy-source.md",
+      "id": "healthy-source",
+      "title": "Healthy source",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-17",
+      "optedIn": false,
+      "markdown": "# Healthy source"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "Continue research",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchPrimaryAction"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSelectionSummary",
+      "value": "1 of 1 optional pages selected"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchSessionClipboardFeedback"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Start Glasswork Research Session: {\"topicId\":\"healthy-launch\",\"contextPageIds\":[\"healthy-launch\",\"healthy-source\"],\"action\":\"continue-research\",\"wikiGovernance\":\"AGENTS.md\"}"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-session-healthy-launch",
+      "waitMilliseconds": 400
+    }
+  ]
+}

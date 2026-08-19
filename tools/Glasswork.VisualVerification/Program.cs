@@ -367,6 +367,9 @@ internal static partial class VisualVerificationRunner
             case "assert-name":
                 AssertName(WaitForElement(hwnd, action), action.Value!);
                 return;
+            case "assert-clipboard-text":
+                AssertClipboardText(action.Value!);
+                return;
             case "assert-focus-within":
                 ForegroundWindowBestEffort(hwnd);
                 AssertFocusWithin(WaitForElement(hwnd, action));
@@ -406,6 +409,35 @@ internal static partial class VisualVerificationRunner
                 return;
             default:
                 throw new FormatException($"Unsupported visual verification action type '{action.Type}'.");
+        }
+    }
+
+    private static void AssertClipboardText(string expected)
+    {
+        string? actual = null;
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                actual = System.Windows.Forms.Clipboard.GetText();
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        if (failure is not null)
+            throw new InvalidOperationException("Could not read clipboard text.", failure);
+        if (!string.Equals(actual, expected, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Expected clipboard text did not match the actual clipboard text. " +
+                $"Expected length {expected.Length}, actual length {actual?.Length ?? 0}.");
         }
     }
 

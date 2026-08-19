@@ -1,0 +1,87 @@
+{
+  "name": "Keyboard narrowed Research Session launch",
+  "theme": "light",
+  "startUri": "glasswork://research/narrowed-launch",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/narrowed-launch.md",
+      "id": "narrowed-launch",
+      "title": "Narrowed launch",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "markdown": "# Narrowed launch\n\n[[wiki/sources/alpha-source]] [[wiki/systems/beta-system]]"
+    },
+    {
+      "relativePath": "sources/alpha-source.md",
+      "id": "alpha-source",
+      "title": "Alpha source",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": false,
+      "markdown": "# Alpha source"
+    },
+    {
+      "relativePath": "systems/beta-system.md",
+      "id": "beta-system",
+      "title": "Beta system",
+      "type": "system",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "optedIn": false,
+      "markdown": "# Beta system"
+    }
+  ],
+  "actions": [
+    {
+      "type": "focus",
+      "automationId": "ResearchAddSourcesAction",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "focus",
+      "name": "Include Beta system in the next Research Session"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ResearchContextSelectionSummary",
+      "value": "1 of 2 optional pages selected"
+    },
+    {
+      "type": "focus",
+      "automationId": "ResearchContextSelectionDone"
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchSessionClipboardFeedback"
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "ResearchAddSourcesAction"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Start Glasswork Research Session: {\"topicId\":\"narrowed-launch\",\"contextPageIds\":[\"narrowed-launch\",\"alpha-source\"],\"action\":\"add-sources\",\"wikiGovernance\":\"AGENTS.md\"}"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-session-narrowed-keyboard-launch",
+      "waitMilliseconds": 400
+    }
+  ]
+}
