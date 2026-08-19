@@ -8,6 +8,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Glasswork.Core.Models;
 using Glasswork.Core.Queries;
+using Glasswork.Core.Research;
 using Glasswork.Core.Services;
 using Glasswork.Mcp.Preconditions;
 using ModelContextProtocol.Server;
@@ -30,6 +31,7 @@ public sealed class GlassworkTools
     private readonly ResourceMutationService _mutations;
     private readonly TimeProvider _timeProvider;
     private readonly ITaskQuery _taskQuery;
+    private readonly IResearchChangeLogStore _researchChangeLogs;
 
     public GlassworkTools(
         VaultContext vaultContext,
@@ -50,7 +52,71 @@ public sealed class GlassworkTools
         _mutations = new ResourceMutationService(_vaultPath, _vault, clock, faults);
         _timeProvider = new DelegateTimeProvider(clock);
         _taskQuery = new FreshVaultTaskQuery(_vault, _vaultRoot);
+        _researchChangeLogs = new FileSystemResearchChangeLogStore(
+            _vaultRoot,
+            new SelfWriteCoordinator(_vaultRoot),
+            clock);
         _logger = logger;
+    }
+
+    [McpServerTool(Name = "append_research_change_log")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Append one durable summary for a knowledge-changing Research Session. Read-only sessions pass no changed page IDs and do not create history.")]
+    public string AppendResearchChangeLog(
+        [Description("Stable ID of the opted-in Research Topic.")] string topic_id,
+        [Description("Concise one-line summary of durable Wiki knowledge changed; never include prompts or transcripts.")] string summary,
+        [Description("Stable IDs of Wiki Pages changed by the session. Empty or omitted means no-op/read-only.")] string[]? changed_page_ids = null)
+    {
+        changed_page_ids ??= [];
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+        var snapshot = catalog.Capture();
+        if (!snapshot.Topics.Any(topic => string.Equals(
+                topic.Id,
+                topic_id,
+                StringComparison.Ordinal)))
+        {
+            return JsonSerializer.Serialize(new
+            {
+                status = "topic_not_found",
+                message = $"Research Topic '{topic_id}' is not currently opted in.",
+            });
+        }
+        var eligibleIds = snapshot.EligiblePages
+            .Where(page => page.Eligibility == ResearchPageEligibility.Eligible)
+            .Select(page => page.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var unknownPageIds = changed_page_ids
+            .Where(id => !eligibleIds.Contains(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (unknownPageIds.Length > 0)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                status = "invalid_changed_pages",
+                message = "Changed page IDs must resolve to current schema-governed Wiki Pages.",
+                unknown_page_ids = unknownPageIds,
+            });
+        }
+
+        var result = _researchChangeLogs.Append(topic_id, summary, changed_page_ids);
+        return JsonSerializer.Serialize(new
+        {
+            status = result.Status switch
+            {
+                ResearchChangeLogAppendStatus.Appended => "appended",
+                ResearchChangeLogAppendStatus.NoKnowledgeChanges => "no_knowledge_changes",
+                ResearchChangeLogAppendStatus.InvalidRequest => "invalid_request",
+                ResearchChangeLogAppendStatus.MalformedLog => "malformed_log",
+                ResearchChangeLogAppendStatus.ConcurrentModification => "concurrent_modification",
+                _ => "write_failed",
+            },
+            message = result.Message,
+            topic_id = result.Log.TopicId,
+            state = result.Log.State.ToString().ToLowerInvariant(),
+            entry_count = result.Log.Entries.Count,
+            path = result.Log.VaultRelativePath,
+        });
     }
 
     [McpServerTool(Name = "transact_tasks")]

@@ -271,6 +271,15 @@ internal static partial class VisualVerificationRunner
             lines.Add(page.Markdown);
             File.WriteAllText(fullPath, string.Join(Environment.NewLine, lines));
         }
+
+        var researchLogRoot = Path.Combine(wikiRoot, "research-logs");
+        foreach (var log in scenario.ResearchChangeLogs)
+        {
+            Directory.CreateDirectory(researchLogRoot);
+            File.WriteAllText(
+                Path.Combine(researchLogRoot, log.TopicId + ".md"),
+                log.Markdown.ReplaceLineEndings(Environment.NewLine));
+        }
     }
 
     private static string YamlScalar(string value) => JsonSerializer.Serialize(value);

@@ -24,6 +24,7 @@ public sealed partial class VisualVerificationScenario
     public string Theme { get; init; } = "system";
     public List<VisualVerificationTask> Tasks { get; init; } = [];
     public List<VisualVerificationWikiPage> WikiPages { get; init; } = [];
+    public List<VisualVerificationResearchChangeLog> ResearchChangeLogs { get; init; } = [];
     public List<VisualVerificationAction> Actions { get; init; } = [];
     public List<VisualVerificationCapture> Captures { get; init; } = [];
 
@@ -84,6 +85,15 @@ public sealed partial class VisualVerificationScenario
             if (!IsSafeWikiPagePath(page.RelativePath))
                 throw new FormatException(
                     $"Scenario Wiki Page '{page.Id}' requires a safe .md path relative to wiki/.");
+        }
+
+        foreach (var log in ResearchChangeLogs)
+        {
+            if (string.IsNullOrWhiteSpace(log.TopicId) || !IsSafeTaskId(log.TopicId))
+            {
+                throw new FormatException(
+                    "Every scenario Research Change Log requires a safe Topic ID.");
+            }
         }
 
         foreach (var action in Actions)
@@ -348,6 +358,12 @@ public sealed class VisualVerificationWikiPage
     public List<string> ResearchInclude { get; init; } = [];
     public List<string> ResearchExclude { get; init; } = [];
     public List<string> ResearchRelatedWork { get; init; } = [];
+    public string Markdown { get; init; } = string.Empty;
+}
+
+public sealed class VisualVerificationResearchChangeLog
+{
+    public string TopicId { get; init; } = string.Empty;
     public string Markdown { get; init; } = string.Empty;
 }
 

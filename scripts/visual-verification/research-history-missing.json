@@ -1,0 +1,27 @@
+{
+  "name": "Research missing history",
+  "theme": "dark",
+  "startUri": "glasswork://research/missing-history",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/missing-history.md",
+      "id": "missing-history",
+      "title": "Missing History",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "sources": ["https://example.test/source"],
+      "markdown": "# Missing History\n\nThe first write-producing session will create history."
+    }
+  ],
+  "actions": [
+    { "type": "invoke", "automationId": "ResearchHistoryButton", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ResearchHistoryStateTitle", "timeoutMilliseconds": 10000 },
+    { "type": "assert-name", "automationId": "ResearchHistoryStateTitle", "value": "No Research history yet", "timeoutMilliseconds": 10000 },
+    { "type": "assert-hidden", "automationId": "ResearchPreviewOpenInObsidian", "timeoutMilliseconds": 10000 }
+  ],
+  "captures": [
+    { "name": "research-history-missing", "waitMilliseconds": 400 }
+  ]
+}

@@ -5,6 +5,7 @@ namespace Glasswork.Core.Research;
 public interface IResearchCatalog : IDisposable
 {
     event EventHandler<ResearchTopicsChangedEventArgs>? TopicsChanged;
+    event EventHandler<ResearchChangeLogsChangedEventArgs>? ChangeLogsChanged;
 
     bool IsWatching { get; }
     ResearchRemovalRecoveryState? RemovalRecoveryState { get; }
@@ -120,6 +121,7 @@ public sealed record ResearchTopic(
     }
 
     public ResearchContext Context { get; init; } = ResearchContext.Empty;
+    public ResearchChangeLog ChangeLog { get; init; } = ResearchChangeLog.Missing(Id);
     public ResearchRelatedWork RelatedWork { get; init; } = ResearchRelatedWork.Empty;
 }
 
@@ -431,6 +433,23 @@ public enum ResearchCatalogDiagnosticCode
 public sealed class ResearchTopicsChangedEventArgs : EventArgs
 {
     public ResearchTopicsChangedEventArgs(
+        IReadOnlyCollection<string> affectedTopicIds,
+        ResearchCatalogSnapshot snapshot,
+        ResearchCatalogChangeOrigin origin)
+    {
+        AffectedTopicIds = affectedTopicIds;
+        Snapshot = snapshot;
+        Origin = origin;
+    }
+
+    public IReadOnlyCollection<string> AffectedTopicIds { get; }
+    public ResearchCatalogSnapshot Snapshot { get; }
+    public ResearchCatalogChangeOrigin Origin { get; }
+}
+
+public sealed class ResearchChangeLogsChangedEventArgs : EventArgs
+{
+    public ResearchChangeLogsChangedEventArgs(
         IReadOnlyCollection<string> affectedTopicIds,
         ResearchCatalogSnapshot snapshot,
         ResearchCatalogChangeOrigin origin)
