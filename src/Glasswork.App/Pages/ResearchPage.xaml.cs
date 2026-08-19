@@ -6,7 +6,9 @@ using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
 using Glasswork.Controls;
+using Glasswork.Core.Models;
 using Glasswork.Core.Research;
+using Glasswork.Core.Services;
 using Glasswork.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -23,6 +25,9 @@ public sealed partial class ResearchPage : Page
     public ObservableCollection<ResearchRelatedGroupRow> RelatedGroups { get; } = [];
     public ObservableCollection<ResearchContextWarningRow> ContextWarnings { get; } = [];
     public ObservableCollection<ResearchContextSelectionRow> ContextSelectionRows { get; } = [];
+    public ObservableCollection<ResearchRelatedTaskRow> ActiveRelatedTasks { get; } = [];
+    public ObservableCollection<ResearchRelatedTaskRow> CompletedRelatedTasks { get; } = [];
+    public ObservableCollection<ResearchRelatedWorkWarningRow> RelatedWorkWarnings { get; } = [];
     public ObservableCollection<ResearchOpenQuestionRow> OpenQuestions { get; } = [];
 
     private ResearchTopic? _selectedTopic;
@@ -55,6 +60,9 @@ public sealed partial class ResearchPage : Page
         RelatedGroupsList.ItemsSource = RelatedGroups;
         ContextWarningsList.ItemsSource = ContextWarnings;
         ContextSelectionList.ItemsSource = ContextSelectionRows;
+        ActiveRelatedWorkList.ItemsSource = ActiveRelatedTasks;
+        CompletedRelatedWorkList.ItemsSource = CompletedRelatedTasks;
+        RelatedWorkWarningsList.ItemsSource = RelatedWorkWarnings;
         OpenQuestionsList.ItemsSource = OpenQuestions;
         TopicMarkdown.WikiLinkResolver = VaultPageHelper.BuildWikiLinkResolver();
         PreviewMarkdown.WikiLinkResolver = VaultPageHelper.BuildWikiLinkResolver();
@@ -68,6 +76,7 @@ public sealed partial class ResearchPage : Page
         var navigation = e.Parameter as ResearchPageNavigation;
         App.Research.TopicsChanged += OnResearchTopicsChanged;
         App.Research.ChangeLogsChanged += OnResearchChangeLogsChanged;
+        App.Index.TasksChanged += OnTasksChanged;
         RefreshCatalog(navigation?.TopicId, preserveCurrentState: false);
     }
 
@@ -77,12 +86,19 @@ public sealed partial class ResearchPage : Page
         CloseOpenDrawer(restoreFocus: false);
         App.Research.TopicsChanged -= OnResearchTopicsChanged;
         App.Research.ChangeLogsChanged -= OnResearchChangeLogsChanged;
+        App.Index.TasksChanged -= OnTasksChanged;
         base.OnNavigatedFrom(e);
     }
 
     private void OnResearchChangeLogsChanged(
         object? sender,
         ResearchChangeLogsChangedEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+            RefreshCatalog(requestedTopicId: null, preserveCurrentState: true));
+    }
+
+    private void OnTasksChanged(object? sender, TasksChangedEventArgs e)
     {
         DispatcherQueue.TryEnqueue(() =>
             RefreshCatalog(requestedTopicId: null, preserveCurrentState: true));
@@ -172,6 +188,7 @@ public sealed partial class ResearchPage : Page
             _selectedTopic = null;
             TopicList.SelectedItem = null;
             ShowRelatedContext(ResearchContext.Empty);
+            ShowRelatedWork(ResearchRelatedWork.Empty, resetCompletedExpansion: true);
             ReconcileOpenPreview();
             ReconcileOpenContextSelectionDrawer();
             return;
@@ -346,7 +363,52 @@ public sealed partial class ResearchPage : Page
         TopicMarkdown.Markdown = topic.Markdown;
         ResearchHistoryButton.IsEnabled = true;
         ShowRelatedContext(topic.Context);
+        ShowRelatedWork(topic.RelatedWork, topicChanged);
         UpdateContextSummary(topic);
+    }
+
+    private void ShowRelatedWork(
+        ResearchRelatedWork relatedWork,
+        bool resetCompletedExpansion)
+    {
+        var repairableReferences = relatedWork.Warnings
+            .Where(warning => warning.CanRepair)
+            .Select(warning => warning.Reference)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        ActiveRelatedTasks.Clear();
+        foreach (var task in relatedWork.ActiveTasks)
+        {
+            ActiveRelatedTasks.Add(new ResearchRelatedTaskRow(
+                task,
+                repairableReferences.Contains(task.TaskId)));
+        }
+
+        CompletedRelatedTasks.Clear();
+        foreach (var task in relatedWork.CompletedTasks)
+        {
+            CompletedRelatedTasks.Add(new ResearchRelatedTaskRow(
+                task,
+                repairableReferences.Contains(task.TaskId)));
+        }
+
+        RelatedWorkWarnings.Clear();
+        foreach (var warning in relatedWork.Warnings)
+            RelatedWorkWarnings.Add(new ResearchRelatedWorkWarningRow(warning));
+
+        RelatedWorkEmpty.Visibility =
+            ActiveRelatedTasks.Count == 0 && CompletedRelatedTasks.Count == 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        ActiveRelatedWorkSection.Visibility = ActiveRelatedTasks.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        CompletedRelatedWorkExpander.Visibility = CompletedRelatedTasks.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        CompletedRelatedWorkHeader.Text =
+            $"Completed or closed ({CompletedRelatedTasks.Count})";
+        if (resetCompletedExpansion)
+            CompletedRelatedWorkExpander.IsExpanded = false;
     }
 
     private void ShowRelatedContext(ResearchContext context)
@@ -1223,6 +1285,88 @@ public sealed partial class ResearchPage : Page
         ShowHistory();
     }
 
+    private async void CreateRelatedTaskButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_selectedTopic is null)
+            return;
+        var dialog = new CreateTaskDialog(
+            App.Tasks,
+            App.Research,
+            _selectedTopic.Id)
+        {
+            XamlRoot = XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary
+            && dialog.CreatedTask is not null)
+        {
+            RefreshCatalog(_selectedTopic.Id, preserveCurrentState: true);
+        }
+    }
+
+    private async void LinkExistingTaskButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_selectedTopic is null)
+            return;
+        var dialog = new LinkRelatedTaskDialog(
+            App.Index,
+            App.Research,
+            _selectedTopic.Id)
+        {
+            XamlRoot = XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary
+            && dialog.LinkedTaskId is not null)
+        {
+            RefreshCatalog(_selectedTopic.Id, preserveCurrentState: true);
+        }
+    }
+
+    private void RelatedTaskButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ResearchRelatedTaskRow row })
+            return;
+        var task = App.Index.ById(row.Task.TaskId);
+        if (task is not null)
+            Frame.Navigate(typeof(TaskDetailPage), task);
+    }
+
+    private async void RepairRelatedTaskButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_selectedTopic is null
+            || sender is not Button { Tag: ResearchRelatedTaskRow row })
+        {
+            return;
+        }
+
+        var result = App.Research.RepairRelatedTask(
+            _selectedTopic.Id,
+            row.Task.TaskId);
+        if (!result.Succeeded)
+        {
+            var error = new ContentDialog
+            {
+                Title = "Unable to repair Related Work",
+                Content = result.Message,
+                CloseButtonText = "OK",
+                XamlRoot = XamlRoot,
+            };
+            error.WithAppTheme(this);
+            await error.ShowAsync();
+            return;
+        }
+        RefreshCatalog(_selectedTopic.Id, preserveCurrentState: true);
+    }
+
     private void RemoveFromResearchButton_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedTopic is not { } topic)
@@ -1364,6 +1508,74 @@ public sealed partial class ResearchPage : Page
 public sealed record ResearchPageNavigation(
     ResearchCatalogSnapshot Snapshot,
     string? TopicId);
+
+public sealed class ResearchRelatedTaskRow
+{
+    private readonly bool _canRepair;
+
+    public ResearchRelatedTaskRow(
+        ResearchRelatedTask task,
+        bool canRepair = false)
+    {
+        Task = task;
+        _canRepair = task.CanRepair || canRepair;
+        Title = task.RelationState == ResearchTaskRelationState.MissingTask
+            ? $"Missing Task: {task.TaskId}"
+            : task.Title;
+        var status = task.Status == "missing"
+            ? "Missing"
+            : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(
+                task.Status.Replace('-', ' '));
+        var relation = task.RelationState switch
+        {
+            ResearchTaskRelationState.MissingTaskReciprocalLink =>
+                "Task is missing the Topic reference",
+            ResearchTaskRelationState.MissingTopicReciprocalLink =>
+                "Topic is missing the Task reference",
+            ResearchTaskRelationState.MissingTask =>
+                "Task no longer exists",
+            _ => null,
+        };
+        StatusLabel = relation is null ? status : $"{status} · {relation}";
+        AccessibleName = $"{Title}, {StatusLabel}";
+        RepairAccessibleName = $"Repair Related Work link for {Title}";
+    }
+
+    public ResearchRelatedTask Task { get; }
+    public string Title { get; }
+    public string StatusLabel { get; }
+    public string AccessibleName { get; }
+    public string RepairAccessibleName { get; }
+    public bool CanNavigate => Task.CanNavigate;
+    public Visibility RepairVisibility => _canRepair
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+}
+
+public sealed class ResearchRelatedWorkWarningRow
+{
+    public ResearchRelatedWorkWarningRow(ResearchRelatedWorkWarning warning)
+    {
+        Title = warning.Code switch
+        {
+            ResearchRelatedWorkWarningCode.InvalidMetadata =>
+                "Malformed Related Work metadata",
+            ResearchRelatedWorkWarningCode.InvalidTaskId =>
+                "Invalid Related Work Task ID",
+            ResearchRelatedWorkWarningCode.DuplicateTaskId =>
+                $"Duplicate Task reference: {warning.Reference}",
+            ResearchRelatedWorkWarningCode.MissingTask =>
+                $"Missing Task: {warning.Reference}",
+            ResearchRelatedWorkWarningCode.MissingTaskReciprocalLink =>
+                $"Task reference needs repair: {warning.Reference}",
+            _ => $"Topic reference needs repair: {warning.Reference}",
+        };
+        Message = warning.Message;
+    }
+
+    public string Title { get; }
+    public string Message { get; }
+}
 
 public sealed class ResearchTopicRow
 {

@@ -1,0 +1,54 @@
+{
+  "name": "Research Related Work create Task",
+  "theme": "light",
+  "startUri": "glasswork://research/async-callbacks",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/async-callbacks.md",
+      "id": "async-callbacks",
+      "title": "Async callbacks",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "sources": ["https://example.test/async-callbacks"],
+      "markdown": "# Async callbacks\n\nCreate actionable work without converting the Topic."
+    }
+  ],
+  "actions": [
+    {
+      "type": "invoke",
+      "automationId": "ResearchCreateTaskButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "CreateTaskTitleBox"
+    },
+    {
+      "type": "set-value",
+      "automationId": "CreateTaskTitleBox",
+      "value": "Implement callback probe"
+    },
+    {
+      "type": "set-value",
+      "automationId": "CreateTaskNotesBox",
+      "value": "Created from Related Work."
+    },
+    {
+      "type": "invoke",
+      "name": "Create"
+    },
+    {
+      "type": "wait-for",
+      "name": "Implement callback probe, Todo",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-related-work-create",
+      "waitMilliseconds": 500
+    }
+  ]
+}

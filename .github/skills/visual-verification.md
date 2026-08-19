@@ -76,6 +76,7 @@ commas allowed.
     { "relativePath": "concepts/example.md", "id": "example",
       "title": "Example", "type": "concept", "confidence": "high",
       "updated": "2026-08-15", "expires": "2027-01-01",
+      "researchRelatedWork": ["safe-slug"],
       "markdown": "# Example\n\nSynthesis." }
   ],
   "actions": [                        // UI Automation driven, in order

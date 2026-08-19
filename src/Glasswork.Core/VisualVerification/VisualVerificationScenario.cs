@@ -66,6 +66,12 @@ public sealed partial class VisualVerificationScenario
                 if (string.IsNullOrWhiteSpace(subtask.Text))
                     throw new FormatException($"Scenario task '{task.Id}' contains a subtask without text.");
             }
+            foreach (var related in task.Related)
+            {
+                if (!IsSafeWikiPagePath(related + ".md"))
+                    throw new FormatException(
+                        $"Scenario task '{task.Id}' has unsafe Related Wiki path '{related}'.");
+            }
         }
 
         foreach (var page in WikiPages)
@@ -219,6 +225,7 @@ public sealed class VisualVerificationTask
     public string? CancellationReason { get; init; }
     public string? Parent { get; init; }
     public int? AdoLink { get; init; }
+    public List<string> Related { get; init; } = [];
     public List<VisualVerificationSubtask> Subtasks { get; init; } = [];
     public List<VisualVerificationArtifact> Artifacts { get; init; } = [];
 
@@ -241,6 +248,10 @@ public sealed class VisualVerificationTask
             AdoLink = AdoLink,
             Description = Description ?? string.Empty,
             Notes = Notes ?? string.Empty,
+            RelatedLinks = Related.Select(slug => new RelatedLink
+            {
+                Slug = slug,
+            }).ToList(),
         };
 
         foreach (var subtask in Subtasks)
@@ -346,6 +357,7 @@ public sealed class VisualVerificationWikiPage
     public bool OptedIn { get; init; } = true;
     public List<string> ResearchInclude { get; init; } = [];
     public List<string> ResearchExclude { get; init; } = [];
+    public List<string> ResearchRelatedWork { get; init; } = [];
     public string Markdown { get; init; } = string.Empty;
 }
 

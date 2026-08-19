@@ -25,6 +25,8 @@ public class VaultService
     private ResourceMutationService? _mutations;
     private readonly object _mutationGate = new();
 
+    internal Action? AfterCreatedTaskQuarantineHook { get; set; }
+
     public VaultService(string vaultPath) : this(vaultPath, null) { }
 
     public VaultService(string vaultPath, SelfWriteCoordinator? selfWrites)
@@ -844,6 +846,74 @@ public class VaultService
     internal bool Delete(string taskId)
     {
         return EnsureMutations().CommitDelete(taskId);
+    }
+
+    internal bool TryDeleteCreatedTask(
+        string taskId,
+        string expectedRevision,
+        out string? rollbackConflict)
+    {
+        rollbackConflict = null;
+        var path = GetFilePath(taskId);
+        var quarantinePath = path
+            + ".related-work-rollback-"
+            + Guid.NewGuid().ToString("N")
+            + ".tmp";
+        var deleted = false;
+        var restored = false;
+        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+        {
+            if (!File.Exists(path))
+            {
+                deleted = true;
+            }
+            else
+            {
+                _selfWrites?.RegisterWrite(path);
+                File.Move(path, quarantinePath);
+                AfterCreatedTaskQuarantineHook?.Invoke();
+                var displaced = File.ReadAllBytes(quarantinePath);
+                var revisionMatches = string.Equals(
+                    ResourceMutationService.Revision(displaced),
+                    expectedRevision,
+                    StringComparison.Ordinal);
+                if (!revisionMatches)
+                {
+                    if (File.Exists(path))
+                    {
+                        restored = true;
+                        rollbackConflict =
+                            $"The changed Task was preserved at '{quarantinePath}' because another file now occupies its original path.";
+                    }
+                    else
+                    {
+                        _selfWrites?.RegisterWrite(path);
+                        File.Move(quarantinePath, path);
+                        restored = true;
+                        rollbackConflict = "The Task changed before rollback and its newer content was restored.";
+                    }
+                }
+                else
+                {
+                    File.Delete(quarantinePath);
+                    if (File.Exists(path))
+                    {
+                        restored = true;
+                        rollbackConflict = "Another writer replaced the Task during rollback, so Glasswork preserved that replacement.";
+                    }
+                    else
+                    {
+                        deleted = true;
+                    }
+                }
+            }
+        }
+
+        if (deleted)
+            NotifyTaskDeleted(taskId);
+        else if (restored)
+            NotifyTaskWritten(taskId);
+        return deleted;
     }
 
     /// <summary>

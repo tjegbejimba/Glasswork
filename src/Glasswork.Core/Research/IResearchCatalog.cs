@@ -1,3 +1,5 @@
+using Glasswork.Core.Models;
+
 namespace Glasswork.Core.Research;
 
 public interface IResearchCatalog : IDisposable
@@ -22,6 +24,15 @@ public interface IResearchCatalog : IDisposable
         string topicId,
         string pageId,
         bool included);
+    ResearchRelatedWorkResult CreateRelatedTask(
+        string topicId,
+        ResearchTaskDraft draft);
+    ResearchRelatedWorkResult LinkExistingTask(
+        string topicId,
+        string taskId);
+    ResearchRelatedWorkResult RepairRelatedTask(
+        string topicId,
+        string taskId);
     void Start();
     void Stop();
 }
@@ -111,6 +122,102 @@ public sealed record ResearchTopic(
 
     public ResearchContext Context { get; init; } = ResearchContext.Empty;
     public ResearchChangeLog ChangeLog { get; init; } = ResearchChangeLog.Missing(Id);
+    public ResearchRelatedWork RelatedWork { get; init; } = ResearchRelatedWork.Empty;
+}
+
+public sealed record ResearchTaskDraft(
+    string Title,
+    string Priority = GlassworkTask.Priorities.Medium,
+    string? Description = null,
+    bool AddToMyDay = false,
+    int? AdoLink = null,
+    string? AdoTitle = null);
+
+public sealed record ResearchRelatedWork(
+    IReadOnlyList<ResearchRelatedTask> ActiveTasks,
+    IReadOnlyList<ResearchRelatedTask> CompletedTasks,
+    IReadOnlyList<ResearchRelatedWorkWarning> Warnings)
+{
+    public static ResearchRelatedWork Empty { get; } =
+        new(
+            Array.Empty<ResearchRelatedTask>(),
+            Array.Empty<ResearchRelatedTask>(),
+            Array.Empty<ResearchRelatedWorkWarning>());
+}
+
+public sealed record ResearchRelatedTask(
+    string TaskId,
+    string Title,
+    string Status,
+    ResearchTaskRelationState RelationState)
+{
+    public bool CanNavigate => RelationState != ResearchTaskRelationState.MissingTask;
+    public bool CanRepair => RelationState switch
+    {
+        ResearchTaskRelationState.MissingTask => true,
+        ResearchTaskRelationState.MissingTopicReciprocalLink => true,
+        ResearchTaskRelationState.MissingTaskReciprocalLink =>
+            Status != GlassworkTask.Statuses.Cancelled,
+        _ => false,
+    };
+}
+
+public enum ResearchTaskRelationState
+{
+    Healthy,
+    MissingTaskReciprocalLink,
+    MissingTopicReciprocalLink,
+    MissingTask,
+}
+
+public sealed record ResearchRelatedWorkWarning(
+    string Reference,
+    ResearchRelatedWorkWarningCode Code,
+    string Message,
+    bool CanRepair);
+
+public enum ResearchRelatedWorkWarningCode
+{
+    InvalidMetadata,
+    InvalidTaskId,
+    DuplicateTaskId,
+    MissingTask,
+    MissingTaskReciprocalLink,
+    MissingTopicReciprocalLink,
+}
+
+public sealed record ResearchRelatedWorkResult(
+    bool Succeeded,
+    ResearchTopic? Topic,
+    ResearchRelatedTask? Task,
+    ResearchRelatedWorkErrorCode? ErrorCode,
+    string Message)
+{
+    public static ResearchRelatedWorkResult Success(
+        ResearchTopic topic,
+        ResearchRelatedTask task,
+        string message) =>
+        new(true, topic, task, null, message);
+
+    public static ResearchRelatedWorkResult Failure(
+        ResearchRelatedWorkErrorCode errorCode,
+        string message) =>
+        new(false, null, null, errorCode, message);
+}
+
+public enum ResearchRelatedWorkErrorCode
+{
+    ServicesUnavailable,
+    TopicNotFound,
+    TaskNotFound,
+    TaskReadOnly,
+    InvalidTaskId,
+    InvalidTitle,
+    DuplicateRelationship,
+    IncompleteRelationship,
+    InvalidResearchMetadata,
+    ConcurrentModification,
+    WriteFailed,
 }
 
 public sealed record ResearchPageCandidate(
