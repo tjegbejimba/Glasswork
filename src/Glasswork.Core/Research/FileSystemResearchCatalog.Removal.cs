@@ -74,6 +74,18 @@ public sealed partial class FileSystemResearchCatalog
                     ResearchRemovalErrorCode.TopicNotFound,
                     $"Research Topic '{topicId}' no longer exists.");
             }
+            FileStream changeLogLock;
+            try
+            {
+                changeLogLock = ResearchChangeLogWriteLock.Acquire(_vaultRoot, topic.Id);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return ResearchRemovalResult.Failure(
+                    ResearchRemovalErrorCode.WriteFailed,
+                    $"Research Topic '{topic.Id}' could not lock its Change Log: {ex.Message}");
+            }
+            using var heldChangeLogLock = changeLogLock;
 
             var fullPath = Path.GetFullPath(Path.Combine(
                 _vaultRoot,
@@ -512,6 +524,9 @@ public sealed partial class FileSystemResearchCatalog
             return;
 
         var journal = ReadResearchRemovalJournal();
+        using var changeLogLock = ResearchChangeLogWriteLock.Acquire(
+            _vaultRoot,
+            journal.TopicId);
         if (journal.CleanupPending)
         {
             CleanupResearchRemoval(journal);

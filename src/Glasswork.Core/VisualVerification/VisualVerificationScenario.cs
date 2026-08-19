@@ -26,6 +26,7 @@ public sealed partial class VisualVerificationScenario
     public List<VisualVerificationTask> Tasks { get; init; } = [];
     public List<VisualVerificationWikiPage> WikiPages { get; init; } = [];
     public List<VisualVerificationWayfinderIssue> WayfinderIssues { get; init; } = [];
+    public List<VisualVerificationResearchChangeLog> ResearchChangeLogs { get; init; } = [];
     public List<VisualVerificationAction> Actions { get; init; } = [];
     public List<VisualVerificationCapture> Captures { get; init; } = [];
 
@@ -100,6 +101,15 @@ public sealed partial class VisualVerificationScenario
             {
                 throw new FormatException(
                     $"Scenario Wayfinder issue '{issue.Reference}' has unsupported state '{issue.State}'.");
+            }
+        }
+
+        foreach (var log in ResearchChangeLogs)
+        {
+            if (string.IsNullOrWhiteSpace(log.TopicId) || !IsSafeTaskId(log.TopicId))
+            {
+                throw new FormatException(
+                    "Every scenario Research Change Log requires a safe Topic ID.");
             }
         }
 
@@ -375,6 +385,12 @@ public sealed class VisualVerificationWayfinderIssue
     public string Title { get; init; } = string.Empty;
     public string State { get; init; } = "unknown";
     public bool HasReciprocalReference { get; init; }
+}
+
+public sealed class VisualVerificationResearchChangeLog
+{
+    public string TopicId { get; init; } = string.Empty;
+    public string Markdown { get; init; } = string.Empty;
 }
 
 public sealed class VisualVerificationAction

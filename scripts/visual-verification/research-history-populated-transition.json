@@ -1,0 +1,53 @@
+{
+  "name": "Research populated history transition",
+  "theme": "dark",
+  "startUri": "glasswork://research/history-topic",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/history-topic.md",
+      "id": "history-topic",
+      "title": "History Topic",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "sources": ["[[history-source]]"],
+      "markdown": "# History Topic\n\nDurable synthesis links to [[history-source]]."
+    },
+    {
+      "relativePath": "sources/history-source.md",
+      "id": "history-source",
+      "title": "History source",
+      "type": "source",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "optedIn": false,
+      "markdown": "# History source\n\nPrimary evidence."
+    }
+  ],
+  "researchChangeLogs": [
+    {
+      "topicId": "history-topic",
+      "markdown": "---\ntopic_id: history-topic\n---\n# Research Change Log\n\n## 2026-08-18T23:48:25.356Z\n\nClarified the durable synthesis and added primary evidence.\n\nChanged Wiki Pages:\n- [[history-topic]]\n- [[history-source]]"
+    }
+  ],
+  "actions": [
+    { "type": "wait-for", "automationId": "ResearchHistoryButton", "timeoutMilliseconds": 10000 },
+    { "type": "invoke", "automationId": "ResearchRelatedPage", "timeoutMilliseconds": 10000 },
+    { "type": "assert-focused", "automationId": "ResearchPreviewClose", "timeoutMilliseconds": 10000 },
+    { "type": "press-key", "value": "Escape" },
+    { "type": "assert-focused", "automationId": "ResearchRelatedPage", "timeoutMilliseconds": 10000 },
+    { "type": "focus", "automationId": "ResearchHistoryButton", "timeoutMilliseconds": 10000 },
+    { "type": "press-key", "value": "Space" },
+    { "type": "assert-focused", "automationId": "ResearchPreviewClose", "timeoutMilliseconds": 10000 },
+    { "type": "press-key", "value": "Escape" },
+    { "type": "assert-focused", "automationId": "ResearchHistoryButton", "timeoutMilliseconds": 10000 },
+    { "type": "press-key", "value": "Space" },
+    { "type": "wait-for", "automationId": "ResearchPreviewClose", "timeoutMilliseconds": 10000 },
+    { "type": "assert-focused", "automationId": "ResearchPreviewClose", "timeoutMilliseconds": 10000 }
+  ],
+  "captures": [
+    { "name": "research-history-populated-transition", "waitMilliseconds": 400 }
+  ]
+}

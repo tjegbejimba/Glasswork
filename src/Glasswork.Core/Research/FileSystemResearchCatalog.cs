@@ -40,12 +40,14 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private readonly IWikiLinkResolver _wikiLinkResolver;
     private readonly Func<DateOnly> _today;
     private readonly SelfWriteCoordinator? _selfWrites;
+    private readonly IResearchChangeLogStore _changeLogs;
     private readonly VaultService? _taskVault;
     private readonly IndexService? _taskIndex;
     private readonly TaskService? _taskService;
     private readonly IWayfinderGateway? _wayfinderGateway;
     private readonly TimeSpan _quietPeriod;
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _wayfinderMutationGate = new(1, 1);
     private readonly object _processingGate = new();
     private readonly Dictionary<string, WikiPageCandidate> _pagesByPath =
         new(StringComparer.OrdinalIgnoreCase);
@@ -92,6 +94,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         Directory.CreateDirectory(_vaultRoot);
         _today = today ?? (() => DateOnly.FromDateTime(DateTime.Today));
         _selfWrites = selfWrites;
+        _changeLogs = new FileSystemResearchChangeLogStore(_vaultRoot, selfWrites);
         _taskVault = taskVault;
         _taskIndex = taskIndex;
         _taskService = taskService;
@@ -126,6 +129,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     }
 
     public event EventHandler<ResearchTopicsChangedEventArgs>? TopicsChanged;
+    public event EventHandler<ResearchChangeLogsChangedEventArgs>? ChangeLogsChanged;
 
     public bool IsWatching => _watcher.EnableRaisingEvents;
 
@@ -1029,6 +1033,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         lock (_processingGate)
         {
             ResearchTopicsChangedEventArgs? change;
+            ResearchChangeLogsChangedEventArgs? changeLogChange;
             var queryDate = _today();
             KeyValuePair<string, ResearchCatalogChangeOrigin>[] pending;
             lock (_pendingGate)
@@ -1046,7 +1051,17 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     Hydrate(queryDate);
 
                 var before = _snapshot;
-                var pendingPaths = pending.Select(pair => pair.Key).ToArray();
+                var logTopicIds = pending
+                    .Select(pair => TryGetResearchLogTopicId(pair.Key, out var topicId)
+                        ? topicId
+                        : null)
+                    .Where(topicId => topicId is not null)
+                    .Cast<string>()
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var catalogPending = pending
+                    .Where(pair => !TryGetResearchLogTopicId(pair.Key, out _))
+                    .ToArray();
+                var pendingPaths = catalogPending.Select(pair => pair.Key).ToArray();
                 var priorTopicIds = pendingPaths
                     .Select(FindTopicIdByPath)
                     .Where(id => id is not null)
@@ -1056,9 +1071,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 if (isRecovery)
                 {
                     priorTopicIds.UnionWith(before.Topics.Select(topic => topic.Id));
+                    logTopicIds.UnionWith(before.Topics.Select(topic => topic.Id));
                     Hydrate(queryDate);
                 }
-                else
+                else if (catalogPending.Length > 0)
                 {
                     var missingPaths = pendingPaths
                         .Where(path => !File.Exists(path))
@@ -1125,11 +1141,20 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     _snapshot = BuildSnapshot(queryDate, before);
                 }
 
+                if (!isRecovery && logTopicIds.Count > 0)
+                    _snapshot = RefreshChangeLogs(_snapshot, logTopicIds);
                 var origin = ResolveOrigin(pending, isRecovery);
                 change = CreateChange(before, _snapshot, priorTopicIds, origin);
+                changeLogChange = CreateChangeLogChange(
+                    before,
+                    _snapshot,
+                    logTopicIds,
+                    origin);
             }
 
             RaiseChange(change);
+            if (changeLogChange is not null)
+                ChangeLogsChanged?.Invoke(this, changeLogChange);
         }
     }
 
@@ -1842,6 +1867,12 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     }
 
     private static bool TopicsEquivalent(ResearchTopic left, ResearchTopic right) =>
+        TopicsEquivalentWithoutChangeLog(left, right)
+        && ChangeLogsEquivalent(left.ChangeLog, right.ChangeLog);
+
+    private static bool TopicsEquivalentWithoutChangeLog(
+        ResearchTopic left,
+        ResearchTopic right) =>
         left.Id == right.Id
         && left.Title == right.Title
         && left.Summary == right.Summary
@@ -1862,6 +1893,15 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         && left.RelatedWork.ActiveWayfinder.SequenceEqual(right.RelatedWork.ActiveWayfinder)
         && left.RelatedWork.CompletedWayfinder.SequenceEqual(right.RelatedWork.CompletedWayfinder)
         && left.RelatedWork.Warnings.SequenceEqual(right.RelatedWork.Warnings);
+
+    private static bool ChangeLogsEquivalent(
+        ResearchChangeLog left,
+        ResearchChangeLog right) =>
+        left.TopicId == right.TopicId
+        && left.State == right.State
+        && left.Markdown == right.Markdown
+        && left.VaultRelativePath == right.VaultRelativePath
+        && left.Message == right.Message;
 
     private static string NormalizeReference(string reference)
     {
@@ -2161,7 +2201,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             .Where(id =>
                 !beforeById.TryGetValue(id, out var oldTopic)
                 || !afterById.TryGetValue(id, out var newTopic)
-                || !ReferenceEquals(oldTopic, newTopic))
+                || !TopicsEquivalentWithoutChangeLog(oldTopic, newTopic))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var topicId in pathTopicIds)
             affected.Add(topicId);
@@ -2176,6 +2216,54 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             ? null
             : new ResearchTopicsChangedEventArgs(
                 Array.AsReadOnly(affected.Order(StringComparer.OrdinalIgnoreCase).ToArray()),
+                after,
+                origin);
+    }
+
+    private ResearchCatalogSnapshot RefreshChangeLogs(
+        ResearchCatalogSnapshot snapshot,
+        IReadOnlySet<string> topicIds)
+    {
+        var topics = snapshot.Topics
+            .Select(topic =>
+            {
+                if (!topicIds.Contains(topic.Id))
+                    return topic;
+                var changeLog = _changeLogs.Read(topic.Id);
+                return ChangeLogsEquivalent(topic.ChangeLog, changeLog)
+                    ? topic
+                    : topic with { ChangeLog = changeLog };
+            })
+            .ToArray();
+        return new ResearchCatalogSnapshot(
+            Array.AsReadOnly(topics),
+            snapshot.EligiblePages,
+            snapshot.Diagnostics);
+    }
+
+    private static ResearchChangeLogsChangedEventArgs? CreateChangeLogChange(
+        ResearchCatalogSnapshot before,
+        ResearchCatalogSnapshot after,
+        IReadOnlySet<string> candidateTopicIds,
+        ResearchCatalogChangeOrigin origin)
+    {
+        var beforeById = before.Topics.ToDictionary(
+            topic => topic.Id,
+            StringComparer.OrdinalIgnoreCase);
+        var afterById = after.Topics.ToDictionary(
+            topic => topic.Id,
+            StringComparer.OrdinalIgnoreCase);
+        var affected = candidateTopicIds
+            .Where(id =>
+                beforeById.TryGetValue(id, out var oldTopic)
+                && afterById.TryGetValue(id, out var newTopic)
+                && !ChangeLogsEquivalent(oldTopic.ChangeLog, newTopic.ChangeLog))
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return affected.Length == 0
+            ? null
+            : new ResearchChangeLogsChangedEventArgs(
+                Array.AsReadOnly(affected),
                 after,
                 origin);
     }
@@ -3109,11 +3197,33 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private bool TryGetWikiRelativePath(string fullPath, out string relativePath) =>
         TryGetEligibleRelativePath(fullPath, out relativePath);
 
+    private bool TryGetResearchLogTopicId(string fullPath, out string topicId)
+    {
+        topicId = string.Empty;
+        var relativePath = ToRelativePath(fullPath);
+        const string prefix = "wiki/research-logs/";
+        if (!relativePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            || !relativePath.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var candidate = relativePath[prefix.Length..^3];
+        if (candidate.Length == 0
+            || candidate.Contains('/')
+            || candidate.Contains('\\'))
+        {
+            return false;
+        }
+        topicId = candidate;
+        return true;
+    }
+
     private string ToRelativePath(string fullPath) =>
         Path.GetRelativePath(_vaultRoot, Path.GetFullPath(fullPath))
             .Replace(Path.DirectorySeparatorChar, '/');
 
-    private static ResearchTopic ToTopic(
+    private ResearchTopic ToTopic(
         WikiPageCandidate page,
         DateOnly queryDate) =>
         new(
@@ -3134,7 +3244,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 page.Sources,
                 queryDate),
             page.VaultRelativePath,
-            page.Markdown);
+                page.Markdown)
+        {
+                ChangeLog = _changeLogs.Read(page.Id),
+        };
 
     private static ResearchPageCandidate ToCandidate(
         WikiPageCandidate page,
@@ -3220,7 +3333,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray());
 
-    private static bool IsEligibleLocation(string vaultRelativePath)
+    internal static bool IsEligibleLocation(string vaultRelativePath)
     {
         if (!vaultRelativePath.StartsWith("wiki/", StringComparison.OrdinalIgnoreCase)
             || !vaultRelativePath.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
@@ -3264,6 +3377,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         _disposed = true;
         _watcher.Dispose();
         _refreshDebouncer.Dispose();
+        _wayfinderMutationGate.Dispose();
         lock (_pendingGate)
             _pendingPaths.Clear();
         _selfWriteBursts.Clear();

@@ -72,6 +72,42 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Capture_ExposesTopicChangeLogWithoutTreatingItAsEligibleWikiKnowledge()
+    {
+        WriteOptedInPage("wiki/concepts/async-callbacks.md", "async-callbacks", "concept");
+        WritePage(
+            "wiki/research-logs/async-callbacks.md",
+            """
+            ---
+            topic_id: async-callbacks
+            ---
+            # Research Change Log
+
+            ## 2026-08-18T23:48:25.356Z
+
+            Clarified callback ordering.
+
+            Changed Wiki Pages:
+            - [[async-callbacks]]
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var snapshot = catalog.Capture();
+
+        var topic = snapshot.Topics.Single();
+        Assert.AreEqual(ResearchChangeLogState.Available, topic.ChangeLog.State);
+        Assert.HasCount(1, topic.ChangeLog.Entries);
+        Assert.IsFalse(snapshot.EligiblePages.Any(page =>
+            page.VaultRelativePath.StartsWith(
+                "wiki/research-logs/",
+                StringComparison.OrdinalIgnoreCase)));
+        Assert.IsFalse(topic.Context.RelatedPages.Any(page =>
+            page.VaultRelativePath.StartsWith(
+                "wiki/research-logs/",
+                StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [TestMethod]
     public void Search_FindsTopicsAcrossWikiMetadataAndAppliesFilters()
     {
         WritePage(
@@ -469,6 +505,80 @@ public sealed class ResearchCatalogTests
         Assert.IsTrue(result.Succeeded, result.Message);
         Assert.IsFalse(File.Exists(FullPath(logPath)));
         Assert.DoesNotContain("research:", File.ReadAllText(FullPath(relativePath)));
+    }
+
+    [TestMethod]
+    public void RemoveThenReAdd_StartsResearchHistoryFromZero()
+    {
+        const string pagePath = "wiki/concepts/readded.md";
+        WriteOptedInPage(pagePath, "readded", "concept");
+        WriteLogWithEntries("readded", ("Prior durable learning.", "readded"));
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var removal = catalog.Remove("readded");
+        var reAdd = catalog.OptIn(pagePath);
+
+        Assert.IsTrue(removal.Succeeded, removal.Message);
+        Assert.IsTrue(reAdd.Succeeded, reAdd.Message);
+        Assert.IsNotNull(reAdd.Topic);
+        Assert.AreEqual(ResearchChangeLogState.Missing, reAdd.Topic.ChangeLog.State);
+        Assert.IsFalse(File.Exists(FullPath("wiki/research-logs/readded.md")));
+    }
+
+    [TestMethod]
+    public async Task RemoveRacingAppend_DoesNotRecreateOrphanedHistory()
+    {
+        const string pagePath = "wiki/concepts/remove-race.md";
+        WriteOptedInPage(pagePath, "remove-race", "concept");
+        using var removalEntered = new ManualResetEventSlim(false);
+        using var allowRemoval = new ManualResetEventSlim(false);
+        var catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            BeforeRemovalPageSwapHook = () =>
+            {
+                removalEntered.Set();
+                Assert.IsTrue(allowRemoval.Wait(TimeSpan.FromSeconds(5)));
+            },
+        };
+        IResearchChangeLogStore store = new FileSystemResearchChangeLogStore(_vaultRoot);
+
+        var removalTask = Task.Run(() => catalog.Remove("remove-race"));
+        Assert.IsTrue(removalEntered.Wait(TimeSpan.FromSeconds(5)));
+        var appendTask = Task.Run(() => store.Append(
+            "remove-race",
+            "This racing update must not survive removal.",
+            ["remove-race"]));
+        allowRemoval.Set();
+        var removal = await removalTask;
+        var append = await appendTask;
+
+        Assert.IsTrue(removal.Succeeded, removal.Message);
+        Assert.AreEqual(ResearchChangeLogAppendStatus.InvalidRequest, append.Status);
+        Assert.IsFalse(File.Exists(FullPath("wiki/research-logs/remove-race.md")));
+    }
+
+    [TestMethod]
+    public void Remove_RejectsUnsafeTopicIdBeforeAcquiringChangeLogLock()
+    {
+        WritePage(
+            "wiki/concepts/unsafe-id.md",
+            """
+            ---
+            id: ../outside
+            title: Unsafe ID
+            type: concept
+            glasswork:
+              research: {}
+            ---
+            Synthesis.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Remove("../outside");
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.AreEqual(ResearchRemovalErrorCode.WriteFailed, result.ErrorCode);
+        Assert.IsFalse(File.Exists(FullPath("wiki/research-logs/outside.lock")));
     }
 
     [TestMethod]
@@ -3348,6 +3458,53 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void ExternalChangeLogCreateAppendAndDeleteEmitOnlyChangeLogDeltas()
+    {
+        WriteOptedInPage("wiki/concepts/live-history.md", "live-history", "concept");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            quietPeriod: TimeSpan.FromMilliseconds(50));
+        _ = catalog.Capture();
+        using var signal = new AutoResetEvent(false);
+        ResearchChangeLogsChangedEventArgs? observed = null;
+        var topicChangeCount = 0;
+        catalog.TopicsChanged += (_, _) => Interlocked.Increment(ref topicChangeCount);
+        catalog.ChangeLogsChanged += (_, args) =>
+        {
+            observed = args;
+            signal.Set();
+        };
+        catalog.Start();
+
+        WriteLogWithEntries("live-history", ("Created history.", "live-history"));
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)), "Log creation delta should arrive.");
+        Assert.IsNotNull(observed);
+        CollectionAssert.AreEqual(new[] { "live-history" }, observed.AffectedTopicIds.ToArray());
+        Assert.AreEqual(
+            ResearchChangeLogState.Available,
+            observed.Snapshot.Topics.Single().ChangeLog.State);
+        Assert.AreEqual(0, topicChangeCount);
+
+        WriteLogWithEntries(
+            "live-history",
+            ("Created history.", "live-history"),
+            ("Appended history.", "source-page"));
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)), "Log append delta should arrive.");
+        Assert.HasCount(2, observed!.Snapshot.Topics.Single().ChangeLog.Entries);
+        Assert.AreEqual(0, topicChangeCount);
+
+        File.Delete(FullPath("wiki/research-logs/live-history.md"));
+
+        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)), "Log deletion delta should arrive.");
+        Assert.AreEqual(
+            ResearchChangeLogState.Missing,
+            observed!.Snapshot.Topics.Single().ChangeLog.State);
+        Assert.AreEqual(0, topicChangeCount);
+    }
+
+    [TestMethod]
     public void MalformedExternalWrite_PreservesDatedSnapshotUntilValidReplacement()
     {
         const string relativePath = "wiki/concepts/resilient-live.md";
@@ -3557,6 +3714,21 @@ public sealed class ResearchCatalogTests
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, content.ReplaceLineEndings());
+    }
+
+    private void WriteLogWithEntries(
+        string topicId,
+        params (string Summary, string ChangedPageId)[] entries)
+    {
+        var markdown =
+            $"---\ntopic_id: {topicId}\n---\n# Research Change Log";
+        foreach (var entry in entries)
+        {
+            markdown +=
+                $"\n\n## 2026-08-18T23:48:25.356Z\n\n{entry.Summary}\n\n" +
+                $"Changed Wiki Pages:\n- [[{entry.ChangedPageId}]]";
+        }
+        WritePage($"wiki/research-logs/{topicId}.md", markdown);
     }
 
     private string FullPath(string relativePath) =>

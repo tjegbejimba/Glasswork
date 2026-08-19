@@ -7,6 +7,25 @@ public sealed partial class FileSystemResearchCatalog
         string issueReference,
         CancellationToken cancellationToken = default)
     {
+        await _wayfinderMutationGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await LinkExistingWayfinderCoreAsync(
+                topicId,
+                issueReference,
+                cancellationToken);
+        }
+        finally
+        {
+            _wayfinderMutationGate.Release();
+        }
+    }
+
+    private async Task<ResearchWayfinderResult> LinkExistingWayfinderCoreAsync(
+        string topicId,
+        string issueReference,
+        CancellationToken cancellationToken)
+    {
         if (!WayfinderIssueIdentity.TryParse(issueReference, out var identity))
         {
             return ResearchWayfinderResult.Failure(
@@ -109,6 +128,25 @@ public sealed partial class FileSystemResearchCatalog
         string topicId,
         string issueReference,
         CancellationToken cancellationToken = default)
+    {
+        await _wayfinderMutationGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await RepairRelatedWayfinderCoreAsync(
+                topicId,
+                issueReference,
+                cancellationToken);
+        }
+        finally
+        {
+            _wayfinderMutationGate.Release();
+        }
+    }
+
+    private async Task<ResearchWayfinderResult> RepairRelatedWayfinderCoreAsync(
+        string topicId,
+        string issueReference,
+        CancellationToken cancellationToken)
     {
         if (!WayfinderIssueIdentity.TryParse(issueReference, out var identity))
         {

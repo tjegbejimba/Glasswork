@@ -1,0 +1,33 @@
+{
+  "name": "Research malformed history",
+  "theme": "light",
+  "startUri": "glasswork://research/malformed-history",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/malformed-history.md",
+      "id": "malformed-history",
+      "title": "Malformed History",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "sources": ["https://example.test/source"],
+      "markdown": "# Malformed History\n\nThe synthesis remains readable."
+    }
+  ],
+  "researchChangeLogs": [
+    {
+      "topicId": "malformed-history",
+      "markdown": "# damaged Research history"
+    }
+  ],
+  "actions": [
+    { "type": "invoke", "automationId": "ResearchHistoryButton", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ResearchHistoryStateTitle", "timeoutMilliseconds": 10000 },
+    { "type": "assert-name", "automationId": "ResearchHistoryStateTitle", "value": "History needs repair", "timeoutMilliseconds": 10000 },
+    { "type": "assert-enabled", "automationId": "ResearchPreviewOpenInObsidian", "timeoutMilliseconds": 10000 }
+  ],
+  "captures": [
+    { "name": "research-history-malformed", "waitMilliseconds": 400 }
+  ]
+}

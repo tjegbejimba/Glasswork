@@ -1,0 +1,53 @@
+{
+  "name": "Research history live refresh",
+  "theme": "dark",
+  "startUri": "glasswork://research/live-history",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/live-history.md",
+      "id": "live-history",
+      "title": "Live History",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "sources": ["https://example.test/source"],
+      "markdown": "# Live History\n\nExternal Research Sessions update the drawer live."
+    }
+  ],
+  "researchChangeLogs": [
+    {
+      "topicId": "live-history",
+      "markdown": "---\ntopic_id: live-history\n---\n# Research Change Log\n\n## 2026-08-18T23:48:25.356Z\n\nCreated durable history.\n\nChanged Wiki Pages:\n- [[live-history]]"
+    }
+  ],
+  "actions": [
+    { "type": "invoke", "automationId": "ResearchHistoryButton", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ResearchPreviewClose", "timeoutMilliseconds": 10000 },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "research-logs/live-history.md",
+      "oldValue": "topic_id: live-history",
+      "value": "topic_id: wrong-topic"
+    },
+    { "type": "delay", "timeoutMilliseconds": 1200 },
+    { "type": "assert-name", "automationId": "ResearchHistoryStateTitle", "value": "History needs repair", "timeoutMilliseconds": 10000 },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "research-logs/live-history.md",
+      "oldValue": "topic_id: wrong-topic",
+      "value": "topic_id: live-history"
+    },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "research-logs/live-history.md",
+      "oldValue": "- [[live-history]]",
+      "value": "- [[live-history]]\n\n## 2026-08-19T00:10:00.000Z\n\nAdded fresh primary evidence.\n\nChanged Wiki Pages:\n- [[live-history]]\n- [[new-source]]"
+    },
+    { "type": "delay", "timeoutMilliseconds": 1200 },
+    { "type": "wait-for", "automationId": "ResearchPreviewClose", "timeoutMilliseconds": 10000 }
+  ],
+  "captures": [
+    { "name": "research-history-live-refresh", "waitMilliseconds": 400 }
+  ]
+}

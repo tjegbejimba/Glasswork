@@ -69,7 +69,22 @@ public class VisualVerificationScenarioTests
               "researchInclude": ["included-page"],
               "researchExclude": ["excluded-page"],
               "researchRelatedWork": ["verify-backlog-task"],
+              "researchRelatedWayfinder": ["tjegbejimba/Glasswork#369"],
               "markdown": "# Async callbacks\n\nSynthesis."
+            }
+          ],
+          "wayfinderIssues": [
+            {
+              "reference": "tjegbejimba/Glasswork#369",
+              "title": "Choose the architecture",
+              "state": "open",
+              "hasReciprocalReference": true
+            }
+          ],
+          "researchChangeLogs": [
+            {
+              "topicId": "async-callbacks",
+              "markdown": "# Research Change Log"
             }
           ],
           "captures": [
@@ -95,7 +110,41 @@ public class VisualVerificationScenarioTests
         CollectionAssert.AreEqual(
             new[] { "verify-backlog-task" },
             scenario.WikiPages[0].ResearchRelatedWork);
+        CollectionAssert.AreEqual(
+            new[] { "tjegbejimba/Glasswork#369" },
+            scenario.WikiPages[0].ResearchRelatedWayfinder);
+        Assert.AreEqual("open", scenario.WayfinderIssues.Single().State);
+        Assert.AreEqual(
+            "async-callbacks",
+            scenario.ResearchChangeLogs.Single().TopicId);
         Assert.AreEqual("# Async callbacks\n\nSynthesis.", scenario.WikiPages[0].Markdown);
+    }
+
+    [TestMethod]
+    public void FromJson_LoadsResearchChangeLogsForDrawerStates()
+    {
+        const string json = """
+        {
+          "name": "research history",
+          "researchChangeLogs": [
+            {
+              "topicId": "async-callbacks",
+              "markdown": "---\ntopic_id: async-callbacks\n---\n# Research Change Log"
+            }
+          ],
+          "captures": [
+            { "name": "research-history" }
+          ]
+        }
+        """;
+
+        var scenario = VisualVerificationScenario.FromJson(json);
+
+        Assert.HasCount(1, scenario.ResearchChangeLogs);
+        Assert.AreEqual("async-callbacks", scenario.ResearchChangeLogs[0].TopicId);
+        StringAssert.Contains(
+            scenario.ResearchChangeLogs[0].Markdown,
+            "# Research Change Log");
     }
 
     [TestMethod]

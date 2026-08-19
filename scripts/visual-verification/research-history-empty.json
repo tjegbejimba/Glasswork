@@ -1,0 +1,32 @@
+{
+  "name": "Research empty history",
+  "theme": "light",
+  "startUri": "glasswork://research/empty-history",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/empty-history.md",
+      "id": "empty-history",
+      "title": "Empty History",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-18",
+      "expires": "2027-08-18",
+      "sources": ["https://example.test/source"],
+      "markdown": "# Empty History\n\nNo knowledge-changing sessions yet."
+    }
+  ],
+  "researchChangeLogs": [
+    {
+      "topicId": "empty-history",
+      "markdown": "---\ntopic_id: empty-history\n---\n# Research Change Log"
+    }
+  ],
+  "actions": [
+    { "type": "invoke", "automationId": "ResearchHistoryButton", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "ResearchHistoryStateTitle", "timeoutMilliseconds": 10000 },
+    { "type": "assert-name", "automationId": "ResearchHistoryStateTitle", "value": "No history entries", "timeoutMilliseconds": 10000 }
+  ],
+  "captures": [
+    { "name": "research-history-empty", "waitMilliseconds": 400 }
+  ]
+}

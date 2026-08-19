@@ -217,6 +217,33 @@ public sealed class ResearchWayfinderRelatedWorkTests
     }
 
     [TestMethod]
+    public async Task LinkExistingWayfinder_SerializesConcurrentReciprocalMutation()
+    {
+        var gateway = new FakeWayfinderGateway
+        {
+            ReciprocalDelayMilliseconds = 100,
+        };
+        gateway.AddOpen(
+            "tjegbejimba/Glasswork#401",
+            "Concurrent Wayfinder issue");
+        using var catalog = CreateCatalog(gateway);
+
+        var first = catalog.LinkExistingWayfinderAsync(
+            "async-callbacks",
+            "tjegbejimba/Glasswork#401");
+        var second = catalog.LinkExistingWayfinderAsync(
+            "async-callbacks",
+            "tjegbejimba/Glasswork#401");
+        var results = await Task.WhenAll(first, second);
+
+        Assert.AreEqual(1, results.Count(result => result.Succeeded));
+        Assert.AreEqual(
+            ResearchWayfinderErrorCode.DuplicateRelationship,
+            results.Single(result => !result.Succeeded).ErrorCode);
+        Assert.AreEqual(1, gateway.ReciprocalCalls);
+    }
+
+    [TestMethod]
     public void WayfinderNavigationPolicy_AllowsOnlyCanonicalTrustedGitHubIssueUri()
     {
         Assert.IsTrue(WayfinderIssueIdentity.TryParse(
@@ -274,6 +301,8 @@ public sealed class ResearchWayfinderRelatedWorkTests
             new(StringComparer.OrdinalIgnoreCase);
 
         public List<string> ReciprocalTopicIds { get; } = [];
+        public int ReciprocalCalls { get; private set; }
+        public int ReciprocalDelayMilliseconds { get; init; }
 
         public void AddOpen(
             string reference,
@@ -319,17 +348,24 @@ public sealed class ResearchWayfinderRelatedWorkTests
                     ? WayfinderIssueLookup.Available(issue)
                     : WayfinderIssueLookup.NotFound(identity));
 
-        public Task<WayfinderReciprocalResult> EnsureReciprocalReferenceAsync(
+        public async Task<WayfinderReciprocalResult> EnsureReciprocalReferenceAsync(
             WayfinderIssueIdentity identity,
             ResearchWayfinderTopicReference topic,
             CancellationToken cancellationToken = default)
         {
+            ReciprocalCalls++;
+            if (ReciprocalDelayMilliseconds > 0)
+            {
+                await Task.Delay(
+                    ReciprocalDelayMilliseconds,
+                    cancellationToken);
+            }
             ReciprocalTopicIds.Add(topic.TopicId);
             _issues[identity.Canonical] = _issues[identity.Canonical] with
             {
                 HasReciprocalReference = true,
             };
-            return Task.FromResult(WayfinderReciprocalResult.Added());
+            return WayfinderReciprocalResult.Added();
         }
     }
 }

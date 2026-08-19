@@ -205,6 +205,11 @@
                                 Click="OpenInObsidianButton_Click"
                                 Content="Open in Obsidian" />
                             <Button
+                                x:Name="ResearchHistoryButton"
+                                AutomationProperties.AutomationId="ResearchHistoryButton"
+                                Click="ResearchHistoryButton_Click"
+                                Content="History" />
+                            <Button
                                 x:Name="RemoveFromResearchButton"
                                 AutomationProperties.AutomationId="ResearchRemoveTopicButton"
                                 Click="RemoveFromResearchButton_Click"
@@ -802,6 +807,7 @@
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                     <StackPanel Spacing="4">
                         <TextBlock
+                            x:Name="PreviewEyebrow"
                             Opacity="0.68"
                             Text="Related Wiki Page" />
                         <TextBlock
@@ -841,6 +847,7 @@
                         Opacity="0.72"
                         TextWrapping="Wrap" />
                     <Button
+                        x:Name="PreviewOpenInObsidianButton"
                         Grid.Column="3"
                         AutomationProperties.AutomationId="ResearchPreviewOpenInObsidian"
                         Click="PreviewOpenInObsidianButton_Click"
@@ -848,6 +855,7 @@
                 </Grid>
 
                 <ScrollViewer
+                    x:Name="PreviewMarkdownScroll"
                     Grid.Row="2"
                     AutomationProperties.AutomationId="ResearchPreviewMarkdownScroll"
                     HorizontalScrollMode="Disabled"
@@ -858,6 +866,24 @@
                         AutomationProperties.AutomationId="ResearchPreviewMarkdown"
                         LinkClicked="PreviewMarkdown_LinkClicked" />
                 </ScrollViewer>
+                <StackPanel
+                    x:Name="PreviewStatePanel"
+                    Grid.Row="2"
+                    AutomationProperties.AutomationId="ResearchHistoryState"
+                    Spacing="10"
+                    Visibility="Collapsed">
+                    <TextBlock
+                        x:Name="PreviewStateTitle"
+                        AutomationProperties.AutomationId="ResearchHistoryStateTitle"
+                        FontSize="18"
+                        FontWeight="SemiBold"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        x:Name="PreviewStateMessage"
+                        AutomationProperties.AutomationId="ResearchHistoryStateMessage"
+                        Opacity="0.78"
+                        TextWrapping="Wrap" />
+                </StackPanel>
             </Grid>
             <Grid
                 x:Name="ContextSelectionDrawerContent"
