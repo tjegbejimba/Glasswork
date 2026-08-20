@@ -92,6 +92,7 @@ public sealed class PlannerScopeResolverTests
         Assert.AreEqual(SizeBucket.Short, leaves[1].EffectiveSize);
         Assert.IsTrue(leaves[1].IsAssumed);
         Assert.IsTrue(leaves[1].IsUncertain);
+        Assert.AreEqual("Unknown size value", leaves[1].SizeCueLabel);
         CollectionAssert.AreEqual(new[] { "parent" }, leaves[1].RemovalTaskIds.ToArray());
     }
 
@@ -137,6 +138,9 @@ public sealed class PlannerScopeResolverTests
         CollectionAssert.AreEqual(
             new[] { PlannerScopeCue.ExplicitPbiSizeIgnored },
             group.Cues.ToArray());
+        Assert.AreEqual(
+            "Move PBI group (2 tasks) out of My Day",
+            group.NotTodayControlName);
     }
 
     [TestMethod]
@@ -310,7 +314,54 @@ public sealed class PlannerScopeResolverTests
             leaves.Select(leaf => leaf.Identity).ToArray());
         Assert.AreEqual(120, leaves[0].CapacityMinutes);
         Assert.IsTrue(leaves[0].IsUncertain);
+        Assert.AreEqual("Check Size", leaves[0].SizeCueLabel);
         Assert.AreEqual(60, leaves[1].CapacityMinutes);
+    }
+
+    [TestMethod]
+    public void Resolve_ContainerOnlyPbiOmitsItsInlineSubtasks()
+    {
+        var pbi = new GlassworkTask
+        {
+            Id = "container-only",
+            Title = "Container only",
+            Type = GlassworkTask.Types.Pbi,
+            Subtasks =
+            [
+                new SubTask
+                {
+                    Text = "Dismissed inline action",
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["my_day"] = "2026-08-19",
+                    },
+                },
+            ],
+        };
+        var child = new GlassworkTask
+        {
+            Id = "still-promoted-child",
+            Title = "Still promoted child",
+            Type = GlassworkTask.Types.Task,
+            Parent = pbi.Id,
+            MyDay = Today.ToDateTime(default),
+        };
+        pbi.TodaysChildren = [child];
+        var snapshot = new PlannerScopeSnapshot(
+            Today,
+            [pbi],
+            new Dictionary<string, GlassworkTask>(StringComparer.Ordinal)
+            {
+                [pbi.Id] = pbi,
+                [child.Id] = child,
+            },
+            new HashSet<string>(StringComparer.Ordinal) { child.Id });
+
+        var leaves = PlannerScopeResolver.Resolve(snapshot).Groups.Single().Leaves;
+
+        CollectionAssert.AreEqual(
+            new[] { "task:still-promoted-child" },
+            leaves.Select(leaf => leaf.Identity).ToArray());
     }
 
     [TestMethod]

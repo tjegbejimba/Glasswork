@@ -326,7 +326,7 @@ public partial class App : Application
         if (!launchOptions.SkipProtocolRegistration)
             RegisterUrlScheme();
 
-        _window = new MainWindow();
+        _window = new MainWindow(launchOptions.StartPage);
         ApplyTheme(_window);
         _window.Activate();
         StartVisualCaptureBridge(launchOptions);

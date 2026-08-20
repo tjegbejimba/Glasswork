@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="Glasswork.Pages.PlannerPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Glasswork.Controls"
+    xmlns:conv="using:Glasswork.Converters"
+    KeyDown="PlannerPage_KeyDown"
+    NavigationCacheMode="Disabled">
+
+    <Page.Resources>
+        <conv:BoolVisibilityConverter x:Key="BoolVis" />
+    </Page.Resources>
+
+    <Page.KeyboardAccelerators>
+        <KeyboardAccelerator Key="U" Modifiers="Menu" Invoked="Undo_Accelerator" />
+    </Page.KeyboardAccelerators>
+
+    <Grid Padding="32" RowDefinitions="Auto,Auto,Auto,*,Auto">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+            <StackPanel>
+                <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="Planner" />
+                <TextBlock Text="Choose realistic work for today without hiding uncertain inputs."
+                           Opacity="0.65" Margin="0,4,0,0" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="Refresh" Click="Refresh_Click"
+                    AutomationProperties.AutomationId="PlannerRefresh" />
+        </Grid>
+
+        <Border x:Name="SetupPanel" Grid.Row="1" Margin="0,20,0,0" Padding="18"
+                CornerRadius="8"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                AutomationProperties.AutomationId="PlannerSetupRequired">
+            <StackPanel Spacing="12">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="Setup required" />
+                    <TextBlock Text="Confirm these suggested planning defaults before they are saved."
+                               Opacity="0.7" />
+                </StackPanel>
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
+                    <StackPanel>
+                        <TextBlock Text="Daily capacity (minutes)" />
+                        <TextBox x:Name="CapacityBox"
+                                 AutomationProperties.AutomationId="PlannerDailyCapacity" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1">
+                        <TextBlock Text="Work window" />
+                        <Grid ColumnDefinitions="*,Auto,*" ColumnSpacing="6">
+                            <TextBox x:Name="WorkStartBox"
+                                     AutomationProperties.AutomationId="PlannerWorkStart" />
+                            <TextBlock Grid.Column="1" Text="to" VerticalAlignment="Center" />
+                            <TextBox x:Name="WorkEndBox" Grid.Column="2"
+                                     AutomationProperties.AutomationId="PlannerWorkEnd" />
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Lunch" />
+                        <Grid ColumnDefinitions="*,Auto,*" ColumnSpacing="6">
+                            <TextBox x:Name="LunchStartBox"
+                                     AutomationProperties.AutomationId="PlannerLunchStart" />
+                            <TextBlock Grid.Column="1" Text="to" VerticalAlignment="Center" />
+                            <TextBox x:Name="LunchEndBox" Grid.Column="2"
+                                     AutomationProperties.AutomationId="PlannerLunchEnd" />
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <StackPanel>
+                        <TextBlock Text="Transition buffer (minutes)" />
+                        <TextBox x:Name="BufferBox" Width="180" HorizontalAlignment="Left"
+                                 AutomationProperties.AutomationId="PlannerTransitionBuffer" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Confirm Planner Profile"
+                            VerticalAlignment="Bottom"
+                            Click="ConfirmProfile_Click"
+                            AutomationProperties.AutomationId="PlannerConfirmProfile" />
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,16,0,0" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="20">
+            <TextBlock x:Name="ProfileStateText" FontWeight="SemiBold"
+                       AutomationProperties.AutomationId="PlannerProfileState" />
+            <TextBlock Grid.Column="1" Text="Unknown calendar"
+                       AutomationProperties.AutomationId="PlannerUnknownCalendar" />
+            <TextBlock Grid.Column="2" x:Name="TotalsText"
+                       AutomationProperties.AutomationId="PlannerSelectedWorkTotal" />
+            <TextBlock Grid.Column="3" x:Name="UncertaintyText"
+                       AutomationProperties.AutomationId="PlannerUncertaintyTotal" />
+        </Grid>
+
+        <ScrollViewer Grid.Row="3" Margin="0,16,0,0">
+            <ItemsControl x:Name="GroupList"
+                          AutomationProperties.AutomationId="PlannerScopeGroups">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,0,0,12" Padding="16" CornerRadius="8"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <StackPanel Spacing="10">
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Container.Title}" FontSize="17"
+                                                   FontWeight="SemiBold" />
+                                        <TextBlock Text="PBI Size ignored; leaf Sizes determine capacity."
+                                                   Opacity="0.65"
+                                                   Visibility="{Binding HasIgnoredPbiSize, Converter={StaticResource BoolVis}}" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding CapacityMinutes}"
+                                               VerticalAlignment="Center" />
+                                    <Button Grid.Column="2" Content="{Binding NotTodayPreviewLabel}"
+                                            Tag="{Binding}"
+                                            Click="GroupNotToday_Click"
+                                            Visibility="{Binding ShowGroupNotToday, Converter={StaticResource BoolVis}}"
+                                            AutomationProperties.Name="{Binding NotTodayControlName}" />
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding Leaves}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Padding="10,8" ColumnDefinitions="*,Auto,Auto,Auto,Auto"
+                                                  ColumnSpacing="10">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding ContextLabel}" Opacity="0.55" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding EffectiveSizeLabel}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2" Text="{Binding SizeCueLabel}"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                <Button Grid.Column="3" MinWidth="130"
+                                                        Content="{Binding EffectiveSizeLabel}"
+                                                        Tag="{Binding}"
+                                                        Click="SizeButton_Click"
+                                                        AutomationProperties.Name="{Binding SizeControlName}" />
+                                                <Button Grid.Column="4" Content="{Binding NotTodayPreviewLabel}"
+                                                        Tag="{Binding}"
+                                                        Click="LeafNotToday_Click"
+                                                        AutomationProperties.Name="{Binding NotTodayControlName}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="4" Margin="0,12,0,0" Spacing="8">
+            <InfoBar x:Name="ErrorBar" Severity="Error" IsOpen="False"
+                     AutomationProperties.AutomationId="PlannerError" />
+            <Grid x:Name="UndoPanel" Visibility="Collapsed"
+                  ColumnDefinitions="*,Auto" Padding="12"
+                  Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                  AutomationProperties.AutomationId="PlannerInlineUndo">
+                <TextBlock x:Name="UndoText" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="Undo (Alt+U)" Click="Undo_Click"
+                        AutomationProperties.AutomationId="PlannerUndo" />
+            </Grid>
+            <Expander x:Name="TrayExpander" Header="Not today tray" Visibility="Collapsed"
+                      AutomationProperties.AutomationId="PlannerNotTodayTray">
+                <ItemsControl x:Name="TrayList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid ColumnDefinitions="*,Auto" Padding="8">
+                                <TextBlock Text="{Binding Title}" />
+                                <Button Grid.Column="1" Content="Restore" Tag="{Binding}"
+                                        Click="Restore_Click"
+                                        AutomationProperties.Name="{Binding RestoreControlName}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Expander>
+            <controls:PlannerAnnouncementControl
+                x:Name="AnnouncementText"
+                Opacity="0"
+                AutomationProperties.AccessibilityView="Content"
+                AutomationProperties.LiveSetting="Polite"
+                AutomationProperties.AutomationId="PlannerAnnouncement" />
+        </StackPanel>
+    </Grid>
+</Page>

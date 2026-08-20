@@ -34,8 +34,10 @@ public sealed partial class MainWindow : Window
     private bool _titleBarBackWasVisible;
     private AccessibilityView _shellContentAccessibilityView;
 
-    public MainWindow()
+    public MainWindow(string? verificationStartPage = null)
     {
+        var launchPlanner = verificationStartPage == "planner";
+        _suppressSelectionNavigation = launchPlanner;
         InitializeComponent();
 
         ExtendsContentIntoTitleBar = true;
@@ -46,15 +48,38 @@ public sealed partial class MainWindow : Window
         var icoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
         AppWindow.SetIcon(icoPath);
 
-        // Land on My Day. The XAML IsSelected="True" sets the chrome state but does not
-        // reliably navigate the Frame on first launch — be explicit.
-        NavFrame.Navigate(typeof(MyDayPage));
+        // Planner is intentionally reachable only from the isolated visual-verification
+        // launch option. It is absent from normal navigation and protocol routing.
+        if (launchPlanner)
+        {
+            NavView.SelectedItem = null;
+            NavFrame.Navigate(typeof(PlannerPage));
+        }
+        else
+        {
+            // Land on My Day. The XAML IsSelected="True" sets the chrome state but does not
+            // reliably navigate the Frame on first launch — be explicit.
+            NavFrame.Navigate(typeof(MyDayPage));
+        }
 
         // Update-available announce surface: badge the built-in Settings nav item whenever
         // App.Updater reports an update is available (issue #241). SettingsItem isn't
         // available until the NavigationView template applies, so initialise on Loaded.
         // ResultChanged covers the fire-and-forget startup check landing after construction.
-        NavView.Loaded += (_, _) => RefreshUpdateBadge();
+        NavView.Loaded += (_, _) =>
+        {
+            RefreshUpdateBadge();
+            if (launchPlanner)
+            {
+                NavView.SelectedItem = null;
+                if (NavFrame.Content is not PlannerPage)
+                {
+                    NavFrame.Navigate(typeof(PlannerPage));
+                    NavFrame.BackStack.Clear();
+                }
+                _suppressSelectionNavigation = false;
+            }
+        };
         App.Updater.ResultChanged += OnUpdaterResultChanged;
         App.McpUpdater.ResultChanged += OnUpdaterResultChanged;
 

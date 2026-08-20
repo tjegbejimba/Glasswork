@@ -1,0 +1,47 @@
+{
+  "name": "Planner setup required",
+  "startPage": "planner",
+  "windowWidth": 1280,
+  "windowHeight": 900,
+  "tasks": [
+    {
+      "id": "draft-brief",
+      "title": "Draft the brief",
+      "status": "todo",
+      "myDay": "today"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "PlannerDailyCapacity"
+    },
+    {
+      "type": "assert-ui-state-missing",
+      "name": "planner.profile"
+    },
+    {
+      "type": "capture",
+      "name": "planner-setup-required"
+    },
+    {
+      "type": "invoke",
+      "automationId": "PlannerConfirmProfile"
+    },
+    {
+      "type": "assert-not-present",
+      "automationId": "PlannerDailyCapacity"
+    },
+    {
+      "type": "assert-ui-state-json",
+      "name": "planner.profile",
+      "value": "{\"schemaVersion\":1,\"isConfirmed\":true,\"dailyCapacityMinutes\":360,\"workStartLocal\":\"09:00:00\",\"workEndLocal\":\"17:00:00\",\"lunchStartLocal\":\"12:00:00\",\"lunchEndLocal\":\"13:00:00\",\"transitionBufferMinutes\":15,\"selectedCalendarReferences\":[]}"
+    }
+  ],
+  "captures": [
+    {
+      "name": "planner-profile-confirmed",
+      "waitMilliseconds": 700
+    }
+  ]
+}
