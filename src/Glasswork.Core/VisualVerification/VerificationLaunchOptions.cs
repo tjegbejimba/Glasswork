@@ -9,7 +9,8 @@ public sealed record VerificationLaunchOptions(
     string? UiStatePath,
     string InstanceKey,
     bool SkipProtocolRegistration,
-    bool SkipUpdateCheck)
+    bool SkipUpdateCheck,
+    string? StartPage = null)
 {
     public const string VaultPathVariable = "GLASSWORK_VERIFY_VAULT_PATH";
     public const string UiStatePathVariable = "GLASSWORK_VERIFY_UI_STATE_PATH";
@@ -18,13 +19,15 @@ public sealed record VerificationLaunchOptions(
     public const string SkipUpdateCheckVariable = "GLASSWORK_SKIP_UPDATE_CHECK";
     public const string CaptureRequestPathVariable = "GLASSWORK_VERIFY_CAPTURE_REQUEST";
     public const string CaptureOutputPathVariable = "GLASSWORK_VERIFY_CAPTURE_OUTPUT";
+    public const string StartPageVariable = "GLASSWORK_VERIFY_START_PAGE";
 
     public bool IsVerificationRun =>
         !string.IsNullOrWhiteSpace(VaultPath) ||
         !string.IsNullOrWhiteSpace(UiStatePath) ||
         !string.IsNullOrWhiteSpace(InstanceKey) && InstanceKey != "main" ||
         SkipProtocolRegistration ||
-        SkipUpdateCheck;
+        SkipUpdateCheck ||
+        StartPage is not null;
 
     public static VerificationLaunchOptions FromProcessEnvironment() =>
         FromEnvironment(ToStringDictionary(Environment.GetEnvironmentVariables()));
@@ -34,6 +37,9 @@ public sealed record VerificationLaunchOptions(
         var vaultPath = Read(environment, VaultPathVariable);
         var uiStatePath = Read(environment, UiStatePathVariable);
         var instanceKey = Read(environment, InstanceKeyVariable) ?? "main";
+        var startPage = Read(environment, StartPageVariable);
+        if (startPage is not null && startPage != "planner")
+            throw new FormatException($"Unsupported verification start page '{startPage}'.");
 
         var explicitSkipProtocol = ReadBool(environment, SkipProtocolRegistrationVariable);
         var explicitSkipUpdate = ReadBool(environment, SkipUpdateCheckVariable);
@@ -41,14 +47,16 @@ public sealed record VerificationLaunchOptions(
         var isVerificationRun =
             !string.IsNullOrWhiteSpace(vaultPath) ||
             !string.IsNullOrWhiteSpace(uiStatePath) ||
-            instanceKey != "main";
+            instanceKey != "main" ||
+            startPage is not null;
 
         return new VerificationLaunchOptions(
             vaultPath,
             uiStatePath,
             instanceKey,
             explicitSkipProtocol || isVerificationRun,
-            explicitSkipUpdate || isVerificationRun);
+            explicitSkipUpdate || isVerificationRun,
+            startPage);
     }
 
     private static string? Read(IReadOnlyDictionary<string, string?> environment, string key)

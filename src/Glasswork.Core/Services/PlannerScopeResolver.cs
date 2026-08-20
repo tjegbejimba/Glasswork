@@ -17,6 +17,11 @@ public sealed record PlannerScopeGroup(
     IReadOnlyList<PlannerScopeCue> Cues)
 {
     public int CapacityMinutes => Leaves.Sum(leaf => leaf.CapacityMinutes);
+    public bool HasIgnoredPbiSize => Cues.Contains(PlannerScopeCue.ExplicitPbiSizeIgnored);
+    public bool ShowGroupNotToday => RemovalTaskIds.Count > 1;
+    public string NotTodayPreviewLabel => RemovalTaskIds.Count == 1
+        ? "Not today"
+        : $"Not today ({RemovalTaskIds.Count} tasks)";
 }
 
 public enum PlannerScopeCue
@@ -41,7 +46,22 @@ public sealed record PlannerActionableLeaf(
     int CapacityMinutes,
     bool IsAssumed,
     bool IsUncertain,
-    IReadOnlyList<string> RemovalTaskIds);
+    IReadOnlyList<string> RemovalTaskIds)
+{
+    public string EffectiveSizeLabel => EffectiveSize.ToString();
+    public string SizeCueLabel => IsUncertain ? "Check Size" : IsAssumed ? "Assumed" : string.Empty;
+    public string SizeControlName => $"Size for {Title}";
+    public string NotTodayScopeTitle => SubtaskIndex.HasValue ? Container.Title : Title;
+    public string NotTodayControlName => $"Move {NotTodayScopeTitle} out of My Day";
+    public string ContextLabel => string.Equals(Title, Container.Title, StringComparison.Ordinal)
+        ? string.Empty
+        : Container.Title;
+    public string NotTodayPreviewLabel => SubtaskIndex.HasValue
+        ? $"Not today ({Container.Title})"
+        : RemovalTaskIds.Count == 1
+        ? "Not today"
+        : $"Not today ({RemovalTaskIds.Count} tasks)";
+}
 
 public static class PlannerScopeResolver
 {

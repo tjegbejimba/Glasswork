@@ -37,4 +37,19 @@ public class VerificationLaunchOptionsTests
         Assert.IsTrue(options.SkipProtocolRegistration);
         Assert.IsTrue(options.SkipUpdateCheck);
     }
+
+    [TestMethod]
+    public void FromEnvironment_WhenPlannerStartPageIsSet_UsesHiddenVerificationPage()
+    {
+        var options = VerificationLaunchOptions.FromEnvironment(
+            new Dictionary<string, string?>
+            {
+                [VerificationLaunchOptions.StartPageVariable] = "planner",
+            });
+
+        Assert.IsTrue(options.IsVerificationRun);
+        Assert.AreEqual("planner", options.StartPage);
+        Assert.IsTrue(options.SkipProtocolRegistration);
+        Assert.IsTrue(options.SkipUpdateCheck);
+    }
 }

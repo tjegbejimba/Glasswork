@@ -7,6 +7,40 @@ namespace Glasswork.Tests;
 public class VisualVerificationScenarioTests
 {
     [TestMethod]
+    public void FromJson_LoadsPlannerProfileHiddenStartAndRecoveryActions()
+    {
+        const string json = """
+        {
+          "name": "planner",
+          "startPage": "planner",
+          "plannerProfile": {
+            "schemaVersion": 1,
+            "isConfirmed": true,
+            "dailyCapacityMinutes": 360,
+            "workStartLocal": "09:00:00",
+            "workEndLocal": "17:00:00",
+            "lunchStartLocal": "12:00:00",
+            "lunchEndLocal": "13:00:00",
+            "transitionBufferMinutes": 15,
+            "selectedCalendarReferences": []
+          },
+          "actions": [
+            { "type": "press-key", "value": "Alt+U" },
+            { "type": "assert-ui-state-missing", "name": "missing.key" },
+            { "type": "assert-ui-state-json", "name": "planner.profile", "value": "{\"schemaVersion\":1}" }
+          ],
+          "captures": [{ "name": "planner" }]
+        }
+        """;
+
+        var scenario = VisualVerificationScenario.FromJson(json);
+
+        Assert.AreEqual("planner", scenario.StartPage);
+        Assert.AreEqual(360, scenario.PlannerProfile!.DailyCapacityMinutes);
+        Assert.AreEqual("Alt+U", scenario.Actions[0].Value);
+    }
+
+    [TestMethod]
     public void FromJson_LoadsTasksActionsAndCaptures()
     {
         const string json = """

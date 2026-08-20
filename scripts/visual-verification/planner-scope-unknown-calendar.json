@@ -1,0 +1,109 @@
+{
+  "name": "Planner scope and unknown calendar",
+  "startPage": "planner",
+  "windowWidth": 1280,
+  "windowHeight": 900,
+  "plannerProfile": {
+    "schemaVersion": 1,
+    "isConfirmed": true,
+    "dailyCapacityMinutes": 360,
+    "workStartLocal": "09:00:00",
+    "workEndLocal": "17:00:00",
+    "lunchStartLocal": "12:00:00",
+    "lunchEndLocal": "13:00:00",
+    "transitionBufferMinutes": 15,
+    "selectedCalendarReferences": []
+  },
+  "tasks": [
+    {
+      "id": "explicit-task",
+      "title": "Explicit task",
+      "status": "todo",
+      "myDay": "today",
+      "size": "short"
+    },
+    {
+      "id": "unknown-task",
+      "title": "Unknown task",
+      "status": "todo",
+      "myDay": "today",
+      "size": "future_bucket"
+    },
+    {
+      "id": "subtask-owner",
+      "title": "Subtask owner",
+      "status": "todo",
+      "subtasks": [
+        {
+          "text": "Deep subtask",
+          "status": "todo",
+          "myDay": "today",
+          "size": "deep"
+        }
+      ]
+    },
+    {
+      "id": "delivery-pbi",
+      "title": "Delivery PBI",
+      "type": "pbi",
+      "status": "todo",
+      "myDay": "today",
+      "size": "deep"
+    },
+    {
+      "id": "delivery-child",
+      "title": "Delivery child",
+      "status": "todo",
+      "parent": "delivery-pbi",
+      "myDay": "today",
+      "size": "focus"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "PlannerUnknownCalendar"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerSelectedWorkTotal",
+      "value": "240 min selected"
+    },
+    {
+      "type": "invoke",
+      "name": "Size for Explicit task"
+    },
+    {
+      "type": "invoke",
+      "name": "Set Deep size"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerSelectedWorkTotal",
+      "value": "330 min selected"
+    },
+    {
+      "type": "capture",
+      "name": "planner-size-mutated"
+    },
+    {
+      "type": "invoke",
+      "name": "Size for Explicit task"
+    },
+    {
+      "type": "invoke",
+      "name": "Clear size"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerSelectedWorkTotal",
+      "value": "240 min selected"
+    }
+  ],
+  "captures": [
+    {
+      "name": "planner-scope-unknown-calendar",
+      "waitMilliseconds": 500
+    }
+  ]
+}

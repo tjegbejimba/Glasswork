@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Glasswork.Core.Models;
 using Glasswork.Core.Research;
+using Glasswork.Core.Services;
 
 namespace Glasswork.Core.VisualVerification;
 
@@ -20,6 +21,8 @@ public sealed partial class VisualVerificationScenario
 
     public string Name { get; init; } = string.Empty;
     public string? StartUri { get; init; }
+    public string? StartPage { get; init; }
+    public PlannerProfile? PlannerProfile { get; init; }
     public int LaunchTimeoutSeconds { get; init; } = 20;
     public int InitialWaitMilliseconds { get; init; } = 800;
     public string Theme { get; init; } = "system";
@@ -56,10 +59,32 @@ public sealed partial class VisualVerificationScenario
             throw new FormatException("initialWaitMilliseconds must not be negative.");
         if (Theme is not ("system" or "light" or "dark"))
             throw new FormatException("theme must be system, light, or dark.");
+        if (StartPage is not null and not "planner")
+            throw new FormatException("startPage supports only the verification-only planner page.");
         if (WindowWidth.HasValue != WindowHeight.HasValue)
             throw new FormatException("windowWidth and windowHeight must be specified together.");
         if (WindowWidth is <= 0 || WindowHeight is <= 0)
             throw new FormatException("windowWidth and windowHeight must be greater than zero.");
+        if (PlannerProfile is not null)
+        {
+            if (PlannerProfile.SchemaVersion != PlannerProfileService.CurrentSchemaVersion
+                || !PlannerProfile.IsConfirmed)
+            {
+                throw new FormatException("plannerProfile must be a confirmed V1 profile.");
+            }
+            var validation = PlannerProfileService.ValidateDraft(new PlannerProfileDraft
+            {
+                DailyCapacityMinutes = PlannerProfile.DailyCapacityMinutes,
+                WorkStartLocal = PlannerProfile.WorkStartLocal,
+                WorkEndLocal = PlannerProfile.WorkEndLocal,
+                LunchStartLocal = PlannerProfile.LunchStartLocal,
+                LunchEndLocal = PlannerProfile.LunchEndLocal,
+                TransitionBufferMinutes = PlannerProfile.TransitionBufferMinutes,
+                SelectedCalendarReferences = PlannerProfile.SelectedCalendarReferences,
+            });
+            if (!validation.IsValid)
+                throw new FormatException("plannerProfile contains invalid values.");
+        }
 
         foreach (var task in Tasks)
         {
@@ -189,9 +214,32 @@ public sealed partial class VisualVerificationScenario
                 throw new FormatException("assert-clipboard-text requires value.");
             }
             if (action.Type.Equals("press-key", StringComparison.OrdinalIgnoreCase)
-                && action.Value is not ("Escape" or "Tab" or "Space"))
+                && action.Value is not ("Escape" or "Tab" or "Space" or "Alt+U"))
             {
-                throw new FormatException("press-key requires value Escape, Tab, or Space.");
+                throw new FormatException("press-key requires value Escape, Tab, Space, or Alt+U.");
+            }
+            if (action.Type.Equals("assert-ui-state-missing", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(action.Name))
+            {
+                throw new FormatException("assert-ui-state-missing requires name.");
+            }
+            if (action.Type.Equals("assert-ui-state-json", StringComparison.OrdinalIgnoreCase)
+                && (string.IsNullOrWhiteSpace(action.Name) || action.Value is null))
+            {
+                throw new FormatException("assert-ui-state-json requires name and value.");
+            }
+            if (action.Type.Equals("assert-ui-state-json", StringComparison.OrdinalIgnoreCase))
+            {
+                try { JsonDocument.Parse(action.Value!); }
+                catch (JsonException ex)
+                {
+                    throw new FormatException("assert-ui-state-json value must be valid JSON.", ex);
+                }
+            }
+            if (action.Type.Equals("capture", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(action.Name))
+            {
+                throw new FormatException("capture requires name.");
             }
         }
 
@@ -239,6 +287,7 @@ public sealed class VisualVerificationTask
     public string Status { get; init; } = GlassworkTask.Statuses.Todo;
     public string Priority { get; init; } = GlassworkTask.Priorities.Medium;
     public string? Type { get; init; }
+    public string? Size { get; init; }
     public string? Description { get; init; }
     public string? Notes { get; init; }
     public string? Due { get; init; }
@@ -261,6 +310,7 @@ public sealed class VisualVerificationTask
             Status = Status,
             Priority = Priority,
             Type = GlassworkTask.Types.Normalize(Type),
+            Size = Size,
             Created = today.Date,
             Due = ParseScenarioDate(Due, today),
             MyDay = ParseScenarioDate(MyDay, today),
@@ -318,6 +368,7 @@ public sealed class VisualVerificationSubtask
     public string Text { get; init; } = string.Empty;
     public bool IsCompleted { get; init; }
     public string? Status { get; init; }
+    public string? Size { get; init; }
     public Dictionary<string, string> Metadata { get; init; } = [];
     public string? Notes { get; init; }
     public string? Due { get; init; }
@@ -330,6 +381,8 @@ public sealed class VisualVerificationSubtask
             metadata["due"] = VisualVerificationTask.ParseScenarioDate(Due, today)!.Value.ToString("yyyy-MM-dd");
         if (MyDay is not null)
             metadata["my_day"] = VisualVerificationTask.ParseScenarioDate(MyDay, today)!.Value.ToString("yyyy-MM-dd");
+        if (Size is not null)
+            metadata["size"] = Size;
 
         return new SubTask
         {

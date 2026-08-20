@@ -7,6 +7,7 @@ using System.IO;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -87,17 +88,19 @@ internal static partial class VisualVerificationRunner
         File.WriteAllText(
             wayfinderFixturePath,
             JsonSerializer.Serialize(scenario.WayfinderIssues));
-        File.WriteAllText(
-            uiStatePath,
-            JsonSerializer.Serialize(new Dictionary<string, string>
-            {
-                ["app.theme"] = scenario.Theme,
-            }));
+        var initialUiState = new Dictionary<string, object?>
+        {
+            ["app.theme"] = scenario.Theme,
+        };
+        if (scenario.PlannerProfile is not null)
+            initialUiState[PlannerProfileService.UiStateKey] = scenario.PlannerProfile;
+        File.WriteAllText(uiStatePath, JsonSerializer.Serialize(initialUiState));
 
         var instanceKey = "visual-" + Guid.NewGuid().ToString("N");
         using var process = LaunchApp(
             appExe,
             scenario.StartUri,
+            scenario.StartPage,
             vaultRoot,
             uiStatePath,
             instanceKey,
@@ -115,7 +118,15 @@ internal static partial class VisualVerificationRunner
             {
                 try
                 {
-                    PerformAction(hwnd, vaultRoot, todoPath, action);
+                    PerformAction(
+                        hwnd,
+                        vaultRoot,
+                        todoPath,
+                        uiStatePath,
+                        options.OutDir,
+                        captureRequestPath,
+                        captureOutputPath,
+                        action);
                 }
                 catch (Exception ex)
                 {
@@ -298,6 +309,7 @@ internal static partial class VisualVerificationRunner
     private static Process LaunchApp(
         string appExe,
         string? startUri,
+        string? startPage,
         string vaultPath,
         string uiStatePath,
         string instanceKey,
@@ -321,6 +333,8 @@ internal static partial class VisualVerificationRunner
         psi.Environment[VerificationLaunchOptions.SkipUpdateCheckVariable] = "1";
         psi.Environment[VerificationLaunchOptions.CaptureRequestPathVariable] = captureRequestPath;
         psi.Environment[VerificationLaunchOptions.CaptureOutputPathVariable] = captureOutputPath;
+        if (startPage is not null)
+            psi.Environment[VerificationLaunchOptions.StartPageVariable] = startPage;
         psi.Environment["GLASSWORK_VISUAL_WAYFINDER_FIXTURE"] = wayfinderFixturePath;
 
         return Process.Start(psi) ?? throw new InvalidOperationException("Failed to launch Glasswork.");
@@ -348,6 +362,10 @@ internal static partial class VisualVerificationRunner
         IntPtr hwnd,
         string vaultRoot,
         string todoPath,
+        string uiStatePath,
+        string outDir,
+        string captureRequestPath,
+        string captureOutputPath,
         VisualVerificationAction action)
     {
         switch (action.Type.Trim().ToLowerInvariant())
@@ -411,6 +429,25 @@ internal static partial class VisualVerificationRunner
             case "press-key":
                 PressKey(hwnd, action.Value!);
                 return;
+            case "assert-ui-state-missing":
+                AssertUiStateMissing(uiStatePath, action);
+                return;
+            case "assert-ui-state-json":
+                AssertUiStateJson(uiStatePath, action);
+                return;
+            case "capture":
+            {
+                var path = Path.Combine(outDir, SanitizeFileName(action.Name!) + ".png");
+                CaptureThroughApp(
+                    captureRequestPath,
+                    captureOutputPath,
+                    path,
+                    TimeSpan.FromSeconds(10));
+                var imageStats = AnalyzeImage(path);
+                if (imageStats.UniqueSampledColors <= 1)
+                    throw new InvalidOperationException($"Capture '{action.Name}' appears blank or uniform: {path}");
+                return;
+            }
             case "assert-single-selection":
                 AssertSingleSelection(WaitForElement(hwnd, action));
                 return;
@@ -430,6 +467,8 @@ internal static partial class VisualVerificationRunner
                 AssertVerticalScrollAtMost(WaitForElement(hwnd, action), action);
                 return;
             case "expand":
+                ForegroundWindowBestEffort(hwnd);
+                Thread.Sleep(100);
                 ExpandElement(WaitForElement(hwnd, action));
                 return;
             case "delay":
@@ -1005,6 +1044,11 @@ internal static partial class VisualVerificationRunner
 
     private static void PressKey(IntPtr hwnd, string key)
     {
+        if (key == "Alt+U")
+        {
+            PressAltU(hwnd);
+            return;
+        }
         var virtualKey = key switch
         {
             "Escape" => (byte)0x1B,
@@ -1023,6 +1067,76 @@ internal static partial class VisualVerificationRunner
         SendMessage(inputWindow, WindowMessageKeyUp, new IntPtr(virtualKey), upState);
         Thread.Sleep(150);
     }
+
+    private static void PressAltU(IntPtr hwnd)
+    {
+        const byte u = 0x55;
+        ForegroundWindowBestEffort(hwnd);
+        Thread.Sleep(100);
+        var inputWindow = GetFocusedInputWindow(hwnd);
+        var scanCode = (byte)MapVirtualKey(u, MapVirtualKeyToScanCode);
+        var downState = new IntPtr(1 | (scanCode << 16) | (1 << 29));
+        var upState = new IntPtr(
+            1 | (scanCode << 16) | (1 << 29) | (1 << 30) | unchecked((int)0x80000000));
+        SendMessage(inputWindow, WindowMessageSystemKeyDown, new IntPtr(u), downState);
+        SendMessage(inputWindow, WindowMessageSystemKeyUp, new IntPtr(u), upState);
+        Thread.Sleep(150);
+    }
+
+    private static void AssertUiStateMissing(string path, VisualVerificationAction action)
+    {
+        var key = ResolveUiStateKey(action.Name!);
+        var timeout = Stopwatch.StartNew();
+        while (timeout.ElapsedMilliseconds <= action.TimeoutMilliseconds)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(path));
+                if (!document.RootElement.TryGetProperty(key, out _))
+                    return;
+            }
+            catch (Exception ex) when (ex is IOException or JsonException)
+            {
+                // Auto-saving UI State replaces the file atomically; retry the transient window.
+            }
+            Thread.Sleep(100);
+        }
+        throw new InvalidOperationException($"UI state key '{key}' was present.");
+    }
+
+    private static void AssertUiStateJson(string path, VisualVerificationAction action)
+    {
+        var key = ResolveUiStateKey(action.Name!);
+        var timeout = Stopwatch.StartNew();
+        while (timeout.ElapsedMilliseconds <= action.TimeoutMilliseconds)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(path));
+                if (document.RootElement.TryGetProperty(key, out var actual))
+                {
+                    var actualNode = JsonNode.Parse(actual.GetRawText());
+                    var expectedNode = JsonNode.Parse(action.Value!);
+                    if (JsonNode.DeepEquals(actualNode, expectedNode))
+                        return;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or JsonException)
+            {
+                // Auto-saving UI State replaces the file atomically; retry the transient window.
+            }
+            Thread.Sleep(100);
+        }
+
+        throw new InvalidOperationException(
+            $"UI state key '{key}' did not match the expected JSON.");
+    }
+
+    private static string ResolveUiStateKey(string key) =>
+        key.Replace(
+            "{today}",
+            DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            StringComparison.Ordinal);
 
     private static IntPtr GetFocusedInputWindow(IntPtr hwnd)
     {
@@ -1435,6 +1549,7 @@ internal static partial class VisualVerificationRunner
         IntPtr wParam,
         IntPtr lParam);
 
+
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(
         IntPtr hwnd,
@@ -1483,6 +1598,8 @@ internal static partial class VisualVerificationRunner
     private const uint MapVirtualKeyToScanCode = 0;
     private const uint WindowMessageKeyDown = 0x0100;
     private const uint WindowMessageKeyUp = 0x0101;
+    private const uint WindowMessageSystemKeyDown = 0x0104;
+    private const uint WindowMessageSystemKeyUp = 0x0105;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct GuiThreadInfo

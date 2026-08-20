@@ -1,0 +1,106 @@
+{
+  "name": "Planner Not today recovery",
+  "startPage": "planner",
+  "windowWidth": 1280,
+  "windowHeight": 900,
+  "plannerProfile": {
+    "schemaVersion": 1,
+    "isConfirmed": true,
+    "dailyCapacityMinutes": 360,
+    "workStartLocal": "09:00:00",
+    "workEndLocal": "17:00:00",
+    "lunchStartLocal": "12:00:00",
+    "lunchEndLocal": "13:00:00",
+    "transitionBufferMinutes": 15,
+    "selectedCalendarReferences": []
+  },
+  "tasks": [
+    {
+      "id": "first-recovery",
+      "title": "First recovery",
+      "status": "todo",
+      "myDay": "today",
+      "size": "focus"
+    },
+    {
+      "id": "second-recovery",
+      "title": "Second recovery",
+      "status": "todo",
+      "myDay": "today",
+      "size": "short"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "name": "Move First recovery out of My Day"
+    },
+    {
+      "type": "invoke",
+      "name": "Move First recovery out of My Day"
+    },
+    {
+      "type": "assert-focused",
+      "name": "Move Second recovery out of My Day"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "PlannerUndo"
+    },
+    {
+      "type": "press-key",
+      "value": "Alt+U"
+    },
+    {
+      "type": "wait-for",
+      "name": "Move First recovery out of My Day"
+    },
+    {
+      "type": "invoke",
+      "name": "Move First recovery out of My Day"
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 11000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "PlannerNotTodayTray"
+    },
+    {
+      "type": "expand",
+      "automationId": "PlannerNotTodayTray"
+    },
+    {
+      "type": "wait-for",
+      "name": "Restore First recovery"
+    },
+    {
+      "type": "capture",
+      "name": "planner-not-today-tray"
+    },
+    {
+      "type": "invoke",
+      "name": "Restore First recovery"
+    },
+    {
+      "type": "wait-for",
+      "name": "Move First recovery out of My Day"
+    },
+    {
+      "type": "assert-ui-state-missing",
+      "name": "dismissed.{today}.first-recovery"
+    },
+    {
+      "type": "assert-ui-state-json",
+      "name": "planner.profile",
+      "value": "{\"schemaVersion\":1,\"isConfirmed\":true,\"dailyCapacityMinutes\":360,\"workStartLocal\":\"09:00:00\",\"workEndLocal\":\"17:00:00\",\"lunchStartLocal\":\"12:00:00\",\"lunchEndLocal\":\"13:00:00\",\"transitionBufferMinutes\":15,\"selectedCalendarReferences\":[]}"
+    }
+  ],
+  "captures": [
+    {
+      "name": "planner-not-today-restored",
+      "waitMilliseconds": 500
+    }
+  ]
+}

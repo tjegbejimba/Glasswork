@@ -184,7 +184,8 @@ Non-task user preferences that should persist across app restarts but
 manually collapsed, sidebar pane width, last-selected page.
 
 - **Owns**: `IUiStateService`, JSON file in `%LocalAppData%\Glasswork\`,
-  and app-local **Saved Task views** (named filters over Tasks).
+  app-local **Saved Task views** (named filters over Tasks), and the confirmed,
+  versioned **Planner Profile**.
 - **Speaks to**: Presentation (read/write key-value).
 - **Does not own**: anything in the vault, anything in the task model.
 - **Boundary rule**: if the data describes a *task*, it lives in the vault.
@@ -194,6 +195,9 @@ manually collapsed, sidebar pane width, last-selected page.
   in doubt, vault wins.
 - **Lifecycle**: GC stale entries on app launch (drop entries whose taskId
   no longer exists in vault).
+- **Planner boundary**: only the confirmed `planner.profile` envelope is
+  durable here. Suggested setup values, Unknown calendar, inline Undo, and the
+  Not today tray are transient and must not be written to UI State.
 
 ### 6. Presentation
 
@@ -218,6 +222,14 @@ no domain logic — composes the other contexts into screens.
   Detail is otherwise read-only; ordinary edits require Restore first.
 - **Speaks to**: every other context (consumes services).
 - **Default landing**: `MyDayPage` (Home Dashboard is a future concept).
+- **Planner composition**: `PlannerViewModel` composes the coherent My Day
+  grouping with `PlannerScopeResolver`. Vault frontmatter owns explicit Task
+  and Subtask Size plus `my_day`; UI State owns the confirmed Planner Profile
+  and dated dismissals. Actionable-leaf scope, selected-work totals, Unknown
+  calendar, inline Undo, and the Not today tray are derived or page-session
+  state. Slice 2's `PlannerPage` is reachable only through isolated visual-
+  verification launch options: it has no NavigationView item, protocol route,
+  persistent preview key, or production feature flag.
 - **Research Page** *(future)*: a focused, two-pane reading library over
   explicitly opted-in **Research Topics**. It surfaces schema-governed Wiki
   knowledge, Research freshness, bounded Research context, Related Work, and
