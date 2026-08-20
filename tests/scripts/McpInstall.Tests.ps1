@@ -112,6 +112,32 @@ Describe "Install-GlassworkMcp" {
         Should -Invoke Remove-McpInstalledTool -Times 1 -Exactly
         Should -Invoke Install-McpTargetTool -Times 1 -Exactly
     }
+
+    It "reports a locked active MCP process without exposing terminal output" {
+        Mock Remove-McpInstalledTool {
+            throw "[31;1mAccess to the path 'C:\Users\test\.dotnet\tools\.store\glasswork-mcp\0.10.0' is denied.[0m"
+        }
+
+        {
+            Install-GlassworkMcp `
+                -Version "0.11.0" `
+                -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg"
+        } | Should -Throw "*Close active Copilot or agent sessions, then retry the MCP update.*"
+        Should -Invoke Install-McpTargetTool -Times 0 -Exactly
+    }
+
+    It "preserves unrelated uninstall failures" {
+        Mock Remove-McpInstalledTool {
+            throw "Failed to uninstall tool package 'glasswork-mcp': There is not enough space on the disk."
+        }
+
+        {
+            Install-GlassworkMcp `
+                -Version "0.11.0" `
+                -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg"
+        } | Should -Throw "*not enough space on the disk*"
+        Should -Invoke Install-McpTargetTool -Times 0 -Exactly
+    }
 }
 
 Describe "install-mcp.ps1 entry point" {

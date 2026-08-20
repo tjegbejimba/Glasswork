@@ -350,7 +350,16 @@ function Install-GlassworkMcp {
         }
 
         if ($toolInstalled) {
-            Remove-McpInstalledTool -ToolPath $ToolPath
+            try {
+                Remove-McpInstalledTool -ToolPath $ToolPath
+            }
+            catch {
+                $message = $_.Exception.Message
+                if ($message -match '(?is)(access to the path.+glasswork-mcp.+denied|being used by another process|sharing violation)') {
+                    throw "glasswork-mcp is currently in use. Close active Copilot or agent sessions, then retry the MCP update."
+                }
+                throw
+            }
         }
         Install-McpTargetTool -Package $package -ToolPath $ToolPath
 
