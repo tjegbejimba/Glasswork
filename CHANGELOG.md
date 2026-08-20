@@ -24,6 +24,9 @@ Each component is versioned independently. Entries below note the component when
 ### Changed
 
 #### App
+- **Non-disruptive MCP updates** — verified MCP builds install side by side and
+  atomically update Copilot's Glasswork command. Existing agent sessions keep
+  running their loaded build while new sessions use the update.
 - **Independent app/MCP updates** — GitHub Release detection now filters stable
   `vX.Y.Z` app releases separately from `mcp-vX.Y.Z` MCP releases. Settings can
   install a verified MCP-only update without restarting Glasswork, and app

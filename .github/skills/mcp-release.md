@@ -39,8 +39,9 @@ After the MCP Release PR lands on `main`:
 2. Monitor the run to completion.
 3. Verify the `mcp-vX.Y.Z` GitHub Release contains the exact `.nupkg` and
    `.nupkg.sha256` assets.
-4. Run `scripts\install-mcp.ps1 -Version X.Y.Z` and verify
-   `glasswork-mcp --version` reports `X.Y.Z+<tag-commit>`.
+4. Run `scripts\install-mcp.ps1 -Version X.Y.Z`, read
+   `%LocalAppData%\Glasswork\Mcp\current.json`, and verify its executable reports
+   `X.Y.Z+<tag-commit>`. Existing sessions may still report their loaded version.
 
 Only the workflow creates MCP tags and GitHub Releases. Failed gates leave a
 resumable draft; after the annotated integrity tag exists, reruns reuse its

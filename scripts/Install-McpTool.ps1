@@ -301,6 +301,213 @@ function Install-McpTargetTool {
         -NuGetPackagesPath (Join-Path (Split-Path $Package.FeedPath -Parent) "target-nuget-packages")
 }
 
+function Get-DefaultMcpInstallRoot {
+    Join-Path `
+        ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) `
+        "Glasswork\Mcp"
+}
+
+function Get-DefaultCopilotMcpConfigPath {
+    Join-Path `
+        ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) `
+        ".copilot\mcp-config.json"
+}
+
+function Write-McpAtomicJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Value,
+
+        [string]$ExpectedContent
+    )
+
+    $directory = Split-Path $Path -Parent
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $temporaryPath = Join-Path $directory ".$(Split-Path $Path -Leaf).$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        $json = $Value | ConvertTo-Json -Depth 100
+        [System.IO.File]::WriteAllText($temporaryPath, $json)
+        if ($PSBoundParameters.ContainsKey("ExpectedContent")) {
+            $currentContent = Get-Content $Path -Raw
+            if ($currentContent -cne $ExpectedContent) {
+                throw "MCP configuration changed while the update was being prepared. Retry the MCP update."
+            }
+        }
+        [System.IO.File]::Move($temporaryPath, $Path, $true)
+    }
+    finally {
+        if (Test-Path $temporaryPath) {
+            Remove-Item -Force $temporaryPath
+        }
+    }
+}
+
+function Set-CopilotGlassworkMcpCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExecutablePath
+    )
+
+    $configExists = Test-Path $ConfigPath -PathType Leaf
+    $originalContent = if ($configExists) {
+        Get-Content $ConfigPath -Raw
+    }
+    else {
+        $null
+    }
+    $config = if ($configExists) {
+        $originalContent | ConvertFrom-Json -AsHashtable
+    }
+    else {
+        [ordered]@{}
+    }
+    if (-not $config.Contains("mcpServers")) {
+        $config["mcpServers"] = [ordered]@{}
+    }
+    $glassworkExists = $config["mcpServers"].Contains("glasswork")
+    if (-not $glassworkExists) {
+        $config["mcpServers"]["glasswork"] = [ordered]@{
+            tools = @("*")
+            type = "stdio"
+            command = $ExecutablePath
+            args = @()
+        }
+    }
+
+    $glasswork = $config["mcpServers"]["glasswork"]
+    $previousCommand = if ($glassworkExists) {
+        [string]$glasswork["command"]
+    }
+    else {
+        $null
+    }
+    $glasswork["command"] = $ExecutablePath
+    if ($configExists) {
+        Write-McpAtomicJson `
+            -Path $ConfigPath `
+            -Value $config `
+            -ExpectedContent $originalContent
+    }
+    else {
+        Write-McpAtomicJson -Path $ConfigPath -Value $config
+    }
+    $previousCommand
+}
+
+function Get-McpSideBySideState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallRoot
+    )
+
+    $statePath = Join-Path $InstallRoot "current.json"
+    if (-not (Test-Path $statePath -PathType Leaf)) {
+        return $null
+    }
+
+    Get-Content $statePath -Raw | ConvertFrom-Json
+}
+
+function Install-McpSideBySide {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$Package,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedIdentity,
+
+        [Parameter(Mandatory = $true)]
+        [string]$StagingPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$InstallRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$McpConfigPath
+    )
+
+    $versionsRoot = Join-Path $InstallRoot "versions"
+    $versionDirectory = Join-Path $versionsRoot $ExpectedIdentity
+    $executablePath = Get-McpToolExecutablePath -ToolPath $versionDirectory
+    $currentState = Get-McpSideBySideState -InstallRoot $InstallRoot
+
+    New-Item -ItemType Directory -Force -Path $versionsRoot | Out-Null
+    $materializeVersion = $false
+    if (Test-Path $versionDirectory) {
+        $existingIdentity = Get-McpExecutableIdentity -ExecutablePath $executablePath
+        if ($existingIdentity -ne $ExpectedIdentity) {
+            try {
+                Remove-Item -Recurse -Force -ErrorAction Stop $versionDirectory
+            }
+            catch {
+                throw "MCP version directory is damaged and could not be replaced: $versionDirectory"
+            }
+            $materializeVersion = $true
+        }
+    }
+    else {
+        $materializeVersion = $true
+    }
+    if ($materializeVersion) {
+        $pendingDirectory = Join-Path $versionsRoot ".pending-$([guid]::NewGuid().ToString('N'))"
+        try {
+            Copy-Item $StagingPath $pendingDirectory -Recurse
+            $pendingExecutable = Get-McpToolExecutablePath -ToolPath $pendingDirectory
+            $pendingIdentity = Get-McpExecutableIdentity -ExecutablePath $pendingExecutable
+            if ($pendingIdentity -ne $ExpectedIdentity) {
+                throw "Pending MCP identity '$pendingIdentity' does not match '$ExpectedIdentity'."
+            }
+            Move-Item $pendingDirectory $versionDirectory
+        }
+        finally {
+            if (Test-Path $pendingDirectory) {
+                Remove-Item -Recurse -Force $pendingDirectory
+            }
+        }
+    }
+
+    $previousCommand = Set-CopilotGlassworkMcpCommand `
+        -ConfigPath $McpConfigPath `
+        -ExecutablePath $executablePath
+    Write-McpAtomicJson `
+        -Path (Join-Path $InstallRoot "current.json") `
+        -Value ([ordered]@{
+            version = $Package.Version
+            identity = $ExpectedIdentity
+            sourceRevision = $Package.SourceRevision
+            sha256 = $Package.Sha256
+            executablePath = $executablePath
+        })
+    $currentIdentity = if ($null -ne $currentState) {
+        [string]$currentState.identity
+    }
+    else {
+        $null
+    }
+
+    [pscustomobject]@{
+        Status = if ($currentIdentity -eq $ExpectedIdentity) {
+            "Current"
+        }
+        elseif ([string]::IsNullOrWhiteSpace($previousCommand)) {
+            "Installed"
+        }
+        else {
+            "Updated"
+        }
+        Version = $Package.Version
+        Identity = $ExpectedIdentity
+        Sha256 = $Package.Sha256
+        ExecutablePath = $executablePath
+    }
+}
+
 function Install-GlassworkMcp {
     param(
         [Parameter(Mandatory = $true)]
@@ -308,7 +515,11 @@ function Install-GlassworkMcp {
 
         [string]$PackagePath,
 
-        [string]$ToolPath
+        [string]$ToolPath,
+
+        [string]$InstallRoot,
+
+        [string]$McpConfigPath
     )
 
     $ErrorActionPreference = "Stop"
@@ -331,6 +542,28 @@ function Install-GlassworkMcp {
         $stagedIdentity = Install-McpToolToStaging -Package $package -StagingPath $stagingPath
         if ($stagedIdentity -ne $expectedIdentity) {
             throw "Staged MCP identity '$stagedIdentity' does not match expected '$expectedIdentity'."
+        }
+
+        if ([string]::IsNullOrWhiteSpace($ToolPath)) {
+            $resolvedInstallRoot = if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+                Get-DefaultMcpInstallRoot
+            }
+            else {
+                $InstallRoot
+            }
+            $resolvedConfigPath = if ([string]::IsNullOrWhiteSpace($McpConfigPath)) {
+                Get-DefaultCopilotMcpConfigPath
+            }
+            else {
+                $McpConfigPath
+            }
+
+            return Install-McpSideBySide `
+                -Package $package `
+                -ExpectedIdentity $expectedIdentity `
+                -StagingPath $stagingPath `
+                -InstallRoot $resolvedInstallRoot `
+                -McpConfigPath $resolvedConfigPath
         }
 
         $toolInstalled = Test-McpToolInstalled -ToolPath $ToolPath

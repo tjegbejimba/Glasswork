@@ -1,6 +1,8 @@
 # ADR 0023: App and MCP use independent GitHub Release streams
 
 **Status**: Accepted
+**Amended**: ADR 0024 replaces in-place global-tool updates with side-by-side
+installation and an atomic Copilot command pointer.
 
 ## Context
 
@@ -41,8 +43,9 @@ Glasswork checks the installed global MCP tool through
 `glasswork-mcp --version`. Missing or legacy builds are eligible for the newest
 MCP release. The app bundles the exact-version installer, which downloads the
 MCP Release assets, verifies the checksum and tag source revision, installs to
-an isolated staging path, executes the staged build identity, then replaces and
-re-verifies the global tool. MCP-only updates do not restart Glasswork.
+an isolated staging path, executes the staged build identity, then activates the
+side-by-side version through the Copilot MCP command pointer. MCP-only updates
+do not restart Glasswork or existing agent sessions. See ADR 0024.
 
 Semantic version rules from ADR 0022 remain:
 

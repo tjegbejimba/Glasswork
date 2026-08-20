@@ -324,6 +324,22 @@ version. See ADR 0023.
   changes bump patch. Publication runs only from current reviewed `main`, and
   MCP releases never participate in the app `vX.Y.Z` stream.
 
+### 10. MCP Update
+
+Keeps new agent sessions on the latest verified MCP Release without disrupting
+sessions already using an older build. See ADR 0024.
+
+- **Owns**: immutable side-by-side MCP version directories under Local App
+  Data, the MCP installation state, exact package/tag/checksum verification,
+  and the atomic Copilot MCP command pointer.
+- **Speaks to**: MCP publication for release assets, Presentation for update
+  status/action, and Copilot user configuration for new-session activation.
+- **Does not own**: running agent process lifetime, app Self-update, or other
+  clients' MCP configuration.
+- **Boundary rule**: activating a new build never mutates or deletes files used
+  by running MCP processes. Existing sessions finish on their original build;
+  new sessions resolve the updated command.
+
 ## Cross-cutting
 
 - **Service locator pattern** — `App.Vault`, `App.Tasks`, `App.Index`,

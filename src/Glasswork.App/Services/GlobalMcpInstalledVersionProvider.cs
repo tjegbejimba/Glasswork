@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Glasswork.Core.AppUpdate;
@@ -12,11 +13,40 @@ public sealed partial class GlobalMcpInstalledVersionProvider : IMcpInstalledVer
 {
     public async Task<McpInstalledVersionResult> GetInstalledVersionAsync()
     {
-        var executablePath = Path.Combine(
+        var globalExecutablePath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".dotnet",
             "tools",
             "glasswork-mcp.exe");
+        var configPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".copilot",
+            "mcp-config.json");
+        var executablePath = globalExecutablePath;
+        if (File.Exists(configPath))
+        {
+            try
+            {
+                using var config = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+                string? configuredCommand = null;
+                if (config.RootElement.TryGetProperty("mcpServers", out var servers) &&
+                    servers.TryGetProperty("glasswork", out var glasswork) &&
+                    glasswork.TryGetProperty("command", out var command) &&
+                    command.ValueKind == JsonValueKind.String)
+                {
+                    configuredCommand = command.GetString();
+                }
+                if (!string.IsNullOrWhiteSpace(configuredCommand) &&
+                    Path.IsPathFullyQualified(configuredCommand))
+                {
+                    executablePath = configuredCommand;
+                }
+            }
+            catch (JsonException ex)
+            {
+                return McpInstalledVersionResult.Failed(ex.Message);
+            }
+        }
         if (!File.Exists(executablePath))
         {
             return McpInstalledVersionResult.NotInstalled();

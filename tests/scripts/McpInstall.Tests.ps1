@@ -85,7 +85,8 @@ Describe "Install-GlassworkMcp" {
     It "replaces stale same-version bits after staging the expected build identity" {
         $result = Install-GlassworkMcp `
             -Version "0.11.0" `
-            -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg"
+            -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg" `
+            -ToolPath "C:\target"
 
         $result.Status | Should -Be "Updated"
         $result.Identity | Should -Be $script:ExpectedIdentity
@@ -106,7 +107,8 @@ Describe "Install-GlassworkMcp" {
 
         $result = Install-GlassworkMcp `
             -Version "0.11.0" `
-            -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg"
+            -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg" `
+            -ToolPath "C:\target"
 
         $result.Status | Should -Be "Updated"
         Should -Invoke Remove-McpInstalledTool -Times 1 -Exactly
@@ -121,7 +123,8 @@ Describe "Install-GlassworkMcp" {
         {
             Install-GlassworkMcp `
                 -Version "0.11.0" `
-                -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg"
+                -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg" `
+                -ToolPath "C:\target"
         } | Should -Throw "*Close active Copilot or agent sessions, then retry the MCP update.*"
         Should -Invoke Install-McpTargetTool -Times 0 -Exactly
     }
@@ -134,9 +137,33 @@ Describe "Install-GlassworkMcp" {
         {
             Install-GlassworkMcp `
                 -Version "0.11.0" `
-                -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg"
+                -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg" `
+                -ToolPath "C:\target"
         } | Should -Throw "*not enough space on the disk*"
         Should -Invoke Install-McpTargetTool -Times 0 -Exactly
+    }
+
+    It "uses side-by-side defaults for the normal install path" {
+        Mock Get-DefaultMcpInstallRoot { "C:\local-app-data\Glasswork\Mcp" }
+        Mock Get-DefaultCopilotMcpConfigPath { "C:\profile\.copilot\mcp-config.json" }
+        Mock Install-McpSideBySide {
+            [pscustomobject]@{
+                Status = "Updated"
+                Version = "0.11.0"
+                Identity = $script:ExpectedIdentity
+                Sha256 = "b" * 64
+            }
+        }
+
+        $result = Install-GlassworkMcp `
+            -Version "0.11.0" `
+            -PackagePath "C:\incoming\glasswork-mcp.0.11.0.nupkg"
+
+        $result.Status | Should -Be "Updated"
+        Should -Invoke Install-McpSideBySide -Times 1 -Exactly -ParameterFilter {
+            $InstallRoot -eq "C:\local-app-data\Glasswork\Mcp" -and
+            $McpConfigPath -eq "C:\profile\.copilot\mcp-config.json"
+        }
     }
 }
 
@@ -245,6 +272,54 @@ Describe "Get-McpPublishedMetadata" {
     }
 }
 
+Describe "Set-CopilotGlassworkMcpCommand" {
+    It "creates the Glasswork server when the user config does not exist" {
+        $configPath = Join-Path $TestDrive "new-config\mcp-config.json"
+        $command = "C:\local\Glasswork\Mcp\versions\0.11.0+abc\glasswork-mcp.exe"
+
+        Set-CopilotGlassworkMcpCommand `
+            -ConfigPath $configPath `
+            -ExecutablePath $command | Should -BeNullOrEmpty
+
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        $config.mcpServers.glasswork.command | Should -Be $command
+        $config.mcpServers.glasswork.tools[0] | Should -Be "*"
+        $config.mcpServers.glasswork.type | Should -Be "stdio"
+    }
+
+    It "changes only the Glasswork command in an existing config" {
+        $configPath = Join-Path $TestDrive "existing-config.json"
+        @{
+            mcpServers = @{
+                glasswork = @{
+                    tools = @("*")
+                    type = "stdio"
+                    command = "old-command.exe"
+                    args = @("--keep-glasswork-arg")
+                    env = @{ GLASSWORK_VAULT = "C:\Wiki"; EXTRA = "keep" }
+                }
+                playwright = @{
+                    command = "playwright"
+                    args = @("--keep-playwright-arg")
+                }
+            }
+            custom = @{ keep = $true }
+        } | ConvertTo-Json -Depth 10 | Set-Content $configPath
+
+        $previous = Set-CopilotGlassworkMcpCommand `
+            -ConfigPath $configPath `
+            -ExecutablePath "C:\new\glasswork-mcp.exe"
+
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        $previous | Should -Be "old-command.exe"
+        $config.mcpServers.glasswork.command | Should -Be "C:\new\glasswork-mcp.exe"
+        $config.mcpServers.glasswork.args[0] | Should -Be "--keep-glasswork-arg"
+        $config.mcpServers.glasswork.env.EXTRA | Should -Be "keep"
+        $config.mcpServers.playwright.args[0] | Should -Be "--keep-playwright-arg"
+        $config.custom.keep | Should -BeTrue
+    }
+}
+
 Describe "Install-GlassworkMcp integration" {
     It "replaces a disposable same-version install built from an older source revision" {
         $projectPath = Join-Path $script:RepoRoot "src\Glasswork.Mcp\Glasswork.Mcp.csproj"
@@ -298,5 +373,97 @@ Describe "Install-GlassworkMcp integration" {
         $result.Identity | Should -Be "$version+$newRevision"
         Get-McpExecutableIdentity -ExecutablePath (Get-McpToolExecutablePath -ToolPath $toolPath) |
             Should -Be "$version+$newRevision"
+    }
+
+    It "switches new sessions side by side while the old MCP process keeps running" {
+        $projectPath = Join-Path $script:RepoRoot "src\Glasswork.Mcp\Glasswork.Mcp.csproj"
+        [xml]$project = Get-Content $projectPath -Raw
+        $version = ($project.Project.PropertyGroup | Select-Object -First 1).Version
+        $oldRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        $newRevision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        $oldFeed = Join-Path $TestDrive "side-by-side-old"
+        $newFeed = Join-Path $TestDrive "side-by-side-new"
+        $installRoot = Join-Path $TestDrive "installed"
+        $configPath = Join-Path $TestDrive "mcp-config.json"
+        New-Item -ItemType Directory -Force -Path $oldFeed, $newFeed | Out-Null
+        @{
+            mcpServers = @{
+                glasswork = @{
+                    tools = @("*")
+                    type = "stdio"
+                    command = "legacy-glasswork-mcp.exe"
+                    args = @()
+                    env = @{ GLASSWORK_VAULT = $TestDrive }
+                }
+                playwright = @{
+                    type = "stdio"
+                    command = "playwright-mcp"
+                    args = @("--preserve-me")
+                }
+            }
+        } | ConvertTo-Json -Depth 10 | Set-Content $configPath
+
+        & dotnet pack $projectPath `
+            --configuration Release `
+            --output $oldFeed `
+            --nologo `
+            --verbosity quiet `
+            "-p:RepositoryCommit=$oldRevision"
+        $LASTEXITCODE | Should -Be 0
+        & dotnet pack $projectPath `
+            --configuration Release `
+            --output $newFeed `
+            --nologo `
+            --verbosity quiet `
+            "-p:RepositoryCommit=$newRevision"
+        $LASTEXITCODE | Should -Be 0
+
+        $oldPackage = Join-Path $oldFeed "glasswork-mcp.$version.nupkg"
+        $newPackage = Join-Path $newFeed "glasswork-mcp.$version.nupkg"
+        Install-GlassworkMcp `
+            -Version $version `
+            -PackagePath $oldPackage `
+            -InstallRoot $installRoot `
+            -McpConfigPath $configPath | Out-Null
+        $oldConfig = Get-Content $configPath -Raw | ConvertFrom-Json
+        $oldCommand = $oldConfig.mcpServers.glasswork.command
+
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $oldCommand
+        $startInfo.RedirectStandardInput = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.UseShellExecute = $false
+        $startInfo.Environment["GLASSWORK_VAULT"] = $TestDrive
+        $oldProcess = [System.Diagnostics.Process]::new()
+        $oldProcess.StartInfo = $startInfo
+        try {
+            $oldProcess.Start() | Should -BeTrue
+            Start-Sleep -Milliseconds 300
+            $oldProcess.HasExited | Should -BeFalse
+
+            $result = Install-GlassworkMcp `
+                -Version $version `
+                -PackagePath $newPackage `
+                -InstallRoot $installRoot `
+                -McpConfigPath $configPath
+
+            $config = Get-Content $configPath -Raw | ConvertFrom-Json
+            $result.Status | Should -Be "Updated"
+            $oldProcess.HasExited | Should -BeFalse
+            $config.mcpServers.glasswork.command | Should -Not -Be $oldCommand
+            $config.mcpServers.glasswork.tools[0] | Should -Be "*"
+            $config.mcpServers.glasswork.env.GLASSWORK_VAULT | Should -Be $TestDrive
+            $config.mcpServers.playwright.args[0] | Should -Be "--preserve-me"
+            Get-McpExecutableIdentity -ExecutablePath $config.mcpServers.glasswork.command |
+                Should -Be "$version+$newRevision"
+        }
+        finally {
+            if (-not $oldProcess.HasExited) {
+                $oldProcess.Kill($true)
+                $oldProcess.WaitForExit()
+            }
+            $oldProcess.Dispose()
+        }
     }
 }

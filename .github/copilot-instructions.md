@@ -29,6 +29,7 @@ this content, it does not own it.
   - UI state storage → ADR 0001
   - App Release publication → ADR 0012
   - Independent app/MCP GitHub Release streams → ADR 0023
+  - Side-by-side MCP updates and Copilot command migration → ADR 0024
 
 ### WinUI 3 internals (when chasing platform behavior)
 

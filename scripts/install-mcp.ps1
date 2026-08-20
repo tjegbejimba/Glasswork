@@ -10,7 +10,11 @@ param(
 
     [string]$PackagePath,
 
-    [string]$ToolPath
+    [string]$ToolPath,
+
+    [string]$InstallRoot,
+
+    [string]$McpConfigPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,7 +28,9 @@ try {
     $result = Install-GlassworkMcp `
         -Version $Version `
         -PackagePath $PackagePath `
-        -ToolPath $ToolPath
+        -ToolPath $ToolPath `
+        -InstallRoot $InstallRoot `
+        -McpConfigPath $McpConfigPath
 
     Write-Host "glasswork-mcp $($result.Status.ToLowerInvariant()): $($result.Identity)"
     Write-Host "SHA-256: $($result.Sha256)"
