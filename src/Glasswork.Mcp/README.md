@@ -26,9 +26,12 @@
 
 The script downloads the exact package and checksum assets from the
 `mcp-v0.11.0` GitHub Release, verifies the tag source revision, stages and
-executes the replacement, then installs it globally only after the staged build
-reports the expected `0.11.0+<commit>` identity. Re-running the command replaces
-a stale same-version local build instead of trusting the version string alone.
+executes the replacement, then installs it under
+`%LocalAppData%\Glasswork\Mcp\versions\0.11.0+<commit>`. It atomically updates
+only the Glasswork command in `~\.copilot\mcp-config.json`, preserving every
+other server and setting. Running sessions keep their loaded build; new sessions
+start the verified version immediately. Re-running the command recognizes an
+already-current build instead of trusting the package version alone.
 
 ### Development package install
 
@@ -47,7 +50,9 @@ published version.
 To inspect the installed build:
 
 ```powershell
-glasswork-mcp --version
+$state = Get-Content "$env:LOCALAPPDATA\Glasswork\Mcp\current.json" -Raw |
+    ConvertFrom-Json
+& $state.executablePath --version
 ```
 
 ---
@@ -77,22 +82,11 @@ $env:GLASSWORK_VAULT = "C:\path\to\your\vault-root"
 
 ## Configuring in Copilot CLI
 
-Add `glasswork-mcp` to your Copilot CLI MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "glasswork": {
-      "command": "glasswork-mcp",
-      "env": {
-        "GLASSWORK_VAULT": "/absolute/path/to/your/vault-root"
-      }
-    }
-  }
-}
-```
-
-If you have already opened the Glasswork app and configured the vault, you can omit the `env` block — the server will read the persisted path from the app state file.
+`install-mcp.ps1` creates or updates the `glasswork` entry in
+`~/.copilot/mcp-config.json` automatically. It changes only the command path and
+preserves existing tools, arguments, environment values, and every other MCP
+server. If you have opened Glasswork and configured the vault, no explicit
+`GLASSWORK_VAULT` entry is required.
 
 ---
 
@@ -104,7 +98,7 @@ Open Claude Desktop's settings (`claude_desktop_config.json`) and add:
 {
   "mcpServers": {
     "glasswork": {
-      "command": "glasswork-mcp",
+      "command": "C:\\Users\\you\\AppData\\Local\\Glasswork\\Mcp\\versions\\<build-identity>\\glasswork-mcp.exe",
       "env": {
         "GLASSWORK_VAULT": "/absolute/path/to/your/vault-root"
       }
@@ -113,7 +107,10 @@ Open Claude Desktop's settings (`claude_desktop_config.json`) and add:
 }
 ```
 
-The `command` field must resolve to the `glasswork-mcp` binary on `PATH` (i.e., the .NET global tools directory, typically `~/.dotnet/tools` on Unix or `%USERPROFILE%\.dotnet\tools` on Windows, must be in `PATH`).
+Read the exact executable path from
+`%LocalAppData%\Glasswork\Mcp\current.json`. Copilot configuration is migrated
+automatically; other MCP clients must update their command when choosing a new
+side-by-side version.
 
 ---
 
