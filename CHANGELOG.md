@@ -14,6 +14,13 @@ Each component is versioned independently. Entries below note the component when
 
 ## [Unreleased]
 
+### Fixed
+
+#### App
+- **MCP update lock guidance** — when an active Copilot or agent session keeps
+  the installed MCP tool open, Settings now shows one clear close-and-retry
+  instruction instead of raw PowerShell stack output and ANSI control codes.
+
 ### Changed
 
 #### App
