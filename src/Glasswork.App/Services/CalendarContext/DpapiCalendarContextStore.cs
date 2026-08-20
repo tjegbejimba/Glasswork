@@ -88,13 +88,32 @@ public sealed partial class DpapiCalendarContextStore : ICalendarContextStore
         bool olderVersionIsMissing)
         where T : class
     {
-        if (!File.Exists(path))
+        byte[] content;
+        try
+        {
+            content = File.ReadAllBytes(path);
+        }
+        catch (FileNotFoundException)
+        {
             return CalendarContextStoreRead<T>.Missing();
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return CalendarContextStoreRead<T>.Missing();
+        }
+        catch (IOException)
+        {
+            return CalendarContextStoreRead<T>.TransientFailure();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return CalendarContextStoreRead<T>.TransientFailure();
+        }
 
         try
         {
             var outer = JsonSerializer.Deserialize<ProtectedEnvelope>(
-                File.ReadAllBytes(path),
+                content,
                 JsonOptions);
             if (outer is null
                 || outer.SchemaVersion < 0
@@ -148,14 +167,6 @@ public sealed partial class DpapiCalendarContextStore : ICalendarContextStore
             }
         }
         catch (JsonException)
-        {
-            return CalendarContextStoreRead<T>.Corrupt();
-        }
-        catch (IOException)
-        {
-            return CalendarContextStoreRead<T>.Corrupt();
-        }
-        catch (UnauthorizedAccessException)
         {
             return CalendarContextStoreRead<T>.Corrupt();
         }

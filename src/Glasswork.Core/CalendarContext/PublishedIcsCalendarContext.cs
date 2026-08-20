@@ -50,7 +50,7 @@ public sealed class PublishedIcsCalendarContext : ICalendarContext
             if (configuration.Status != CalendarContextStoreStatus.Ready
                 || configuration.Value is null)
             {
-                return Task.FromResult(ProtectedStoreRecovery(configuration.Status));
+                return Task.FromResult(StoreFailure(configuration.Status));
             }
 
             stored = _store.ReadSnapshot();
@@ -58,7 +58,7 @@ public sealed class PublishedIcsCalendarContext : ICalendarContext
                     CalendarContextStoreStatus.Missing
                     or CalendarContextStoreStatus.Ready))
             {
-                return Task.FromResult(ProtectedStoreRecovery(stored.Status));
+                return Task.FromResult(StoreFailure(stored.Status));
             }
 
             if (stored is { Status: CalendarContextStoreStatus.Ready, Value: { } snapshot })
@@ -104,7 +104,7 @@ public sealed class PublishedIcsCalendarContext : ICalendarContext
                     CalendarContextStoreStatus.Missing
                     or CalendarContextStoreStatus.Ready))
             {
-                return ProtectedStoreRecovery(prior.Status);
+                return StoreFailure(prior.Status);
             }
 
             var stored = _store.ReadSnapshot();
@@ -112,7 +112,7 @@ public sealed class PublishedIcsCalendarContext : ICalendarContext
                     CalendarContextStoreStatus.Missing
                     or CalendarContextStoreStatus.Ready))
             {
-                return ProtectedStoreRecovery(stored.Status);
+                return StoreFailure(stored.Status);
             }
 
             generation = AdvanceGenerationLocked();
@@ -208,7 +208,7 @@ public sealed class PublishedIcsCalendarContext : ICalendarContext
                 || latestConfiguration.Value is null)
             {
                 return Task.FromResult(
-                    ProtectedStoreRecovery(latestConfiguration.Status));
+                    StoreFailure(latestConfiguration.Status));
             }
             configuration = latestConfiguration.Value;
             key = new RefreshKey(
@@ -454,6 +454,18 @@ public sealed class PublishedIcsCalendarContext : ICalendarContext
                 },
                 "published_ics"),
             CreateResetScope());
+
+    private static CalendarContextResult StoreFailure(
+        CalendarContextStoreStatus status) =>
+        status == CalendarContextStoreStatus.TransientFailure
+            ? new CalendarContextResult(
+                CalendarContextStatus.TransientFailure,
+                null,
+                [CalendarContextAction.Refresh],
+                new CalendarContextDiagnostic(
+                    "protected_store_transient",
+                    "published_ics"))
+            : ProtectedStoreRecovery(status);
 
     private static CalendarContextResetScope CreateResetScope() =>
         new(

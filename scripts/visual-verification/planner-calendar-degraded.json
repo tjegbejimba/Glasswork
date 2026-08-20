@@ -60,6 +60,20 @@
       "automationId": "PlannerCalendarReset"
     },
     {
+      "type": "assert-live-setting",
+      "automationId": "PlannerAnnouncement",
+      "value": "Polite"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerAnnouncement",
+      "value": "Calendar connection needs reset. Reset Calendar Context is available."
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "PlannerCalendarReset"
+    },
+    {
       "type": "assert-name",
       "automationId": "PlannerUnknownCalendar",
       "value": "Calendar connection needs reset"
@@ -83,6 +97,15 @@
     },
     {
       "type": "wait-for",
+      "automationId": "PlannerCalendarConnect"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerAnnouncement",
+      "value": "Calendar Context reset. Connect is available."
+    },
+    {
+      "type": "assert-focused",
       "automationId": "PlannerCalendarConnect"
     },
     {

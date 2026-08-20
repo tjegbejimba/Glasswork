@@ -60,6 +60,24 @@
       "automationId": "PlannerCalendarDisconnect"
     },
     {
+      "type": "invoke",
+      "automationId": "PlannerCalendarRefresh"
+    },
+    {
+      "type": "assert-live-setting",
+      "automationId": "PlannerAnnouncement",
+      "value": "Polite"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerAnnouncement",
+      "value": "Calendar refreshed."
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "PlannerCalendarRefresh"
+    },
+    {
       "type": "assert-name",
       "automationId": "PlannerSelectedWorkTotal",
       "value": "60 min selected"

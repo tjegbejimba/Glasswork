@@ -30,6 +30,7 @@ public enum CalendarContextStoreStatus
 {
     Missing,
     Ready,
+    TransientFailure,
     Corrupt,
     Undecryptable,
     UnsupportedVersion,
@@ -45,6 +46,9 @@ public sealed record CalendarContextStoreRead<T>(
 
     public static CalendarContextStoreRead<T> Ready(T value) =>
         new(CalendarContextStoreStatus.Ready, value);
+
+    public static CalendarContextStoreRead<T> TransientFailure() =>
+        new(CalendarContextStoreStatus.TransientFailure, null);
 
     public static CalendarContextStoreRead<T> Corrupt() =>
         new(CalendarContextStoreStatus.Corrupt, null);

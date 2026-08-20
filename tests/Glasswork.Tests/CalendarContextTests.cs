@@ -1073,6 +1073,150 @@ public sealed class CalendarContextTests
     }
 
     [TestMethod]
+    public async Task GetTodayAsync_TemporarilyInaccessibleConfiguration_IsRetryableWithoutReset()
+    {
+        const string secret = "https://calendar.example.test/published.ics";
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-calendar-context-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new DpapiCalendarContextStore(
+                directory,
+                new PassthroughCalendarDataProtector());
+            store.WriteConfiguration(new CalendarContextConfiguration(
+                CalendarContextPersistenceContract.ConfigurationSchemaVersion,
+                CalendarContextProviderKind.PublishedIcs,
+                secret,
+                CalendarContextPersistenceContract.SourceFingerprint(new Uri(secret))));
+            var configurationPath = Path.Combine(directory, "configuration.json");
+            await using var locked = new FileStream(
+                configurationPath,
+                FileMode.Open,
+                FileAccess.ReadWrite,
+                FileShare.None);
+            var transport = new CountingCalendarTransport();
+            ICalendarContext calendarContext = new PublishedIcsCalendarContext(
+                transport,
+                store);
+
+            var result = await calendarContext.GetTodayAsync(
+                new CalendarContextRequest(
+                    new DateOnly(2026, 8, 20),
+                    TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time")),
+                CancellationToken.None);
+
+            Assert.AreEqual(CalendarContextStatus.TransientFailure, result.Status);
+            Assert.Contains(CalendarContextAction.Refresh, result.Actions);
+            Assert.DoesNotContain(CalendarContextAction.Reset, result.Actions);
+            Assert.AreEqual("protected_store_transient", result.Diagnostic?.Code);
+            Assert.AreEqual(0, transport.RequestCount);
+            Assert.IsTrue(File.Exists(configurationPath));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task GetTodayAsync_InaccessibleConfigurationEntry_IsNotReportedAsMissing()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-calendar-context-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(directory, "configuration.json"));
+            var transport = new CountingCalendarTransport();
+            ICalendarContext calendarContext = new PublishedIcsCalendarContext(
+                transport,
+                new DpapiCalendarContextStore(
+                    directory,
+                    new PassthroughCalendarDataProtector()));
+
+            var result = await calendarContext.GetTodayAsync(
+                new CalendarContextRequest(
+                    new DateOnly(2026, 8, 20),
+                    TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time")),
+                CancellationToken.None);
+
+            Assert.AreEqual(CalendarContextStatus.TransientFailure, result.Status);
+            Assert.Contains(CalendarContextAction.Refresh, result.Actions);
+            Assert.DoesNotContain(CalendarContextAction.Reset, result.Actions);
+            Assert.AreEqual("protected_store_transient", result.Diagnostic?.Code);
+            Assert.AreEqual(0, transport.RequestCount);
+            Assert.IsTrue(Directory.Exists(
+                Path.Combine(directory, "configuration.json")));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task GetTodayAsync_TemporarilyInaccessibleSnapshot_IsRetryableWithoutReset()
+    {
+        const string secret = "https://calendar.example.test/published.ics";
+        var day = new DateOnly(2026, 8, 20);
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+        var fingerprint = CalendarContextPersistenceContract.SourceFingerprint(
+            new Uri(secret));
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-calendar-context-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new DpapiCalendarContextStore(
+                directory,
+                new PassthroughCalendarDataProtector());
+            store.WriteConfiguration(new CalendarContextConfiguration(
+                CalendarContextPersistenceContract.ConfigurationSchemaVersion,
+                CalendarContextProviderKind.PublishedIcs,
+                secret,
+                fingerprint));
+            store.WriteSnapshot(new CalendarContextSnapshot(
+                CalendarContextPersistenceContract.SnapshotSchemaVersion,
+                CalendarContextPersistenceContract.NormalizationVersion,
+                day,
+                timeZone.Id,
+                new DateTimeOffset(2026, 8, 20, 16, 0, 0, TimeSpan.Zero),
+                fingerprint,
+                true,
+                []));
+            var snapshotPath = Path.Combine(directory, "snapshot.json");
+            await using var locked = new FileStream(
+                snapshotPath,
+                FileMode.Open,
+                FileAccess.ReadWrite,
+                FileShare.None);
+            var transport = new CountingCalendarTransport();
+            ICalendarContext calendarContext = new PublishedIcsCalendarContext(
+                transport,
+                store);
+
+            var result = await calendarContext.GetTodayAsync(
+                new CalendarContextRequest(day, timeZone),
+                CancellationToken.None);
+
+            Assert.AreEqual(CalendarContextStatus.TransientFailure, result.Status);
+            Assert.Contains(CalendarContextAction.Refresh, result.Actions);
+            Assert.DoesNotContain(CalendarContextAction.Reset, result.Actions);
+            Assert.AreEqual("protected_store_transient", result.Diagnostic?.Code);
+            Assert.AreEqual(0, transport.RequestCount);
+            Assert.IsTrue(File.Exists(snapshotPath));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task ConnectAsync_NewerProtectedConfiguration_FailsClosedWithoutOverwriting()
     {
         const string newerEnvelope = """

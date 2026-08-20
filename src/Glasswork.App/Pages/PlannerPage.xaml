@@ -106,7 +106,8 @@
                                     PasswordRevealMode="Hidden"
                                     PlaceholderText="Private published ICS link"
                                     AutomationProperties.AutomationId="PlannerCalendarSecret" />
-                       <Button Grid.Column="1" Content="Connect"
+                       <Button x:Name="CalendarConnectButton" Grid.Column="1"
+                               Content="Connect"
                                Click="CalendarConnect_Click"
                                AutomationProperties.AutomationId="PlannerCalendarConnect" />
                     </Grid>
@@ -117,7 +118,8 @@
                     <TextBlock x:Name="CalendarResetScopeText"
                               TextWrapping="Wrap" Opacity="0.7"
                               AutomationProperties.AutomationId="PlannerCalendarResetScope" />
-                    <Button Content="Reset Calendar Context"
+                    <Button x:Name="CalendarResetButton"
+                           Content="Reset Calendar Context"
                            HorizontalAlignment="Left"
                            Click="CalendarReset_Click"
                            AutomationProperties.AutomationId="PlannerCalendarReset" />

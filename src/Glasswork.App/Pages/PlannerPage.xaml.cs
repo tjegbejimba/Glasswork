@@ -224,25 +224,53 @@ public sealed partial class PlannerPage : Page
         CalendarSecretBox.Password = string.Empty;
         await _viewModel.ConnectCalendarAsync(secret, _navigationCancellation.Token);
         RenderState();
+        QueueCalendarFocus(
+            _viewModel.CanRefreshCalendar
+                ? CalendarRefreshButton
+                : _viewModel.CanResetCalendar
+                    ? CalendarResetButton
+                    : CalendarConnectButton);
     }
 
     private async void CalendarRefresh_Click(object sender, RoutedEventArgs e)
     {
         await _viewModel.RefreshCalendarAsync(_navigationCancellation.Token);
         RenderState();
+        QueueCalendarFocus(
+            _viewModel.CanResetCalendar
+                ? CalendarResetButton
+                : _viewModel.CanConnectCalendar
+                    ? CalendarConnectButton
+                    : CalendarRefreshButton);
     }
 
     private async void CalendarDisconnect_Click(object sender, RoutedEventArgs e)
     {
         await _viewModel.DisconnectCalendarAsync(_navigationCancellation.Token);
         RenderState();
+        QueueCalendarFocus(
+            _viewModel.CanDisconnectCalendar
+                ? CalendarDisconnectButton
+                : _viewModel.CanResetCalendar
+                    ? CalendarResetButton
+                    : CalendarConnectButton);
     }
 
     private async void CalendarReset_Click(object sender, RoutedEventArgs e)
     {
         await _viewModel.ResetCalendarAsync(_navigationCancellation.Token);
         RenderState();
+        QueueCalendarFocus(
+            _viewModel.CanResetCalendar
+                ? CalendarResetButton
+                : _viewModel.CanConnectCalendar
+                    ? CalendarConnectButton
+                    : CalendarRefreshButton);
     }
+
+    private void QueueCalendarFocus(Control target) =>
+        DispatcherQueue.TryEnqueue(
+            () => target.Focus(FocusState.Programmatic));
 
     private void SizeButton_Click(object sender, RoutedEventArgs e)
     {
