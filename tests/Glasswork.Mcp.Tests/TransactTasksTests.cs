@@ -227,6 +227,95 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_CompleteReplacementPreservesUnknownSizeAtSameSubtaskLocator()
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        vault.Save(new GlassworkTask
+        {
+            Id = "preserve-unknown-size",
+            Title = "Preserve unknown size",
+            Subtasks =
+            [
+                new SubTask { Text = "Future step", Size = "future_bucket" },
+                new SubTask { Text = "Known step", Size = "quick" },
+            ],
+        });
+        var revision = vault.Load("preserve-unknown-size")!.ResourceRevision;
+        using var operations = JsonDocument.Parse($$"""
+        [{
+          "op": "set_task_fields",
+          "task_id": "preserve-unknown-size",
+          "if_revision": "{{revision}}",
+          "fields": {
+            "subtasks": [
+              { "text": "Future step", "size": "future_bucket", "notes": "Preserved" },
+              { "text": "Known step", "size": "quick" }
+            ]
+          }
+        }]
+        """);
+
+        var result = JsonDocument.Parse(
+            _tools.TransactTasks("preserve-existing-unknown-size", operations.RootElement)).RootElement;
+
+        Assert.AreEqual("applied", result.GetProperty("outcome").GetString());
+        Assert.AreEqual("future_bucket", vault.Load("preserve-unknown-size")!.Subtasks[0].Size);
+    }
+
+    [DataTestMethod]
+    [DataRow("""
+        [
+          { "text": "Known step", "size": "quick" },
+          { "text": "Future step", "size": "future_bucket" }
+        ]
+        """)]
+    [DataRow("""
+        [
+          { "text": "Future step", "size": "future_bucket" },
+          { "text": "Copied step", "size": "future_bucket" }
+        ]
+        """)]
+    [DataRow("""
+        [
+          { "text": "Future step", "size": "next_bucket" },
+          { "text": "Known step", "size": "quick" }
+        ]
+        """)]
+    public void TransactTasks_CompleteReplacementRejectsMovedCopiedOrNewUnknownSize(
+        string replacementSubtasks)
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        vault.Save(new GlassworkTask
+        {
+            Id = "reject-unknown-size",
+            Title = "Reject unknown size",
+            Subtasks =
+            [
+                new SubTask { Text = "Future step", Size = "future_bucket" },
+                new SubTask { Text = "Known step", Size = "quick" },
+            ],
+        });
+        var original = vault.Load("reject-unknown-size")!;
+        using var operations = JsonDocument.Parse($$"""
+        [{
+          "op": "set_task_fields",
+          "task_id": "reject-unknown-size",
+          "if_revision": "{{original.ResourceRevision}}",
+          "fields": { "subtasks": {{replacementSubtasks}} }
+        }]
+        """);
+
+        var result = JsonDocument.Parse(
+            _tools.TransactTasks($"reject-unknown-{Guid.NewGuid():N}", operations.RootElement)).RootElement;
+
+        Assert.AreEqual("validation_error", result.GetProperty("error").GetString());
+        var saved = vault.Load("reject-unknown-size")!;
+        Assert.AreEqual(original.ResourceRevision, saved.ResourceRevision);
+        Assert.AreEqual("future_bucket", saved.Subtasks[0].Size);
+        Assert.AreEqual("quick", saved.Subtasks[1].Size);
+    }
+
+    [TestMethod]
     public void TransactTasks_CanonicalizesRecognizedSizeSuppliedThroughSubtaskMetadata()
     {
         using var operations = JsonDocument.Parse("""

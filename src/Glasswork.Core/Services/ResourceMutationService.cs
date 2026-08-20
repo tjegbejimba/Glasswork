@@ -408,7 +408,8 @@ public sealed partial class ResourceMutationService
         string? mutationId,
         string? taskId,
         string? ifRevision,
-        JsonElement fields)
+        JsonElement fields,
+        bool preserveExistingUnknownSizes = false)
     {
         var notifications = new HashSet<string>(StringComparer.Ordinal);
         ResourceMutationOutcome? result = null;
@@ -424,7 +425,7 @@ public sealed partial class ResourceMutationService
                     ifRevision,
                     "set_task_fields",
                     fields,
-                    task => ApplyFields(task, fields),
+                    task => ApplyFields(task, fields, preserveExistingUnknownSizes),
                     notifications);
             }
         }
@@ -784,7 +785,8 @@ public sealed partial class ResourceMutationService
         string? mutationId,
         JsonElement operations,
         string? transactionRevision = null,
-        JsonElement? assertions = null)
+        JsonElement? assertions = null,
+        bool preserveExistingUnknownSizes = false)
     {
         var notifications = new HashSet<string>(StringComparer.Ordinal);
         try
@@ -792,7 +794,13 @@ public sealed partial class ResourceMutationService
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
                 notifications.UnionWith(RecoverUnsafe());
-                var result = TransactTasksUnsafe(mutationId, operations, transactionRevision, assertions, notifications);
+                var result = TransactTasksUnsafe(
+                    mutationId,
+                    operations,
+                    transactionRevision,
+                    assertions,
+                    notifications,
+                    preserveExistingUnknownSizes);
                 return result;
             }
         }
@@ -822,7 +830,8 @@ public sealed partial class ResourceMutationService
         JsonElement operations,
         string? transactionRevision,
         JsonElement? assertions,
-        ISet<string> notifications)
+        ISet<string> notifications,
+        bool preserveExistingUnknownSizes)
     {
         var state = ReadState();
         Prune(state);
@@ -902,10 +911,23 @@ public sealed partial class ResourceMutationService
                     ApplyRevisionAssertion(staged, operation, taskId, index, diagnostics);
                     break;
                 case "set_task_fields":
-                    ApplyStagedFields(staged, operation, taskId!, transactionRevision, index, diagnostics);
+                    ApplyStagedFields(
+                        staged,
+                        operation,
+                        taskId!,
+                        transactionRevision,
+                        index,
+                        diagnostics,
+                        preserveExistingUnknownSizes);
                     break;
                 case "create_task":
-                    CreateStagedTask(staged, operation, taskId!, index, diagnostics);
+                    CreateStagedTask(
+                        staged,
+                        operation,
+                        taskId!,
+                        index,
+                        diagnostics,
+                        preserveExistingUnknownSizes);
                     break;
                 case "replace_task_relationships":
                     ReplaceStagedRelationships(staged, operation, taskId!, index, diagnostics);
@@ -1068,7 +1090,8 @@ public sealed partial class ResourceMutationService
         string taskId,
         string? transactionRevision,
         int operationIndex,
-        ICollection<ResourceMutationDiagnostic> diagnostics)
+        ICollection<ResourceMutationDiagnostic> diagnostics,
+        bool preserveExistingUnknownSizes)
     {
         if (!staged.TryGetValue(taskId, out var current))
         {
@@ -1102,7 +1125,7 @@ public sealed partial class ResourceMutationService
 
         try
         {
-            var error = ApplyFields(current.Task, fields);
+            var error = ApplyFields(current.Task, fields, preserveExistingUnknownSizes);
             if (error is not null)
                 diagnostics.Add(new("invalid_fields", operationIndex, [taskId], error));
         }
@@ -1117,7 +1140,8 @@ public sealed partial class ResourceMutationService
         JsonElement operation,
         string taskId,
         int operationIndex,
-        ICollection<ResourceMutationDiagnostic> diagnostics)
+        ICollection<ResourceMutationDiagnostic> diagnostics,
+        bool preserveExistingUnknownSizes)
     {
         if (!IsSafeTaskId(taskId))
         {
@@ -1143,7 +1167,7 @@ public sealed partial class ResourceMutationService
         var task = new GlassworkTask { Id = taskId };
         try
         {
-            var error = ApplyFields(task, fields);
+            var error = ApplyFields(task, fields, preserveExistingUnknownSizes);
             if (error is not null) diagnostics.Add(new("invalid_fields", operationIndex, [taskId], error));
         }
         catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException)
@@ -1462,7 +1486,10 @@ public sealed partial class ResourceMutationService
         return outcome;
     }
 
-    private string? ApplyFields(GlassworkTask task, JsonElement fields)
+    private string? ApplyFields(
+        GlassworkTask task,
+        JsonElement fields,
+        bool preserveExistingUnknownSizes = false)
     {
         var repairingMalformedBlocker = task.IsBlocked
             && task.NeedsBlockerDetails
@@ -1496,7 +1523,7 @@ public sealed partial class ResourceMutationService
                 case "size":
                 {
                     var requestedSize = ReadString(property.Value, property.Name);
-                    if (!CanApplySize(task.Size, requestedSize))
+                    if (!preserveExistingUnknownSizes && !CanApplySize(task.Size, requestedSize))
                         return "size must be quick, short, focus, deep, break_down, or null.";
                     task.Size = requestedSize;
                     break;
@@ -1510,11 +1537,13 @@ public sealed partial class ResourceMutationService
                 case "links": task.Links = ReadLinks(property.Value, property.Name); break;
                 case "subtasks":
                 {
+                    var existingSubtasks = task.Subtasks;
                     var requestedSubtasks = ReadSubtasks(property.Value, property.Name);
                     for (var index = 0; index < requestedSubtasks.Count; index++)
                     {
                         var requestedSize = requestedSubtasks[index].Size;
-                        if (!CanApplySubtaskSize(task.Subtasks, requestedSize))
+                        if (!preserveExistingUnknownSizes
+                            && !CanApplySubtaskSize(existingSubtasks, index, requestedSize))
                             return $"subtasks[{index}].size must be quick, short, focus, deep, break_down, or null.";
                     }
                     task.Subtasks = requestedSubtasks;
@@ -1717,11 +1746,15 @@ public sealed partial class ResourceMutationService
 
     private static bool CanApplySubtaskSize(
         IReadOnlyList<SubTask> existingSubtasks,
+        int requestedIndex,
         string? requestedSize) =>
         string.IsNullOrWhiteSpace(requestedSize)
         || SizeBuckets.TryParse(requestedSize, out _)
-        || existingSubtasks.Any(existing =>
-            string.Equals(existing.Size, requestedSize, StringComparison.Ordinal));
+        || requestedIndex < existingSubtasks.Count
+            && string.Equals(
+                existingSubtasks[requestedIndex].Size,
+                requestedSize,
+                StringComparison.Ordinal);
 
     private ResourceMutationTaskSnapshot Snapshot(GlassworkTask task, string revision) =>
         new(task.Id, task.Title, task.Status == GlassworkTask.Statuses.InProgress ? "doing" : task.Status,

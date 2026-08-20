@@ -33,7 +33,7 @@ public class ListSubtasksTests
         var parentJson = _tools.AddTask("Parent task");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
         
-        _tools.AddTask("Child 1", parent_task_id: parentId);
+        _tools.AddTask("Child 1", parent_task_id: parentId, size: "focus");
         _tools.AddTask("Child 2", parent_task_id: parentId);
 
         // Act
@@ -46,6 +46,13 @@ public class ListSubtasksTests
         
         var subtasks = result.GetProperty("subtasks").EnumerateArray().ToArray();
         Assert.AreEqual(2, subtasks.Length, "Should return 2 direct children");
+        Assert.AreEqual(
+            "focus",
+            subtasks.Single(task => task.GetProperty("title").GetString() == "Child 1")
+                .GetProperty("size").GetString());
+        Assert.IsFalse(
+            subtasks.Single(task => task.GetProperty("title").GetString() == "Child 2")
+                .TryGetProperty("size", out _));
         Assert.AreEqual(2, result.GetProperty("total").GetInt32());
     }
 

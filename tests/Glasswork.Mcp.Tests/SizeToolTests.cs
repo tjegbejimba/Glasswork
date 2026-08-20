@@ -166,8 +166,10 @@ public sealed class SizeToolTests
             size: "deep");
 
         var result = JsonDocument.Parse(_tools.GetTaskContext(taskId)).RootElement;
+        var saved = new VaultService(Path.Combine(_vaultDir, "wiki", "todo")).Load(taskId)!;
 
         Assert.AreEqual("focus", result.GetProperty("size").GetString());
+        Assert.AreEqual(saved.ResourceRevision, result.GetProperty("resource_revision").GetString());
         Assert.AreEqual(
             "deep",
             result.GetProperty("active_subtasks")[0].GetProperty("size").GetString());

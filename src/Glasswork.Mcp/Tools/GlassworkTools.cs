@@ -643,6 +643,7 @@ public sealed class GlassworkTools
                     Title: t.Title,
                     Status: MapToExternalStatus(t.Status),
                     Priority: t.Priority,
+                    Size: t.Size,
                     Depth: CalculateDepth(t.Id, all),
                     SubtaskCount: all.Count(child => child.Parent == t.Id),
                     ResourceRevision: ResourceRevision(t.Id)))
@@ -2252,14 +2253,14 @@ public sealed class GlassworkTools
                         if (subtask.ValueKind == JsonValueKind.Object)
                         {
                             if (subtask.TryGetProperty("size", out var subtaskSize)
-                                && ValidateSizeElement(
+                                && ValidateSizeElementShape(
                                     subtaskSize,
                                     $"operations[{operationIndex}].fields.subtasks[{subtaskIndex}].size") is { } subtaskError)
                                 return subtaskError;
                             if (subtask.TryGetProperty("metadata", out var metadata)
                                 && metadata.ValueKind == JsonValueKind.Object
                                 && metadata.TryGetProperty("size", out var metadataSize)
-                                && ValidateSizeElement(
+                                && ValidateSizeElementShape(
                                     metadataSize,
                                     $"operations[{operationIndex}].fields.subtasks[{subtaskIndex}].metadata.size") is { } metadataError)
                                 return metadataError;
@@ -2282,6 +2283,11 @@ public sealed class GlassworkTools
             return $"{path} must be a string or null.";
         return ValidateSize(value.GetString(), path);
     }
+
+    private static string? ValidateSizeElementShape(JsonElement value, string path) =>
+        value.ValueKind is JsonValueKind.Null or JsonValueKind.String
+            ? null
+            : $"{path} must be a string or null.";
 
     private static string? ValidateSize(string? size, string path) =>
         string.IsNullOrWhiteSpace(size) || SizeBuckets.TryParse(size, out _)
@@ -3407,6 +3413,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("title")] string Title,
         [property: JsonPropertyName("status")] string Status,
         [property: JsonPropertyName("priority")] string Priority,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size,
         [property: JsonPropertyName("depth")] int Depth,
         [property: JsonPropertyName("subtask_count")] int SubtaskCount,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision);
@@ -3639,6 +3646,7 @@ public sealed class GlassworkTools
                     DueDate: t.Due!.Value.ToString("yyyy-MM-dd"),
                     DaysOverdue: (today - t.Due!.Value.Date).Days,
                     Priority: t.Priority,
+                    Size: t.Size,
                     InMyDay: t.IsMyDay,
                     ResourceRevision: ResourceRevision(t.Id)))
                 .ToList();
@@ -3829,6 +3837,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("due_date")] string DueDate,
         [property: JsonPropertyName("days_overdue")] int DaysOverdue,
         [property: JsonPropertyName("priority")] string Priority,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size,
         [property: JsonPropertyName("in_my_day")] bool InMyDay,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
@@ -3873,10 +3882,10 @@ public sealed class GlassworkTools
                 TaskId: bundle.TaskId,
                 Title: bundle.Title,
                 Status: MapToExternalStatus(bundle.Status),
-                ResourceRevision: ResourceRevision(bundle.TaskId),
+                ResourceRevision: bundle.ResourceRevision,
                 Description: bundle.Description,
                 Notes: bundle.Notes,
-                Size: _vault.Load(bundle.TaskId)?.Size,
+                Size: bundle.Size,
                 ActiveSubtasks: bundle.ActiveSubtasks.Select(s => new ContextSubtaskInfo(
                     Text: s.Text,
                     Status: s.Status is not null ? MapToExternalStatus(s.Status) : (s.IsCompleted ? "done" : "todo"),
@@ -4020,7 +4029,10 @@ public sealed class GlassworkTools
                     fields = BuildMutationFields(parent)
                 }
             });
-            var mutation = _mutations.TransactTasks(mutation_id, operations);
+            var mutation = _mutations.TransactTasks(
+                mutation_id,
+                operations,
+                preserveExistingUnknownSizes: true);
             if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
                 return SerializeMutationOutcome(mutation);
 
@@ -4093,7 +4105,8 @@ public sealed class GlassworkTools
                 mutation_id,
                 safeId,
                 if_revision,
-                JsonSerializer.SerializeToElement(BuildMutationFields(parent)));
+                JsonSerializer.SerializeToElement(BuildMutationFields(parent)),
+                preserveExistingUnknownSizes: true);
             if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
                 return SerializeMutationOutcome(mutation);
             var updated = parent;

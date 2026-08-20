@@ -173,7 +173,7 @@ public static class PlannerScopeResolver
     {
         var (effectiveSize, isAssumed, isUncertain) = ResolveSize(subtask.Size);
         return new PlannerActionableLeaf(
-            $"subtask:{owner.Id}:{subtaskIndex}",
+            $"subtask:{owner.Id}:{subtask.PlannerIdentity}",
             owner.Id,
             subtaskIndex,
             subtask.Text,

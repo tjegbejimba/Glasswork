@@ -70,7 +70,7 @@ public class PromoteSubtaskToolTests
     }
 
     [TestMethod]
-    public void PromoteSubtask_UnknownExistingSizeFailsClosedWithoutRemovingSource()
+    public void PromoteSubtask_PreservesUnknownExistingRawSize()
     {
         var parent = new GlassworkTask
         {
@@ -86,10 +86,10 @@ public class PromoteSubtaskToolTests
         var result = JsonDocument.Parse(
             _tools.PromoteSubtask(parent.Id, subtask_index: 0)).RootElement;
 
-        Assert.AreEqual("validation_error", result.GetProperty("error").GetString());
+        var promotedId = result.GetProperty("task_id").GetString()!;
+        Assert.AreEqual("future_bucket", _vault.Load(promotedId)!.Size);
         var reloadedParent = _vault.Load(parent.Id)!;
-        Assert.AreEqual("future_bucket", reloadedParent.Subtasks.Single().Size);
-        Assert.IsFalse(_vault.Exists(VaultService.GenerateId("Future sized step")));
+        Assert.IsEmpty(reloadedParent.Subtasks);
     }
 
     [TestMethod]

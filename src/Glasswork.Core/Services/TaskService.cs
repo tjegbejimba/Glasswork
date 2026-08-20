@@ -33,7 +33,8 @@ public class TaskService
         string? adoTitle = null,
         string? description = null,
         bool addToMyDay = false,
-        IReadOnlyCollection<RelatedLink>? relatedLinks = null)
+        IReadOnlyCollection<RelatedLink>? relatedLinks = null,
+        string? size = null)
     {
         var id = VaultService.GenerateId(title);
         var suffix = 1;
@@ -52,6 +53,7 @@ public class TaskService
             AdoTitle = adoTitle,
             Description = description?.Trim() ?? string.Empty,
             MyDay = addToMyDay ? DateTime.Today : null,
+            Size = size,
             RelatedLinks = relatedLinks is null
                 ? []
                 : relatedLinks
@@ -170,7 +172,7 @@ public class TaskService
             throw new ArgumentOutOfRangeException(nameof(subtaskIndex));
 
         var subtask = parent.Subtasks[subtaskIndex];
-        var newTask = CreateTask(subtask.Text, parent: parent.Id);
+        var newTask = CreateTask(subtask.Text, parent: parent.Id, size: subtask.Size);
 
         if (subtask.IsCompleted)
             SetStatus(newTask, GlassworkTask.Statuses.Done);

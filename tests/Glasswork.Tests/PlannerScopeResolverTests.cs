@@ -84,7 +84,7 @@ public sealed class PlannerScopeResolverTests
 
         var leaves = result.Groups.Single().Leaves;
         CollectionAssert.AreEqual(
-            new[] { "subtask:parent:0", "subtask:parent:1" },
+            task.Subtasks.Select(subtask => $"subtask:parent:{subtask.PlannerIdentity}").ToArray(),
             leaves.Select(leaf => leaf.Identity).ToArray());
         Assert.AreEqual(SizeBucket.Quick, leaves[0].EffectiveSize);
         Assert.IsFalse(leaves[0].IsAssumed);
@@ -204,7 +204,7 @@ public sealed class PlannerScopeResolverTests
 
         var leaf = PlannerScopeResolver.Resolve(snapshot).Groups.Single().Leaves.Single();
 
-        Assert.AreEqual("subtask:child:0", leaf.Identity);
+        Assert.AreEqual($"subtask:child:{child.Subtasks[0].PlannerIdentity}", leaf.Identity);
         Assert.AreEqual("child", leaf.SourceTaskId);
         Assert.AreEqual(0, leaf.SubtaskIndex);
         CollectionAssert.AreEqual(new[] { "child" }, leaf.RemovalTaskIds.ToArray());
@@ -302,7 +302,11 @@ public sealed class PlannerScopeResolverTests
         var leaves = PlannerScopeResolver.Resolve(snapshot).Groups.Single().Leaves;
 
         CollectionAssert.AreEqual(
-            new[] { "subtask:semantics:1", "subtask:semantics:0" },
+            new[]
+            {
+                $"subtask:semantics:{task.Subtasks[1].PlannerIdentity}",
+                $"subtask:semantics:{task.Subtasks[0].PlannerIdentity}",
+            },
             leaves.Select(leaf => leaf.Identity).ToArray());
         Assert.AreEqual(120, leaves[0].CapacityMinutes);
         Assert.IsTrue(leaves[0].IsUncertain);
@@ -357,7 +361,54 @@ public sealed class PlannerScopeResolverTests
         var leaves = PlannerScopeResolver.Resolve(snapshot).Groups.Single().Leaves;
 
         CollectionAssert.AreEqual(
-            new[] { "subtask:container:0", "task:child-action" },
+            new[] { $"subtask:container:{pbi.Subtasks[0].PlannerIdentity}", "task:child-action" },
             leaves.Select(leaf => leaf.Identity).ToArray());
+    }
+
+    [TestMethod]
+    public void Resolve_SubtaskIdentitySurvivesInsertionAndReorderWhileLocatorChanges()
+    {
+        var first = new SubTask
+        {
+            Text = "First",
+            Metadata = new Dictionary<string, string> { ["my_day"] = "true" },
+        };
+        var second = new SubTask
+        {
+            Text = "Second",
+            Metadata = new Dictionary<string, string> { ["my_day"] = "true" },
+        };
+        var task = new GlassworkTask
+        {
+            Id = "stable-subtasks",
+            Title = "Stable subtasks",
+            Type = GlassworkTask.Types.Task,
+            MyDay = Today.ToDateTime(default),
+            Subtasks = [first, second],
+        };
+        var tasksById = new Dictionary<string, GlassworkTask>(StringComparer.Ordinal)
+        {
+            [task.Id] = task,
+        };
+
+        var before = PlannerScopeResolver.Resolve(
+            new PlannerScopeSnapshot(Today, [task], tasksById));
+        task.Subtasks.Insert(0, new SubTask
+        {
+            Text = "Inserted",
+            Metadata = new Dictionary<string, string> { ["my_day"] = "true" },
+        });
+        task.Subtasks = [second, first, task.Subtasks[0]];
+        var after = PlannerScopeResolver.Resolve(
+            new PlannerScopeSnapshot(Today, [task], tasksById));
+
+        var beforeByTitle = before.Groups.Single().Leaves.ToDictionary(leaf => leaf.Title);
+        var afterByTitle = after.Groups.Single().Leaves.ToDictionary(leaf => leaf.Title);
+        Assert.AreEqual(beforeByTitle["First"].Identity, afterByTitle["First"].Identity);
+        Assert.AreEqual(beforeByTitle["Second"].Identity, afterByTitle["Second"].Identity);
+        Assert.AreEqual(0, beforeByTitle["First"].SubtaskIndex);
+        Assert.AreEqual(1, beforeByTitle["Second"].SubtaskIndex);
+        Assert.AreEqual(1, afterByTitle["First"].SubtaskIndex);
+        Assert.AreEqual(0, afterByTitle["Second"].SubtaskIndex);
     }
 }

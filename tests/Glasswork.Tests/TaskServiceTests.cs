@@ -416,6 +416,25 @@ public class TaskServiceTests
         Assert.AreEqual(0, reloaded.Subtasks.Count);
     }
 
+    [DataTestMethod]
+    [DataRow("focus")]
+    [DataRow("future_bucket")]
+    public void PromoteSubtask_PreservesRawSize(string size)
+    {
+        var parent = new GlassworkTask
+        {
+            Id = $"promote-{size.Replace('_', '-')}",
+            Title = "Parent Task",
+            Subtasks = { new SubTask { Text = $"Promoted {size}", Size = size } },
+        };
+        _vault.Save(parent);
+
+        var promoted = _taskService.PromoteSubtask(parent, 0);
+
+        Assert.AreEqual(size, promoted.Size);
+        Assert.AreEqual(size, _vault.Load(promoted.Id)!.Size);
+    }
+
     [TestMethod]
     public void DeleteSubtask_RemovesAndPersists()
     {

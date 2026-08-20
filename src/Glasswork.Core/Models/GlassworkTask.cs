@@ -456,6 +456,7 @@ public partial class GlassworkTask : ObservableObject
                 Status = sub.Status,
                 Notes = sub.Notes,
                 Metadata = new Dictionary<string, string>(sub.Metadata),
+                PlannerIdentity = sub.PlannerIdentity,
             });
         }
 
@@ -571,6 +572,8 @@ public enum DueUrgency
 /// </summary>
 public partial class SubTask : ObservableObject
 {
+    public string PlannerIdentity { get; init; } = Guid.NewGuid().ToString("N");
+
     [ObservableProperty] public partial string Text { get; set; } = string.Empty;
     [ObservableProperty] public partial bool IsCompleted { get; set; }
 

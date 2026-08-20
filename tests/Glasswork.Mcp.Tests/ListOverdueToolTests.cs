@@ -43,7 +43,8 @@ public class ListOverdueToolTests
             Title = "Overdue Task",
             Status = GlassworkTask.Statuses.Todo,
             Due = yesterday,
-            Created = DateTime.Today.AddDays(-7)
+            Created = DateTime.Today.AddDays(-7),
+            Size = "future_bucket",
         };
         _vault.Save(task);
 
@@ -61,6 +62,7 @@ public class ListOverdueToolTests
         Assert.AreEqual("todo", returnedTask.GetProperty("status").GetString());
         Assert.AreEqual(yesterday.ToString("yyyy-MM-dd"), returnedTask.GetProperty("due_date").GetString());
         Assert.AreEqual(1, returnedTask.GetProperty("days_overdue").GetInt32());
+        Assert.AreEqual("future_bucket", returnedTask.GetProperty("size").GetString());
     }
 
     [TestMethod]
