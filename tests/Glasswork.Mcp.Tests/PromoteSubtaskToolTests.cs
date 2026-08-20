@@ -43,7 +43,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
-            Subtasks = { new SubTask { Text = "Do the thing", IsCompleted = false } }
+            Subtasks = { new SubTask { Text = "Do the thing", IsCompleted = false, Size = "focus" } }
         };
         _vault.Save(parent);
 
@@ -62,10 +62,34 @@ public class PromoteSubtaskToolTests
         Assert.IsNotNull(promoted, "New task must exist on disk");
         Assert.AreEqual("Do the thing", promoted.Title);
         Assert.AreEqual("parent-task", promoted.Parent);
+        Assert.AreEqual("focus", promoted.Size);
 
         // Assert: Subtask removed from parent
         var reloadedParent = _vault.Load("parent-task")!;
         Assert.AreEqual(0, reloadedParent.Subtasks.Count, "Subtask must be removed from parent");
+    }
+
+    [TestMethod]
+    public void PromoteSubtask_UnknownExistingSizeFailsClosedWithoutRemovingSource()
+    {
+        var parent = new GlassworkTask
+        {
+            Id = "parent-future-size",
+            Title = "Parent future size",
+            Subtasks =
+            {
+                new SubTask { Text = "Future sized step", Size = "future_bucket" },
+            },
+        };
+        _vault.Save(parent);
+
+        var result = JsonDocument.Parse(
+            _tools.PromoteSubtask(parent.Id, subtask_index: 0)).RootElement;
+
+        Assert.AreEqual("validation_error", result.GetProperty("error").GetString());
+        var reloadedParent = _vault.Load(parent.Id)!;
+        Assert.AreEqual("future_bucket", reloadedParent.Subtasks.Single().Size);
+        Assert.IsFalse(_vault.Exists(VaultService.GenerateId("Future sized step")));
     }
 
     [TestMethod]

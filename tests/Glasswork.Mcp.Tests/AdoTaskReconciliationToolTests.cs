@@ -46,6 +46,7 @@ public sealed class AdoTaskReconciliationToolTests
             Id = "removed-from-ado",
             Title = "Removed from ADO",
             Status = status,
+            Size = "future_bucket",
             MyDay = DateTime.Today,
             Description =
                 $"ADO {adoId} - https://msazure.visualstudio.com/One/_workitems/edit/{adoId}",
@@ -54,6 +55,10 @@ public sealed class AdoTaskReconciliationToolTests
             BlockedFromStatus = status == GlassworkTask.Statuses.Blocked
                 ? GlassworkTask.Statuses.InProgress
                 : null,
+            Subtasks =
+            [
+                new SubTask { Text = "Future step", Size = "next_bucket" },
+            ],
         };
         _vault.Save(task);
         task = _vault.Load(task.Id)!;
@@ -81,6 +86,8 @@ public sealed class AdoTaskReconciliationToolTests
         Assert.IsNull(persisted.BlockedReason);
         Assert.IsNull(persisted.BlockedAt);
         Assert.IsNull(persisted.BlockedFromStatus);
+        Assert.AreEqual("future_bucket", persisted.Size);
+        Assert.AreEqual("next_bucket", persisted.Subtasks.Single().Size);
     }
 
     [TestMethod]

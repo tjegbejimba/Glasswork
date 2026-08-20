@@ -44,6 +44,68 @@ public class VaultServiceTests
     }
 
     [TestMethod]
+    public void SaveAndLoad_RoundTripsCanonicalTaskAndSubtaskSize()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "sized-work",
+            Title = "Sized work",
+            Size = "FOCUS",
+            Subtasks =
+            [
+                new SubTask { Text = "Sized step", Size = "Quick" },
+            ],
+        });
+
+        var loaded = _vault.Load("sized-work")!;
+        var markdown = File.ReadAllText(Path.Combine(_tempDir, "sized-work.md"));
+
+        Assert.AreEqual("focus", loaded.Size);
+        Assert.AreEqual(SizeBucket.Focus, loaded.ExplicitSize);
+        Assert.AreEqual("quick", loaded.Subtasks[0].Size);
+        Assert.AreEqual(SizeBucket.Quick, loaded.Subtasks[0].ExplicitSize);
+        StringAssert.Contains(markdown, "size: focus");
+        StringAssert.Contains(markdown, "- size: quick");
+    }
+
+    [TestMethod]
+    public void LoadAndSave_PreserveUnknownSizeAndUnrelatedMetadata()
+    {
+        File.WriteAllText(
+            Path.Combine(_tempDir, "future-sized.md"),
+            """
+            ---
+            id: future-sized
+            title: Future sized
+            size: future_bucket
+            future_flag: keep
+            ---
+
+            ## Description
+
+            Description
+
+            ## Subtasks
+
+            ### [ ] Future step
+            - size: next_bucket
+            - future_meta: keep-too
+            """);
+
+        var loaded = _vault.Load("future-sized")!;
+        _vault.Save(loaded);
+        var reloaded = _vault.Load("future-sized")!;
+        var markdown = File.ReadAllText(Path.Combine(_tempDir, "future-sized.md"));
+
+        Assert.AreEqual("future_bucket", reloaded.Size);
+        Assert.IsNull(reloaded.ExplicitSize);
+        Assert.AreEqual("next_bucket", reloaded.Subtasks.Single().Size);
+        Assert.IsNull(reloaded.Subtasks.Single().ExplicitSize);
+        StringAssert.Contains(markdown, "future_flag: keep");
+        StringAssert.Contains(markdown, "- future_meta: keep-too");
+    }
+
+    [TestMethod]
     public void Load_NonExistent_ReturnsNull()
     {
         var result = _vault.Load("does-not-exist");

@@ -45,6 +45,7 @@ internal static class TaskQueryPolicy
             TaskQueryField.Status,
             TaskQueryField.Type,
             TaskQueryField.Priority,
+            TaskQueryField.Size,
             TaskQueryField.Due,
             TaskQueryField.MyDay,
             TaskQueryField.ParentId,

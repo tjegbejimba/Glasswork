@@ -226,6 +226,7 @@ public class MyDayViewModelRefreshingEventTests
         row.IsManuallyCollapsed = true;
 
         task.Title = "Updated title";
+        task.Size = "deep";
         _vault.Save(task);
 
         vm.Refresh();
@@ -233,6 +234,7 @@ public class MyDayViewModelRefreshingEventTests
         Assert.AreSame(row, vm.TodayTasks.Single(),
             "Refreshing changed task data should update the existing row instead of replacing it.");
         Assert.AreEqual("Updated title", row.Title);
+        Assert.AreEqual("deep", row.Size);
         Assert.IsTrue(row.IsManuallyCollapsed,
             "Domain refresh must not wipe per-page transient collapse state before the page hydrates it.");
     }

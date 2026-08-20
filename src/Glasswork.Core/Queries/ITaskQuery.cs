@@ -106,6 +106,7 @@ public enum TaskQueryField
     Path,
     Created,
     Priority,
+    Size,
     Due,
     Start,
     MyDay,
@@ -149,6 +150,7 @@ public sealed record TaskQuerySubtask(
     string Notes,
     bool IsCompleted,
     string? Status,
+    string? Size,
     IReadOnlyDictionary<string, string> Metadata);
 
 public sealed record TaskQueryLink(
@@ -180,6 +182,7 @@ public sealed class TaskQueryItem
         Path = $"{task.Id}.md";
         Created = task.Created;
         Priority = task.Priority;
+        Size = task.Size;
         Due = task.Due;
         Start = task.Start;
         MyDay = task.MyDay;
@@ -209,6 +212,7 @@ public sealed class TaskQueryItem
                 subtask.Notes,
                 subtask.IsCompleted,
                 subtask.Status,
+                subtask.Size,
                 new Dictionary<string, string>(subtask.Metadata))).ToArray()
             : null;
         Links = task.Links
@@ -226,6 +230,7 @@ public sealed class TaskQueryItem
     public string Path { get; }
     public DateTime Created { get; }
     public string Priority { get; }
+    public string? Size { get; }
     public DateTime? Due { get; }
     public DateTime? Start { get; }
     public DateTime? MyDay { get; }

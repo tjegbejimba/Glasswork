@@ -245,6 +245,7 @@ public partial class MyDayViewModel : ObservableObject
         target.Status = source.Status;
         target.Type = source.Type;
         target.Priority = source.Priority;
+        target.Size = source.Size;
         target.Created = source.Created;
         target.CompletedAt = source.CompletedAt;
         target.Due = source.Due;

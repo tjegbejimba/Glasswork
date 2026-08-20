@@ -261,6 +261,34 @@ public sealed class TaskQueryConformanceTests
     [DataTestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
+    public void Execute_SizeProjectionCarriesRawTaskAndSubtaskSize(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        fixture.Save(new GlassworkTask
+        {
+            Id = "sized",
+            Title = "Sized",
+            Size = "future_bucket",
+            Subtasks = [new SubTask { Text = "Step", Size = "deep" }],
+        });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new ListTaskSelection(
+                Projection: new SelectedTaskFieldsProjection(
+                    new HashSet<TaskQueryField>
+                    {
+                        TaskQueryField.Size,
+                        TaskQueryField.Subtasks,
+                    }))));
+
+        Assert.AreEqual("future_bucket", result.Tasks.Single().Size);
+        Assert.AreEqual("deep", result.Tasks.Single().Subtasks?.Single().Size);
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
     public void Execute_ListSelectionComputesActionabilityAndBacklinkCounts(string adapter)
     {
         using var fixture = TaskQueryFixture.Create(adapter);

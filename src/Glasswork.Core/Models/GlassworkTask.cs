@@ -28,6 +28,18 @@ public partial class GlassworkTask : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsMyDayContainer))]
     [NotifyPropertyChangedFor(nameof(ShowLeafCompleteAffordance))]
     public partial string Type { get; set; } = "task";
+    private string? _size;
+    public string? Size
+    {
+        get => _size;
+        set
+        {
+            if (SetProperty(ref _size, SizeBuckets.NormalizeRaw(value)))
+                OnPropertyChanged(nameof(ExplicitSize));
+        }
+    }
+    public SizeBucket? ExplicitSize =>
+        SizeBuckets.TryParse(Size, out var bucket) ? bucket : null;
     [ObservableProperty] public partial DateTime Created { get; set; } = DateTime.Today;
     [ObservableProperty] public partial DateTime? CompletedAt { get; set; }
     [ObservableProperty] public partial DateTimeOffset? CancelledAt { get; set; }
@@ -405,6 +417,7 @@ public partial class GlassworkTask : ObservableObject
             Status = Status,
             Priority = Priority,
             Type = Type,
+            Size = Size,
             Created = Created,
             CompletedAt = CompletedAt,
             CancelledAt = CancelledAt,
@@ -573,6 +586,24 @@ public partial class SubTask : ObservableObject
     /// header (e.g. ado, completed, blocker, my_day). Excludes "status" which is first-class.
     /// </summary>
     [ObservableProperty] public partial Dictionary<string, string> Metadata { get; set; } = [];
+
+    public string? Size
+    {
+        get => Metadata.TryGetValue("size", out var raw) ? SizeBuckets.NormalizeRaw(raw) : null;
+        set
+        {
+            var normalized = SizeBuckets.NormalizeRaw(value);
+            if (normalized is null)
+                Metadata.Remove("size");
+            else
+                Metadata["size"] = normalized;
+            OnPropertyChanged(nameof(Size));
+            OnPropertyChanged(nameof(ExplicitSize));
+        }
+    }
+
+    public SizeBucket? ExplicitSize =>
+        SizeBuckets.TryParse(Size, out var bucket) ? bucket : null;
 
     /// <summary>
     /// Prose notes (markdown) following the metadata block, before the next `### ` header.

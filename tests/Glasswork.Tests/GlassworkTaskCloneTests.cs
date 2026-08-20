@@ -22,6 +22,7 @@ public class GlassworkTaskCloneTests
             Status = GlassworkTask.Statuses.InProgress,
             Priority = GlassworkTask.Priorities.High,
             Type = GlassworkTask.Types.Pbi,
+            Size = "future_bucket",
             Created = new DateTime(2024, 1, 2),
             CompletedAt = new DateTime(2024, 5, 1),
             Due = new DateTime(2024, 6, 1),
@@ -39,6 +40,7 @@ public class GlassworkTaskCloneTests
         Assert.AreEqual(GlassworkTask.Statuses.InProgress, copy.Status);
         Assert.AreEqual(GlassworkTask.Priorities.High, copy.Priority);
         Assert.AreEqual(GlassworkTask.Types.Pbi, copy.Type);
+        Assert.AreEqual("future_bucket", copy.Size);
         Assert.AreEqual(new DateTime(2024, 1, 2), copy.Created);
         Assert.AreEqual(new DateTime(2024, 5, 1), copy.CompletedAt);
         Assert.AreEqual(new DateTime(2024, 6, 1), copy.Due);
@@ -53,7 +55,7 @@ public class GlassworkTaskCloneTests
     public void Clone_DeepCopiesSubtasksList_MutationIsolated()
     {
         var src = new GlassworkTask { Id = "t1", Title = "T" };
-        src.Subtasks.Add(new SubTask { Text = "step 1", Status = "in_progress" });
+        src.Subtasks.Add(new SubTask { Text = "step 1", Status = "in_progress", Size = "future_bucket" });
         src.Subtasks[0].Metadata["blocker"] = "waiting on Alice";
 
         var copy = src.Clone();
@@ -65,6 +67,7 @@ public class GlassworkTaskCloneTests
         Assert.AreNotSame(src.Subtasks[0], copy.Subtasks[0]);
         Assert.AreEqual("step 1", copy.Subtasks[0].Text);
         Assert.AreEqual("in_progress", copy.Subtasks[0].Status);
+        Assert.AreEqual("future_bucket", copy.Subtasks[0].Size);
         // Different Metadata dict instance.
         Assert.AreNotSame(src.Subtasks[0].Metadata, copy.Subtasks[0].Metadata);
         Assert.AreEqual("waiting on Alice", copy.Subtasks[0].Metadata["blocker"]);

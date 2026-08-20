@@ -28,7 +28,7 @@ public partial class FrontmatterParser
 
     private static readonly HashSet<string> KnownFrontmatterKeys = new(StringComparer.Ordinal)
     {
-        "id", "title", "status", "priority", "type", "created", "completed_at",
+        "id", "title", "status", "priority", "type", "size", "created", "completed_at",
         "cancelled_at", "cancellation_reason",
         "blocked_reason", "blocked_at", "blocked_from_status", "due", "start",
         "my_day", "defer_until", "ado_link", "ado_title", "parent", "blocked_by",
@@ -60,7 +60,7 @@ public partial class FrontmatterParser
     /// Recognized metadata keys, in the canonical serialization order.
     /// "status" is handled as a first-class SubTask field; the rest live in Metadata.
     /// </summary>
-    private static readonly string[] MetadataOrder = ["status", "ado", "completed", "blocker", "due", "my_day"];
+    private static readonly string[] MetadataOrder = ["status", "size", "ado", "completed", "blocker", "due", "my_day"];
 
     /// <summary>
     /// Parse a markdown file's content into a GlassworkTask.
@@ -86,6 +86,7 @@ public partial class FrontmatterParser
             Status = frontmatter.Status ?? GlassworkTask.Statuses.Todo,
             Priority = frontmatter.Priority ?? GlassworkTask.Priorities.Medium,
             Type = GlassworkTask.Types.Normalize(frontmatter.Type),
+            Size = frontmatter.Size,
             Created = ParseDate(frontmatter.Created) ?? DateTime.Today,
             CompletedAt = ParseDate(frontmatter.CompletedAt),
             Due = ParseDate(frontmatter.Due),
@@ -159,6 +160,7 @@ public partial class FrontmatterParser
             Priority = task.Priority,
             // Default "task" is omitted to avoid churning legacy files; only pbi/bug are written.
             Type = task.Type == GlassworkTask.Types.Task ? null : task.Type,
+            Size = task.Size,
             Created = task.Created.ToString("yyyy-MM-dd"),
             CompletedAt = task.CompletedAt?.ToString("yyyy-MM-dd"),
             CancelledAt = task.Status == GlassworkTask.Statuses.Cancelled
@@ -393,6 +395,8 @@ public partial class FrontmatterParser
                     var value = metaMatch.Groups[2].Value.Trim();
                     if (key == "status")
                         current.Status = value;
+                    else if (key == "size")
+                        current.Size = value;
                     else
                         current.Metadata[key] = value;
                     continue;
@@ -447,6 +451,7 @@ public partial class FrontmatterParser
         public string? Status { get; set; }
         public string? Priority { get; set; }
         public string? Type { get; set; }
+        public string? Size { get; set; }
         public string? Created { get; set; }
         [YamlMember(Alias = "completed_at")]
         public string? CompletedAt { get; set; }

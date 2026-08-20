@@ -163,6 +163,102 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_CreateCarriesRawTaskAndSubtaskSize()
+    {
+        using var operations = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "sized-transaction",
+          "if_absent": true,
+          "fields": {
+            "title": "Sized transaction",
+            "size": "FOCUS",
+            "subtasks": [{
+              "text": "Deep step",
+              "size": "deep"
+            }]
+          }
+        }]
+        """);
+
+        var result = JsonDocument.Parse(
+            _tools.TransactTasks("sized-transaction-create", operations.RootElement)).RootElement;
+
+        Assert.AreEqual("focus", result.GetProperty("task").GetProperty("size").GetString());
+        Assert.AreEqual(
+            "deep",
+            result.GetProperty("task").GetProperty("subtasks")[0].GetProperty("size").GetString());
+        var saved = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"))
+            .Load("sized-transaction")!;
+        Assert.AreEqual("focus", saved.Size);
+        Assert.AreEqual("deep", saved.Subtasks.Single().Size);
+    }
+
+    [TestMethod]
+    public void TransactTasks_CreateRejectsUnknownNewSubtaskSize()
+    {
+        using var operations = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "unknown-sized-transaction",
+          "if_absent": true,
+          "fields": {
+            "title": "Unknown sized transaction",
+            "subtasks": [{
+              "text": "Future step",
+              "size": "future_bucket"
+            }]
+          }
+        }]
+        """);
+
+        var result = JsonDocument.Parse(
+            _tools.TransactTasks("unknown-sized-transaction-create", operations.RootElement)).RootElement;
+
+        Assert.AreEqual("validation_error", result.GetProperty("error").GetString());
+        StringAssert.Contains(
+            result.GetProperty("message").GetString(),
+            "size");
+        Assert.IsFalse(File.Exists(Path.Combine(
+            _vaultDir,
+            "wiki",
+            "todo",
+            "unknown-sized-transaction.md")));
+    }
+
+    [TestMethod]
+    public void TransactTasks_CanonicalizesRecognizedSizeSuppliedThroughSubtaskMetadata()
+    {
+        using var operations = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "metadata-sized-transaction",
+          "if_absent": true,
+          "fields": {
+            "title": "Metadata sized transaction",
+            "subtasks": [{
+              "text": "Metadata size",
+              "metadata": { "size": "FOCUS" }
+            }]
+          }
+        }]
+        """);
+
+        var result = JsonDocument.Parse(
+            _tools.TransactTasks("metadata-sized-transaction-create", operations.RootElement)).RootElement;
+
+        Assert.AreEqual(
+            "focus",
+            result.GetProperty("task").GetProperty("subtasks")[0].GetProperty("size").GetString());
+        var markdown = File.ReadAllText(Path.Combine(
+            _vaultDir,
+            "wiki",
+            "todo",
+            "metadata-sized-transaction.md"));
+        StringAssert.Contains(markdown, "- size: focus");
+    }
+
+    [TestMethod]
     public void TransactTasks_CreateRequiresIfAbsentAndDoesNotWrite()
     {
         using var operations = JsonDocument.Parse("""

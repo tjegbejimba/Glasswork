@@ -19,7 +19,8 @@ public sealed class TaskSearchService
         IReadOnlyList<string>? fields = null,
         IReadOnlyList<string>? requiredTags = null,
         IReadOnlyList<string>? statuses = null,
-        int limit = 20)
+        int limit = 20,
+        string? size = null)
     {
         if (string.IsNullOrWhiteSpace(query))
             throw new ArgumentException("query is required.");
@@ -35,7 +36,7 @@ public sealed class TaskSearchService
         var documents = _vault.LoadAll()
             .Select(TaskSearchDocument.FromTask)
             .ToArray();
-        return Search(documents, query, fields, requiredTags, statuses, limit);
+        return Search(documents, query, fields, requiredTags, statuses, limit, size);
     }
 
     public IReadOnlyList<TaskSearchHit> Search(
@@ -44,7 +45,8 @@ public sealed class TaskSearchService
         IReadOnlyList<string>? fields = null,
         IReadOnlyList<string>? requiredTags = null,
         IReadOnlyList<string>? statuses = null,
-        int limit = 20)
+        int limit = 20,
+        string? size = null)
     {
         ArgumentNullException.ThrowIfNull(documents);
         if (string.IsNullOrWhiteSpace(query))
@@ -56,6 +58,7 @@ public sealed class TaskSearchService
         var scope = TaskSearchText.NormalizeScope(fields);
         var requiredTagSet = TaskSearchText.NormalizeTags(requiredTags);
         var allowedStatuses = TaskSearchText.NormalizeStatuses(statuses);
+        var explicitSize = NormalizeSizeFilter(size);
         var tokens = TaskSearchText.Tokenize(query);
         var hits = new List<ScoredHit>();
 
@@ -64,6 +67,8 @@ public sealed class TaskSearchService
             if (allowedStatuses is null && task.Status == GlassworkTask.Statuses.Cancelled)
                 continue;
             if (allowedStatuses is not null && !allowedStatuses.Contains(task.Status))
+                continue;
+            if (explicitSize.HasValue && task.ExplicitSize != explicitSize)
                 continue;
 
             if (requiredTagSet is not null)
@@ -92,7 +97,8 @@ public sealed class TaskSearchService
                     effectiveStatus,
                     task.ParentId,
                     matchedFields,
-                    snippet),
+                    snippet,
+                    task.Size),
                 score,
                 task.Created));
         }
@@ -107,6 +113,16 @@ public sealed class TaskSearchService
     }
 
     private sealed record ScoredHit(TaskSearchHit Hit, int Score, DateTime Created);
+
+    private static SizeBucket? NormalizeSizeFilter(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+        if (SizeBuckets.TryParse(raw, out var bucket))
+            return bucket;
+        throw new ArgumentException(
+            $"Invalid size '{raw}'. Valid values: quick, short, focus, deep, break_down.");
+    }
 }
 
 internal static class TaskSearchText
@@ -279,7 +295,8 @@ public sealed record TaskSearchHit(
     string Status,
     string? ParentId,
     IReadOnlyList<string> MatchedIn,
-    string Snippet);
+    string Snippet,
+    string? Size = null);
 
 public sealed record TaskSearchDocument(
     string Id,
@@ -290,8 +307,12 @@ public sealed record TaskSearchDocument(
     string Description,
     string Notes,
     IReadOnlyList<string> Subtasks,
-    IReadOnlyList<string> Tags)
+    IReadOnlyList<string> Tags,
+    string? Size = null)
 {
+    internal SizeBucket? ExplicitSize =>
+        SizeBuckets.TryParse(Size, out var bucket) ? bucket : null;
+
     internal static TaskSearchDocument FromTask(GlassworkTask task) =>
         new(
             task.Id,
@@ -302,5 +323,6 @@ public sealed record TaskSearchDocument(
             task.Description,
             task.Notes,
             task.Subtasks.Select(subtask => $"{subtask.Text}\n{subtask.Notes}".Trim()).ToArray(),
-            task.Tags.ToArray());
+            task.Tags.ToArray(),
+            task.Size);
 }
