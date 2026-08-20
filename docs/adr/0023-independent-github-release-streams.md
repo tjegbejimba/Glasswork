@@ -22,9 +22,14 @@ streams:
   `glasswork-mcp.X.Y.Z.nupkg` plus SHA-256.
 
 Release detection enumerates GitHub Releases and selects the highest stable tag
-for the requested stream. App Update ignores every `mcp-v*` release, and MCP
-Update ignores every app `v*` release. Drafts, prereleases, malformed tags, and
-the other stream never participate. `/releases/latest` is no longer a release
+for the requested stream. The GitHub API is preferred; when anonymous API
+limits reject the request, detection falls back to GitHub's complete public
+smart-Git tag advertisement and accepts only an exact stable-shaped tag whose
+expected immutable Release asset is downloadable. App Update ignores every
+`mcp-v*` release, and MCP Update ignores every app `v*` release. Drafts,
+malformed tags, and the other stream never participate. The fallback relies on
+the repository rule that these exact tag namespaces are created only by the
+non-prerelease publication workflows. `/releases/latest` is no longer a release
 selection interface.
 
 The manually dispatched MCP publication workflow still publishes only current

@@ -69,6 +69,62 @@ public class GitHubReleaseDetectorTests
     }
 
     [TestMethod]
+    public async Task GetLatestReleaseAsync_ApiRateLimited_FallsBackToPublishedGitTags()
+    {
+        var handler = new FakeHttpMessageHandler();
+        handler.SetResponses(
+            (HttpStatusCode.Forbidden, """{"message":"API rate limit exceeded"}"""),
+            (HttpStatusCode.OK, """
+                003faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/tags/mcp-v0.11.0
+                003bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/tags/v1.4.9
+                003bcccccccccccccccccccccccccccccccccccccccc refs/tags/v1.4.10
+                0000
+                """),
+            (HttpStatusCode.OK, ""));
+
+        var result = await new GitHubReleaseDetector(handler)
+            .GetLatestReleaseAsync(ReleaseStream.App);
+
+        Assert.IsTrue(result.IsSuccess);
+        Assert.AreEqual("1.4.10", result.Version!.ToString());
+        Assert.HasCount(3, handler.Requests);
+        Assert.AreEqual(
+            "https://github.com/tjegbejimba/Glasswork.git/info/refs?service=git-upload-pack",
+            handler.Requests[1].RequestUri!.AbsoluteUri);
+        Assert.AreEqual(HttpMethod.Head, handler.Requests[2].Method);
+        StringAssert.EndsWith(
+            handler.Requests[2].RequestUri!.AbsoluteUri,
+            "/releases/download/v1.4.10/Glasswork-win-x64.zip");
+    }
+
+    [TestMethod]
+    public async Task GetLatestReleaseAsync_McpFallback_IsNotTruncatedByAppTags()
+    {
+        var handler = new FakeHttpMessageHandler();
+        var appTags = string.Join(
+            "\n",
+            Enumerable.Range(1, 20).Select(
+                patch => $"003b{patch:D40} refs/tags/v1.4.{patch}"));
+        handler.SetResponses(
+            (HttpStatusCode.Forbidden, "rate limited"),
+            (HttpStatusCode.OK, $"""
+                003faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/tags/mcp-v0.11.0
+                {appTags}
+                0000
+                """),
+            (HttpStatusCode.OK, ""));
+
+        var result = await new GitHubReleaseDetector(handler)
+            .GetLatestReleaseAsync(ReleaseStream.Mcp);
+
+        Assert.IsTrue(result.IsSuccess);
+        Assert.AreEqual("0.11.0", result.Version!.ToString());
+        StringAssert.EndsWith(
+            handler.Requests[2].RequestUri!.AbsoluteUri,
+            "/releases/download/mcp-v0.11.0/glasswork-mcp.0.11.0.nupkg");
+    }
+
+    [TestMethod]
     public async Task GetLatestReleaseAsync_SuccessfulResponse_ReturnsAvailableVersion()
     {
         // Arrange
@@ -270,13 +326,25 @@ internal class FakeHttpMessageHandler : HttpMessageHandler
     private HttpStatusCode _statusCode;
     private string _content = string.Empty;
     private Exception? _exceptionToThrow;
+    private readonly Queue<(HttpStatusCode StatusCode, string Content)> _responses = new();
 
     public HttpRequestMessage? LastRequest { get; private set; }
+    public List<HttpRequestMessage> Requests { get; } = [];
 
     public void SetResponse(HttpStatusCode statusCode, string content)
     {
         _statusCode = statusCode;
         _content = content;
+        _exceptionToThrow = null;
+    }
+
+    public void SetResponses(params (HttpStatusCode StatusCode, string Content)[] responses)
+    {
+        _responses.Clear();
+        foreach (var response in responses)
+        {
+            _responses.Enqueue(response);
+        }
         _exceptionToThrow = null;
     }
 
@@ -290,15 +358,19 @@ internal class FakeHttpMessageHandler : HttpMessageHandler
         CancellationToken cancellationToken)
     {
         LastRequest = request;
+        Requests.Add(request);
 
         if (_exceptionToThrow != null)
         {
             throw _exceptionToThrow;
         }
 
-        var response = new HttpResponseMessage(_statusCode)
+        var configured = _responses.Count > 0
+            ? _responses.Dequeue()
+            : (_statusCode, _content);
+        var response = new HttpResponseMessage(configured.Item1)
         {
-            Content = new StringContent(_content)
+            Content = new StringContent(configured.Item2)
         };
 
         return Task.FromResult(response);

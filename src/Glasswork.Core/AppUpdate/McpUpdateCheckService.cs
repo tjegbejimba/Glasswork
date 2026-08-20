@@ -31,7 +31,9 @@ public sealed class McpUpdateCheckService
         if (!release.IsSuccess)
         {
             return SetLastResult(McpUpdateCheckResult.Failed(
-                release.FailureReason ?? "MCP release detection failed"));
+                release.FailureReason ?? "MCP release detection failed",
+                installed.IsInstalled,
+                installed.Version));
         }
 
         return SetLastResult(McpUpdateCheckResult.Compare(
@@ -80,6 +82,9 @@ public sealed record McpUpdateCheckResult(
             null);
     }
 
-    public static McpUpdateCheckResult Failed(string reason) =>
-        new(false, false, true, false, null, null, reason);
+    public static McpUpdateCheckResult Failed(
+        string reason,
+        bool isInstalled = false,
+        AppVersion? installedVersion = null) =>
+        new(false, false, true, isInstalled, installedVersion, null, reason);
 }

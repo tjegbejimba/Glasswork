@@ -245,9 +245,11 @@ See ADR 0020 (supersedes ADR 0011's apply mechanism).
 
 - **Owns**:
   - **Detection** — an unauthenticated HTTPS client that enumerates public
-    GitHub Releases and selects the highest stable app `vX.Y.Z` tag, plus the
-    pure SemVer comparison in `Glasswork.Core` that yields whether an **Update
-    Check** found a newer **Available Version** than the **Installed Version**.
+    GitHub Releases, falls back to complete public smart-Git tags plus expected
+    Release-asset verification when anonymous API limits are exhausted, and
+    selects the highest stable app `vX.Y.Z` tag, plus the pure SemVer comparison
+    in `Glasswork.Core` that yields whether an **Update Check** found a newer
+    **Available Version** than the **Installed Version**.
   - **Apply** — the **Self-Update** orchestration: spawn the bundled detached
     **Updater** (`Updater\release-update.ps1`), self-close, and let the updater
     download the matching Windows **Release package**, verify its SHA-256
