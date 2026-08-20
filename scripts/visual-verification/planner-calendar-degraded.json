@@ -1,0 +1,109 @@
+{
+  "name": "Planner calendar degraded",
+  "startPage": "planner",
+  "windowWidth": 1280,
+  "windowHeight": 900,
+  "plannerProfile": {
+    "schemaVersion": 1,
+    "isConfirmed": true,
+    "dailyCapacityMinutes": 360,
+    "workStartLocal": "09:00:00",
+    "workEndLocal": "17:00:00",
+    "lunchStartLocal": "12:00:00",
+    "lunchEndLocal": "13:00:00",
+    "transitionBufferMinutes": 15,
+    "selectedCalendarReferences": []
+  },
+  "calendarContext": {
+    "status": "possibly-stale",
+    "diagnosticCode": "network_failure",
+    "refreshStatus": "protected-store-recovery",
+    "refreshDiagnosticCode": "protected_store_newer",
+    "intervals": [
+      {
+        "startLocal": "10:00:00",
+        "endLocal": "11:00:00",
+        "availability": "busy",
+        "isAllDay": false
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "id": "calendar-degraded-task",
+      "title": "Preserve Planner actions while degraded",
+      "status": "todo",
+      "myDay": "today",
+      "size": "short"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "PlannerUnknownCalendar"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerUnknownCalendar",
+      "value": "Calendar may be stale · 1 busy interval"
+    },
+    {
+      "type": "capture",
+      "name": "planner-calendar-degraded-stale"
+    },
+    {
+      "type": "invoke",
+      "automationId": "PlannerCalendarRefresh"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "PlannerCalendarReset"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerUnknownCalendar",
+      "value": "Calendar connection needs reset"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerCalendarResetScope",
+      "value": "Published calendar connection; Current-day calendar snapshot"
+    },
+    {
+      "type": "assert-not-present",
+      "automationId": "PlannerCalendarRefresh"
+    },
+    {
+      "type": "capture",
+      "name": "planner-calendar-degraded-recovery"
+    },
+    {
+      "type": "invoke",
+      "automationId": "PlannerCalendarReset"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "PlannerCalendarConnect"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerUnknownCalendar",
+      "value": "Unknown calendar"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerSelectedWorkTotal",
+      "value": "30 min selected"
+    },
+    {
+      "type": "wait-for",
+      "name": "Move Preserve Planner actions while degraded out of My Day"
+    }
+  ],
+  "captures": [
+    {
+      "name": "planner-calendar-degraded-reset",
+      "waitMilliseconds": 500
+    }
+  ]
+}

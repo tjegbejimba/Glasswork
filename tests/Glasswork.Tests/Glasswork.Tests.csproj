@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="MSTest" Version="4.0.2" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
     <PackageReference Include="YamlDotNet" Version="17.0.1" />
   </ItemGroup>
 
@@ -27,6 +28,8 @@
              Link="ResearchPageRefreshPolicy.cs" />
     <Compile Include="..\..\src\Glasswork.App\Pages\ResearchContextSelectionPolicy.cs"
              Link="ResearchContextSelectionPolicy.cs" />
+    <Compile Include="..\..\src\Glasswork.App\Services\CalendarContext\BoundedPublishedIcsTransport.cs" Link="BoundedPublishedIcsTransport.cs" />
+    <Compile Include="..\..\src\Glasswork.App\Services\CalendarContext\DpapiCalendarContextStore.cs" Link="DpapiCalendarContextStore.cs" />
   </ItemGroup>
 
 </Project>

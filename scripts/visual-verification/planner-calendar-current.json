@@ -1,0 +1,78 @@
+{
+  "name": "Planner calendar current",
+  "startPage": "planner",
+  "windowWidth": 1280,
+  "windowHeight": 900,
+  "plannerProfile": {
+    "schemaVersion": 1,
+    "isConfirmed": true,
+    "dailyCapacityMinutes": 360,
+    "workStartLocal": "09:00:00",
+    "workEndLocal": "17:00:00",
+    "lunchStartLocal": "12:00:00",
+    "lunchEndLocal": "13:00:00",
+    "transitionBufferMinutes": 15,
+    "selectedCalendarReferences": []
+  },
+  "calendarContext": {
+    "status": "current",
+    "diagnosticCode": "current",
+    "intervals": [
+      {
+        "startLocal": "09:30:00",
+        "endLocal": "10:15:00",
+        "availability": "busy",
+        "isAllDay": false
+      },
+      {
+        "startLocal": "13:00:00",
+        "endLocal": "13:30:00",
+        "availability": "tentative",
+        "isAllDay": false
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "id": "calendar-current-task",
+      "title": "Keep Planner scope unchanged",
+      "status": "todo",
+      "myDay": "today",
+      "size": "focus"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "PlannerUnknownCalendar"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerUnknownCalendar",
+      "value": "Calendar current · 1 busy interval, 1 tentative interval"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "PlannerCalendarRefresh"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "PlannerCalendarDisconnect"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerSelectedWorkTotal",
+      "value": "60 min selected"
+    },
+    {
+      "type": "wait-for",
+      "name": "Move Keep Planner scope unchanged out of My Day"
+    }
+  ],
+  "captures": [
+    {
+      "name": "planner-calendar-current",
+      "waitMilliseconds": 500
+    }
+  ]
+}

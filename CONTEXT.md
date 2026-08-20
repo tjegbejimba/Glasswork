@@ -177,7 +177,35 @@ remains the source of truth and is never copied into a Research-owned document.
 - **Does not own**: Wiki synthesis prose, Task workflow state, Wayfinder state,
   Copilot session history, or general Vault browsing.
 
-### 5. UI State *(new — this slice)*
+### 5. Calendar Context
+
+The provider-neutral, current-day availability input consumed by Planner.
+Calendar Context returns either one complete normalized snapshot for the
+requested local day and time zone or an explicit degraded result; retrieval
+failure is never represented as an empty successful calendar.
+
+- **Owns**: `ICalendarContext`, Unavailable and Published ICS adapters,
+  endpoint policy, recurrence/time-zone normalization, freshness and refresh
+  coalescing, and generic Busy/Tentative intervals.
+- **Protected persistence**: dedicated versioned configuration and snapshot
+  envelopes live under `%LocalAppData%\Glasswork\calendar-context\`, protected
+  with current-user DPAPI. They are separate from Vault and UI State. Missing,
+  corrupt, undecryptable, and newer data fail closed; explicit scope-previewed
+  Reset is the only destructive recovery.
+- **Retrieval boundary**: the Windows adapter uses bounded HTTPS retrieval,
+  validates every DNS result and redirect hop, rejects non-public addresses,
+  and never exposes a bearer URL, provider payload, event detail, identity, or
+  calendar name through results or diagnostics.
+- **Snapshot boundary**: only complete same-day snapshots are persisted.
+  Source changes, day/time-zone rollover, incompatible schemas, Disconnect,
+  and Reset invalidate qualification. A transient refresh failure may retain a
+  qualified snapshot only as Possibly stale.
+- **Speaks to**: Presentation through the provider-neutral interface and
+  Windows platform adapters for HTTP and protected storage.
+- **Does not own**: Planner capacity, Day context, task state, Planner Profile,
+  or UI State.
+
+### 6. UI State
 
 Non-task user preferences that should persist across app restarts but
 **must not pollute the vault**. Examples: which task cards the user has
@@ -199,7 +227,7 @@ manually collapsed, sidebar pane width, last-selected page.
   durable here. Suggested setup values, Unknown calendar, inline Undo, and the
   Not today tray are transient and must not be written to UI State.
 
-### 6. Presentation
+### 7. Presentation
 
 WinUI 3 pages, controls, and view-state. Lives in `Glasswork.App`. Holds
 no domain logic — composes the other contexts into screens.
@@ -225,9 +253,11 @@ no domain logic — composes the other contexts into screens.
 - **Planner composition**: `PlannerViewModel` composes the coherent My Day
   grouping with `PlannerScopeResolver`. Vault frontmatter owns explicit Task
   and Subtask Size plus `my_day`; UI State owns the confirmed Planner Profile
-  and dated dismissals. Actionable-leaf scope, selected-work totals, Unknown
-  calendar, inline Undo, and the Not today tray are derived or page-session
-  state. Slice 2's `PlannerPage` is reachable only through isolated visual-
+  and dated dismissals. Calendar Context owns current/degraded normalized
+  availability and its protected connection lifecycle. Actionable-leaf scope,
+  selected-work totals, Unknown calendar, inline Undo, and the Not today tray
+  are derived or page-session state. Slice 3's `PlannerPage` is reachable only
+  through isolated visual-
   verification launch options: it has no NavigationView item, protocol route,
   persistent preview key, or production feature flag.
 - **Research Page** *(future)*: a focused, two-pane reading library over

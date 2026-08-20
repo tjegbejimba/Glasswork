@@ -20,6 +20,8 @@ public sealed record VerificationLaunchOptions(
     public const string CaptureRequestPathVariable = "GLASSWORK_VERIFY_CAPTURE_REQUEST";
     public const string CaptureOutputPathVariable = "GLASSWORK_VERIFY_CAPTURE_OUTPUT";
     public const string StartPageVariable = "GLASSWORK_VERIFY_START_PAGE";
+    public const string CalendarContextFixturePathVariable =
+        "GLASSWORK_VISUAL_CALENDAR_CONTEXT_FIXTURE";
 
     public bool IsVerificationRun =>
         !string.IsNullOrWhiteSpace(VaultPath) ||

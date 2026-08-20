@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Globalization;
+using System.Threading;
 using System.Threading.Tasks;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
@@ -19,6 +20,7 @@ public sealed partial class PlannerPage : Page
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _sessionTimer;
     private bool _rendering;
     private bool _subscribed;
+    private CancellationTokenSource _navigationCancellation = new();
 
     public PlannerPage()
     {
@@ -29,7 +31,8 @@ public sealed partial class PlannerPage : Page
             App.Index,
             App.UiState,
             App.Mutations,
-            App.TaskQuery);
+            App.TaskQuery,
+            calendarContext: App.CalendarContext);
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         _viewModel.NotTodayTray.CollectionChanged += (_, _) => RenderRecovery();
         _sessionTimer = DispatcherQueue.CreateTimer();
@@ -41,21 +44,27 @@ public sealed partial class PlannerPage : Page
         };
     }
 
-    protected override void OnNavigatedTo(NavigationEventArgs e)
+    protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        if (_navigationCancellation.IsCancellationRequested)
+        {
+            _navigationCancellation.Dispose();
+            _navigationCancellation = new CancellationTokenSource();
+        }
         if (!_subscribed)
         {
             App.Index.TasksChanged += Index_TasksChanged;
             _subscribed = true;
         }
         _sessionTimer.Start();
-        RefreshPlanner();
+        await RefreshPlannerAsync();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         _sessionTimer.Stop();
+        _navigationCancellation.Cancel();
         if (_subscribed)
         {
             App.Index.TasksChanged -= Index_TasksChanged;
@@ -66,7 +75,7 @@ public sealed partial class PlannerPage : Page
     }
 
     private void Index_TasksChanged(object? sender, TasksChangedEventArgs e) =>
-        DispatcherQueue.TryEnqueue(RefreshPlanner);
+        DispatcherQueue.TryEnqueue(() => _ = RefreshPlannerAsync());
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e) =>
         DispatcherQueue.TryEnqueue(RenderState);
@@ -74,6 +83,16 @@ public sealed partial class PlannerPage : Page
     private void RefreshPlanner()
     {
         _viewModel.Refresh();
+        RenderState();
+    }
+
+    private async Task RefreshPlannerAsync(bool forceCalendarRefresh = false)
+    {
+        var refresh = _viewModel.RefreshAsync(
+            forceCalendarRefresh,
+            _navigationCancellation.Token);
+        RenderState();
+        await refresh;
         RenderState();
     }
 
@@ -96,6 +115,20 @@ public sealed partial class PlannerPage : Page
             TotalsText.Text = $"{_viewModel.SelectedWorkMinutes} min selected";
             UncertaintyText.Text =
                 $"{_viewModel.AssumedSizeCount} assumed, {_viewModel.UncertainSizeCount} check";
+            CalendarStateText.Text = _viewModel.CalendarStatus;
+            CalendarSetupPanel.Visibility = _viewModel.CanConnectCalendar
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            CalendarRefreshButton.Visibility = _viewModel.CanRefreshCalendar
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            CalendarDisconnectButton.Visibility = _viewModel.CanDisconnectCalendar
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            CalendarRecoveryPanel.Visibility = _viewModel.CanResetCalendar
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            CalendarResetScopeText.Text = _viewModel.CalendarResetScopeText;
             ErrorBar.IsOpen = !string.IsNullOrWhiteSpace(_viewModel.ErrorMessage);
             ErrorBar.Message = _viewModel.ErrorMessage ?? string.Empty;
             AnnouncementText.Text = _viewModel.Announcement;
@@ -182,7 +215,34 @@ public sealed partial class PlannerPage : Page
         return false;
     }
 
-    private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshPlanner();
+    private async void Refresh_Click(object sender, RoutedEventArgs e) =>
+        await RefreshPlannerAsync(forceCalendarRefresh: true);
+
+    private async void CalendarConnect_Click(object sender, RoutedEventArgs e)
+    {
+        var secret = CalendarSecretBox.Password;
+        CalendarSecretBox.Password = string.Empty;
+        await _viewModel.ConnectCalendarAsync(secret, _navigationCancellation.Token);
+        RenderState();
+    }
+
+    private async void CalendarRefresh_Click(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.RefreshCalendarAsync(_navigationCancellation.Token);
+        RenderState();
+    }
+
+    private async void CalendarDisconnect_Click(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.DisconnectCalendarAsync(_navigationCancellation.Token);
+        RenderState();
+    }
+
+    private async void CalendarReset_Click(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.ResetCalendarAsync(_navigationCancellation.Token);
+        RenderState();
+    }
 
     private void SizeButton_Click(object sender, RoutedEventArgs e)
     {
