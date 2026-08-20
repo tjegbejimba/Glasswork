@@ -70,6 +70,60 @@ public class VerificationLaunchOptionsTests
     }
 
     [TestMethod]
+    public void FromEnvironment_WhenProductionCalendarProbeIsFullyIsolated_EnablesProbeMode()
+    {
+        var options = VerificationLaunchOptions.FromEnvironment(
+            new Dictionary<string, string?>
+            {
+                [VerificationLaunchOptions.StartPageVariable] = "planner",
+                [VerificationLaunchOptions.VaultPathVariable] =
+                    @"C:\tmp\glasswork-probe\vault",
+                [VerificationLaunchOptions.UiStatePathVariable] =
+                    @"C:\tmp\glasswork-probe\ui-state.json",
+                [VerificationLaunchOptions.InstanceKeyVariable] = "calendar-probe-123",
+                [VerificationLaunchOptions.ProductionCalendarProbeVariable] = "1",
+            });
+
+        Assert.IsTrue(options.IsProductionCalendarProbe);
+        Assert.IsTrue(options.IsVerificationRun);
+        Assert.AreEqual("planner", options.StartPage);
+        Assert.IsTrue(options.SkipProtocolRegistration);
+        Assert.IsTrue(options.SkipUpdateCheck);
+    }
+
+    [TestMethod]
+    public void FromEnvironment_WhenProductionCalendarProbeLacksPlannerIsolation_RejectsLaunch()
+    {
+        Assert.Throws<FormatException>(() =>
+            VerificationLaunchOptions.FromEnvironment(
+                new Dictionary<string, string?>
+                {
+                    [VerificationLaunchOptions.ProductionCalendarProbeVariable] = "1",
+                }));
+    }
+
+    [TestMethod]
+    public void FromEnvironment_WhenProductionCalendarProbeAlsoHasVisualFixture_RejectsWithoutEcho()
+    {
+        const string fixturePath = @"C:\tmp\do-not-echo\calendar-fixture.json";
+        var exception = Assert.Throws<FormatException>(() =>
+            VerificationLaunchOptions.FromEnvironment(
+                new Dictionary<string, string?>
+                {
+                    [VerificationLaunchOptions.StartPageVariable] = "planner",
+                    [VerificationLaunchOptions.VaultPathVariable] =
+                        @"C:\tmp\glasswork-probe\vault",
+                    [VerificationLaunchOptions.UiStatePathVariable] =
+                        @"C:\tmp\glasswork-probe\ui-state.json",
+                    [VerificationLaunchOptions.InstanceKeyVariable] = "calendar-probe-123",
+                    [VerificationLaunchOptions.ProductionCalendarProbeVariable] = "1",
+                    [VerificationLaunchOptions.CalendarContextFixturePathVariable] = fixturePath,
+                }));
+
+        Assert.DoesNotContain(fixturePath, exception.Message);
+    }
+
+    [TestMethod]
     public async Task CreateCalendarContext_VerificationWithoutFixture_FailsClosedWithoutProductionFactory()
     {
         var productionFactoryCalls = 0;
@@ -100,6 +154,37 @@ public class VerificationLaunchOptionsTests
 
         Assert.AreEqual(CalendarContextStatus.Unavailable, result.Status);
         Assert.AreEqual(0, productionFactoryCalls);
+    }
+
+    [TestMethod]
+    public void CreateCalendarContext_ProductionCalendarProbe_UsesProductionFactory()
+    {
+        var productionFactoryCalls = 0;
+        var options = VerificationLaunchOptions.FromEnvironment(
+            new Dictionary<string, string?>
+            {
+                [VerificationLaunchOptions.StartPageVariable] = "planner",
+                [VerificationLaunchOptions.VaultPathVariable] =
+                    @"C:\tmp\glasswork-probe\vault",
+                [VerificationLaunchOptions.UiStatePathVariable] =
+                    @"C:\tmp\glasswork-probe\ui-state.json",
+                [VerificationLaunchOptions.InstanceKeyVariable] = "calendar-probe-123",
+                [VerificationLaunchOptions.ProductionCalendarProbeVariable] = "1",
+            });
+        var production = new UnavailableCalendarContext();
+
+        var calendarContext = VerificationLaunchOptions.CreateCalendarContext(
+            options,
+            fixturePath: null,
+            _ => throw new AssertFailedException("Fixture factory must not run."),
+            () =>
+            {
+                productionFactoryCalls++;
+                return production;
+            });
+
+        Assert.AreSame(production, calendarContext);
+        Assert.AreEqual(1, productionFactoryCalls);
     }
 
     [TestMethod]

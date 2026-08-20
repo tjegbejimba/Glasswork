@@ -11,7 +11,8 @@ public sealed record VerificationLaunchOptions(
     string InstanceKey,
     bool SkipProtocolRegistration,
     bool SkipUpdateCheck,
-    string? StartPage = null)
+    string? StartPage = null,
+    bool IsProductionCalendarProbe = false)
 {
     public const string VaultPathVariable = "GLASSWORK_VERIFY_VAULT_PATH";
     public const string UiStatePathVariable = "GLASSWORK_VERIFY_UI_STATE_PATH";
@@ -23,6 +24,8 @@ public sealed record VerificationLaunchOptions(
     public const string StartPageVariable = "GLASSWORK_VERIFY_START_PAGE";
     public const string CalendarContextFixturePathVariable =
         "GLASSWORK_VISUAL_CALENDAR_CONTEXT_FIXTURE";
+    public const string ProductionCalendarProbeVariable =
+        "GLASSWORK_PROBE_PRODUCTION_CALENDAR_CONTEXT";
 
     public bool IsVerificationRun =>
         !string.IsNullOrWhiteSpace(VaultPath) ||
@@ -43,7 +46,7 @@ public sealed record VerificationLaunchOptions(
         ArgumentNullException.ThrowIfNull(fixtureFactory);
         ArgumentNullException.ThrowIfNull(productionFactory);
 
-        if (!options.IsVerificationRun)
+        if (!options.IsVerificationRun || options.IsProductionCalendarProbe)
             return productionFactory();
 
         return string.IsNullOrWhiteSpace(fixturePath)
@@ -57,6 +60,7 @@ public sealed record VerificationLaunchOptions(
         var uiStatePath = Read(environment, UiStatePathVariable);
         var instanceKey = Read(environment, InstanceKeyVariable) ?? "main";
         var startPage = Read(environment, StartPageVariable);
+        var isProductionCalendarProbe = ReadBool(environment, ProductionCalendarProbeVariable);
         if (startPage is not null && startPage != "planner")
             throw new FormatException($"Unsupported verification start page '{startPage}'.");
         if (startPage == "planner"
@@ -66,6 +70,17 @@ public sealed record VerificationLaunchOptions(
         {
             throw new FormatException(
                 "Planner verification start requires isolated Vault, UI state, and instance paths.");
+        }
+        if (isProductionCalendarProbe && startPage != "planner")
+        {
+            throw new FormatException(
+                "Production Calendar probe requires an isolated Planner launch.");
+        }
+        if (isProductionCalendarProbe
+            && Read(environment, CalendarContextFixturePathVariable) is not null)
+        {
+            throw new FormatException(
+                "Production Calendar probe cannot use a visual Calendar fixture.");
         }
 
         var explicitSkipProtocol = ReadBool(environment, SkipProtocolRegistrationVariable);
@@ -83,7 +98,8 @@ public sealed record VerificationLaunchOptions(
             instanceKey,
             explicitSkipProtocol || isVerificationRun,
             explicitSkipUpdate || isVerificationRun,
-            startPage);
+            startPage,
+            isProductionCalendarProbe);
     }
 
     private static string? Read(IReadOnlyDictionary<string, string?> environment, string key)
