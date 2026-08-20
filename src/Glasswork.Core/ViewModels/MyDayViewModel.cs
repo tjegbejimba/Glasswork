@@ -18,6 +18,7 @@ public partial class MyDayViewModel : ObservableObject
     private readonly IUiStateService? _uiState;
     private readonly IPerformanceTracer _performanceTracer;
     private readonly ITaskQuery _taskQuery;
+    private readonly PlannerSubtaskIdentityStore _plannerIdentities = new();
 
     public ObservableCollection<GlassworkTask> TodayTasks { get; } = [];
     public ObservableCollection<GlassworkTask> RecentlyCompletedTasks { get; } = [];
@@ -96,6 +97,10 @@ public partial class MyDayViewModel : ObservableObject
         EnsureSuccessful(queryResult, "My Day");
         var all = queryResult.MaterializeSourceTasks();
         var todayTasks = queryResult.MaterializeTasks();
+        foreach (var task in all.Values)
+            _plannerIdentities.Reconcile(task);
+        foreach (var task in todayTasks)
+            _plannerIdentities.Reconcile(task);
         var targetTodayTasks = new List<GlassworkTask>();
         foreach (var task in todayTasks)
         {
@@ -245,6 +250,7 @@ public partial class MyDayViewModel : ObservableObject
         target.Status = source.Status;
         target.Type = source.Type;
         target.Priority = source.Priority;
+        target.Size = source.Size;
         target.Created = source.Created;
         target.CompletedAt = source.CompletedAt;
         target.Due = source.Due;

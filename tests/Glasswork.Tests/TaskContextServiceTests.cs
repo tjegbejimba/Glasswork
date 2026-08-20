@@ -36,6 +36,7 @@ public class TaskContextServiceTests
             Status = GlassworkTask.Statuses.InProgress,
             Description = "## Context\n\nInvestigate third-party API options.",
             Notes = "Started with vendor docs.",
+            Size = "future_bucket",
         };
         _vault.Save(task);
 
@@ -49,6 +50,8 @@ public class TaskContextServiceTests
         Assert.AreEqual(GlassworkTask.Statuses.InProgress, bundle.Status);
         Assert.AreEqual("## Context\n\nInvestigate third-party API options.", bundle.Description);
         Assert.AreEqual("Started with vendor docs.", bundle.Notes);
+        Assert.AreEqual("future_bucket", bundle.Size);
+        Assert.AreEqual(_vault.Load(task.Id)!.ResourceRevision, bundle.ResourceRevision);
         Assert.IsTrue(bundle.TaskFilePath.EndsWith("research-api.md"));
     }
 

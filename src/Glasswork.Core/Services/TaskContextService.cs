@@ -32,6 +32,8 @@ public class TaskContextService
         var task = _vault.Load(taskId);
         if (task == null)
             return null;
+        var resourceRevision = task.ResourceRevision
+            ?? throw new InvalidOperationException("Managed Task snapshot is missing its Resource Revision.");
 
         var taskFilePath = Path.Combine(_vault.VaultPath, $"{taskId}.md");
 
@@ -67,6 +69,8 @@ public class TaskContextService
             Backlinks: backlinks.ToList(),
             OpenBlockers: openBlockers,
             TaskFilePath: taskFilePath,
-            ArtifactsPath: hasArtifactsDir ? artifactsPath : null);
+            ArtifactsPath: hasArtifactsDir ? artifactsPath : null,
+            Size: task.Size,
+            ResourceRevision: resourceRevision);
     }
 }

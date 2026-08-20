@@ -156,4 +156,32 @@ public sealed class TaskSearchServiceTests
     {
         Assert.ThrowsExactly<ArgumentException>(() => _search.Search(" "));
     }
+
+    [TestMethod]
+    public void Search_ExactSizeFilterMatchesOnlyRecognizedExplicitTaskSize()
+    {
+        _vault.Save(new GlassworkTask
+        {
+            Id = "explicit-focus",
+            Title = "Sized work",
+            Size = "focus",
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "missing-size",
+            Title = "Sized work",
+        });
+        _vault.Save(new GlassworkTask
+        {
+            Id = "unknown-size",
+            Title = "Sized work",
+            Size = "future_bucket",
+        });
+
+        var hits = _search.Search("sized", size: "FOCUS");
+
+        Assert.AreEqual(1, hits.Count);
+        Assert.AreEqual("explicit-focus", hits[0].Id);
+        Assert.AreEqual("focus", hits[0].Size);
+    }
 }

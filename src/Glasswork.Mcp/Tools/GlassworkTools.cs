@@ -130,6 +130,10 @@ public sealed class GlassworkTools
     {
         try
         {
+            var sizeError = ValidateOperationSizes(operations);
+            if (sizeError is not null)
+                return SerializeMutationValidation(mutation_id, sizeError, if_revision);
+
             if (operations.ValueKind == JsonValueKind.Array
                 && operations.GetArrayLength() == 1
                 && operations[0].ValueKind == JsonValueKind.Object
@@ -197,10 +201,11 @@ public sealed class GlassworkTools
         string? scheduled = null,
         bool? my_day = null,
         string? notes = null,
-        string? type = null)
+        string? type = null,
+        string? size = null)
     {
         return AddTask(title, Guid.NewGuid().ToString("N"), true, description, parent_task_id, status,
-            blocked_reason, priority, due_date, scheduled, my_day, notes, type);
+            blocked_reason, priority, due_date, scheduled, my_day, notes, type, size);
     }
 
     [McpServerTool(Name = "add_task")]
@@ -219,7 +224,8 @@ public sealed class GlassworkTools
         [Description("Optional scheduled date (yyyy-MM-dd format). Sets my_day to this future date.")] string? scheduled = null,
         [Description("If true, sets my_day to today.")] bool? my_day = null,
         [Description("Optional notes content. Becomes the Notes section (ADR 0002).")] string? notes = null,
-        [Description("Task type: task, pbi, or bug. Accepts broader aliases (Product Backlog Item/User Story/Epic/Feature → pbi). Defaults to task (ADR 0016).")] string? type = null)
+        [Description("Task type: task, pbi, or bug. Accepts broader aliases (Product Backlog Item/User Story/Epic/Feature → pbi). Defaults to task (ADR 0016).")] string? type = null,
+        [Description("Optional Size: quick, short, focus, deep, or break_down.")] string? size = null)
     {
         using var scope = _logger?.BeginCall("add_task");
         try
@@ -237,6 +243,8 @@ public sealed class GlassworkTools
                 scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_title", "title is required."));
             }
+            if (ValidateSize(size, "size") is { } sizeError)
+                return SerializeMutationValidation(mutation_id, sizeError);
 
             if (!TryMapToInternalStatus(status, out var internalStatus, out var statusError))
             {
@@ -280,6 +288,7 @@ public sealed class GlassworkTools
                 Status = internalStatus == GlassworkTask.Statuses.Blocked ? GlassworkTask.Statuses.Todo : internalStatus,
                 Priority = taskPriority,
                 Type = taskType,
+                Size = size,
                 Created = DateTime.Today,
                 Parent = safeParent,
                 Description = description ?? string.Empty,
@@ -325,7 +334,7 @@ public sealed class GlassworkTools
     public string ListTasks(
         [Description("Filter by status: todo, doing, blocked, done, or cancelled. Cancelled Tasks are excluded when omitted.")] string? status = null,
         [Description("Filter by parent task ID.")] string? parent_task_id = null,
-        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values include title, status, type, parent_id, path, created, priority, due, start, my_day, defer_until, cancelled_at, cancellation_reason, ready, urgency_score, backlink_count, and in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
+        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values include title, status, type, size, parent_id, path, created, priority, due, start, my_day, defer_until, cancelled_at, cancellation_reason, ready, urgency_score, backlink_count, and in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
     {
         using var scope = _logger?.BeginCall("list_tasks");
         try
@@ -374,6 +383,7 @@ public sealed class GlassworkTools
                         Ready: task.Ready,
                         UrgencyScore: task.UrgencyScore,
                         BacklinkCount: task.BacklinkCount,
+                        Size: task.Size,
                         ResourceRevision: task.ResourceRevision!,
                         CancelledAt: task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
                         CancellationReason: task.CancellationReason))
@@ -533,7 +543,8 @@ public sealed class GlassworkTools
                         Type: link.Type,
                         Url: link.Value,
                         Title: link.Label ?? link.Value
-                    )).ToList()))
+                    )).ToList(),
+                    Size: task.Size))
                 .ToList();
 
             var result = new GetMyDayResult(
@@ -632,9 +643,10 @@ public sealed class GlassworkTools
                     Title: t.Title,
                     Status: MapToExternalStatus(t.Status),
                     Priority: t.Priority,
+                    Size: t.Size,
                     Depth: CalculateDepth(t.Id, all),
                     SubtaskCount: all.Count(child => child.Parent == t.Id),
-                    ResourceRevision: ResourceRevision(t.Id)))
+                    ResourceRevision: ManagedResourceRevision(t)))
                 .ToList();
 
             var total = subtaskInfos.Count;
@@ -646,7 +658,7 @@ public sealed class GlassworkTools
                     sanitizedId,
                     parentTask.Title,
                     MapToExternalStatus(parentTask.Status),
-                    ResourceRevision(parentTask.Id)),
+                    ManagedResourceRevision(parentTask)),
                 Subtasks: subtaskInfos,
                 Total: total,
                 CompletionRate: completionRate);
@@ -671,7 +683,8 @@ public sealed class GlassworkTools
         [Description("Task ID to add the subtask to.")] string task_id,
         [Description("Title of the new subtask.")] string title,
         [Description("Client-generated idempotency key.")] string? mutation_id,
-        [Description("Resource Revision observed before the update.")] string? if_revision)
+        [Description("Resource Revision observed before the update.")] string? if_revision,
+        [Description("Optional Size: quick, short, focus, deep, or break_down.")] string? size = null)
     {
         using var scope = _logger?.BeginCall("add_subtask");
         try
@@ -685,6 +698,8 @@ public sealed class GlassworkTools
                 scope?.SetResult("invalid_title");
                 return JsonSerializer.Serialize(new ErrorResult("invalid_title", "Subtask title cannot be empty."));
             }
+            if (ValidateSize(size, "size") is { } sizeError)
+                return SerializeMutationValidation(mutation_id, sizeError, if_revision);
 
             var sanitizedId = SanitizeId(task_id);
             if (sanitizedId is null)
@@ -700,7 +715,7 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("not_found", $"Task '{task_id}' not found."));
             }
 
-            task.Subtasks.Add(new SubTask { Text = title });
+            task.Subtasks.Add(new SubTask { Text = title, Size = size });
             var mutation = _mutations.TransactSingleTask(
                 mutation_id,
                 sanitizedId,
@@ -716,7 +731,8 @@ public sealed class GlassworkTools
                     st.Text,
                     // When Status is null, derive from checkbox: IsCompleted -> "done", else "todo"
                     st.Status is not null ? MapToExternalStatus(st.Status) : (st.IsCompleted ? "done" : "todo"),
-                    st.Notes))
+                    st.Notes,
+                    st.Size))
                 .ToArray();
 
             var result = new
@@ -758,7 +774,8 @@ public sealed class GlassworkTools
         [Description("Optional field scope. Valid values: title, description, notes, subtasks, tags.")] string[]? @in = null,
         [Description("Optional tags filter (AND).")] string[]? tags = null,
         [Description("Optional status filter(s): todo, doing, blocked, done, or cancelled. Cancelled Tasks are excluded when omitted.")] string[]? status = null,
-        [Description("Maximum results. Clamped to [1, 100]. Default: 20.")] int limit = 20)
+        [Description("Maximum results. Clamped to [1, 100]. Default: 20.")] int limit = 20,
+        [Description("Exact recognized explicit Task Size filter: quick, short, focus, deep, or break_down.")] string? size = null)
     {
         using var scope = _logger?.BeginCall("search_tasks");
         try
@@ -782,6 +799,7 @@ public sealed class GlassworkTools
                     TaskQueryField.Notes,
                     TaskQueryField.Subtasks,
                     TaskQueryField.Tags,
+                    TaskQueryField.Size,
                     TaskQueryField.Ready,
                     TaskQueryField.UrgencyScore,
                     TaskQueryField.BacklinkCount,
@@ -821,7 +839,8 @@ public sealed class GlassworkTools
                         .Select(subtask => $"{subtask.Text}\n{subtask.Notes}".Trim())
                         .ToArray()
                         ?? [],
-                    task.Tags))
+                    task.Tags,
+                    task.Size))
                 .ToArray();
 
             // Defensive net: pre-validation should have caught known cases, but a
@@ -832,7 +851,7 @@ public sealed class GlassworkTools
             IReadOnlyList<TaskSearchHit> searchHits;
             try
             {
-                searchHits = _search.Search(documents, query, @in, tags, status, limit);
+                searchHits = _search.Search(documents, query, @in, tags, status, limit, size);
             }
             catch (ArgumentException ex)
             {
@@ -854,6 +873,7 @@ public sealed class GlassworkTools
                         Ready: task.Ready,
                         UrgencyScore: task.UrgencyScore,
                         BacklinkCount: task.BacklinkCount,
+                        Size: h.Size,
                         ResourceRevision: task.ResourceRevision!,
                         CancelledAt: task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
                         CancellationReason: task.CancellationReason);
@@ -1002,7 +1022,8 @@ public sealed class GlassworkTools
                 BlockedFromStatus: task.BlockedFromStatus is null ? null : MapToExternalStatus(task.BlockedFromStatus),
                 NeedsBlockerDetails: task.NeedsBlockerDetails ? true : null,
                 DueDate: task.Due?.ToString("yyyy-MM-dd"),
-                Scheduled: task.MyDay?.ToString("yyyy-MM-dd"));
+                Scheduled: task.MyDay?.ToString("yyyy-MM-dd"),
+                Size: task.Size);
 
             return JsonSerializer.Serialize(result);
         }
@@ -1574,7 +1595,7 @@ public sealed class GlassworkTools
     [Description("Update an existing task. Only fields present in the fields object are written; omitted fields remain untouched.")]
     public string UpdateTask(
         [Description("Task ID to update.")] string task_id,
-        [Description("Object containing fields to update: title, status, blocked_reason, blocked_from_status, description, notes, priority, type, parent_task_id, ado_link, ado_title, due_date, scheduled. notes may be a string/null or { value, append }. due_date and scheduled accept yyyy-MM-dd strings or null to clear. status=blocked requires blocked_reason. blocked_from_status is only used when repairing malformed blocked metadata.")] JsonElement fields,
+        [Description("Object containing fields to update: title, status, blocked_reason, blocked_from_status, description, notes, priority, type, size, parent_task_id, ado_link, ado_title, due_date, scheduled. notes may be a string/null or { value, append }. due_date and scheduled accept yyyy-MM-dd strings or null to clear. size accepts a raw string or null to clear. status=blocked requires blocked_reason. blocked_from_status is only used when repairing malformed blocked metadata.")] JsonElement fields,
         [Description("Client-generated idempotency key.")] string? mutation_id,
         [Description("Resource Revision observed before the update.")] string? if_revision)
     {
@@ -1688,6 +1709,15 @@ public sealed class GlassworkTools
                     return SerializeInputError(scope, error!);
                 var normalizedType = GlassworkTask.Types.Normalize(value);
                 UpdateIfChanged(task.Type, normalizedType, v => task.Type = v, "type", updatedFields);
+            }
+
+            if (hasFields && fields.TryGetProperty("size", out var sizeElement))
+            {
+                if (!TryReadNullableString(sizeElement, "size", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                if (ValidateSize(value, "size") is { } sizeError)
+                    return SerializeMutationValidation(mutation_id, sizeError, if_revision);
+                UpdateIfChanged(task.Size, SizeBuckets.NormalizeRaw(value), v => task.Size = v, "size", updatedFields);
             }
 
             if (hasFields && fields.TryGetProperty("parent_task_id", out var parentElement))
@@ -1872,7 +1902,7 @@ public sealed class GlassworkTools
     public string UpdateSubtask(
         [Description("Parent task ID.")] string task_id,
         [Description("Zero-based subtask index.")] int subtask_index,
-        [Description("Object containing fields to update: status (todo/done/blocked), title, notes.")] JsonElement fields,
+        [Description("Object containing fields to update: status (todo/done/blocked), title, notes, size. size accepts a raw string or null to clear.")] JsonElement fields,
         [Description("Client-generated idempotency key.")] string? mutation_id,
         [Description("Resource Revision observed before the update.")] string? if_revision)
     {
@@ -1953,6 +1983,15 @@ public sealed class GlassworkTools
                 UpdateIfChanged(subtask.Notes, value ?? string.Empty, v => subtask.Notes = v, "notes", updatedFields);
             }
 
+            if (hasFields && fields.TryGetProperty("size", out var sizeElement))
+            {
+                if (!TryReadNullableString(sizeElement, "size", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                if (ValidateSize(value, "size") is { } sizeError)
+                    return SerializeMutationValidation(mutation_id, sizeError, if_revision);
+                UpdateIfChanged(subtask.Size, SizeBuckets.NormalizeRaw(value), v => subtask.Size = v, "size", updatedFields);
+            }
+
             var mutation = _mutations.TransactSingleTask(
                 mutation_id,
                 safeId,
@@ -1972,6 +2011,7 @@ public sealed class GlassworkTools
                     text = subtask.Text,
                     status = subtask.Status,
                     notes = subtask.Notes,
+                    size = subtask.Size,
                     is_completed = subtask.IsCompleted
                 }
             });
@@ -2095,6 +2135,7 @@ public sealed class GlassworkTools
             ["status"] = task.Status,
             ["priority"] = task.Priority,
             ["type"] = task.Type,
+            ["size"] = task.Size,
             ["parent_task_id"] = task.Parent,
             ["description"] = task.Description,
             ["notes"] = task.Notes,
@@ -2116,6 +2157,7 @@ public sealed class GlassworkTools
                 ["is_completed"] = subtask.IsCompleted,
                 ["status"] = subtask.Status,
                 ["notes"] = subtask.Notes,
+                ["size"] = subtask.Size,
                 ["metadata"] = subtask.Metadata
             }).ToArray(),
         };
@@ -2145,7 +2187,7 @@ public sealed class GlassworkTools
     private static readonly string[] UpdatedFieldOrder =
     [
         "title", "status", "blocked_reason", "blocked_at", "blocked_from_status", "description", "notes",
-        "priority", "type", "parent_task_id", "ado_link", "ado_title", "due_date", "scheduled"
+        "priority", "type", "size", "parent_task_id", "ado_link", "ado_title", "due_date", "scheduled"
     ];
 
     private static string[] OrderUpdatedFields(List<string> updatedFields)
@@ -2185,6 +2227,72 @@ public sealed class GlassworkTools
         error = new ErrorResult("invalid_" + fieldName, fieldName + " must be a string or null.");
         return false;
     }
+
+    private static string? ValidateOperationSizes(JsonElement operations)
+    {
+        if (operations.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var operationIndex = 0;
+        foreach (var operation in operations.EnumerateArray())
+        {
+            if (operation.ValueKind == JsonValueKind.Object
+                && operation.TryGetProperty("fields", out var fields)
+                && fields.ValueKind == JsonValueKind.Object)
+            {
+                if (fields.TryGetProperty("size", out var taskSize)
+                    && ValidateSizeElement(taskSize, $"operations[{operationIndex}].fields.size") is { } taskError)
+                    return taskError;
+
+                if (fields.TryGetProperty("subtasks", out var subtasks)
+                    && subtasks.ValueKind == JsonValueKind.Array)
+                {
+                    var subtaskIndex = 0;
+                    foreach (var subtask in subtasks.EnumerateArray())
+                    {
+                        if (subtask.ValueKind == JsonValueKind.Object)
+                        {
+                            if (subtask.TryGetProperty("size", out var subtaskSize)
+                                && ValidateSizeElementShape(
+                                    subtaskSize,
+                                    $"operations[{operationIndex}].fields.subtasks[{subtaskIndex}].size") is { } subtaskError)
+                                return subtaskError;
+                            if (subtask.TryGetProperty("metadata", out var metadata)
+                                && metadata.ValueKind == JsonValueKind.Object
+                                && metadata.TryGetProperty("size", out var metadataSize)
+                                && ValidateSizeElementShape(
+                                    metadataSize,
+                                    $"operations[{operationIndex}].fields.subtasks[{subtaskIndex}].metadata.size") is { } metadataError)
+                                return metadataError;
+                        }
+                        subtaskIndex++;
+                    }
+                }
+            }
+            operationIndex++;
+        }
+
+        return null;
+    }
+
+    private static string? ValidateSizeElement(JsonElement value, string path)
+    {
+        if (value.ValueKind == JsonValueKind.Null)
+            return null;
+        if (value.ValueKind != JsonValueKind.String)
+            return $"{path} must be a string or null.";
+        return ValidateSize(value.GetString(), path);
+    }
+
+    private static string? ValidateSizeElementShape(JsonElement value, string path) =>
+        value.ValueKind is JsonValueKind.Null or JsonValueKind.String
+            ? null
+            : $"{path} must be a string or null.";
+
+    private static string? ValidateSize(string? size, string path) =>
+        string.IsNullOrWhiteSpace(size) || SizeBuckets.TryParse(size, out _)
+            ? null
+            : $"{path} must be quick, short, focus, deep, break_down, or null.";
 
     private static bool TryReadNullableInt(
         JsonElement element,
@@ -2554,6 +2662,7 @@ public sealed class GlassworkTools
         Description: task.Description,
         Notes: task.Notes,
         ResourceRevision: ResourceRevision(task.Id),
+        Size: task.Size,
         CancelledAt: task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
         CancellationReason: task.CancellationReason,
         BlockedReason: task.BlockedReason,
@@ -2679,6 +2788,7 @@ public sealed class GlassworkTools
                 "path" => TaskQueryField.Path,
                 "created" => TaskQueryField.Created,
                 "priority" => TaskQueryField.Priority,
+                "size" => TaskQueryField.Size,
                 "due" => TaskQueryField.Due,
                 "start" => TaskQueryField.Start,
                 "my_day" => TaskQueryField.MyDay,
@@ -2729,6 +2839,7 @@ public sealed class GlassworkTools
         if (task.Includes(TaskQueryField.Path)) dict["path"] = task.Path;
         if (task.Includes(TaskQueryField.Created)) dict["created"] = task.Created.ToString("yyyy-MM-dd");
         if (task.Includes(TaskQueryField.Priority)) dict["priority"] = task.Priority;
+        if (task.Includes(TaskQueryField.Size)) dict["size"] = task.Size;
         if (task.Includes(TaskQueryField.Due)) dict["due"] = task.Due?.ToString("yyyy-MM-dd");
         if (task.Includes(TaskQueryField.Start)) dict["start"] = task.Start?.ToString("yyyy-MM-dd");
         if (task.Includes(TaskQueryField.MyDay)) dict["my_day"] = task.MyDay?.ToString("yyyy-MM-dd");
@@ -2765,6 +2876,11 @@ public sealed class GlassworkTools
         return $"rr1-{Convert.ToHexString(digest).ToLowerInvariant()}";
     }
 
+    private static string ManagedResourceRevision(GlassworkTask task) =>
+        task.ResourceRevision
+        ?? throw new InvalidOperationException(
+            $"Managed Task snapshot '{task.Id}' is missing its Resource Revision.");
+
     private static Dictionary<string, object?> QueryTaskSnapshot(TaskQueryItem task)
     {
         var snapshot = new Dictionary<string, object?>
@@ -2784,6 +2900,8 @@ public sealed class GlassworkTools
             snapshot["cancelled_at"] = task.CancelledAt.Value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
         if (task.CancellationReason is not null)
             snapshot["cancellation_reason"] = task.CancellationReason;
+        if (task.Size is not null)
+            snapshot["size"] = task.Size;
         return snapshot;
     }
 
@@ -3005,6 +3123,7 @@ public sealed class GlassworkTools
             status = task.Status,
             priority = task.Priority,
             type = task.Type,
+            size = task.Size,
             created = task.Created.ToString("yyyy-MM-dd"),
             due = task.Due?.ToString("yyyy-MM-dd"),
             start = task.Start?.ToString("yyyy-MM-dd"),
@@ -3019,6 +3138,15 @@ public sealed class GlassworkTools
             cancelled_at = task.CancelledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
             cancellation_reason = task.CancellationReason,
             blocked_reason = task.BlockedReason,
+            subtasks = task.Subtasks?.Select(subtask => new
+            {
+                text = subtask.Text,
+                is_completed = subtask.IsCompleted,
+                status = subtask.Status,
+                size = subtask.Size,
+                metadata = subtask.Metadata,
+                notes = subtask.Notes
+            }).ToArray(),
             resource_revision = task.ResourceRevision
         };
     }
@@ -3086,6 +3214,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("ready")] bool Ready,
         [property: JsonPropertyName("urgency_score")] double UrgencyScore,
         [property: JsonPropertyName("backlink_count")] int BacklinkCount,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision,
         [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,
         [property: JsonPropertyName("cancellation_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancellationReason = null);
@@ -3106,6 +3235,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("ready")] bool Ready,
         [property: JsonPropertyName("urgency_score")] double UrgencyScore,
         [property: JsonPropertyName("backlink_count")] int BacklinkCount,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision,
         [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,
         [property: JsonPropertyName("cancellation_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancellationReason = null);
@@ -3140,7 +3270,13 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("blocked_from_status"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedFromStatus = null,
         [property: JsonPropertyName("needs_blocker_details"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? NeedsBlockerDetails = null,
         [property: JsonPropertyName("due_date"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DueDate = null,
-        [property: JsonPropertyName("scheduled"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Scheduled = null);
+        [property: JsonPropertyName("scheduled"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Scheduled = null,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size = null);
+
+    private sealed record SubtaskMutationSummary(
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("status")] string? Status,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size);
 
     private sealed record AddArtifactResult(
         [property: JsonPropertyName("path")] string Path,
@@ -3210,6 +3346,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("description")] string Description,
         [property: JsonPropertyName("notes")] string Notes,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size = null,
         [property: JsonPropertyName("cancelled_at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancelledAt = null,
         [property: JsonPropertyName("cancellation_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CancellationReason = null,
         [property: JsonPropertyName("blocked_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BlockedReason = null,
@@ -3281,6 +3418,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("title")] string Title,
         [property: JsonPropertyName("status")] string Status,
         [property: JsonPropertyName("priority")] string Priority,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size,
         [property: JsonPropertyName("depth")] int Depth,
         [property: JsonPropertyName("subtask_count")] int SubtaskCount,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision);
@@ -3513,8 +3651,9 @@ public sealed class GlassworkTools
                     DueDate: t.Due!.Value.ToString("yyyy-MM-dd"),
                     DaysOverdue: (today - t.Due!.Value.Date).Days,
                     Priority: t.Priority,
+                    Size: t.Size,
                     InMyDay: t.IsMyDay,
-                    ResourceRevision: ResourceRevision(t.Id)))
+                    ResourceRevision: ManagedResourceRevision(t)))
                 .ToList();
 
             var result = new ListOverdueResult(
@@ -3682,7 +3821,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("scheduled")] string? Scheduled,
         [property: JsonPropertyName("parent_id")] string? ParentId,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision,
-        [property: JsonPropertyName("links")] List<MyDayLink> Links);
+        [property: JsonPropertyName("links")] List<MyDayLink> Links,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size = null);
 
     private sealed record MyDayLink(
         [property: JsonPropertyName("type")] string Type,
@@ -3702,6 +3842,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("due_date")] string DueDate,
         [property: JsonPropertyName("days_overdue")] int DaysOverdue,
         [property: JsonPropertyName("priority")] string Priority,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size,
         [property: JsonPropertyName("in_my_day")] bool InMyDay,
         [property: JsonPropertyName("resource_revision")] string ResourceRevision);
 
@@ -3746,13 +3887,15 @@ public sealed class GlassworkTools
                 TaskId: bundle.TaskId,
                 Title: bundle.Title,
                 Status: MapToExternalStatus(bundle.Status),
-                ResourceRevision: ResourceRevision(bundle.TaskId),
+                ResourceRevision: bundle.ResourceRevision,
                 Description: bundle.Description,
                 Notes: bundle.Notes,
+                Size: bundle.Size,
                 ActiveSubtasks: bundle.ActiveSubtasks.Select(s => new ContextSubtaskInfo(
                     Text: s.Text,
                     Status: s.Status is not null ? MapToExternalStatus(s.Status) : (s.IsCompleted ? "done" : "todo"),
-                    Notes: s.Notes)).ToArray(),
+                    Notes: s.Notes,
+                    Size: s.Size)).ToArray(),
                 Links: bundle.Links.Select(l => new LinkResult(l.Type, l.Value, l.Label)).ToArray(),
                 LatestArtifacts: bundle.LatestArtifacts.Select(a => new ContextArtifactInfo(
                     Path: TodoRelativeArtifactPath(bundle.TaskId, Path.GetFileName(a.Path)),
@@ -3767,7 +3910,8 @@ public sealed class GlassworkTools
                 OpenBlockers: bundle.OpenBlockers.Select(s => new ContextSubtaskInfo(
                     Text: s.Text,
                     Status: s.Status is not null ? MapToExternalStatus(s.Status) : (s.IsCompleted ? "done" : "todo"),
-                    Notes: s.Notes)).ToArray(),
+                    Notes: s.Notes,
+                    Size: s.Size)).ToArray(),
                 TaskFilePath: TodoRelativeTaskPath(bundle.TaskId),
                 ArtifactsPath: bundle.ArtifactsPath != null 
                     ? TodoRelativeTaskPath(bundle.TaskId).Replace(".md", ".artifacts")
@@ -3790,6 +3934,7 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("resource_revision")] string ResourceRevision,
         [property: JsonPropertyName("description")] string? Description,
         [property: JsonPropertyName("notes")] string? Notes,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size,
         [property: JsonPropertyName("active_subtasks")] ContextSubtaskInfo[] ActiveSubtasks,
         [property: JsonPropertyName("links")] LinkResult[] Links,
         [property: JsonPropertyName("latest_artifacts")] ContextArtifactInfo[] LatestArtifacts,
@@ -3801,7 +3946,8 @@ public sealed class GlassworkTools
     private sealed record ContextSubtaskInfo(
         [property: JsonPropertyName("text")] string Text,
         [property: JsonPropertyName("status")] string Status,
-        [property: JsonPropertyName("notes")] string? Notes);
+        [property: JsonPropertyName("notes")] string? Notes,
+        [property: JsonPropertyName("size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Size = null);
 
     private sealed record ContextArtifactInfo(
         [property: JsonPropertyName("path")] string Path,
@@ -3868,7 +4014,8 @@ public sealed class GlassworkTools
             {
                 ["title"] = subtask.Text,
                 ["parent_task_id"] = parent.Id,
-                ["status"] = subtask.IsCompleted ? "done" : "todo"
+                ["status"] = subtask.IsCompleted ? "done" : "todo",
+                ["size"] = subtask.Size
             };
             var operations = JsonSerializer.SerializeToElement(new object[]
             {
@@ -3887,7 +4034,10 @@ public sealed class GlassworkTools
                     fields = BuildMutationFields(parent)
                 }
             });
-            var mutation = _mutations.TransactTasks(mutation_id, operations);
+            var mutation = _mutations.TransactTasks(
+                mutation_id,
+                operations,
+                preserveExistingUnknownSizes: true);
             if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
                 return SerializeMutationOutcome(mutation);
 
@@ -3960,7 +4110,8 @@ public sealed class GlassworkTools
                 mutation_id,
                 safeId,
                 if_revision,
-                JsonSerializer.SerializeToElement(BuildMutationFields(parent)));
+                JsonSerializer.SerializeToElement(BuildMutationFields(parent)),
+                preserveExistingUnknownSizes: true);
             if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
                 return SerializeMutationOutcome(mutation);
             var updated = parent;
@@ -3968,7 +4119,10 @@ public sealed class GlassworkTools
             scope?.SetResult("success");
             return JsonSerializer.Serialize(new
             {
-                subtasks = updated.Subtasks.Select(s => new { text = s.Text, status = s.Status }).ToArray(),
+                subtasks = updated.Subtasks.Select(s => new SubtaskMutationSummary(
+                    s.Text,
+                    s.Status,
+                    s.Size)).ToArray(),
                 parent_task_id = updated.Id,
                 removed_index = subtask_index,
                 resource_revision = mutation.Task?.ResourceRevision

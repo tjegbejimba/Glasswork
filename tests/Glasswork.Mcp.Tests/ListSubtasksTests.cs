@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Glasswork.Core.Models;
+using Glasswork.Core.Services;
 using Glasswork.Mcp.Tools;
 
 namespace Glasswork.Mcp.Tests;
@@ -33,7 +35,7 @@ public class ListSubtasksTests
         var parentJson = _tools.AddTask("Parent task");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
         
-        _tools.AddTask("Child 1", parent_task_id: parentId);
+        _tools.AddTask("Child 1", parent_task_id: parentId, size: "focus");
         _tools.AddTask("Child 2", parent_task_id: parentId);
 
         // Act
@@ -46,7 +48,66 @@ public class ListSubtasksTests
         
         var subtasks = result.GetProperty("subtasks").EnumerateArray().ToArray();
         Assert.AreEqual(2, subtasks.Length, "Should return 2 direct children");
+        Assert.AreEqual(
+            "focus",
+            subtasks.Single(task => task.GetProperty("title").GetString() == "Child 1")
+                .GetProperty("size").GetString());
+        Assert.IsFalse(
+            subtasks.Single(task => task.GetProperty("title").GetString() == "Child 2")
+                .TryGetProperty("size", out _));
         Assert.AreEqual(2, result.GetProperty("total").GetInt32());
+    }
+
+    [TestMethod]
+    public void ListSubtasks_ReturnsChildFieldsSizeAndRevisionFromOneSnapshot()
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var parent = new GlassworkTask { Id = "snapshot-parent", Title = "Snapshot parent" };
+        var child = new GlassworkTask
+        {
+            Id = "snapshot-child",
+            Title = "Snapshot child",
+            Parent = parent.Id,
+            Size = "quick",
+        };
+        vault.Save(parent);
+        vault.Save(child);
+        for (var index = 0; index < 100; index++)
+        {
+            vault.Save(new GlassworkTask
+            {
+                Id = $"snapshot-filler-{index:D3}",
+                Title = $"Snapshot filler {index}",
+                Parent = parent.Id,
+                Description = new string('x', 1_000),
+            });
+        }
+        var parentRevision = vault.Load(parent.Id)!.ResourceRevision;
+        var childRevision = vault.Load(child.Id)!.ResourceRevision;
+        var writer = Task.Run(() =>
+        {
+            Thread.Sleep(10);
+            var updated = vault.Load(parent.Id)!;
+            updated.Title = "Updated snapshot parent";
+            vault.Save(updated);
+            return vault.Load(parent.Id)!.ResourceRevision;
+        });
+
+        using var result = JsonDocument.Parse(_tools.ListSubtasks(parent.Id));
+        var updatedParentRevision = writer.GetAwaiter().GetResult();
+        var returned = result.RootElement.GetProperty("subtasks").EnumerateArray()
+            .Single(task => task.GetProperty("id").GetString() == child.Id);
+        var returnedParent = result.RootElement.GetProperty("parent");
+
+        Assert.AreEqual("quick", returned.GetProperty("size").GetString());
+        Assert.AreEqual(childRevision, returned.GetProperty("resource_revision").GetString());
+        var expectedParentRevision =
+            returnedParent.GetProperty("title").GetString() == "Snapshot parent"
+                ? parentRevision
+                : updatedParentRevision;
+        Assert.AreEqual(
+            expectedParentRevision,
+            returnedParent.GetProperty("resource_revision").GetString());
     }
 
     // ───────────────── Status filtering ─────────────────

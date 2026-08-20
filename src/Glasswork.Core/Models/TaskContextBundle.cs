@@ -20,4 +20,6 @@ public sealed record TaskContextBundle(
     List<Backlink> Backlinks,
     List<SubTask> OpenBlockers,
     string TaskFilePath,
-    string? ArtifactsPath);
+    string? ArtifactsPath,
+    string? Size,
+    string ResourceRevision);

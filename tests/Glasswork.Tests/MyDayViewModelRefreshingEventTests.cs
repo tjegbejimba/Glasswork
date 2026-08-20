@@ -226,6 +226,7 @@ public class MyDayViewModelRefreshingEventTests
         row.IsManuallyCollapsed = true;
 
         task.Title = "Updated title";
+        task.Size = "deep";
         _vault.Save(task);
 
         vm.Refresh();
@@ -233,9 +234,65 @@ public class MyDayViewModelRefreshingEventTests
         Assert.AreSame(row, vm.TodayTasks.Single(),
             "Refreshing changed task data should update the existing row instead of replacing it.");
         Assert.AreEqual("Updated title", row.Title);
+        Assert.AreEqual("deep", row.Size);
         Assert.IsTrue(row.IsManuallyCollapsed,
             "Domain refresh must not wipe per-page transient collapse state before the page hydrates it.");
     }
+
+    [TestMethod]
+    public void Refresh_ReconstructedSubtasksRetainPlannerIdentityAcrossInsertRemoveAndReorder()
+    {
+        var task = CreateMyDayTask("Planner identity");
+        task.Subtasks =
+        [
+            TodaySubtask("First"),
+            TodaySubtask("Removed"),
+            TodaySubtask("Third"),
+        ];
+        _vault.Save(task);
+        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        vm.Refresh();
+        var before = ResolvePlannerLeaves(vm.TodayTasks.Single());
+
+        var reconstructed = _vault.Load(task.Id)!;
+        reconstructed.Subtasks =
+        [
+            TodaySubtask("Inserted"),
+            reconstructed.Subtasks[2],
+            reconstructed.Subtasks[0],
+        ];
+        _vault.Save(reconstructed);
+
+        vm.Refresh();
+
+        var after = ResolvePlannerLeaves(vm.TodayTasks.Single());
+        Assert.AreEqual(before["First"].Identity, after["First"].Identity);
+        Assert.AreEqual(before["Third"].Identity, after["Third"].Identity);
+        Assert.AreEqual(2, after["First"].SubtaskIndex);
+        Assert.AreEqual(1, after["Third"].SubtaskIndex);
+        Assert.AreNotEqual(before["First"].Identity, after["Inserted"].Identity);
+        Assert.AreNotEqual(before["Third"].Identity, after["Inserted"].Identity);
+    }
+
+    private static Dictionary<string, PlannerActionableLeaf> ResolvePlannerLeaves(GlassworkTask task) =>
+        PlannerScopeResolver.Resolve(new PlannerScopeSnapshot(
+            DateOnly.FromDateTime(DateTime.Today),
+            [task],
+            new Dictionary<string, GlassworkTask>(StringComparer.Ordinal)
+            {
+                [task.Id] = task,
+            }))
+            .Groups.Single().Leaves.ToDictionary(leaf => leaf.Title, StringComparer.Ordinal);
+
+    private static SubTask TodaySubtask(string text) =>
+        new()
+        {
+            Text = text,
+            Metadata = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["my_day"] = "true",
+            },
+        };
 
     [TestMethod]
     public void Refresh_MaterializesTasksFromTheQueryExecutionSnapshot()

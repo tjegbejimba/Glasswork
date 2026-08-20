@@ -47,7 +47,7 @@ public class DeleteSubtaskToolTests
             {
                 new SubTask { Text = "keep me" },
                 new SubTask { Text = "delete me" },
-                new SubTask { Text = "also keep" },
+                new SubTask { Text = "also keep", Size = "future_bucket" },
             }
         };
         _vault.Save(parent);
@@ -61,11 +61,13 @@ public class DeleteSubtaskToolTests
         Assert.AreEqual(2, subtasks.Count, "Must return updated subtask list");
         Assert.AreEqual("keep me", subtasks[0].GetProperty("text").GetString());
         Assert.AreEqual("also keep", subtasks[1].GetProperty("text").GetString());
+        Assert.AreEqual("future_bucket", subtasks[1].GetProperty("size").GetString());
 
         // Assert: Subtask removed from disk
         var reloaded = _vault.Load("parent-del")!;
         Assert.AreEqual(2, reloaded.Subtasks.Count, "Subtask must be persisted on disk");
         Assert.IsFalse(reloaded.Subtasks.Any(s => s.Text == "delete me"), "Deleted subtask must not exist");
+        Assert.AreEqual("future_bucket", reloaded.Subtasks[1].Size);
     }
 
     [TestMethod]
