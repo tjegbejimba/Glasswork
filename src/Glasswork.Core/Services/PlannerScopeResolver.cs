@@ -5,7 +5,8 @@ namespace Glasswork.Core.Services;
 public sealed record PlannerScopeSnapshot(
     DateOnly Today,
     IReadOnlyList<GlassworkTask> MyDayTasks,
-    IReadOnlyDictionary<string, GlassworkTask> TasksById);
+    IReadOnlyDictionary<string, GlassworkTask> TasksById,
+    IReadOnlySet<string>? IndependentlyPromotedTaskIds = null);
 
 public sealed record PlannerScopeResult(IReadOnlyList<PlannerScopeGroup> Groups);
 
@@ -22,6 +23,8 @@ public sealed record PlannerScopeGroup(
     public string NotTodayPreviewLabel => RemovalTaskIds.Count == 1
         ? "Not today"
         : $"Not today ({RemovalTaskIds.Count} tasks)";
+    public string NotTodayControlName =>
+        $"Move {Container.Title} group ({RemovalTaskIds.Count} tasks) out of My Day";
 }
 
 public enum PlannerScopeCue
@@ -44,12 +47,19 @@ public sealed record PlannerActionableLeaf(
     string? RawSize,
     SizeBucket EffectiveSize,
     int CapacityMinutes,
-    bool IsAssumed,
-    bool IsUncertain,
+    PlannerSizeCue SizeCue,
     IReadOnlyList<string> RemovalTaskIds)
 {
     public string EffectiveSizeLabel => EffectiveSize.ToString();
-    public string SizeCueLabel => IsUncertain ? "Check Size" : IsAssumed ? "Assumed" : string.Empty;
+    public bool IsAssumed => SizeCue is PlannerSizeCue.Assumed or PlannerSizeCue.UnknownRawValue;
+    public bool IsUncertain => SizeCue is PlannerSizeCue.BreakDown or PlannerSizeCue.UnknownRawValue;
+    public string SizeCueLabel => SizeCue switch
+    {
+        PlannerSizeCue.Assumed => "Assumed",
+        PlannerSizeCue.BreakDown => "Check Size",
+        PlannerSizeCue.UnknownRawValue => "Unknown size value",
+        _ => string.Empty,
+    };
     public string SizeControlName => $"Size for {Title}";
     public string NotTodayScopeTitle => SubtaskIndex.HasValue ? Container.Title : Title;
     public string NotTodayControlName => $"Move {NotTodayScopeTitle} out of My Day";
@@ -61,6 +71,14 @@ public sealed record PlannerActionableLeaf(
         : RemovalTaskIds.Count == 1
         ? "Not today"
         : $"Not today ({RemovalTaskIds.Count} tasks)";
+}
+
+public enum PlannerSizeCue
+{
+    None,
+    Assumed,
+    BreakDown,
+    UnknownRawValue,
 }
 
 public static class PlannerScopeResolver
@@ -121,11 +139,16 @@ public static class PlannerScopeResolver
             ? sourceTask
             : row;
         var inlineRemovalTargets = new[] { row.Id };
-        leaves.AddRange(CreateSubtaskLeaves(
-            source,
-            snapshot.Today,
-            container,
-            inlineRemovalTargets));
+        var independentlyPromoted =
+            snapshot.IndependentlyPromotedTaskIds?.Contains(row.Id) ?? true;
+        if (independentlyPromoted)
+        {
+            leaves.AddRange(CreateSubtaskLeaves(
+                source,
+                snapshot.Today,
+                container,
+                inlineRemovalTargets));
+        }
 
         foreach (var childRow in row.TodaysChildren ?? [])
         {
@@ -168,7 +191,7 @@ public static class PlannerScopeResolver
         PlannerContainerContext container,
         IReadOnlyList<string> removalTaskIds)
     {
-        var (effectiveSize, isAssumed, isUncertain) = ResolveSize(task.Size);
+        var (effectiveSize, sizeCue) = ResolveSize(task.Size);
         var leaf = new PlannerActionableLeaf(
             $"task:{task.Id}",
             task.Id,
@@ -178,8 +201,7 @@ public static class PlannerScopeResolver
             task.Size,
             effectiveSize,
             CapacityMinutes(effectiveSize),
-            isAssumed,
-            isUncertain,
+            sizeCue,
             removalTaskIds);
         return leaf;
     }
@@ -191,7 +213,7 @@ public static class PlannerScopeResolver
         PlannerContainerContext container,
         IReadOnlyList<string> removalTaskIds)
     {
-        var (effectiveSize, isAssumed, isUncertain) = ResolveSize(subtask.Size);
+        var (effectiveSize, sizeCue) = ResolveSize(subtask.Size);
         return new PlannerActionableLeaf(
             $"subtask:{owner.Id}:{subtask.PlannerIdentity}",
             owner.Id,
@@ -201,8 +223,7 @@ public static class PlannerScopeResolver
             subtask.Size,
             effectiveSize,
             CapacityMinutes(effectiveSize),
-            isAssumed,
-            isUncertain,
+            sizeCue,
             removalTaskIds);
     }
 
@@ -269,13 +290,23 @@ public static class PlannerScopeResolver
         !subtask.IsEffectivelyDone
         && subtask.Status is not "blocked";
 
-    private static (SizeBucket Effective, bool IsAssumed, bool IsUncertain) ResolveSize(
+    private static (SizeBucket Effective, PlannerSizeCue Cue) ResolveSize(
         string? rawSize)
     {
         if (SizeBuckets.TryParse(rawSize, out var size))
-            return (size, false, size == SizeBucket.BreakDown);
+        {
+            return (
+                size,
+                size == SizeBucket.BreakDown
+                    ? PlannerSizeCue.BreakDown
+                    : PlannerSizeCue.None);
+        }
 
-        return (SizeBucket.Short, true, rawSize is not null);
+        return (
+            SizeBucket.Short,
+            rawSize is null
+                ? PlannerSizeCue.Assumed
+                : PlannerSizeCue.UnknownRawValue);
     }
 
     private static int CapacityMinutes(SizeBucket size) => size switch

@@ -21,6 +21,8 @@ public partial class MyDayViewModel : ObservableObject
     private readonly PlannerSubtaskIdentityStore _plannerIdentities = new();
     internal IReadOnlyDictionary<string, GlassworkTask> LastRefreshTasks { get; private set; } =
         new Dictionary<string, GlassworkTask>(StringComparer.Ordinal);
+    internal IReadOnlySet<string> LastRefreshIndependentlyPromotedTaskIds { get; private set; } =
+        new HashSet<string>(StringComparer.Ordinal);
 
     public ObservableCollection<GlassworkTask> TodayTasks { get; } = [];
     public ObservableCollection<GlassworkTask> RecentlyCompletedTasks { get; } = [];
@@ -126,6 +128,9 @@ public partial class MyDayViewModel : ObservableObject
                 : null;
             targetTodayTasks.Add(task);
         }
+        LastRefreshIndependentlyPromotedTaskIds = targetTodayTasks
+            .Select(task => task.Id)
+            .ToHashSet(StringComparer.Ordinal);
 
         // Cross-file PBI container grouping (issue #337 / ADR 0017): nest promoted child
         // Tasks under their parent PBI, pulling the PBI in as a container-only host.

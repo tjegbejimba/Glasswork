@@ -41,6 +41,35 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void FromJson_PlannerProfileWithUrlCalendarReference_IsRejectedWithoutEchoingSecret()
+    {
+        const string secret = "https://calendar.example.test/private.ics?token=super-secret";
+        var json = $$"""
+        {
+          "name": "planner secret rejection",
+          "plannerProfile": {
+            "schemaVersion": 1,
+            "isConfirmed": true,
+            "dailyCapacityMinutes": 360,
+            "workStartLocal": "09:00:00",
+            "workEndLocal": "17:00:00",
+            "lunchStartLocal": "12:00:00",
+            "lunchEndLocal": "13:00:00",
+            "transitionBufferMinutes": 15,
+            "selectedCalendarReferences": ["{{secret}}"]
+          },
+          "captures": [{ "name": "planner" }]
+        }
+        """;
+
+        var exception = Assert.Throws<FormatException>(
+            () => VisualVerificationScenario.FromJson(json));
+
+        StringAssert.Contains(exception.Message, "calendar reference");
+        Assert.DoesNotContain("super-secret", exception.Message);
+    }
+
+    [TestMethod]
     public void FromJson_LoadsTasksActionsAndCaptures()
     {
         const string json = """

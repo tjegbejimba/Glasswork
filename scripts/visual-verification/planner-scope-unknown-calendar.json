@@ -65,6 +65,10 @@
       "automationId": "PlannerUnknownCalendar"
     },
     {
+      "type": "wait-for",
+      "name": "Unknown size value"
+    },
+    {
       "type": "assert-name",
       "automationId": "PlannerSelectedWorkTotal",
       "value": "240 min selected"

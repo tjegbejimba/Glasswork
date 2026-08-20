@@ -270,7 +270,7 @@ public sealed class PlannerViewModelTests
     }
 
     [TestMethod]
-    public void NotTodayRecovery_ClearsOnSessionEndAndLocalDayRollover()
+    public void NotTodayRecovery_ClearsOnSessionEnd()
     {
         var now = DateTimeOffset.Now;
         var (_, viewModel) = CreatePlanner(
@@ -288,14 +288,59 @@ public sealed class PlannerViewModelTests
 
         Assert.IsNull(viewModel.InlineUndo);
         Assert.IsEmpty(viewModel.NotTodayTray);
+    }
 
+    [TestMethod]
+    public void NotTodayRecovery_ClearsActiveInlineUndoAndTrayOnLocalDayRollover()
+    {
+        var now = DateTimeOffset.Now;
+        var (_, viewModel) = CreatePlanner(
+            new RecordingUiStateService(),
+            () => now,
+            TodayTask("rollover-first", "Rollover first"),
+            TodayTask("rollover-second", "Rollover second"));
         viewModel.Refresh();
-        if (viewModel.Groups.Count > 0)
-            Assert.IsTrue(viewModel.NotToday(viewModel.Groups[0].Leaves[0]));
+        Assert.IsTrue(viewModel.NotToday(viewModel.Groups[0].Leaves[0]));
+        Assert.IsTrue(viewModel.NotToday(viewModel.Groups[0].Leaves[0]));
+        Assert.IsNotNull(viewModel.InlineUndo);
+        Assert.HasCount(1, viewModel.NotTodayTray);
+
         now = now.AddDays(1);
         viewModel.ProcessSessionTime();
+
         Assert.IsNull(viewModel.InlineUndo);
         Assert.IsEmpty(viewModel.NotTodayTray);
+    }
+
+    [TestMethod]
+    public void NotToday_PbiInlineLeafDoesNotReappearWhenChildKeepsContainerVisible()
+    {
+        var pbi = TodayTask("pbi-inline-dismissal", "PBI inline dismissal");
+        pbi.Type = GlassworkTask.Types.Pbi;
+        pbi.Subtasks =
+        [
+            new SubTask
+            {
+                Text = "Inline PBI work",
+                Metadata = new Dictionary<string, string>
+                {
+                    ["my_day"] = DateTime.Today.ToString("yyyy-MM-dd"),
+                },
+            },
+        ];
+        var child = TodayTask("pbi-sibling-child", "PBI sibling child");
+        child.Parent = pbi.Id;
+        var (_, viewModel) = CreatePlanner(pbi, child);
+        viewModel.Refresh();
+        var inlineLeaf = viewModel.Groups.Single().Leaves
+            .Single(leaf => leaf.SourceTaskId == pbi.Id);
+
+        Assert.IsTrue(viewModel.NotToday(inlineLeaf), viewModel.ErrorMessage);
+
+        var remainingLeaves = viewModel.Groups.Single().Leaves;
+        CollectionAssert.AreEqual(
+            new[] { "task:pbi-sibling-child" },
+            remainingLeaves.Select(leaf => leaf.Identity).ToArray());
     }
 
     [TestMethod]

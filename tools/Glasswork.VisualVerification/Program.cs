@@ -419,6 +419,10 @@ internal static partial class VisualVerificationRunner
             case "assert-name":
                 AssertName(WaitForElement(hwnd, action), action.Value!);
                 return;
+            case "assert-live-setting":
+                _ = WaitForElement(hwnd, action);
+                AssertLiveSetting(hwnd, action.AutomationId!, action.Value!);
+                return;
             case "assert-clipboard-text":
                 AssertClipboardText(action.Value!);
                 return;
@@ -515,6 +519,97 @@ internal static partial class VisualVerificationRunner
                 "Expected clipboard text did not match the actual clipboard text. " +
                 $"Expected length {expected.Length}, actual length {actual?.Length ?? 0}.");
         }
+    }
+
+    private static void AssertLiveSetting(
+        IntPtr hwnd,
+        string automationId,
+        string expected)
+    {
+        var expectedValue = expected switch
+        {
+            "Off" => AutomationLiveSetting.Off,
+            "Polite" => AutomationLiveSetting.Polite,
+            "Assertive" => AutomationLiveSetting.Assertive,
+            _ => throw new FormatException($"Unsupported live setting '{expected}'."),
+        };
+        var automation = (INativeUiAutomation)(object)new NativeUiAutomation();
+        var root = automation.ElementFromHandle(hwnd);
+        var condition = automation.CreatePropertyCondition(
+            AutomationElementIdentifiers.AutomationIdProperty.Id,
+            automationId);
+        var element = root.FindFirst(0x4, condition)
+            ?? throw new InvalidOperationException(
+                $"Native UI Automation could not find '{automationId}'.");
+        var actual = element.GetCurrentPropertyValue(
+            AutomationElementIdentifiers.LiveSettingProperty.Id);
+        if (Convert.ToInt32(actual, CultureInfo.InvariantCulture) != (int)expectedValue)
+        {
+            throw new InvalidOperationException(
+                $"Expected live setting '{expectedValue}', actual '{actual}'.");
+        }
+    }
+
+    [ComImport]
+    [Guid("FF48DBA4-60EF-4201-AA87-54103EEF594E")]
+    [ClassInterface(ClassInterfaceType.None)]
+    private sealed class NativeUiAutomation
+    {
+    }
+
+    [ComImport]
+    [Guid("30CBE57D-D9D0-452A-AB13-7AC5AC4825EE")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface INativeUiAutomation
+    {
+        IntPtr CompareElements();
+        IntPtr CompareRuntimeIds();
+        IntPtr GetRootElement();
+        INativeUiAutomationElement ElementFromHandle(IntPtr hwnd);
+        IntPtr ElementFromPoint();
+        IntPtr GetFocusedElement();
+        IntPtr GetRootElementBuildCache();
+        IntPtr ElementFromHandleBuildCache();
+        IntPtr ElementFromPointBuildCache();
+        IntPtr GetFocusedElementBuildCache();
+        IntPtr CreateTreeWalker();
+        IntPtr GetControlViewWalker();
+        IntPtr GetContentViewWalker();
+        IntPtr GetRawViewWalker();
+        IntPtr GetRawViewCondition();
+        IntPtr GetControlViewCondition();
+        IntPtr GetContentViewCondition();
+        IntPtr CreateCacheRequest();
+        IntPtr CreateTrueCondition();
+        IntPtr CreateFalseCondition();
+        INativeUiAutomationCondition CreatePropertyCondition(
+            int propertyId,
+            [MarshalAs(UnmanagedType.Struct)] object value);
+    }
+
+    [ComImport]
+    [Guid("D22108AA-8AC5-49A5-837B-37BBB3D7591E")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface INativeUiAutomationElement
+    {
+        void SetFocus();
+        IntPtr GetRuntimeId();
+        INativeUiAutomationElement? FindFirst(
+            int scope,
+            INativeUiAutomationCondition condition);
+        IntPtr FindAll();
+        IntPtr FindFirstBuildCache();
+        IntPtr FindAllBuildCache();
+        IntPtr BuildUpdatedCache();
+        [return: MarshalAs(UnmanagedType.Struct)]
+        object GetCurrentPropertyValue(int propertyId);
+    }
+
+    [ComImport]
+    [Guid("352FFBA8-0973-437C-A61F-F64CAFD81DF9")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface INativeUiAutomationCondition
+    {
     }
 
     private static void ReplaceTaskText(string todoPath, VisualVerificationAction action)

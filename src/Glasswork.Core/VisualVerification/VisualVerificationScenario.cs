@@ -84,6 +84,11 @@ public sealed partial class VisualVerificationScenario
             });
             if (!validation.IsValid)
                 throw new FormatException("plannerProfile contains invalid values.");
+            if (PlannerProfile.SelectedCalendarReferences.Any(IsUrlShapedReference))
+            {
+                throw new FormatException(
+                    "plannerProfile calendar references must not contain URL-shaped values.");
+            }
         }
 
         foreach (var task in Tasks)
@@ -206,6 +211,13 @@ public sealed partial class VisualVerificationScenario
             {
                 throw new FormatException("assert-name requires value.");
             }
+            if (action.Type.Equals("assert-live-setting", StringComparison.OrdinalIgnoreCase)
+                && (string.IsNullOrWhiteSpace(action.AutomationId)
+                    || action.Value is not ("Off" or "Polite" or "Assertive")))
+            {
+                throw new FormatException(
+                    "assert-live-setting requires automationId and value Off, Polite, or Assertive.");
+            }
             if (action.Type.Equals(
                     "assert-clipboard-text",
                     StringComparison.OrdinalIgnoreCase)
@@ -249,6 +261,12 @@ public sealed partial class VisualVerificationScenario
                 throw new FormatException("Every scenario capture requires a non-empty name.");
         }
     }
+
+    private static bool IsUrlShapedReference(string reference) =>
+        Regex.IsMatch(
+            reference.Trim(),
+            @"^[A-Za-z][A-Za-z0-9+.-]*:",
+            RegexOptions.CultureInvariant);
 
     private static bool IsSafeTaskId(string taskId)
     {

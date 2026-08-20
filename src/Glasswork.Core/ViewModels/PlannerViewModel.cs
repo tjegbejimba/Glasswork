@@ -120,7 +120,8 @@ public sealed class PlannerViewModel : ObservableObject
         var scope = PlannerScopeResolver.Resolve(new PlannerScopeSnapshot(
             DateOnly.FromDateTime(DateTime.Today),
             _myDay.TodayTasks.ToArray(),
-            _myDay.LastRefreshTasks));
+            _myDay.LastRefreshTasks,
+            _myDay.LastRefreshIndependentlyPromotedTaskIds));
 
         Groups.Clear();
         foreach (var group in scope.Groups)

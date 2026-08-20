@@ -40,6 +40,14 @@ public sealed record VerificationLaunchOptions(
         var startPage = Read(environment, StartPageVariable);
         if (startPage is not null && startPage != "planner")
             throw new FormatException($"Unsupported verification start page '{startPage}'.");
+        if (startPage == "planner"
+            && (string.IsNullOrWhiteSpace(vaultPath)
+                || string.IsNullOrWhiteSpace(uiStatePath)
+                || instanceKey == "main"))
+        {
+            throw new FormatException(
+                "Planner verification start requires isolated Vault, UI state, and instance paths.");
+        }
 
         var explicitSkipProtocol = ReadBool(environment, SkipProtocolRegistrationVariable);
         var explicitSkipUpdate = ReadBool(environment, SkipUpdateCheckVariable);

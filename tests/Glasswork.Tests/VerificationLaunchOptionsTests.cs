@@ -39,12 +39,27 @@ public class VerificationLaunchOptionsTests
     }
 
     [TestMethod]
-    public void FromEnvironment_WhenPlannerStartPageIsSet_UsesHiddenVerificationPage()
+    public void FromEnvironment_WhenPlannerStartPageLacksIsolation_RejectsLaunch()
+    {
+        Assert.Throws<FormatException>(() =>
+            VerificationLaunchOptions.FromEnvironment(new Dictionary<string, string?>
+            {
+                [VerificationLaunchOptions.StartPageVariable] = "planner",
+            }));
+    }
+
+    [TestMethod]
+    public void FromEnvironment_WhenPlannerStartPageHasCompleteIsolation_UsesHiddenVerificationPage()
     {
         var options = VerificationLaunchOptions.FromEnvironment(
             new Dictionary<string, string?>
             {
                 [VerificationLaunchOptions.StartPageVariable] = "planner",
+                [VerificationLaunchOptions.VaultPathVariable] =
+                    @"C:\tmp\glasswork-vault\wiki\todo",
+                [VerificationLaunchOptions.UiStatePathVariable] =
+                    @"C:\tmp\glasswork-ui-state.json",
+                [VerificationLaunchOptions.InstanceKeyVariable] = "visual-planner",
             });
 
         Assert.IsTrue(options.IsVerificationRun);

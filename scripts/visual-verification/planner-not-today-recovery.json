@@ -40,6 +40,16 @@
       "name": "Move First recovery out of My Day"
     },
     {
+      "type": "assert-live-setting",
+      "automationId": "PlannerAnnouncement",
+      "value": "Polite"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerAnnouncement",
+      "value": "Moved First recovery out of My Day. Undo available for 10 seconds."
+    },
+    {
       "type": "assert-focused",
       "name": "Move Second recovery out of My Day"
     },
