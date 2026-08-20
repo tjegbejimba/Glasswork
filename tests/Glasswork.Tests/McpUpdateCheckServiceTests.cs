@@ -61,6 +61,23 @@ public sealed class McpUpdateCheckServiceTests
         Assert.AreEqual("0.11.0", result.AvailableVersion!.ToString());
     }
 
+    [TestMethod]
+    public async Task CheckForUpdatesAsync_ReleaseDiscoveryFails_PreservesInstalledVersion()
+    {
+        var handler = new FakeHttpMessageHandler();
+        handler.SetResponse(HttpStatusCode.Forbidden, "rate limited");
+        var installed = McpInstalledVersionResult.Installed(ParseVersion("0.11.0"));
+        var service = new McpUpdateCheckService(
+            new GitHubReleaseDetector(handler),
+            new FakeMcpInstalledVersionProvider(installed));
+
+        var result = await service.CheckForUpdatesAsync();
+
+        Assert.IsTrue(result.IsCheckFailed);
+        Assert.IsTrue(result.IsInstalled);
+        Assert.AreEqual("0.11.0", result.InstalledVersion!.ToString());
+    }
+
     private static AppVersion ParseVersion(string value)
     {
         Assert.IsTrue(AppVersion.TryParse(value, out var version));

@@ -17,6 +17,11 @@ Each component is versioned independently. Entries below note the component when
 ### Fixed
 
 #### App
+- **Update checks behind shared API limits** — app and MCP release discovery now
+  fall back to GitHub's complete public tag advertisement plus Release-asset
+  verification when the anonymous API quota is exhausted. A remote MCP check
+  failure also keeps showing the locally installed version instead of
+  incorrectly reporting "Not installed."
 - **MCP update lock guidance** — when an active Copilot or agent session keeps
   the installed MCP tool open, Settings now shows one clear close-and-retry
   instruction instead of raw PowerShell stack output and ANSI control codes.
