@@ -646,7 +646,7 @@ public sealed class GlassworkTools
                     Size: t.Size,
                     Depth: CalculateDepth(t.Id, all),
                     SubtaskCount: all.Count(child => child.Parent == t.Id),
-                    ResourceRevision: ResourceRevision(t.Id)))
+                    ResourceRevision: ManagedResourceRevision(t)))
                 .ToList();
 
             var total = subtaskInfos.Count;
@@ -658,7 +658,7 @@ public sealed class GlassworkTools
                     sanitizedId,
                     parentTask.Title,
                     MapToExternalStatus(parentTask.Status),
-                    ResourceRevision(parentTask.Id)),
+                    ManagedResourceRevision(parentTask)),
                 Subtasks: subtaskInfos,
                 Total: total,
                 CompletionRate: completionRate);
@@ -2876,6 +2876,11 @@ public sealed class GlassworkTools
         return $"rr1-{Convert.ToHexString(digest).ToLowerInvariant()}";
     }
 
+    private static string ManagedResourceRevision(GlassworkTask task) =>
+        task.ResourceRevision
+        ?? throw new InvalidOperationException(
+            $"Managed Task snapshot '{task.Id}' is missing its Resource Revision.");
+
     private static Dictionary<string, object?> QueryTaskSnapshot(TaskQueryItem task)
     {
         var snapshot = new Dictionary<string, object?>
@@ -3648,7 +3653,7 @@ public sealed class GlassworkTools
                     Priority: t.Priority,
                     Size: t.Size,
                     InMyDay: t.IsMyDay,
-                    ResourceRevision: ResourceRevision(t.Id)))
+                    ResourceRevision: ManagedResourceRevision(t)))
                 .ToList();
 
             var result = new ListOverdueResult(

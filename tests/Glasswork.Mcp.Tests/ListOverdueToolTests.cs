@@ -47,6 +47,7 @@ public class ListOverdueToolTests
             Size = "future_bucket",
         };
         _vault.Save(task);
+        var revision = _vault.Load(task.Id)!.ResourceRevision;
 
         // ACT: Call list_overdue
         var json = _tools.ListOverdue();
@@ -63,6 +64,53 @@ public class ListOverdueToolTests
         Assert.AreEqual(yesterday.ToString("yyyy-MM-dd"), returnedTask.GetProperty("due_date").GetString());
         Assert.AreEqual(1, returnedTask.GetProperty("days_overdue").GetInt32());
         Assert.AreEqual("future_bucket", returnedTask.GetProperty("size").GetString());
+        Assert.AreEqual(revision, returnedTask.GetProperty("resource_revision").GetString());
+    }
+
+    [TestMethod]
+    public void ListOverdue_ReturnsFieldsSizeAndRevisionFromOneSnapshot()
+    {
+        var target = new GlassworkTask
+        {
+            Id = "000-snapshot-overdue",
+            Title = "Snapshot overdue",
+            Due = DateTime.Today.AddDays(-1),
+            Size = "quick",
+        };
+        _vault.Save(target);
+        for (var index = 0; index < 100; index++)
+        {
+            _vault.Save(new GlassworkTask
+            {
+                Id = $"overdue-snapshot-filler-{index:D3}",
+                Title = $"Snapshot filler {index}",
+                Due = DateTime.Today.AddDays(-2),
+                Description = new string('x', 1_000),
+            });
+        }
+        var initialRevision = _vault.Load(target.Id)!.ResourceRevision;
+        var writer = Task.Run(() =>
+        {
+            Thread.Sleep(10);
+            var updated = _vault.Load(target.Id)!;
+            updated.Title = "Updated snapshot overdue";
+            updated.Size = "deep";
+            _vault.Save(updated);
+            return _vault.Load(target.Id)!.ResourceRevision;
+        });
+
+        using var result = JsonDocument.Parse(_tools.ListOverdue(limit: 200));
+        var updatedRevision = writer.GetAwaiter().GetResult();
+        var returned = result.RootElement.GetProperty("tasks").EnumerateArray()
+            .Single(task => task.GetProperty("id").GetString() == target.Id);
+
+        var returnedTitle = returned.GetProperty("title").GetString();
+        var expectedRevision = returnedTitle == "Snapshot overdue"
+            ? initialRevision
+            : updatedRevision;
+        var expectedSize = returnedTitle == "Snapshot overdue" ? "quick" : "deep";
+        Assert.AreEqual(expectedSize, returned.GetProperty("size").GetString());
+        Assert.AreEqual(expectedRevision, returned.GetProperty("resource_revision").GetString());
     }
 
     [TestMethod]

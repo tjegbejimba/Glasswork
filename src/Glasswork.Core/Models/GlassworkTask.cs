@@ -572,7 +572,7 @@ public enum DueUrgency
 /// </summary>
 public partial class SubTask : ObservableObject
 {
-    public string PlannerIdentity { get; init; } = Guid.NewGuid().ToString("N");
+    public string PlannerIdentity { get; internal set; } = Guid.NewGuid().ToString("N");
 
     [ObservableProperty] public partial string Text { get; set; } = string.Empty;
     [ObservableProperty] public partial bool IsCompleted { get; set; }
