@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Glasswork.Core.CalendarContext;
 
 namespace Glasswork.Core.VisualVerification;
 
@@ -27,12 +28,28 @@ public sealed record VerificationLaunchOptions(
         !string.IsNullOrWhiteSpace(VaultPath) ||
         !string.IsNullOrWhiteSpace(UiStatePath) ||
         !string.IsNullOrWhiteSpace(InstanceKey) && InstanceKey != "main" ||
-        SkipProtocolRegistration ||
-        SkipUpdateCheck ||
         StartPage is not null;
 
     public static VerificationLaunchOptions FromProcessEnvironment() =>
         FromEnvironment(ToStringDictionary(Environment.GetEnvironmentVariables()));
+
+    public static ICalendarContext CreateCalendarContext(
+        VerificationLaunchOptions options,
+        string? fixturePath,
+        Func<string, ICalendarContext> fixtureFactory,
+        Func<ICalendarContext> productionFactory)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(fixtureFactory);
+        ArgumentNullException.ThrowIfNull(productionFactory);
+
+        if (!options.IsVerificationRun)
+            return productionFactory();
+
+        return string.IsNullOrWhiteSpace(fixturePath)
+            ? new UnavailableCalendarContext()
+            : fixtureFactory(fixturePath);
+    }
 
     public static VerificationLaunchOptions FromEnvironment(IReadOnlyDictionary<string, string?> environment)
     {

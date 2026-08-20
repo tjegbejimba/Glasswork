@@ -121,6 +121,31 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void FromJson_PlannerCalendarSecretSetValueWithUrl_IsRejectedWithoutEchoingValue()
+    {
+        const string secret = "https://calendar.example.test/private.ics?token=action-secret";
+        var json = $$"""
+        {
+          "name": "planner calendar action secret rejection",
+          "actions": [
+            {
+              "type": "set-value",
+              "automationId": "PlannerCalendarSecret",
+              "value": "{{secret}}"
+            }
+          ],
+          "captures": [{ "name": "planner-calendar" }]
+        }
+        """;
+
+        var exception = Assert.Throws<FormatException>(
+            () => VisualVerificationScenario.FromJson(json));
+
+        StringAssert.Contains(exception.Message, "protected calendar input");
+        Assert.DoesNotContain("action-secret", exception.Message);
+    }
+
+    [TestMethod]
     public void FromJson_LoadsTasksActionsAndCaptures()
     {
         const string json = """

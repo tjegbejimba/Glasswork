@@ -2,6 +2,12 @@ using Glasswork.Core.CalendarContext;
 using Glasswork.Services.CalendarContext;
 using System.Net;
 using System.Net.Http;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
 
 namespace Glasswork.Tests;
 
@@ -90,6 +96,49 @@ public sealed class CalendarContextTests
         Assert.AreEqual(CalendarAvailability.Busy, interval.Availability);
         Assert.IsFalse(interval.IsAllDay);
         Assert.AreEqual(result.Snapshot, store.Snapshot);
+    }
+
+    [TestMethod]
+    public async Task ConnectAsync_Utf8BomPublishedIcs_ReturnsNormalizedCurrentDaySnapshot()
+    {
+        const string calendar = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:-//Glasswork Tests//EN
+            BEGIN:VEVENT
+            UID:bom-fixture
+            DTSTAMP:20260820T120000Z
+            DTSTART:20260820T170000Z
+            DTEND:20260820T180000Z
+            END:VEVENT
+            END:VCALENDAR
+            """;
+        var bytes = Encoding.UTF8.GetPreamble()
+            .Concat(Encoding.UTF8.GetBytes(calendar))
+            .ToArray();
+        using var transport = new BoundedPublishedIcsTransport(
+            new ScriptedHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(bytes),
+            }),
+            new FixtureHostResolver(IPAddress.Parse("8.8.8.8")));
+        ICalendarContext calendarContext = new PublishedIcsCalendarContext(
+            transport,
+            new RecordingCalendarContextStore(),
+            () => new DateTimeOffset(2026, 8, 20, 16, 0, 0, TimeSpan.Zero));
+
+        var result = await calendarContext.ConnectAsync(
+            new CalendarContextConnection(
+                CalendarContextProviderKind.PublishedIcs,
+                "https://calendar.example.test/published.ics"),
+            new CalendarContextRequest(
+                new DateOnly(2026, 8, 20),
+                TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time")),
+            CancellationToken.None);
+
+        Assert.AreEqual(CalendarContextStatus.Current, result.Status);
+        Assert.IsNotNull(result.Snapshot);
+        Assert.HasCount(1, result.Snapshot.Intervals);
     }
 
     [TestMethod]
@@ -460,6 +509,108 @@ public sealed class CalendarContextTests
     }
 
     [TestMethod]
+    public async Task ConnectAsync_ProductionConnectionRejectsPrivateDnsRebindingBeforeSocketConnect()
+    {
+        var resolver = new SequencedHostResolver(
+            [IPAddress.Parse("8.8.8.8")],
+            [IPAddress.Loopback]);
+        var connector = new RecordingCalendarSocketConnector();
+        using var transport = BoundedPublishedIcsTransport.CreateProduction(
+            resolver,
+            connector,
+            new CalendarTransportLimits(
+                MaxResponseBytes: 1024,
+                MaxRedirects: 0,
+                MaxAttempts: 1,
+                ConnectTimeout: TimeSpan.FromSeconds(1),
+                RequestTimeout: TimeSpan.FromSeconds(1)));
+        ICalendarContext calendarContext = new PublishedIcsCalendarContext(
+            transport,
+            new RecordingCalendarContextStore());
+
+        var result = await calendarContext.ConnectAsync(
+            new CalendarContextConnection(
+                CalendarContextProviderKind.PublishedIcs,
+                "https://calendar.example.test/published.ics"),
+            new CalendarContextRequest(
+                new DateOnly(2026, 8, 20),
+                TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time")),
+            CancellationToken.None);
+
+        Assert.AreEqual(CalendarContextStatus.TransientFailure, result.Status);
+        Assert.AreEqual(0, connector.ConnectCount);
+        Assert.AreEqual(2, resolver.ResolveCount);
+    }
+
+    [TestMethod]
+    [DoNotParallelize]
+    public async Task ConnectAsync_ProductionConnectionPinsValidatedAddressesWithoutProxyAndPreservesTlsHost()
+    {
+        const string calendar = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:-//Glasswork Tests//EN
+            END:VCALENDAR
+            """;
+        using var certificate = CreateCalendarCertificate();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var serverName = new TaskCompletionSource<string?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = ServeCalendarOverTlsAsync(
+            listener,
+            certificate,
+            calendar,
+            serverName);
+        var resolver = new FixtureHostResolver(
+            IPAddress.Parse("8.8.8.8"),
+            IPAddress.Parse("1.1.1.1"));
+        var connector = new LoopbackCalendarSocketConnector(port);
+        var proxy = new RecordingWebProxy();
+        var priorProxy = HttpClient.DefaultProxy;
+        HttpClient.DefaultProxy = proxy;
+        try
+        {
+            using var transport = BoundedPublishedIcsTransport.CreateProduction(
+                resolver,
+                connector,
+                new CalendarTransportLimits(
+                    MaxResponseBytes: 1024,
+                    MaxRedirects: 0,
+                    MaxAttempts: 1,
+                    ConnectTimeout: TimeSpan.FromSeconds(2),
+                    RequestTimeout: TimeSpan.FromSeconds(5)),
+                (_, _, _, _) => true);
+            ICalendarContext calendarContext = new PublishedIcsCalendarContext(
+                transport,
+                new RecordingCalendarContextStore());
+
+            var result = await calendarContext.ConnectAsync(
+                new CalendarContextConnection(
+                    CalendarContextProviderKind.PublishedIcs,
+                    "https://calendar.example.test/published.ics"),
+                new CalendarContextRequest(
+                    new DateOnly(2026, 8, 20),
+                    TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time")),
+                CancellationToken.None);
+            await server;
+
+            Assert.AreEqual(CalendarContextStatus.Current, result.Status);
+            CollectionAssert.AreEqual(
+                new[] { "8.8.8.8", "1.1.1.1" },
+                connector.AttemptedAddresses.Select(address => address.ToString()).ToArray());
+            Assert.AreEqual("calendar.example.test", await serverName.Task);
+            Assert.AreEqual(0, proxy.RequestCount);
+        }
+        finally
+        {
+            HttpClient.DefaultProxy = priorProxy;
+            listener.Stop();
+        }
+    }
+
+    [TestMethod]
     public async Task ConnectAsync_MalformedCalendar_ReturnsIncompleteWithoutPersistingConnection()
     {
         var store = new RecordingCalendarContextStore();
@@ -740,21 +891,12 @@ public sealed class CalendarContextTests
     }
 
     [TestMethod]
-    public async Task GetTodayAsync_AfterRestart_UsesOnlyProtectedConfigurationAndNormalizedSnapshot()
+    public async Task GetTodayAsync_OlderProtectedSnapshot_RefreshesWithoutRecoveryReset()
     {
-        const string secret = "https://calendar.example.test/published.ics?token=protected-fixture";
         const string calendar = """
             BEGIN:VCALENDAR
             VERSION:2.0
             PRODID:-//Glasswork Tests//EN
-            BEGIN:VEVENT
-            UID:private-fixture-identity
-            DTSTAMP:20260820T120000Z
-            DTSTART:20260820T170000Z
-            DTEND:20260820T180000Z
-            SUMMARY:Private fixture details
-            TRANSP:OPAQUE
-            END:VEVENT
             END:VCALENDAR
             """;
         var directory = Path.Combine(
@@ -762,48 +904,166 @@ public sealed class CalendarContextTests
             "glasswork-calendar-context-" + Guid.NewGuid().ToString("N"));
         try
         {
+            var protector = new PassthroughCalendarDataProtector();
+            var store = new DpapiCalendarContextStore(directory, protector);
             var request = new CalendarContextRequest(
                 new DateOnly(2026, 8, 20),
                 TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time"));
-            var now = new DateTimeOffset(2026, 8, 20, 16, 0, 0, TimeSpan.Zero);
-            ICalendarContext initial = new PublishedIcsCalendarContext(
+            var initial = new PublishedIcsCalendarContext(
                 new FixtureCalendarTransport(calendar),
-                new DpapiCalendarContextStore(directory),
-                () => now);
-
+                store);
             var connected = await initial.ConnectAsync(
                 new CalendarContextConnection(
                     CalendarContextProviderKind.PublishedIcs,
-                    secret),
+                    "https://calendar.example.test/published.ics"),
+                request,
+                CancellationToken.None);
+            Assert.IsNotNull(connected.Snapshot);
+            store.WriteSnapshot(connected.Snapshot with { NormalizationVersion = 0 });
+            var transport = new RecordingFixtureCalendarTransport(calendar);
+            ICalendarContext restarted = new PublishedIcsCalendarContext(transport, store);
+
+            var refreshed = await restarted.GetTodayAsync(
                 request,
                 CancellationToken.None);
 
-            Assert.AreEqual(CalendarContextStatus.Current, connected.Status);
-            var configurationBytes = await File.ReadAllTextAsync(
-                Path.Combine(directory, "configuration.json"));
-            var snapshotBytes = await File.ReadAllTextAsync(
-                Path.Combine(directory, "snapshot.json"));
-            Assert.DoesNotContain(secret, configurationBytes);
-            Assert.DoesNotContain("private-fixture-identity", snapshotBytes);
-            Assert.DoesNotContain("Private fixture details", snapshotBytes);
+            Assert.AreEqual(CalendarContextStatus.Current, refreshed.Status);
+            Assert.AreEqual(1, transport.RequestCount);
+            Assert.AreEqual(
+                PublishedIcsCalendarContext.NormalizationVersion,
+                refreshed.Snapshot?.NormalizationVersion);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
 
-            ICalendarContext restarted = new PublishedIcsCalendarContext(
-                new ThrowingCalendarTransport("network_failure"),
-                new DpapiCalendarContextStore(directory),
-                () => now.AddMinutes(1));
+    [TestMethod]
+    public async Task GetTodayAsync_OlderProtectedConfiguration_RefreshesWithoutRecoveryReset()
+    {
+        const string secret = "https://calendar.example.test/published.ics";
+        const string calendar = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:-//Glasswork Tests//EN
+            END:VCALENDAR
+            """;
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-calendar-context-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new DpapiCalendarContextStore(
+                directory,
+                new PassthroughCalendarDataProtector());
+            store.WriteConfiguration(new CalendarContextConfiguration(
+                0,
+                CalendarContextProviderKind.PublishedIcs,
+                secret,
+                CalendarContextPersistenceContract.SourceFingerprint(new Uri(secret))));
+            var transport = new RecordingFixtureCalendarTransport(calendar);
+            ICalendarContext calendarContext = new PublishedIcsCalendarContext(transport, store);
 
-            var cached = await restarted.GetTodayAsync(request, CancellationToken.None);
-            Assert.AreEqual(CalendarContextStatus.Current, cached.Status);
-            Assert.IsNotNull(cached.Snapshot);
-
-            var recovered = await restarted.GetTodayAsync(
-                request with { ForceRefresh = true },
+            var result = await calendarContext.GetTodayAsync(
+                new CalendarContextRequest(
+                    new DateOnly(2026, 8, 20),
+                    TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time")),
                 CancellationToken.None);
 
-            Assert.AreEqual(CalendarContextStatus.PossiblyStale, recovered.Status);
-            Assert.IsNotNull(recovered.Snapshot);
-            Assert.HasCount(1, recovered.Snapshot.Intervals);
-            Assert.AreEqual("network_failure", recovered.Diagnostic?.Code);
+            Assert.AreEqual(CalendarContextStatus.Current, result.Status);
+            Assert.AreEqual(1, transport.RequestCount);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task GetTodayAsync_MalformedDecryptedSnapshot_FailsClosedAndPreservesFile()
+    {
+        const string calendar = """
+            BEGIN:VCALENDAR
+            VERSION:2.0
+            PRODID:-//Glasswork Tests//EN
+            END:VCALENDAR
+            """;
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-calendar-context-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new DpapiCalendarContextStore(
+                directory,
+                new PassthroughCalendarDataProtector());
+            var request = new CalendarContextRequest(
+                new DateOnly(2026, 8, 20),
+                TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time"));
+            var initial = new PublishedIcsCalendarContext(
+                new FixtureCalendarTransport(calendar),
+                store);
+            var connected = await initial.ConnectAsync(
+                new CalendarContextConnection(
+                    CalendarContextProviderKind.PublishedIcs,
+                    "https://calendar.example.test/published.ics"),
+                request,
+                CancellationToken.None);
+            Assert.IsNotNull(connected.Snapshot);
+            store.WriteSnapshot(connected.Snapshot with { Intervals = null! });
+            var snapshotPath = Path.Combine(directory, "snapshot.json");
+            var transport = new CountingCalendarTransport();
+            ICalendarContext restarted = new PublishedIcsCalendarContext(transport, store);
+
+            var result = await restarted.GetTodayAsync(request, CancellationToken.None);
+
+            Assert.AreEqual(CalendarContextStatus.ProtectedStoreRecovery, result.Status);
+            Assert.AreEqual("protected_store_corrupt", result.Diagnostic?.Code);
+            Assert.AreEqual(0, transport.RequestCount);
+            Assert.IsTrue(File.Exists(snapshotPath));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task GetTodayAsync_MalformedDecryptedConfiguration_FailsClosedAndPreservesFile()
+    {
+        const string secret = "https://calendar.example.test/published.ics";
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "glasswork-calendar-context-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new DpapiCalendarContextStore(
+                directory,
+                new PassthroughCalendarDataProtector());
+            store.WriteConfiguration(new CalendarContextConfiguration(
+                -1,
+                CalendarContextProviderKind.PublishedIcs,
+                secret,
+                CalendarContextPersistenceContract.SourceFingerprint(new Uri(secret))));
+            var configurationPath = Path.Combine(directory, "configuration.json");
+            var transport = new CountingCalendarTransport();
+            ICalendarContext calendarContext = new PublishedIcsCalendarContext(
+                transport,
+                store);
+
+            var result = await calendarContext.GetTodayAsync(
+                new CalendarContextRequest(
+                    new DateOnly(2026, 8, 20),
+                    TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time")),
+                CancellationToken.None);
+
+            Assert.AreEqual(CalendarContextStatus.ProtectedStoreRecovery, result.Status);
+            Assert.AreEqual("protected_store_corrupt", result.Diagnostic?.Code);
+            Assert.AreEqual(0, transport.RequestCount);
+            Assert.IsTrue(File.Exists(configurationPath));
         }
         finally
         {
@@ -829,7 +1089,9 @@ public sealed class CalendarContextTests
             var transport = new CountingCalendarTransport();
             ICalendarContext calendarContext = new PublishedIcsCalendarContext(
                 transport,
-                new DpapiCalendarContextStore(directory));
+                new DpapiCalendarContextStore(
+                    directory,
+                    new PassthroughCalendarDataProtector()));
 
             var result = await calendarContext.ConnectAsync(
                 new CalendarContextConnection(
@@ -872,7 +1134,9 @@ public sealed class CalendarContextTests
                 TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time"));
             ICalendarContext initial = new PublishedIcsCalendarContext(
                 new FixtureCalendarTransport(calendar),
-                new DpapiCalendarContextStore(directory));
+                new DpapiCalendarContextStore(
+                    directory,
+                    new PassthroughCalendarDataProtector()));
             await initial.ConnectAsync(
                 new CalendarContextConnection(
                     CalendarContextProviderKind.PublishedIcs,
@@ -884,7 +1148,9 @@ public sealed class CalendarContextTests
             var transport = new CountingCalendarTransport();
             ICalendarContext restarted = new PublishedIcsCalendarContext(
                 transport,
-                new DpapiCalendarContextStore(directory));
+                new DpapiCalendarContextStore(
+                    directory,
+                    new PassthroughCalendarDataProtector()));
 
             var recovery = await restarted.GetTodayAsync(request, CancellationToken.None);
 
@@ -1294,12 +1560,158 @@ public sealed class CalendarContextTests
             Task.FromResult<IReadOnlyList<IPAddress>>(addresses);
     }
 
+    private sealed class SequencedHostResolver(
+        params IReadOnlyList<IPAddress>[] responses)
+        : ICalendarHostResolver
+    {
+        private int _resolveCount;
+
+        public int ResolveCount => _resolveCount;
+
+        public Task<IReadOnlyList<IPAddress>> ResolveAsync(
+            string host,
+            CancellationToken cancellationToken)
+        {
+            var index = Interlocked.Increment(ref _resolveCount) - 1;
+            return Task.FromResult(responses[index]);
+        }
+    }
+
+    private sealed class RecordingCalendarSocketConnector : ICalendarSocketConnector
+    {
+        public int ConnectCount { get; private set; }
+
+        public ValueTask<Stream> ConnectAsync(
+            IPAddress address,
+            int port,
+            CancellationToken cancellationToken)
+        {
+            ConnectCount++;
+            throw new InvalidOperationException("A rejected address must not be connected.");
+        }
+    }
+
+    private sealed class LoopbackCalendarSocketConnector(int loopbackPort)
+        : ICalendarSocketConnector
+    {
+        public List<IPAddress> AttemptedAddresses { get; } = [];
+
+        public async ValueTask<Stream> ConnectAsync(
+            IPAddress address,
+            int port,
+            CancellationToken cancellationToken)
+        {
+            AttemptedAddresses.Add(address);
+            if (AttemptedAddresses.Count == 1)
+                throw new SocketException((int)SocketError.ConnectionRefused);
+
+            var client = new TcpClient(AddressFamily.InterNetwork);
+            try
+            {
+                await client.ConnectAsync(
+                    IPAddress.Loopback,
+                    loopbackPort,
+                    cancellationToken);
+                return client.GetStream();
+            }
+            catch
+            {
+                client.Dispose();
+                throw;
+            }
+        }
+    }
+
+    private sealed class RecordingWebProxy : IWebProxy
+    {
+        public int RequestCount { get; private set; }
+
+        public ICredentials? Credentials { get; set; }
+
+        public Uri GetProxy(Uri destination)
+        {
+            RequestCount++;
+            return new Uri("http://127.0.0.1:9");
+        }
+
+        public bool IsBypassed(Uri host)
+        {
+            RequestCount++;
+            return false;
+        }
+    }
+
+    private static X509Certificate2 CreateCalendarCertificate()
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest(
+            "CN=calendar.example.test",
+            rsa,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        var san = new SubjectAlternativeNameBuilder();
+        san.AddDnsName("calendar.example.test");
+        request.CertificateExtensions.Add(san.Build());
+        using var generated = request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddDays(-1),
+            DateTimeOffset.UtcNow.AddDays(1));
+        return X509CertificateLoader.LoadPkcs12(
+            generated.Export(X509ContentType.Pkcs12),
+            password: null,
+            X509KeyStorageFlags.UserKeySet
+            | X509KeyStorageFlags.PersistKeySet
+            | X509KeyStorageFlags.Exportable);
+    }
+
+    private static async Task ServeCalendarOverTlsAsync(
+        TcpListener listener,
+        X509Certificate2 certificate,
+        string calendar,
+        TaskCompletionSource<string?> serverName)
+    {
+        using var client = await listener.AcceptTcpClientAsync();
+        await using var ssl = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
+        await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+        {
+            EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+            ServerCertificateSelectionCallback = (_, hostName) =>
+            {
+                serverName.TrySetResult(hostName);
+                return certificate;
+            },
+        });
+
+        using var reader = new StreamReader(
+            ssl,
+            Encoding.ASCII,
+            detectEncodingFromByteOrderMarks: false,
+            leaveOpen: true);
+        while (!string.IsNullOrEmpty(await reader.ReadLineAsync()))
+        {
+        }
+
+        var payload = Encoding.UTF8.GetBytes(calendar);
+        var headers = Encoding.ASCII.GetBytes(
+            $"HTTP/1.1 200 OK\r\nContent-Type: text/calendar\r\nContent-Length: {payload.Length}\r\nConnection: close\r\n\r\n");
+        await ssl.WriteAsync(headers);
+        await ssl.WriteAsync(payload);
+        await ssl.FlushAsync();
+    }
+
     private sealed class ThrowingHostResolver : ICalendarHostResolver
     {
         public Task<IReadOnlyList<IPAddress>> ResolveAsync(
             string host,
             CancellationToken cancellationToken) =>
             throw new System.Net.Sockets.SocketException();
+    }
+
+    private sealed class PassthroughCalendarDataProtector : ICalendarDataProtector
+    {
+        public byte[] Protect(byte[] plaintext, byte[] entropy) => [.. plaintext];
+
+        public byte[] Unprotect(byte[] protectedPayload, byte[] entropy) =>
+            [.. protectedPayload];
     }
 
     private sealed class RecordingCalendarContextStore : ICalendarContextStore

@@ -157,6 +157,17 @@ public sealed partial class VisualVerificationScenario
         {
             if (string.IsNullOrWhiteSpace(action.Type))
                 throw new FormatException("Every scenario action requires a non-empty type.");
+            if (action.Type.Equals("set-value", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    action.AutomationId,
+                    "PlannerCalendarSecret",
+                    StringComparison.Ordinal)
+                && action.Value is not null
+                && IsUrlShapedReference(action.Value))
+            {
+                throw new FormatException(
+                    "A scenario cannot populate the protected calendar input with a URL-shaped value.");
+            }
             if (action.Type.Equals("replace-task-text", StringComparison.OrdinalIgnoreCase))
             {
                 if (string.IsNullOrWhiteSpace(action.TaskId) || !IsSafeTaskId(action.TaskId))

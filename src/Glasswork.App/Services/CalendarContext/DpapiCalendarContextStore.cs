@@ -7,36 +7,33 @@ using Glasswork.Core.CalendarContext;
 
 namespace Glasswork.Services.CalendarContext;
 
-public sealed class DpapiCalendarContextStore : ICalendarContextStore
+public sealed partial class DpapiCalendarContextStore : ICalendarContextStore
 {
     private const int OuterSchemaVersion = 1;
-    private const int ConfigurationSchemaVersion = 1;
-    private const int SnapshotSchemaVersion = 1;
-    private const int NormalizationVersion = 1;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly string _configurationPath;
     private readonly string _snapshotPath;
+    private readonly ICalendarDataProtector _protector;
 
-    public DpapiCalendarContextStore(string baseDirectory)
+    public DpapiCalendarContextStore(
+        string baseDirectory,
+        ICalendarDataProtector protector)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseDirectory);
         _configurationPath = Path.Combine(baseDirectory, "configuration.json");
         _snapshotPath = Path.Combine(baseDirectory, "snapshot.json");
+        _protector = protector ?? throw new ArgumentNullException(nameof(protector));
     }
-
-    public static DpapiCalendarContextStore CreateDefault() =>
-        new(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Glasswork",
-            "calendar-context"));
 
     public CalendarContextStoreRead<CalendarContextConfiguration> ReadConfiguration() =>
         ReadProtected<CalendarContextConfiguration>(
             _configurationPath,
             "configuration",
             configuration => configuration.SchemaVersion,
-            ConfigurationSchemaVersion);
+            CalendarContextPersistenceContract.ConfigurationSchemaVersion,
+            CalendarContextPersistenceContract.IsConfigurationValid,
+            olderVersionIsMissing: false);
 
     public CalendarContextStoreRead<CalendarContextSnapshot> ReadSnapshot()
     {
@@ -44,13 +41,23 @@ public sealed class DpapiCalendarContextStore : ICalendarContextStore
             _snapshotPath,
             "snapshot",
             snapshot => snapshot.SchemaVersion,
-            SnapshotSchemaVersion);
-        if (result is { Status: CalendarContextStoreStatus.Ready, Value: { } snapshot }
-            && snapshot.NormalizationVersion != NormalizationVersion)
+            CalendarContextPersistenceContract.SnapshotSchemaVersion,
+            CalendarContextPersistenceContract.IsSnapshotValid,
+            olderVersionIsMissing: true);
+        if (result is { Status: CalendarContextStoreStatus.Ready, Value: { } snapshot })
         {
-            return snapshot.NormalizationVersion > NormalizationVersion
-                ? CalendarContextStoreRead<CalendarContextSnapshot>.UnsupportedVersion()
-                : CalendarContextStoreRead<CalendarContextSnapshot>.Corrupt();
+            if (snapshot.NormalizationVersion < 0)
+                return CalendarContextStoreRead<CalendarContextSnapshot>.Corrupt();
+            if (snapshot.NormalizationVersion >
+                CalendarContextPersistenceContract.NormalizationVersion)
+            {
+                return CalendarContextStoreRead<CalendarContextSnapshot>.UnsupportedVersion();
+            }
+            if (snapshot.NormalizationVersion <
+                CalendarContextPersistenceContract.NormalizationVersion)
+            {
+                return CalendarContextStoreRead<CalendarContextSnapshot>.Missing();
+            }
         }
 
         return result;
@@ -72,11 +79,13 @@ public sealed class DpapiCalendarContextStore : ICalendarContextStore
 
     public void DeleteSnapshot() => DeleteIfPresent(_snapshotPath);
 
-    private static CalendarContextStoreRead<T> ReadProtected<T>(
+    private CalendarContextStoreRead<T> ReadProtected<T>(
         string path,
         string purpose,
         Func<T, int> innerVersion,
-        int supportedInnerVersion)
+        int supportedInnerVersion,
+        Func<T, bool> validate,
+        bool olderVersionIsMissing)
         where T : class
     {
         if (!File.Exists(path))
@@ -88,7 +97,7 @@ public sealed class DpapiCalendarContextStore : ICalendarContextStore
                 File.ReadAllBytes(path),
                 JsonOptions);
             if (outer is null
-                || outer.SchemaVersion < OuterSchemaVersion
+                || outer.SchemaVersion < 0
                 || string.IsNullOrWhiteSpace(outer.ProtectedPayload))
             {
                 return CalendarContextStoreRead<T>.Corrupt();
@@ -110,10 +119,7 @@ public sealed class DpapiCalendarContextStore : ICalendarContextStore
             byte[] plaintext;
             try
             {
-                plaintext = ProtectedData.Unprotect(
-                    protectedPayload,
-                    Entropy(purpose),
-                    DataProtectionScope.CurrentUser);
+                plaintext = _protector.Unprotect(protectedPayload, Entropy(purpose));
             }
             catch (CryptographicException)
             {
@@ -123,10 +129,17 @@ public sealed class DpapiCalendarContextStore : ICalendarContextStore
             try
             {
                 var value = JsonSerializer.Deserialize<T>(plaintext, JsonOptions);
-                if (value is null || innerVersion(value) < supportedInnerVersion)
+                if (value is null)
                     return CalendarContextStoreRead<T>.Corrupt();
-                if (innerVersion(value) > supportedInnerVersion)
+                var version = innerVersion(value);
+                if (version < 0)
+                    return CalendarContextStoreRead<T>.Corrupt();
+                if (version > supportedInnerVersion)
                     return CalendarContextStoreRead<T>.UnsupportedVersion();
+                if (version < supportedInnerVersion && olderVersionIsMissing)
+                    return CalendarContextStoreRead<T>.Missing();
+                if (!validate(value))
+                    return CalendarContextStoreRead<T>.Corrupt();
                 return CalendarContextStoreRead<T>.Ready(value);
             }
             finally
@@ -148,16 +161,13 @@ public sealed class DpapiCalendarContextStore : ICalendarContextStore
         }
     }
 
-    private static void WriteProtected<T>(string path, string purpose, T value)
+    private void WriteProtected<T>(string path, string purpose, T value)
     {
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
         byte[]? protectedPayload = null;
         try
         {
-            protectedPayload = ProtectedData.Protect(
-                plaintext,
-                Entropy(purpose),
-                DataProtectionScope.CurrentUser);
+            protectedPayload = _protector.Protect(plaintext, Entropy(purpose));
             var envelope = new ProtectedEnvelope(
                 OuterSchemaVersion,
                 Convert.ToBase64String(protectedPayload));

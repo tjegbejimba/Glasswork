@@ -28,6 +28,41 @@ public sealed class DnsCalendarHostResolver : ICalendarHostResolver
             .ConfigureAwait(false);
 }
 
+public interface ICalendarSocketConnector
+{
+    ValueTask<Stream> ConnectAsync(
+        IPAddress address,
+        int port,
+        CancellationToken cancellationToken);
+}
+
+public sealed class CalendarSocketConnector : ICalendarSocketConnector
+{
+    public async ValueTask<Stream> ConnectAsync(
+        IPAddress address,
+        int port,
+        CancellationToken cancellationToken)
+    {
+        var socket = new Socket(
+            address.AddressFamily,
+            SocketType.Stream,
+            ProtocolType.Tcp);
+        try
+        {
+            await socket.ConnectAsync(
+                    new IPEndPoint(address, port),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+}
+
 public sealed record CalendarTransportLimits(
     int MaxResponseBytes,
     int MaxRedirects,
@@ -67,7 +102,22 @@ public sealed class BoundedPublishedIcsTransport : ICalendarFeedTransport, IDisp
     public static BoundedPublishedIcsTransport CreateDefault()
     {
         var resolver = new DnsCalendarHostResolver();
-        var limits = CalendarTransportLimits.Default;
+        return CreateProduction(
+            resolver,
+            new CalendarSocketConnector(),
+            CalendarTransportLimits.Default);
+    }
+
+    public static BoundedPublishedIcsTransport CreateProduction(
+        ICalendarHostResolver resolver,
+        ICalendarSocketConnector connector,
+        CalendarTransportLimits? limits = null,
+        System.Net.Security.RemoteCertificateValidationCallback?
+            certificateValidationCallback = null)
+    {
+        ArgumentNullException.ThrowIfNull(resolver);
+        ArgumentNullException.ThrowIfNull(connector);
+        limits ??= CalendarTransportLimits.Default;
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -75,8 +125,17 @@ public sealed class BoundedPublishedIcsTransport : ICalendarFeedTransport, IDisp
             UseCookies = false,
             UseProxy = false,
         };
+        if (certificateValidationCallback is not null)
+        {
+            handler.SslOptions.RemoteCertificateValidationCallback =
+                certificateValidationCallback;
+        }
         handler.ConnectCallback = (context, cancellationToken) =>
-            ConnectPublicAsync(context.DnsEndPoint, resolver, cancellationToken);
+            ConnectPublicAsync(
+                context.DnsEndPoint,
+                resolver,
+                connector,
+                cancellationToken);
         return new BoundedPublishedIcsTransport(handler, resolver, limits);
     }
 
@@ -222,6 +281,7 @@ public sealed class BoundedPublishedIcsTransport : ICalendarFeedTransport, IDisp
     private static async ValueTask<Stream> ConnectPublicAsync(
         DnsEndPoint endpoint,
         ICalendarHostResolver resolver,
+        ICalendarSocketConnector connector,
         CancellationToken cancellationToken)
     {
         var addresses = await resolver.ResolveAsync(
@@ -237,23 +297,18 @@ public sealed class BoundedPublishedIcsTransport : ICalendarFeedTransport, IDisp
         Exception? lastFailure = null;
         foreach (var address in addresses)
         {
-            var socket = new Socket(
-                address.AddressFamily,
-                SocketType.Stream,
-                ProtocolType.Tcp);
             try
             {
-                await socket.ConnectAsync(
-                        new IPEndPoint(address, endpoint.Port),
+                return await connector.ConnectAsync(
+                        address,
+                        endpoint.Port,
                         cancellationToken)
                     .ConfigureAwait(false);
-                return new NetworkStream(socket, ownsSocket: true);
             }
             catch (Exception ex) when (ex is SocketException
                 or OperationCanceledException)
             {
                 lastFailure = ex;
-                socket.Dispose();
                 if (ex is OperationCanceledException)
                     throw;
             }
@@ -285,7 +340,19 @@ public sealed class BoundedPublishedIcsTransport : ICalendarFeedTransport, IDisp
             buffer.Write(chunk, 0, read);
         }
 
-        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, checked((int)buffer.Length));
+        buffer.Position = 0;
+        using var reader = new StreamReader(
+            buffer,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true),
+            detectEncodingFromByteOrderMarks: true);
+        try
+        {
+            return await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw new CalendarFeedException("invalid_encoding");
+        }
     }
 
     private static bool IsRedirect(HttpStatusCode statusCode) =>

@@ -179,6 +179,8 @@ public sealed class PlannerViewModel : ObservableObject
         var request = CreateCalendarRequest(forceCalendarRefresh);
         await RunCalendarRequestAsync(
             token => _calendarContext.GetTodayAsync(request, token),
+            request,
+            preserveSnapshotForUnchangedSource: true,
             cancellationToken);
     }
 
@@ -194,6 +196,8 @@ public sealed class PlannerViewModel : ObservableObject
                     secret),
                 request,
                 token),
+            request,
+            preserveSnapshotForUnchangedSource: false,
             cancellationToken);
     }
 
@@ -202,6 +206,8 @@ public sealed class PlannerViewModel : ObservableObject
         var request = CreateCalendarRequest(forceRefresh: true);
         return RunCalendarRequestAsync(
             token => _calendarContext.GetTodayAsync(request, token),
+            request,
+            preserveSnapshotForUnchangedSource: true,
             cancellationToken);
     }
 
@@ -210,6 +216,8 @@ public sealed class PlannerViewModel : ObservableObject
         var request = CreateCalendarRequest(forceRefresh: false);
         return RunCalendarRequestAsync(
             token => _calendarContext.DisconnectAsync(request, token),
+            request,
+            preserveSnapshotForUnchangedSource: false,
             cancellationToken);
     }
 
@@ -225,6 +233,8 @@ public sealed class PlannerViewModel : ObservableObject
                 new CalendarContextResetConfirmation(scope.Token),
                 request,
                 token),
+            request,
+            preserveSnapshotForUnchangedSource: false,
             cancellationToken);
     }
 
@@ -359,6 +369,8 @@ public sealed class PlannerViewModel : ObservableObject
 
     private async Task RunCalendarRequestAsync(
         Func<CancellationToken, Task<CalendarContextResult>> operation,
+        CalendarContextRequest request,
+        bool preserveSnapshotForUnchangedSource,
         CancellationToken cancellationToken)
     {
         _calendarRequestCancellation?.Cancel();
@@ -366,13 +378,17 @@ public sealed class PlannerViewModel : ObservableObject
         _calendarRequestCancellation =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var active = _calendarRequestCancellation;
+        var retainedSnapshot = preserveSnapshotForUnchangedSource
+            && IsQualifiedForRequest(_calendarResult.Snapshot, request)
+                ? _calendarResult.Snapshot
+                : null;
         try
         {
             if (ErrorMessage == CalendarStorageFailureMessage)
                 ErrorMessage = null;
             ApplyCalendarResult(new CalendarContextResult(
                 CalendarContextStatus.Loading,
-                _calendarResult.Snapshot,
+                retainedSnapshot,
                 _calendarResult.Actions));
             var result = await operation(active.Token);
             if (!active.IsCancellationRequested)
@@ -387,7 +403,7 @@ public sealed class PlannerViewModel : ObservableObject
             {
                 ApplyCalendarResult(new CalendarContextResult(
                     CalendarContextStatus.TransientFailure,
-                    _calendarResult.Snapshot,
+                    retainedSnapshot,
                     _calendarResult.Actions,
                     new CalendarContextDiagnostic("storage_failure")));
                 ErrorMessage = CalendarStorageFailureMessage;
@@ -402,6 +418,22 @@ public sealed class PlannerViewModel : ObservableObject
             }
         }
     }
+
+    private static bool IsQualifiedForRequest(
+        CalendarContextSnapshot? snapshot,
+        CalendarContextRequest request) =>
+        snapshot is
+        {
+            SchemaVersion: CalendarContextPersistenceContract.SnapshotSchemaVersion,
+            NormalizationVersion: CalendarContextPersistenceContract.NormalizationVersion,
+            IsComplete: true,
+        }
+        && snapshot.Day == request.Day
+        && string.Equals(
+            snapshot.TimeZoneId,
+            request.TimeZone.Id,
+            StringComparison.Ordinal)
+        && !string.IsNullOrWhiteSpace(snapshot.SourceFingerprint);
 
     private void ApplyCalendarResult(CalendarContextResult result)
     {

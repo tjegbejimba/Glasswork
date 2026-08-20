@@ -5,9 +5,12 @@ namespace Glasswork.Core.CalendarContext;
 
 public sealed class PublishedIcsCalendarContext : ICalendarContext
 {
-    public const int ConfigurationSchemaVersion = 1;
-    public const int SnapshotSchemaVersion = 1;
-    public const int NormalizationVersion = 1;
+    public const int ConfigurationSchemaVersion =
+        CalendarContextPersistenceContract.ConfigurationSchemaVersion;
+    public const int SnapshotSchemaVersion =
+        CalendarContextPersistenceContract.SnapshotSchemaVersion;
+    public const int NormalizationVersion =
+        CalendarContextPersistenceContract.NormalizationVersion;
 
     private static readonly IReadOnlyList<CalendarContextAction> ConnectedActions =
         [CalendarContextAction.Refresh, CalendarContextAction.Disconnect];
@@ -91,7 +94,7 @@ public sealed class PublishedIcsCalendarContext : ICalendarContext
                 new CalendarContextDiagnostic("unsafe_endpoint", "published_ics"));
         }
 
-        var fingerprint = Fingerprint(endpoint);
+        var fingerprint = CalendarContextPersistenceContract.SourceFingerprint(endpoint);
         CalendarContextStoreRead<CalendarContextConfiguration> prior;
         long generation;
         lock (_refreshGate)
@@ -243,7 +246,7 @@ public sealed class PublishedIcsCalendarContext : ICalendarContext
         bool persistSnapshot,
         long generation)
     {
-        if (configuration.SchemaVersion != ConfigurationSchemaVersion
+        if (configuration.SchemaVersion > ConfigurationSchemaVersion
             || configuration.Provider != CalendarContextProviderKind.PublishedIcs
             || !CalendarEndpointPolicy.TryValidate(configuration.Secret, out var endpoint))
         {
@@ -457,10 +460,6 @@ public sealed class PublishedIcsCalendarContext : ICalendarContext
             Convert.ToHexString(SHA256.HashData(
                 Encoding.UTF8.GetBytes("calendar-context:configuration,snapshot"))),
             ["Published calendar connection", "Current-day calendar snapshot"]);
-
-    private static string Fingerprint(Uri endpoint) =>
-        Convert.ToHexString(SHA256.HashData(
-            Encoding.UTF8.GetBytes(endpoint.AbsoluteUri)));
 
     private sealed record InFlightRefresh(
         RefreshKey Key,

@@ -270,12 +270,13 @@ public partial class App : Application
         SavedTaskViews = new SavedTaskViewService(UiState);
         var calendarFixturePath = Environment.GetEnvironmentVariable(
             VerificationLaunchOptions.CalendarContextFixturePathVariable);
-        CalendarContext = launchOptions.IsVerificationRun
-            && !string.IsNullOrWhiteSpace(calendarFixturePath)
-                ? VisualVerificationCalendarContextAdapter.FromFile(calendarFixturePath)
-                : new PublishedIcsCalendarContext(
-                    BoundedPublishedIcsTransport.CreateDefault(),
-                    DpapiCalendarContextStore.CreateDefault());
+        CalendarContext = VerificationLaunchOptions.CreateCalendarContext(
+            launchOptions,
+            calendarFixturePath,
+            VisualVerificationCalendarContextAdapter.FromFile,
+            () => new PublishedIcsCalendarContext(
+                BoundedPublishedIcsTransport.CreateDefault(),
+                DpapiCalendarContextStore.CreateDefault()));
 
         // Initialize update checker. Read installed version from AssemblyInformationalVersion,
         // which matches the version shown in the status bar. Fire-and-forget startup check
