@@ -333,6 +333,49 @@ public sealed class PlannerViewModelTests
     }
 
     [TestMethod]
+    public async Task ResetCalendarAsync_WhileLoading_PreservesResetActionAndScopePreview()
+    {
+        var resetScope = new CalendarContextResetScope(
+            "fixture-reset",
+            ["Published calendar connection", "Current-day calendar snapshot"]);
+        var calendar = new BlockingLifecycleCalendarContext
+        {
+            GetTodayResult = new CalendarContextResult(
+                CalendarContextStatus.ProtectedStoreRecovery,
+                null,
+                [CalendarContextAction.Reset],
+                ResetScope: resetScope),
+        };
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        await viewModel.RefreshAsync();
+
+        var reset = viewModel.ResetCalendarAsync();
+        await calendar.ResetStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.IsFalse(reset.IsCompleted);
+        Assert.AreEqual("Calendar loading", viewModel.CalendarStatus);
+        Assert.IsTrue(viewModel.CanResetCalendar);
+        Assert.IsFalse(viewModel.CanConnectCalendar);
+        Assert.IsFalse(viewModel.CanRefreshCalendar);
+        Assert.AreEqual(
+            "Published calendar connection; Current-day calendar snapshot",
+            viewModel.CalendarResetScopeText);
+
+        calendar.CompleteReset(new CalendarContextResult(
+            CalendarContextStatus.SetupRequired,
+            null,
+            [CalendarContextAction.Connect]));
+        await reset;
+
+        Assert.IsTrue(viewModel.CanConnectCalendar);
+        Assert.IsFalse(viewModel.CanResetCalendar);
+        Assert.AreEqual(string.Empty, viewModel.CalendarResetScopeText);
+        Assert.AreEqual(
+            "Calendar Context reset. Connect is available.",
+            viewModel.Announcement);
+    }
+
+    [TestMethod]
     public async Task QueuedCalendarLifecycleOperation_NavigationCancellation_DoesNotEscape()
     {
         var calendar = new BlockingLifecycleCalendarContext();
