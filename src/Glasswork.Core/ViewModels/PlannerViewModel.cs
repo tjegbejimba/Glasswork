@@ -293,6 +293,11 @@ public sealed class PlannerViewModel : ObservableObject
                     cancellationToken);
                 if (applied)
                 {
+                    if (lifecycleOperation == CalendarLifecycleOperation.Reset
+                        && _calendarResult.Status == CalendarContextStatus.TransientFailure)
+                    {
+                        CalendarStatus = "Calendar Context reset failed";
+                    }
                     Announcement = DescribeCalendarAnnouncement(
                         lifecycleOperation,
                         _calendarResult);
@@ -453,6 +458,11 @@ public sealed class PlannerViewModel : ObservableObject
             && IsQualifiedForRequest(_calendarResult.Snapshot, request)
                 ? _calendarResult.Snapshot
                 : null;
+        var retainedActions = _calendarResult.Actions;
+        var retainedResetScope =
+            retainedActions.Contains(CalendarContextAction.Reset)
+                ? _calendarResult.ResetScope
+                : null;
         try
         {
             if (ErrorMessage == CalendarStorageFailureMessage)
@@ -460,7 +470,8 @@ public sealed class PlannerViewModel : ObservableObject
             ApplyCalendarResult(new CalendarContextResult(
                 CalendarContextStatus.Loading,
                 retainedSnapshot,
-                _calendarResult.Actions));
+                retainedActions,
+                ResetScope: retainedResetScope));
             var result = await operation(active.Token);
             if (!active.IsCancellationRequested)
             {
@@ -478,8 +489,9 @@ public sealed class PlannerViewModel : ObservableObject
                 ApplyCalendarResult(new CalendarContextResult(
                     CalendarContextStatus.TransientFailure,
                     retainedSnapshot,
-                    _calendarResult.Actions,
-                    new CalendarContextDiagnostic("storage_failure")));
+                    retainedActions,
+                    new CalendarContextDiagnostic("storage_failure"),
+                    retainedResetScope));
                 ErrorMessage = CalendarStorageFailureMessage;
                 return true;
             }
@@ -566,6 +578,9 @@ public sealed class PlannerViewModel : ObservableObject
 
         if (result.Status == CalendarContextStatus.PossiblyStale)
             return "Calendar refresh failed. Showing the last complete snapshot.";
+
+        if (operation == CalendarLifecycleOperation.Reset)
+            return "Calendar Context reset failed. Reset remains available.";
 
         return operation == CalendarLifecycleOperation.Connect
             ? "Calendar connection failed. Check the link and try again."

@@ -8,12 +8,14 @@ public sealed class VisualVerificationCalendarContextAdapter : ICalendarContext
     private const string ResetToken = "verification-calendar-context-reset";
     private readonly VisualVerificationCalendarContext _fixture;
     private bool _disconnected;
+    private bool _resetStorageFailurePending;
 
     public VisualVerificationCalendarContextAdapter(
         VisualVerificationCalendarContext fixture)
     {
         _fixture = fixture ?? throw new ArgumentNullException(nameof(fixture));
         _fixture.Validate();
+        _resetStorageFailurePending = fixture.ResetStorageFailureOnce;
     }
 
     public static VisualVerificationCalendarContextAdapter FromFile(string path)
@@ -75,6 +77,12 @@ public sealed class VisualVerificationCalendarContextAdapter : ICalendarContext
                 StringComparison.Ordinal))
         {
             return Task.FromResult(Recovery());
+        }
+
+        if (_resetStorageFailurePending)
+        {
+            _resetStorageFailurePending = false;
+            throw new IOException("Verification Calendar Context storage failure.");
         }
 
         _disconnected = true;

@@ -19,6 +19,7 @@
     "diagnosticCode": "network_failure",
     "refreshStatus": "protected-store-recovery",
     "refreshDiagnosticCode": "protected_store_newer",
+    "resetStorageFailureOnce": true,
     "intervals": [
       {
         "startLocal": "10:00:00",
@@ -90,6 +91,37 @@
     {
       "type": "capture",
       "name": "planner-calendar-degraded-recovery"
+    },
+    {
+      "type": "invoke",
+      "automationId": "PlannerCalendarReset"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "PlannerCalendarReset"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerAnnouncement",
+      "value": "Calendar Context reset failed. Reset remains available."
+    },
+    {
+      "type": "assert-focused",
+      "automationId": "PlannerCalendarReset"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerUnknownCalendar",
+      "value": "Calendar Context reset failed"
+    },
+    {
+      "type": "assert-name",
+      "automationId": "PlannerCalendarResetScope",
+      "value": "Published calendar connection; Current-day calendar snapshot"
+    },
+    {
+      "type": "capture",
+      "name": "planner-calendar-degraded-reset-failure"
     },
     {
       "type": "invoke",

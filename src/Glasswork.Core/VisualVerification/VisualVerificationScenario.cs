@@ -320,6 +320,7 @@ public sealed class VisualVerificationCalendarContext
     public string? DiagnosticCode { get; init; }
     public string? RefreshStatus { get; init; }
     public string? RefreshDiagnosticCode { get; init; }
+    public bool ResetStorageFailureOnce { get; init; }
     public List<VisualVerificationCalendarInterval> Intervals { get; init; } = [];
 
     [JsonExtensionData]

@@ -454,6 +454,42 @@ public sealed class PlannerViewModelTests
     }
 
     [TestMethod]
+    public async Task ResetCalendarAsync_StorageFailure_PreservesResetRecoveryAndAnnouncesRetry()
+    {
+        var resetScope = new CalendarContextResetScope(
+            "fixture-reset",
+            ["Published calendar connection", "Current-day calendar snapshot"]);
+        var calendar = new MutableCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.ProtectedStoreRecovery,
+            null,
+            [CalendarContextAction.Reset],
+            ResetScope: resetScope));
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        await viewModel.RefreshAsync();
+        calendar.Failure = new IOException(
+            "Fixture storage path must not surface.");
+
+        await viewModel.ResetCalendarAsync();
+
+        Assert.IsTrue(viewModel.CanResetCalendar);
+        Assert.IsFalse(viewModel.CanConnectCalendar);
+        Assert.IsFalse(viewModel.CanRefreshCalendar);
+        Assert.AreEqual(
+            "Published calendar connection; Current-day calendar snapshot",
+            viewModel.CalendarResetScopeText);
+        Assert.AreEqual(
+            "Calendar Context reset failed",
+            viewModel.CalendarStatus);
+        Assert.AreEqual(
+            "Calendar Context reset failed. Reset remains available.",
+            viewModel.Announcement);
+        Assert.AreEqual(
+            "Calendar Context storage could not be updated.",
+            viewModel.ErrorMessage);
+        Assert.DoesNotContain("Fixture storage path", viewModel.ErrorMessage);
+    }
+
+    [TestMethod]
     public void SetSize_TaskLeaf_WritesCanonicalSizeAndRefreshesTotals()
     {
         var (vault, viewModel) = CreatePlanner(

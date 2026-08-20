@@ -229,7 +229,9 @@ public sealed partial class PlannerPage : Page
                 ? CalendarRefreshButton
                 : _viewModel.CanResetCalendar
                     ? CalendarResetButton
-                    : CalendarConnectButton);
+                    : _viewModel.CanConnectCalendar
+                        ? CalendarConnectButton
+                        : null);
     }
 
     private async void CalendarRefresh_Click(object sender, RoutedEventArgs e)
@@ -241,7 +243,9 @@ public sealed partial class PlannerPage : Page
                 ? CalendarResetButton
                 : _viewModel.CanConnectCalendar
                     ? CalendarConnectButton
-                    : CalendarRefreshButton);
+                    : _viewModel.CanRefreshCalendar
+                        ? CalendarRefreshButton
+                        : null);
     }
 
     private async void CalendarDisconnect_Click(object sender, RoutedEventArgs e)
@@ -253,7 +257,9 @@ public sealed partial class PlannerPage : Page
                 ? CalendarDisconnectButton
                 : _viewModel.CanResetCalendar
                     ? CalendarResetButton
-                    : CalendarConnectButton);
+                    : _viewModel.CanConnectCalendar
+                        ? CalendarConnectButton
+                        : null);
     }
 
     private async void CalendarReset_Click(object sender, RoutedEventArgs e)
@@ -265,12 +271,19 @@ public sealed partial class PlannerPage : Page
                 ? CalendarResetButton
                 : _viewModel.CanConnectCalendar
                     ? CalendarConnectButton
-                    : CalendarRefreshButton);
+                    : _viewModel.CanRefreshCalendar
+                        ? CalendarRefreshButton
+                        : null);
     }
 
-    private void QueueCalendarFocus(Control target) =>
-        DispatcherQueue.TryEnqueue(
-            () => target.Focus(FocusState.Programmatic));
+    private void QueueCalendarFocus(Control? target)
+    {
+        if (target is not null)
+        {
+            DispatcherQueue.TryEnqueue(
+                () => target.Focus(FocusState.Programmatic));
+        }
+    }
 
     private void SizeButton_Click(object sender, RoutedEventArgs e)
     {
