@@ -708,7 +708,7 @@ if [[ "${1:-}" == "--enqueue-prd" ]]; then
   if declare -F ralph_enqueueable_blocker_tags >/dev/null 2>&1; then
     while IFS= read -r _row; do
       [[ -z "$_row" ]] && continue
-      _record=$(echo "$_row" | base64 --decode | tr -d '\r')
+      _record=$(printf '%s' "$_row" | tr -d '\r' | base64 --decode | tr -d '\r')
       _num=$(echo "$_record" | jq -r '.number')
       _blockers=$(ralph_enqueueable_blocker_tags "$_record")
       [[ -z "$_blockers" && -n "$_num" ]] && _runnable_numbers+=("$_num")
