@@ -165,6 +165,20 @@ LOG_DIR="$MAIN_REPO/.ralph/logs"
 mkdir -p "$LOG_DIR" "$MAIN_REPO/.ralph/lock"
 # shellcheck source=lib/state.sh
 . "$MAIN_REPO/.ralph/lib/state.sh"
+# shellcheck source=lib/status.sh
+_status_lib="$MAIN_REPO/.ralph/lib/status.sh"
+if [[ -f "$_status_lib" ]]; then
+  # shellcheck disable=SC1090
+  . "$_status_lib"
+fi
+unset _status_lib
+# shellcheck source=lib/copilot-session.sh
+_copilot_session_lib="$MAIN_REPO/.ralph/lib/copilot-session.sh"
+if [[ -f "$_copilot_session_lib" ]]; then
+  # shellcheck disable=SC1090
+  . "$_copilot_session_lib"
+fi
+unset _copilot_session_lib
 # shellcheck source=lib/labels.sh
 _labels_lib="$MAIN_REPO/.ralph/lib/labels.sh"
 if [[ -f "$_labels_lib" ]]; then
@@ -349,6 +363,24 @@ fi
 
 if [[ "${1:-}" == "--status" ]]; then
   state_file="$MAIN_REPO/.ralph/state.json"
+  
+  # Reconcile stale workers across all active runs
+  if declare -F status_reconcile_stale_workers >/dev/null 2>&1; then
+    if [[ -d "$MAIN_REPO/.ralph/runs" ]]; then
+      for run_dir in "$MAIN_REPO/.ralph/runs/"*; do
+        [[ ! -d "$run_dir" ]] && continue
+        run_id=$(basename "$run_dir")
+        status_file_path="$run_dir/status.json"
+        [[ ! -f "$status_file_path" ]] && continue
+        
+        # Reconcile this run's stale workers
+        state_lock
+        RUN_ID="$run_id" status_reconcile_stale_workers "$run_id" || true
+        state_unlock
+      done
+    fi
+  fi
+  
   echo "Parallelism: $PARALLELISM"
   echo
   echo "Workers for $MAIN_REPO (from ps):"
@@ -568,6 +600,9 @@ if [[ "${1:-}" == "--cleanup" ]]; then
     sleep 2
   fi
   stop_all_caffeinate
+  if declare -F copilot_session_archive_completed >/dev/null 2>&1; then
+    copilot_session_archive_completed
+  fi
   cleanup_worktrees
   exit $?
 fi
@@ -768,26 +803,26 @@ NODEEOF
 fi
 
 # Stale-script detection: when both ralph/ralph.sh (source) and
-# .ralph/ralph.sh (installed copy) exist, refuse to launch if the source is
-# newer than the installed copy. This catches the regression where fixes land
-# in the source but workers keep running the stale installed version.
-# Only applies to the launch/foreground paths; status/stop/cleanup/enqueue
-# are exempt so operators can always inspect and kill stuck workers.
+# .ralph/ralph.sh (installed copy) exist, warn if the source content differs
+# from the installed copy. Per ADR 0004 decision 3, enforcement is now via CI
+# (install.sh --check), so this runtime guard is warn-only to avoid
+# hard-stopping unattended workers. Use --force to suppress the warning.
 _src_ralph="$MAIN_REPO/ralph/ralph.sh"
 _ins_ralph="$MAIN_REPO/.ralph/ralph.sh"
 if [[ -f "$_src_ralph" && -f "$_ins_ralph" ]]; then
-  _src_mtime=$(stat -f %m "$_src_ralph" 2>/dev/null || stat -c %Y "$_src_ralph" 2>/dev/null || echo "")
-  _ins_mtime=$(stat -f %m "$_ins_ralph" 2>/dev/null || stat -c %Y "$_ins_ralph" 2>/dev/null || echo "")
-  if [[ -n "$_src_mtime" && -n "$_ins_mtime" && "$_src_mtime" -gt "$_ins_mtime" ]]; then
+  # Compare by content, not mtime. Git rewrites working-tree mtimes on
+  # checkout/merge even when content is unchanged, which trips mtime-based
+  # guards in self-hosting repos. Use cmp -s for byte-wise comparison.
+  if ! cmp -s "$_src_ralph" "$_ins_ralph"; then
     if [[ "$FORCE" -eq 1 ]]; then
       echo "⚠️  Installed scripts are stale but --force override active." >&2
     else
-      echo "❌ Your installed scripts are stale — run ./install.sh <repo> --scripts-only" >&2
-      echo "   (pass --force to launch anyway)" >&2
-      exit 1
+      echo "⚠️  Your installed scripts may be stale — run ./install.sh <repo> --scripts-only" >&2
+      echo "   (this is a warning; workers will continue — CI enforces content match at PR time)" >&2
     fi
   fi
 fi
+unset _src_ralph _ins_ralph
 unset _src_ralph _ins_ralph _src_mtime _ins_mtime
 
 # --foreground only meaningful with single worker — fan-out doesn't have
@@ -808,6 +843,15 @@ for _flag in "$@"; do
   fi
 done
 unset _flag
+
+# Repository launch authorization is fail-closed. Read-only and enqueue commands
+# exit above this point, so operators can inspect and prepare a disabled install.
+_repo_launch_allowed=$(jq -r '.allowAgentLaunch // false' "$MAIN_REPO/.ralph/config.json" 2>/dev/null || echo "false")
+if [[ "$_repo_launch_allowed" != "true" ]]; then
+  echo "❌ Agent launch is disabled: set allowAgentLaunch=true in .ralph/config.json only after all launch preconditions are enforceable." >&2
+  exit 1
+fi
+unset _repo_launch_allowed
 
 # Launcher-level mutex — prevents two concurrent `launch.sh` invocations from
 # both running setup (which mutates .git/info/exclude, worktrees, and branch

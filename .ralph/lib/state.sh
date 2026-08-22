@@ -310,8 +310,7 @@ issue_satisfaction_detail() {
   if [[ -z "$closure" ]]; then
     # Older `gh` (<2.13, pre-April 2022) doesn't recognise stateReason on
     # the --json flag and fails the whole call. Retry without it so the
-    # strict merged-PR check keeps working; the manual-close fallback
-    # simply won't fire because state_reason stays empty.
+    # strict merged-PR check keeps working.
     closure=$(gh issue view "$n" --repo "$REPO" \
       --json state,closedByPullRequestsReferences 2>/dev/null || echo "")
     if [[ -z "$closure" ]]; then
@@ -340,22 +339,11 @@ issue_satisfaction_detail() {
     if [[ "$satisfied" -eq 0 && -n "${RALPH_RELEASE_BRANCH:-}" ]]; then
       local found
       found=$(gh pr list --repo "$REPO" --state merged --base "$RALPH_RELEASE_BRANCH" \
-        --search "in:body \"Closes #${n}\" OR in:body \"Fixes #${n}\" OR in:body \"Resolves #${n}\"" \
+        --search "in:body \"Closes #${n}\"" \
         --json number -q '.[0].number' 2>/dev/null || echo "")
       if [[ -n "$found" && "$found" != "null" ]]; then
         satisfied=1
       fi
-    fi
-    # Manually-closed fallback: when RALPH_ACCEPT_MANUALLY_CLOSED is exactly
-    # "1" (canonical form produced by ralph.sh's normalize_bool), accept
-    # stateReason=COMPLETED as satisfied even without a PR linkage. Strict
-    # "1" match instead of `-n` so direct callers that set the variable to
-    # "false" or "0" don't accidentally enable the fallback. Rejects
-    # NOT_PLANNED/DUPLICATE and missing stateReason so wontfix closures
-    # still act as blockers. See docs/manually-closed-blockers.md.
-    if [[ "$satisfied" -eq 0 && "${RALPH_ACCEPT_MANUALLY_CLOSED:-}" == "1" \
-          && "$state_reason" == "COMPLETED" ]]; then
-      satisfied=1
     fi
   fi
   printf '%s|%s|%s|%s\n' "$satisfied" "$state" "$state_reason" "$prs_csv"

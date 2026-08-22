@@ -55,11 +55,17 @@ config_get() {
 
 REPO="${RALPH_REPO:-$(git -C "$(git rev-parse --show-toplevel)" config --get remote.origin.url 2>/dev/null | sed -E 's#(git@github.com:|https://github.com/)##; s/\.git$//')}"
 GH="${RALPH_GH_BIN:-gh}"
+COPILOT="${RALPH_COPILOT_BIN:-copilot}"
 TITLE_REGEX="${RALPH_TITLE_REGEX:-$(config_get '.issue.titleRegex')}"
 TITLE_REGEX="${TITLE_REGEX:-^Slice [0-9]+:}"
 TITLE_NUM_RE="${RALPH_TITLE_NUM_REGEX:-$(config_get '.issue.titleNumRegex')}"
 TITLE_NUM_RE="${TITLE_NUM_RE:-^Slice (?<x>[0-9]+):}"
 ISSUE_SEARCH="${RALPH_ISSUE_SEARCH:-$(config_get '.issue.issueSearch')}"
+ALLOW_AGENT_LAUNCH=$(config_get '.allowAgentLaunch')
+if [[ "$ALLOW_AGENT_LAUNCH" != "true" ]]; then
+  echo "❌ Agent launch is disabled: allowAgentLaunch must be true in .ralph/config.json." >&2
+  exit 1
+fi
 
 # Direct-numbers queue. When `.issue.numbers` is non-empty and no RUN_ID is
 # set, the worker treats this list as the candidate set instead of running an
@@ -93,14 +99,13 @@ AUTOPILOT_CONTINUES="${RALPH_AUTOPILOT_CONTINUES:-15}"
 POLL_SEC="${RALPH_POLL_SEC:-30}"
 RUN_ID="${RALPH_RUN_ID:-}"
 # Release-branch flow (opt-in). When RALPH_RELEASE_BRANCH is set, the verifier
-# also accepts PRs merged into that branch as closing their referenced issue,
-# and may call `gh pr merge` + `gh issue close` itself if copilot left a green
-# PR open or pushed a branch without opening a PR. See docs/release-branch.md.
+# also accepts PRs merged into that branch as closing their referenced issue.
+# The worker remains responsible for the merge and explicit issue close.
 RELEASE_BRANCH="${RALPH_RELEASE_BRANCH:-}"
 BRANCH_PREFIX="${RALPH_BRANCH_PREFIX:-$(config_get '.issue.branchPrefix')}"
 
 # Source state.sh early so the boolean-normalisation helper is available
-# before we resolve the verbose / acceptManuallyClosed / resume flags below.
+# before we resolve the verbose and resume flags below.
 # state_init() (which has side effects) is invoked further down after cd.
 # shellcheck source=lib/state.sh
 . "$SCRIPT_DIR/lib/state.sh"
@@ -123,8 +128,9 @@ if ! [[ "$RESUME_MAX" =~ ^[0-9]+$ ]]; then
 fi
 unset _cfg_resume_max
 
-# Opt-in: resume even when an open PR exists for the slice branch. Default
-# off — when humans are reviewing a PR, Ralph should not keep pushing.
+# Escape hatch: force resume even when an open PR exists for the slice branch.
+# Default guarded mode allows Ralph-owned PRs with failing/pending checks to
+# continue, but blocks PRs with human review evidence or unsafe ownership.
 _cfg_resume_open_pr=$(config_get '.worker.resumeOnOpenPR')
 RALPH_RESUME_ON_OPEN_PR=$(normalize_bool "${RALPH_RESUME_ON_OPEN_PR:-${_cfg_resume_open_pr:-}}") || exit 1
 unset _cfg_resume_open_pr
@@ -140,13 +146,6 @@ if ! [[ "$IDLE_EXIT_POLLS" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 unset _cfg_idle
-
-# Manually-closed blocker fallback (opt-in). When enabled, is_issue_satisfied
-# accepts CLOSED + stateReason=COMPLETED as satisfied even without a PR
-# linkage. See docs/manually-closed-blockers.md.
-_cfg_accept_manual=$(config_get '.worker.acceptManuallyClosed')
-RALPH_ACCEPT_MANUALLY_CLOSED=$(normalize_bool "${RALPH_ACCEPT_MANUALLY_CLOSED:-${_cfg_accept_manual:-}}") || exit 1
-unset _cfg_accept_manual
 
 # Verbose diagnostics. When enabled, the candidate-selection loop emits a
 # per-rejection skip line so a stalled worker is debuggable in seconds.
@@ -192,12 +191,20 @@ state_init
 # Per-run status tracking (status.json). Only needed in run-aware mode.
 # shellcheck source=lib/status.sh
 . "$SCRIPT_DIR/lib/status.sh"
+# Copilot session naming/cleanup helpers.
+# shellcheck source=lib/copilot-session.sh
+if [[ -f "$SCRIPT_DIR/lib/copilot-session.sh" ]]; then
+  . "$SCRIPT_DIR/lib/copilot-session.sh"
+fi
 # PR merge fallback helpers.
 # shellcheck source=lib/pr-merge.sh
 . "$SCRIPT_DIR/lib/pr-merge.sh"
 # Resume-incomplete-iterations helpers (issue #60).
 # shellcheck source=lib/resume.sh
 . "$SCRIPT_DIR/lib/resume.sh"
+# Recovery ledger for parked recoverable work (issue #173).
+# shellcheck source=lib/recovery-ledger.sh
+. "$SCRIPT_DIR/lib/recovery-ledger.sh"
 if [[ -n "$RUN_ID" ]]; then
   status_init
 fi
@@ -277,7 +284,7 @@ run_with_timeout() {
 wait_for_issue_closed_by_merged_pr() {
   local issue="$1"
   local context="$2"
-  local closure state pr_numbers merged_count pr merged_at attempt
+  local closure state pr_numbers merged_count pr pr_record merged_at pr_body attempt
   for attempt in 1 2 3 4 5 6; do
     closure=$(gh issue view "$issue" --repo "$REPO" \
       --json state,closedByPullRequestsReferences)
@@ -285,8 +292,11 @@ wait_for_issue_closed_by_merged_pr() {
     pr_numbers=$(echo "$closure" | jq -r '(.closedByPullRequestsReferences // [])[].number')
     merged_count=0
     for pr in $pr_numbers; do
-      merged_at=$(gh pr view "$pr" --repo "$REPO" --json mergedAt -q .mergedAt 2>/dev/null || echo "")
-      if [[ -n "$merged_at" && "$merged_at" != "null" ]]; then
+      pr_record=$(gh pr view "$pr" --repo "$REPO" --json mergedAt,body 2>/dev/null || echo "")
+      merged_at=$(echo "$pr_record" | jq -r '.mergedAt // ""')
+      pr_body=$(echo "$pr_record" | jq -r '.body // ""')
+      if [[ -n "$merged_at" && "$merged_at" != "null" ]] \
+          && printf '%s\n' "$pr_body" | grep -qxE "Closes #${issue}[[:space:]]*"; then
         merged_count=$((merged_count + 1))
       fi
     done
@@ -425,6 +435,12 @@ while true; do
         continue
       fi
       
+      # Skip if recoverable with active lease (not due yet)
+      if ledger_is_recoverable "$cand_num" && ! ledger_is_recovery_due "$cand_num"; then
+        [[ "$RALPH_VERBOSE" == "1" ]] && echo "↪️  Worker $WORKER_ID: #$cand_num is recoverable but lease not expired; deferring." >&2
+        continue
+      fi
+      
       # Re-fetch state/labels/body from GitHub before claiming. Queue files can
       # be stale or agent-supplied, so run-aware workers enforce the same
       # canonical runnable boundary as direct-number queues.
@@ -450,12 +466,11 @@ while true; do
       fi
       if [[ -n "$cand_blockers" ]]; then
         state_lock || { echo "⚠️  Couldn't acquire state lock; retrying." >&2; sleep "$POLL_SEC"; continue; }
-        status_mark_failed "$cand_num" "Issue is not canonical Ralph-runnable: $cand_blockers"
+        status_mark_rejected "$cand_num" "Issue is not canonical Ralph-runnable: $cand_blockers"
         state_unlock
-        if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
-          ralph_apply_label_transition "$cand_num" fail || true
-        fi
-        echo "🚫 Worker $WORKER_ID: #$cand_num not canonical Ralph-runnable ($cand_blockers); marked as failed."
+        # Pre-launch rejection: do NOT apply ralph:failed label transition.
+        # The issue stays ralph:ready and will self-defer until blockers clear.
+        echo "🚫 Worker $WORKER_ID: #$cand_num not canonical Ralph-runnable ($cand_blockers); marked as rejected (no label change)."
         continue
       fi
 
@@ -471,13 +486,18 @@ while true; do
       # No claimable issue this pass. Decide whether to exit or wait:
       # - If every queue item is in a terminal status (merged/failed/skipped),
       #   the run is done — exit cleanly.
+      # - Recoverable items with active leases are counted as not-yet-claimable,
+      #   not terminal (they may become claimable after lease expiry).
       # - Otherwise some items are claimed/in-progress on other workers; sleep.
       total=$(echo "$queue_json" | jq -r 'length')
       terminal_count=0
+      recoverable_leased_count=0
       while IFS= read -r qnum; do
         [[ -z "$qnum" ]] && continue
         if status_is_terminal "$qnum"; then
           terminal_count=$((terminal_count + 1))
+        elif ledger_is_recoverable "$qnum" && ! ledger_is_recovery_due "$qnum"; then
+          recoverable_leased_count=$((recoverable_leased_count + 1))
         fi
       done < <(echo "$queue_json" | jq -r '.[].number')
       if [[ "$total" -eq 0 ]]; then
@@ -488,7 +508,11 @@ while true; do
         echo "✅ Worker $WORKER_ID: run $RUN_ID queue fully resolved ($terminal_count/$total terminal). Done."
         exit 0
       fi
-      echo "⏸  Worker $WORKER_ID: no claimable issues in run $RUN_ID queue (terminal=$terminal_count/$total); sleeping ${POLL_SEC}s."
+      if [[ "$recoverable_leased_count" -gt 0 ]]; then
+        echo "⏸  Worker $WORKER_ID: no claimable issues in run $RUN_ID queue (terminal=$terminal_count/$total, recoverable_leased=$recoverable_leased_count); sleeping ${POLL_SEC}s."
+      else
+        echo "⏸  Worker $WORKER_ID: no claimable issues in run $RUN_ID queue (terminal=$terminal_count/$total); sleeping ${POLL_SEC}s."
+      fi
       _idle_polls=$((_idle_polls + 1))
       if [[ "$IDLE_EXIT_POLLS" -gt 0 && "$_idle_polls" -ge "$IDLE_EXIT_POLLS" ]]; then
         echo "⏸  Worker $WORKER_ID: idle for $_idle_polls polls, exiting."
@@ -789,14 +813,26 @@ while true; do
     fresh_blocker_tags=$(ralph_claimable_blocker_tags "$fresh_record")
   fi
   if [[ -n "$fresh_blocker_tags" ]]; then
-    [[ -n "$RUN_ID" ]] && status_mark_failed "$num" "Issue became non-runnable before claim: $fresh_blocker_tags"
+    [[ -n "$RUN_ID" ]] && status_mark_rejected "$num" "Issue became non-runnable before claim: $fresh_blocker_tags"
     state_unlock
-    if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
-      ralph_apply_label_transition "$num" fail || true
-    fi
-    echo "↪️  Worker $WORKER_ID: #$num became non-runnable during selection ($fresh_blocker_tags); retrying."
+    # Pre-launch rejection: do NOT apply ralph:failed label transition.
+    # The issue stays ralph:ready and will self-defer until blockers clear.
+    echo "↪️  Worker $WORKER_ID: #$num became non-runnable during selection ($fresh_blocker_tags); marked as rejected (no label change)."
     continue
   fi
+  
+  # If this is a recoverable issue, try to claim the recovery lease
+  _is_recovery_claim=0
+  if ledger_is_recoverable "$num"; then
+    if ! ledger_try_claim_recovery "$num" "$WORKER_ID" "$$"; then
+      echo "↪️  Worker $WORKER_ID: #$num recovery lease already claimed by another worker; retrying later." >&2
+      state_unlock
+      continue
+    fi
+    _is_recovery_claim=1
+    echo "ℹ️  Worker $WORKER_ID: claimed recovery lease for #$num." >&2
+  fi
+  
   state_claim "$num" "$WORKER_ID" "$$" "$(basename "$log_file")"
   CURRENT_CLAIM="$num"
   _idle_polls=0  # Reset idle counter: worker successfully claimed an issue
@@ -817,6 +853,25 @@ while true; do
   fi
   if [[ -n "$fresh_body" ]]; then
     body="$fresh_body"
+  fi
+  
+  # If this is a recovery claim, load resume data from ledger and activate resume mode
+  if [[ "$_is_recovery_claim" == "1" ]]; then
+    _ledger_entry=$(ledger_load_entry "$num")
+    _resume_pr=$(echo "$_ledger_entry" | jq -r '.pr // empty')
+    _iter_resume_branch=$(echo "$_ledger_entry" | jq -r '.branch // empty')
+    _iter_resume_attempt=$(echo "$_ledger_entry" | jq -r '.attempt // 0')
+    _resume_reason=$(echo "$_ledger_entry" | jq -r '.reason // empty')
+    
+    if [[ -n "$_iter_resume_branch" ]]; then
+      _iter_resume_active=1
+      echo "ℹ️  Recovery: resuming from branch $_iter_resume_branch (attempt $_iter_resume_attempt)" >&2
+      if [[ -n "$_resume_pr" ]]; then
+        echo "ℹ️  Recovery: open PR #$_resume_pr exists for this branch" >&2
+      fi
+    else
+      echo "⚠️  Recovery: ledger entry exists but no branch found, treating as fresh work" >&2
+    fi
   fi
 
   default_branch=$(gh repo view "$REPO" --json defaultBranchRef -q .defaultBranchRef.name)
@@ -880,9 +935,10 @@ This is resume attempt ${_iter_resume_attempt} of ${RESUME_MAX}.
 DO NOT re-plan or open a new branch. Instead:
   1. \`git fetch origin && git checkout ${_iter_resume_branch}\`
   2. Inspect existing commits to understand what's done.
-  3. Finish the remaining implementation work.
-  4. Run lints/tests, then push.
-  5. Open a PR (if not already open) and merge once green.
+  3. If a PR already exists and CI is failing or pending, read the check logs, fix the branch, push, and re-watch checks.
+  4. Finish the remaining implementation work.
+  5. Run lints/tests, then push.
+  6. Open a PR (if not already open) and merge once green.
 "
     export RALPH_RESUME=1 RALPH_RESUME_ATTEMPT="$_iter_resume_attempt" RALPH_RESUME_BRANCH="$_iter_resume_branch"
   else
@@ -896,9 +952,28 @@ DO NOT re-plan or open a new branch. Instead:
     state_unlock
   fi
 
+  copilot_session_id=""
+  copilot_session_name_value=""
+  copilot_session_args=()
+  if declare -F copilot_session_new_id >/dev/null 2>&1; then
+    copilot_session_id="$(copilot_session_new_id)"
+    copilot_session_name_value="$(copilot_session_name "$num" "$WORKER_ID" "$RUN_ID")"
+    copilot_session_args=(--session-id "$copilot_session_id" --name "$copilot_session_name_value" --no-remote)
+    copilot_session_record_start \
+      "$copilot_session_id" \
+      "$num" \
+      "$WORKER_ID" \
+      "$copilot_session_name_value" \
+      "$(pwd -P)" \
+      "$(basename "$log_file")" \
+      "$iter_start_ts" \
+      "$RUN_ID"
+  fi
+
   set +e
   run_with_timeout "$TIMEOUT_SEC" \
-    copilot -p "$full_prompt" \
+    "$COPILOT" -p "$full_prompt" \
+      "${copilot_session_args[@]}" \
       --allow-all \
       --model "$MODEL" \
       --max-autopilot-continues "$AUTOPILOT_CONTINUES" \
@@ -907,6 +982,9 @@ DO NOT re-plan or open a new branch. Instead:
   set -e
 
   if [[ "$rc" -ne 0 ]]; then
+    if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+      copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "failed" "$RUN_ID" || true
+    fi
     # Mark as failed in status.json (run-aware mode only)
     if [[ -n "$RUN_ID" ]]; then
       state_lock || true
@@ -921,23 +999,30 @@ DO NOT re-plan or open a new branch. Instead:
   fi
 
   # Verify issue closed by a merged PR (not just manually closed).
-  # closedByPullRequestsReferences items contain {number, url, ...} but not .state,
-  # so we look up each referenced PR and require at least one with mergedAt != null.
+  # closedByPullRequestsReferences items contain {number, url, ...} but not merge
+  # metadata or body text, so look up each PR and require both mergedAt and the
+  # worker contract's exact `Closes #N` line.
   #
   # The closedByPullRequestsReferences link is eventually consistent — GitHub can
   # take 1-30s to attach the PR after the merge commit lands. Retry with backoff,
-  # and as a final fallback scan recent merged PRs for "Closes #N" / "Fixes #N".
+  # and as a final fallback scan recent merged PRs for the required "Closes #N".
   state=""
+  state_reason=""
   merged_count=0
   for attempt in 1 2 3 4 5 6; do
     closure=$(gh issue view "$num" --repo "$REPO" \
-      --json state,closedByPullRequestsReferences)
+      --json state,stateReason,closedByPullRequestsReferences)
     state=$(echo "$closure" | jq -r .state)
+    state_reason=$(echo "$closure" | jq -r '.stateReason // ""')
+
     pr_numbers=$(echo "$closure" | jq -r '(.closedByPullRequestsReferences // [])[].number')
     merged_count=0
     for pr in $pr_numbers; do
-      merged_at=$(gh pr view "$pr" --repo "$REPO" --json mergedAt -q .mergedAt 2>/dev/null || echo "")
-      if [[ -n "$merged_at" && "$merged_at" != "null" ]]; then
+      pr_record=$(gh pr view "$pr" --repo "$REPO" --json mergedAt,body 2>/dev/null || echo "")
+      merged_at=$(echo "$pr_record" | jq -r '.mergedAt // ""')
+      pr_body=$(echo "$pr_record" | jq -r '.body // ""')
+      if [[ -n "$merged_at" && "$merged_at" != "null" ]] \
+          && printf '%s\n' "$pr_body" | grep -qxE "Closes #${num}[[:space:]]*"; then
         merged_count=$((merged_count + 1))
       fi
     done
@@ -945,77 +1030,24 @@ DO NOT re-plan or open a new branch. Instead:
       break
     fi
     if [[ "$attempt" -lt 6 ]]; then
-      echo "ℹ️  Issue #$num closure metadata not yet propagated (state=$state, merged_prs=$merged_count); retry $attempt/5 in 5s..." >&2
+      echo "ℹ️  Issue #$num closure metadata not yet propagated (state=$state, stateReason=$state_reason, merged_prs=$merged_count); retry $attempt/5 in 5s..." >&2
       sleep 5
     fi
   done
 
-  # Fallback: scan recent merged PRs for one whose body closes this issue.
-  # Runs whenever the issue link still shows zero merged PRs — including the
-  # case where the issue is still OPEN because state propagation is slow but
-  # the squash-merge has already landed. We only halt if no merged PR exists;
-  # the issue state itself is eventually consistent and not load-bearing here.
-  #
-  # Two guards prevent false positives:
-  #  - mergedAt > iter_start_ts: rejects historical merges (e.g., a regression
-  #    on a reopened issue would otherwise match the original closing PR).
-  #  - baseRefName == default branch: GitHub only auto-closes via "Closes #N"
-  #    when the PR merged into the default branch, so non-default merges
-  #    couldn't have closed the issue and must not be credited here.
-  if [[ "$merged_count" -lt 1 ]]; then
-    if [[ "$state" != "CLOSED" ]] && ralph_merge_ready_open_pr_for_issue "$num" "$default_branch"; then
-      if wait_for_issue_closed_by_merged_pr "$num" "after fallback merge"; then
-        merged_count=1
-      fi
-    fi
+  # Do not infer delivery from PR body text. Final success requires GitHub to
+  # report the issue CLOSED with a linked closing PR whose mergedAt is non-null.
 
-    if [[ "$merged_count" -lt 1 ]]; then
-      echo "ℹ️  Issue #$num closure link empty after retries (state=$state); checking recent merged PRs for 'Closes #$num' on $default_branch since $iter_start_ts..." >&2
-      fallback_pr=$(gh pr list --repo "$REPO" --state merged --limit 20 --base "$default_branch" \
-        --search "in:body \"#$num\"" \
-        --json number,body,mergedAt,baseRefName \
-        --jq ".[] | select(.mergedAt > \"$iter_start_ts\") | select(.baseRefName == \"$default_branch\") | select(.body | test(\"(?i)(close[sd]?|fix(e[sd])?|resolve[sd]?)\\\\s+#$num\\\\b\")) | .number" \
-        | head -1)
-      if [[ -n "$fallback_pr" ]]; then
-        echo "✅ Found merged PR #$fallback_pr referencing 'Closes #$num' — accepting." >&2
-        merged_count=1
-      fi
-    fi
-
-    # Release-branch flow (opt-in via RALPH_RELEASE_BRANCH). GitHub does not
-    # auto-link `Closes #N` for PRs whose base != default branch, so closure
-    # has to be done explicitly. We try, in order:
-    #   (a) merge an open PR into the release branch + manually close issue;
-    #   (b) if BRANCH_PREFIX is set and a `${prefix}${num}-…` branch was pushed
-    #       with no PR, open one and retry (a);
-    #   (c) accept state=CLOSED + a release-branch PR merged in this iteration.
-    if [[ "$merged_count" -lt 1 && -n "$RELEASE_BRANCH" && "$state" != "CLOSED" ]]; then
-      if ralph_merge_release_branch_pr_for_issue "$num" "$RELEASE_BRANCH"; then
-        state="CLOSED"
-        merged_count=1
-      elif [[ -n "$BRANCH_PREFIX" ]] && ralph_open_pr_for_pushed_branch "$num" "$RELEASE_BRANCH" "$BRANCH_PREFIX"; then
-        sleep 15  # give the new PR a moment to register checks
-        if ralph_merge_release_branch_pr_for_issue "$num" "$RELEASE_BRANCH"; then
-          state="CLOSED"
-          merged_count=1
-        fi
-      fi
-    fi
-    if [[ "$merged_count" -lt 1 && -n "$RELEASE_BRANCH" && "$state" == "CLOSED" ]]; then
-      echo "ℹ️  Issue #$num: checking recent merged PRs into release branch '$RELEASE_BRANCH' since $iter_start_ts..." >&2
-      release_pr=$(gh pr list --repo "$REPO" --state merged --limit 20 --base "$RELEASE_BRANCH" \
-        --search "in:body \"#$num\"" \
-        --json number,body,mergedAt,baseRefName \
-        --jq ".[] | select(.mergedAt > \"$iter_start_ts\") | select(.baseRefName == \"$RELEASE_BRANCH\") | select(.body | test(\"(?i)(close[sd]?|fix(e[sd])?|resolve[sd]?)\\\\s+#$num\\\\b\")) | .number" \
-        | head -1)
-      if [[ -n "$release_pr" ]]; then
-        echo "✅ Found merged PR #$release_pr into release branch '$RELEASE_BRANCH' referencing #$num — accepting." >&2
-        merged_count=1
-      fi
-    fi
+  # If merge succeeded and this was a recovery claim, clean up the ledger
+  if [[ "$state" == "CLOSED" && "$merged_count" -ge 1 && "$_is_recovery_claim" == "1" ]]; then
+    state_lock || true
+    ledger_remove_entry "$num"
+    ledger_release_recovery "$num"
+    state_unlock || true
+    echo "✅ Recovery successful for #$num — ledger entry removed." >&2
   fi
 
-  if [[ "$merged_count" -lt 1 ]]; then
+  if [[ "$state" != "CLOSED" || "$merged_count" -lt 1 ]]; then
     # Resume-incomplete-iterations (issue #60). Before marking the issue as
     # terminally failed, check whether this iteration left commits on a
     # slice branch. If so, we likely just hit the autopilot-continues cap
@@ -1043,7 +1075,17 @@ DO NOT re-plan or open a new branch. Instead:
       else
         _open_pr=$(open_pr_for_branch "$REPO" "$_resume_branch" || true)
         if [[ -n "$_open_pr" && "$RALPH_RESUME_ON_OPEN_PR" != "1" ]]; then
-          _resume_reason="open PR #$_open_pr exists on '$_resume_branch' — human review required (set RALPH_RESUME_ON_OPEN_PR=1 to override)"
+          _resume_base_branch="$default_branch"
+          [[ -n "$RELEASE_BRANCH" ]] && _resume_base_branch="$RELEASE_BRANCH"
+          _open_pr_block_reason=$(open_pr_default_resume_block_reason "$REPO" "$_resume_base_branch" "$num" "$_resume_branch" "$_open_pr" || true)
+          if [[ -n "$_open_pr_block_reason" ]]; then
+            _resume_reason="open PR #$_open_pr exists on '$_resume_branch' — $_open_pr_block_reason (set RALPH_RESUME_ON_OPEN_PR=1 to override)"
+          elif [[ "$_next_attempt" -gt "$RESUME_MAX" ]]; then
+            _resume_reason="open PR #$_open_pr has failing/pending checks but resume cap exhausted ($_current_attempt/$RESUME_MAX)"
+          else
+            echo "ℹ️  Open PR #$_open_pr on '$_resume_branch' appears Ralph-owned with failing/pending checks; resuming repair attempt $_next_attempt/$RESUME_MAX." >&2
+            _resume_eligible=1
+          fi
         elif [[ "$_next_attempt" -gt "$RESUME_MAX" ]]; then
           _resume_reason="resume cap exhausted ($_current_attempt/$RESUME_MAX)"
         else
@@ -1060,6 +1102,10 @@ DO NOT re-plan or open a new branch. Instead:
           status_update_item "$num" "running" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
         fi
         state_unlock || true
+        if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+          copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "resumed" "$RUN_ID" || true
+          copilot_session_archive_id "$copilot_session_id" || true
+        fi
         format_resume_log "$_next_attempt" "$RESUME_MAX" "$_resume_branch" "$num" >&2
         # Stash resume context for the loop-top short-circuit.
         export RESUME_NUM="$num"
@@ -1070,19 +1116,88 @@ DO NOT re-plan or open a new branch. Instead:
         continue
       else
         echo "ℹ️  Not resuming #$num: $_resume_reason" >&2
+        
+        # Check if we have durable PR/branch evidence to park as recoverable
+        _has_recovery_evidence=0
+        if [[ -n "$_resume_branch" ]] && resume_branch_ahead_of_base "$_resume_branch" "$default_branch"; then
+          _has_recovery_evidence=1
+        fi
+        
+        if [[ "$_has_recovery_evidence" == "1" ]]; then
+          # If this was already a recovery attempt, increment the counter
+          if [[ "$_is_recovery_claim" == "1" ]]; then
+            echo "ℹ️  Recovery attempt failed for #$num, checking retry budget..." >&2
+            state_lock || true
+            if ! ledger_increment_attempt "$num"; then
+              # Budget exhausted - mark as terminal failure
+              echo "⚠️  Recovery retry budget exhausted for #$num - marking as failed." >&2
+              ledger_release_recovery "$num"
+              if [[ -n "$RUN_ID" ]]; then
+                status_mark_failed "$num" "Recovery retry budget exhausted after $_iter_resume_attempt attempts: $_resume_reason"
+              fi
+              state_unlock || true
+              if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
+                ralph_apply_label_transition "$num" fail || true
+              fi
+              if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+                copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "failed" "$RUN_ID" || true
+              fi
+              echo "❌ Issue #$num marked as terminally failed after exhausting retry budget." >&2
+              exit 1
+            fi
+            if [[ -n "$RUN_ID" ]]; then
+              status_mark_recoverable "$num" "Recovery attempt $_iter_resume_attempt parked for cooldown: $_resume_reason"
+            fi
+            state_unlock || true
+            echo "ℹ️  Incremented retry attempt for #$num, will retry after cooldown." >&2
+            ledger_release_recovery "$num"
+          else
+            # First-time parking — record fresh recoverable entry
+            _recovery_cooldown=300  # 5 minutes in seconds
+            _next_recovery=$(date -u -v+${_recovery_cooldown}S +%FT%TZ 2>/dev/null || date -u -d "+${_recovery_cooldown} seconds" +%FT%TZ)
+            _recovery_pr=$(open_pr_for_branch "$REPO" "$_resume_branch" || true)
+            
+            echo "ℹ️  Parking #$num as recoverable (branch=$_resume_branch, pr=$_recovery_pr, cooldown=${_recovery_cooldown}s)" >&2
+            
+            if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+              copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "recoverable" "$RUN_ID" || true
+            fi
+            # Record recovery ledger regardless of run-aware mode
+            state_lock || true
+            _recovery_detail="Parked with PR/branch evidence: $_resume_reason"
+            ledger_record_recoverable "$num" "$_recovery_pr" "$_resume_branch" "$_current_attempt" "$_next_recovery" "$_resume_reason"
+            # Status is only tracked in run-aware mode
+            if [[ -n "$RUN_ID" ]]; then
+              status_mark_recoverable "$num" "$_recovery_detail"
+            fi
+            state_unlock || true
+            echo "⚠️  Issue #$num parked as recoverable with lease until $_next_recovery. Will retry after cooldown." >&2
+          fi
+          if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
+            ralph_apply_label_transition "$num" retry || true
+          fi
+          exit 1
+        fi
       fi
     fi
 
-    # Mark as failed in status.json (run-aware mode only)
+    # No recovery evidence — mark as terminally failed
+    if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+      copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "failed" "$RUN_ID" || true
+    fi
     if [[ -n "$RUN_ID" ]]; then
       state_lock || true
-      status_mark_failed "$num" "No merged PR found after copilot completed"
+      _failure_detail="No merged PR found after copilot completed (issue state=$state, stateReason=$state_reason, merged_prs=$merged_count)"
+      if [[ -n "${_resume_reason:-}" ]]; then
+        _failure_detail="$_failure_detail; not resumed: $_resume_reason"
+      fi
+      status_mark_failed "$num" "$_failure_detail"
       state_unlock || true
     fi
     if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
       ralph_apply_label_transition "$num" fail || true
     fi
-    echo "⚠️  Issue #$num not closed by a merged PR (state=$state, merged_prs=$merged_count). Halting." >&2
+    echo "⚠️  Issue #$num not closed by a merged PR (state=$state, stateReason=$state_reason, merged_prs=$merged_count). Halting." >&2
     exit 1
   fi
 
@@ -1104,6 +1219,10 @@ DO NOT re-plan or open a new branch. Instead:
       exit 1
     fi
     echo "✅ Slice 1 postcondition: CI workflow present."
+  fi
+  if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+    copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "merged" "$RUN_ID" || true
+    copilot_session_archive_id "$copilot_session_id" || true
   fi
 
   echo "✅ #$num closed via merged PR."

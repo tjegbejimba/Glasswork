@@ -100,6 +100,47 @@ status_mark_failed() {
   ' "$file" >"$tmp" && mv "$tmp" "$file"
 }
 
+# Mark an item as recoverable (worker exited with durable PR/branch evidence)
+# Unlike failed, recoverable items can be retried after lease expiry
+status_mark_recoverable() {
+  local issue="$1" error="${2:-}" run_id="${3:-$RUN_ID}"
+  local file tmp
+  file=$(status_file "$run_id")
+  tmp=$(status_mktemp "$run_id")
+  
+  [[ ! -f "$file" ]] && printf '%s\n' '{"items":{}}' >"$file"
+  
+  jq --arg issue "$issue" --arg error "$error" '
+    .items[$issue].status = "recoverable" |
+    .items[$issue].error = $error
+  ' "$file" >"$tmp" && mv "$tmp" "$file"
+}
+
+# Mark an item as rejected (pre-launch: not runnable before any work started)
+# Unlike status_mark_failed (worker ran and failed), rejected items were never
+# claimed — they are deferred/skipped with no label mutation.
+# Caller MUST hold state_lock
+# Args: issue_number reason [run_id]
+status_mark_rejected() {
+  local issue="$1" reason="${2:-}" run_id="${3:-$RUN_ID}"
+  local file tmp
+  file=$(status_file "$run_id")
+  tmp=$(status_mktemp "$run_id")
+  
+  [[ ! -f "$file" ]] && printf '%s\n' '{"items":{}}' >"$file"
+  
+  jq --arg issue "$issue" --arg reason "$reason" '
+    .items[$issue] = {
+      status: "rejected",
+      reason: $reason,
+      workerId: null,
+      pid: null,
+      logFile: null,
+      startedAt: null
+    }
+  ' "$file" >"$tmp" && mv "$tmp" "$file"
+}
+
 # Mark an item as skipped (already closed before worker could claim)
 # Caller MUST hold state_lock
 # Args: issue_number [run_id]
@@ -157,7 +198,48 @@ status_reap_stale() {
   jq "$jq_filter" "$file" >"$tmp" && mv "$tmp" "$file"
 }
 
-# Check if an issue is in a terminal state (merged/failed/skipped)
+# Reconcile stale workers: detect items marked running/claimed with dead PIDs
+# and mark them as failed. This is the comprehensive version used by --status
+# and run launch, checking both 'running' and 'claimed' states.
+# Caller MUST hold state_lock
+# Args: [run_id]
+status_reconcile_stale_workers() {
+  local run_id="${1:-$RUN_ID}"
+  local file
+  file=$(status_file "$run_id")
+  [[ ! -f "$file" ]] && return 0
+  
+  local items_json issue pid
+  items_json=$(jq -r '.items | to_entries[] | select(.value.status == "running" or .value.status == "claimed") | "\(.key) \(.value.pid)"' "$file" 2>/dev/null || true)
+  local dead_issues=()
+  
+  while IFS=' ' read -r issue pid; do
+    [[ -z "$issue" ]] && continue
+    if ! is_pid_alive_and_ralph "$pid"; then
+      dead_issues+=("$issue")
+    fi
+  done <<<"$items_json"
+  
+  if [[ ${#dead_issues[@]} -eq 0 ]]; then
+    return 0
+  fi
+  
+  local tmp
+  tmp=$(status_mktemp "$run_id")
+  local jq_filter='.'
+  for issue in "${dead_issues[@]}"; do
+    jq_filter="$jq_filter | .items[\"$issue\"].status = \"failed\" | .items[\"$issue\"].error = \"Worker process died\""
+  done
+  jq "$jq_filter" "$file" >"$tmp" && mv "$tmp" "$file"
+  
+  # Log reconciled issues for operator visibility
+  if [[ ${#dead_issues[@]} -gt 0 ]]; then
+    echo "⚠️  Reconciled ${#dead_issues[@]} stale worker(s): $(printf '#%s ' "${dead_issues[@]}")" >&2
+  fi
+}
+
+# Check if an issue is in a terminal state (merged/failed/skipped/rejected)
+# Recoverable is NOT terminal — it can be retried after lease expiry
 # Args: issue_number [run_id]
 # Returns 0 (true) if terminal, 1 (false) otherwise
 status_is_terminal() {
@@ -165,7 +247,7 @@ status_is_terminal() {
   local status
   status=$(status_load_item "$issue" "status" "$run_id")
   case "$status" in
-    merged|failed|skipped) return 0 ;;
+    merged|failed|skipped|rejected) return 0 ;;
     *) return 1 ;;
   esac
 }
