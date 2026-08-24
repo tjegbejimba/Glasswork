@@ -1,0 +1,1594 @@
+#!/usr/bin/env bash
+# TDD Ralph loop.
+# Iterates the lowest-numbered open issue matching $TITLE_REGEX whose declared
+# blockers are all closed, runs Copilot CLI non-interactively with RALPH.md as
+# the prompt, and waits for the issue to close via merged PR.
+#
+# Workers coordinate through .ralph/state.json so multiple copies of this script
+# (one per dedicated worktree) can run safely in parallel without claiming the
+# same issue. See .ralph/launch.sh for the parallel spawn entry point.
+#
+# Usage:
+#   .ralph/ralph.sh           # loop until no eligible open issues remain
+#   .ralph/ralph.sh --once    # run a single iteration then exit
+#
+# Env:
+#   RALPH_MODEL                   model passed to copilot (default: claude-sonnet-4.5)
+#   RALPH_TIMEOUT_SEC             per-iteration timeout in seconds (default: 7200)
+#   RALPH_AUTOPILOT_CONTINUES     copilot --max-autopilot-continues value (default: 15).
+#                                 Copilot CLI's default is 5, which is enough for short TDD
+#                                 cycles but runs out before commit/push/PR if the agent has
+#                                 to debug a build, re-run tests, etc. Bump this if you see
+#                                 iterations halt after staging changes but before opening
+#                                 a PR.
+#   RALPH_WORKER_ID      this worker's identity (default: 1) — must be unique
+#                        across concurrent workers; controls lock + log naming
+#   RALPH_POLL_SEC       sleep between selection attempts when no work is
+#                        eligible (default: 30)
+#   RALPH_RUN_ID         run identifier for queue-based mode (optional)
+#                        When set, worker consumes .ralph/runs/<RUN_ID>/queue.json
+#                        instead of searching GitHub with TITLE_REGEX
+#   RALPH_BASE_REMOTE    remote that owns the worker base (default: origin)
+#   RALPH_BASE_BRANCH    worker base branch (default: RALPH_RELEASE_BRANCH, then main)
+#   RALPH_BASE_COMMIT    immutable preflight-approved startup commit (optional)
+
+set -euo pipefail
+
+# Ensure homebrew tools (gh, etc.) are on PATH even when launched from
+# minimal-PATH contexts (nohup, launchd, dashboard, etc.).
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+gh() {
+  if [[ -n "${RALPH_GH_BIN:-}" ]]; then
+    "$RALPH_GH_BIN" "$@"
+  else
+    command gh "$@"
+  fi
+}
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+CONFIG_FILE="$SCRIPT_DIR/config.json"
+
+config_get() {
+  local jq_path="$1"
+  if [[ -f "$CONFIG_FILE" ]] && command -v jq >/dev/null 2>&1; then
+    jq -r "${jq_path} // empty" "$CONFIG_FILE" 2>/dev/null || true
+  fi
+}
+
+REPO="${RALPH_REPO:-$(git -C "$(git rev-parse --show-toplevel)" config --get remote.origin.url 2>/dev/null | sed -E 's#(git@github.com:|https://github.com/)##; s/\.git$//')}"
+GH="${RALPH_GH_BIN:-gh}"
+COPILOT="${RALPH_COPILOT_BIN:-copilot}"
+TITLE_REGEX="${RALPH_TITLE_REGEX:-$(config_get '.issue.titleRegex')}"
+TITLE_REGEX="${TITLE_REGEX:-^Slice [0-9]+:}"
+TITLE_NUM_RE="${RALPH_TITLE_NUM_REGEX:-$(config_get '.issue.titleNumRegex')}"
+TITLE_NUM_RE="${TITLE_NUM_RE:-^Slice (?<x>[0-9]+):}"
+ISSUE_SEARCH="${RALPH_ISSUE_SEARCH:-$(config_get '.issue.issueSearch')}"
+
+# Direct-numbers queue. When `.issue.numbers` is non-empty and no RUN_ID is
+# set, the worker treats this list as the candidate set instead of running an
+# issueSearch. Closes the "--enqueue wrote config that workers ignore" gap
+# reported in issue #64: previously, operators ran `launch.sh --enqueue 5 6 7`,
+# saw the numbers in config.json, and assumed workers would pick them up — but
+# the legacy code path only ran `gh issue list --search "$ISSUE_SEARCH"` and
+# silently ignored `.issue.numbers` entirely.
+NUMBERS_QUEUE=()
+if [[ -f "$CONFIG_FILE" ]] && command -v jq >/dev/null 2>&1; then
+  while IFS= read -r _n; do
+    [[ -n "$_n" && "$_n" =~ ^[0-9]+$ ]] && NUMBERS_QUEUE+=("$_n")
+  done < <(jq -r '(.issue.numbers // [])[]' "$CONFIG_FILE" 2>/dev/null | tr -d '\r' || true)
+  unset _n
+fi
+if ! jq -nr --arg re "$TITLE_REGEX" '"" | test($re)' >/dev/null 2>&1; then
+  echo "⚠️  Invalid issue.titleRegex \"$TITLE_REGEX\"; using default Slice pattern." >&2
+  TITLE_REGEX="^Slice [0-9]+:"
+fi
+if ! jq -nr --arg re "$TITLE_NUM_RE" '"Slice 1:" | capture($re)' >/dev/null 2>&1; then
+  echo "⚠️  Invalid issue.titleNumRegex \"$TITLE_NUM_RE\"; using default Slice number pattern." >&2
+  TITLE_NUM_RE="^Slice (?<x>[0-9]+):"
+fi
+PROMPT_FILE="$SCRIPT_DIR/RALPH.md"
+LOG_DIR="$SCRIPT_DIR/logs"
+WORKER_ID="${RALPH_WORKER_ID:-1}"
+LOCK_DIR="$SCRIPT_DIR/lock/worker-${WORKER_ID}"
+MODEL="${RALPH_MODEL:-claude-sonnet-4.5}"
+TIMEOUT_SEC="${RALPH_TIMEOUT_SEC:-7200}"
+AUTOPILOT_CONTINUES="${RALPH_AUTOPILOT_CONTINUES:-15}"
+POLL_SEC="${RALPH_POLL_SEC:-30}"
+RUN_ID="${RALPH_RUN_ID:-}"
+# Release-branch flow (opt-in). When RALPH_RELEASE_BRANCH is set, the verifier
+# also accepts PRs merged into that branch as closing their referenced issue,
+# and may call `gh pr merge` + `gh issue close` itself if copilot left a green
+# PR open or pushed a branch without opening a PR. See docs/release-branch.md.
+RELEASE_BRANCH="${RALPH_RELEASE_BRANCH:-}"
+BRANCH_PREFIX="${RALPH_BRANCH_PREFIX:-$(config_get '.issue.branchPrefix')}"
+BASE_REMOTE="${RALPH_BASE_REMOTE:-origin}"
+BASE_BRANCH="${RALPH_BASE_BRANCH:-${RELEASE_BRANCH:-main}}"
+BASE_COMMIT="${RALPH_BASE_COMMIT:-}"
+BASE_COMMIT_PENDING="$BASE_COMMIT"
+BASE_REF="refs/remotes/${BASE_REMOTE}/${BASE_BRANCH}"
+
+if ! [[ "$BASE_REMOTE" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+  echo "❌ RALPH_BASE_REMOTE is not a valid remote name: $BASE_REMOTE" >&2
+  exit 1
+fi
+if ! git check-ref-format --branch "$BASE_BRANCH" >/dev/null 2>&1; then
+  echo "❌ RALPH_BASE_BRANCH is not a valid branch name: $BASE_BRANCH" >&2
+  exit 1
+fi
+if ! git config --get "remote.${BASE_REMOTE}.url" >/dev/null 2>&1; then
+  echo "❌ RALPH_BASE_REMOTE is not configured in this repository: $BASE_REMOTE" >&2
+  exit 1
+fi
+if [[ -n "$BASE_COMMIT" && ! "$BASE_COMMIT" =~ ^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$ ]]; then
+  echo "❌ RALPH_BASE_COMMIT must be a full commit hash" >&2
+  exit 1
+fi
+
+# Source state.sh early so the boolean-normalisation helper is available
+# before we resolve the verbose / acceptManuallyClosed / resume flags below.
+# state_init() (which has side effects) is invoked further down after cd.
+# shellcheck source=lib/state.sh
+. "$SCRIPT_DIR/lib/state.sh"
+# shellcheck source=lib/labels.sh
+if [[ -f "$SCRIPT_DIR/lib/labels.sh" ]]; then
+  . "$SCRIPT_DIR/lib/labels.sh"
+fi
+if [[ -z "$ISSUE_SEARCH" ]] && declare -F ralph_default_issue_search >/dev/null 2>&1; then
+  ISSUE_SEARCH="$(ralph_default_issue_search)"
+fi
+
+# Resume-incomplete-iterations feature (issue #60). Maximum retries per issue
+# when copilot exits 0 but no merged PR is produced (most often: autopilot
+# continues exhausted mid-implementation). Set to 0 to disable resume.
+_cfg_resume_max=$(config_get '.worker.resumeMax')
+RESUME_MAX="${RALPH_RESUME_MAX:-${_cfg_resume_max:-2}}"
+if ! [[ "$RESUME_MAX" =~ ^[0-9]+$ ]]; then
+  echo "❌ RALPH_RESUME_MAX must be a non-negative integer (got: $RESUME_MAX)" >&2
+  exit 1
+fi
+unset _cfg_resume_max
+
+# Escape hatch: force resume even when an open PR exists for the slice branch.
+# Default guarded mode allows Ralph-owned PRs with failing/pending checks to
+# continue, but blocks PRs with human review evidence or unsafe ownership.
+_cfg_resume_open_pr=$(config_get '.worker.resumeOnOpenPR')
+RALPH_RESUME_ON_OPEN_PR=$(normalize_bool "${RALPH_RESUME_ON_OPEN_PR:-${_cfg_resume_open_pr:-}}") || exit 1
+unset _cfg_resume_open_pr
+
+ONCE=0
+
+# Idle-exit threshold: number of consecutive "no claimable issue" polls before
+# the worker exits cleanly. 0 = disabled (legacy "sleep forever" behaviour).
+_cfg_idle=$(config_get '.worker.idleExitAfterPolls')
+IDLE_EXIT_POLLS="${RALPH_IDLE_EXIT_POLLS:-${_cfg_idle:-20}}"
+if ! [[ "$IDLE_EXIT_POLLS" =~ ^[0-9]+$ ]]; then
+  echo "❌ RALPH_IDLE_EXIT_POLLS must be a non-negative integer (got: $IDLE_EXIT_POLLS)" >&2
+  exit 1
+fi
+unset _cfg_idle
+
+# Manually-closed blocker fallback (opt-in). When enabled, is_issue_satisfied
+# accepts CLOSED + stateReason=COMPLETED as satisfied even without a PR
+# linkage. See docs/manually-closed-blockers.md.
+_cfg_accept_manual=$(config_get '.worker.acceptManuallyClosed')
+RALPH_ACCEPT_MANUALLY_CLOSED=$(normalize_bool "${RALPH_ACCEPT_MANUALLY_CLOSED:-${_cfg_accept_manual:-}}") || exit 1
+unset _cfg_accept_manual
+
+# Verbose diagnostics. When enabled, the candidate-selection loop emits a
+# per-rejection skip line so a stalled worker is debuggable in seconds.
+_cfg_verbose=$(config_get '.worker.verbose')
+RALPH_VERBOSE=$(normalize_bool "${RALPH_VERBOSE:-${_cfg_verbose:-}}") || exit 1
+unset _cfg_verbose
+
+# Parse --run-id flag (overrides RALPH_RUN_ID env var)
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --once)
+      ONCE=1
+      shift
+      ;;
+    --run-id)
+      if [[ -z "${2:-}" ]]; then
+        echo "⚠️  --run-id requires an argument" >&2
+        exit 1
+      fi
+      RUN_ID="$2"
+      shift 2
+      ;;
+    *)
+      echo "⚠️  Unknown flag: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+export RUN_ID
+
+if [[ -z "$REPO" ]]; then
+  echo "⚠️  Could not determine target repo. Set RALPH_REPO=owner/repo." >&2
+  exit 1
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+mkdir -p "$LOG_DIR" "$SCRIPT_DIR/lock"
+
+# state.sh was sourced earlier so normalize_bool was available during config
+# resolution; now that cwd and LOG_DIR are settled, initialise state.json.
+state_init
+
+# Per-run status tracking (status.json). Only needed in run-aware mode.
+# shellcheck source=lib/status.sh
+. "$SCRIPT_DIR/lib/status.sh"
+# Copilot session naming/cleanup helpers.
+# shellcheck source=lib/copilot-session.sh
+if [[ -f "$SCRIPT_DIR/lib/copilot-session.sh" ]]; then
+  . "$SCRIPT_DIR/lib/copilot-session.sh"
+fi
+# PR merge fallback helpers.
+# shellcheck source=lib/pr-merge.sh
+. "$SCRIPT_DIR/lib/pr-merge.sh"
+# Resume-incomplete-iterations helpers (issue #60).
+# shellcheck source=lib/resume.sh
+. "$SCRIPT_DIR/lib/resume.sh"
+# Recovery ledger for parked recoverable work (issue #173).
+# shellcheck source=lib/recovery-ledger.sh
+. "$SCRIPT_DIR/lib/recovery-ledger.sh"
+# PRD slice integration lifecycle (issue #202).
+# shellcheck source=lib/prd-branch.sh
+if [[ -f "$SCRIPT_DIR/lib/prd-branch.sh" ]]; then
+  . "$SCRIPT_DIR/lib/prd-branch.sh"
+fi
+# shellcheck source=lib/slice-integration.sh
+if [[ -f "$SCRIPT_DIR/lib/slice-integration.sh" ]]; then
+  . "$SCRIPT_DIR/lib/slice-integration.sh"
+fi
+if [[ -n "$RUN_ID" ]]; then
+  status_init
+fi
+
+# Record the worker's "home" branch — the one we want to be on when
+# sync_to_origin_main runs. Normally this is the dedicated worker branch
+# created by launch.sh (e.g. ralph-loop-1). Allows the preflight
+# dirty-tree rescue to return here before the hard-reset in
+# sync_to_origin_main wipes a slice branch.
+INITIAL_BRANCH="${RALPH_INITIAL_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+
+# Worktree isolation guards (issue #195): record the assigned worktree root
+# at startup and verify the worker never escapes to the primary checkout.
+# Prevents the scenario where a git operation fails and the worker relocates
+# to the primary checkout, mutating it instead of halting cleanly.
+ASSIGNED_WORKTREE_ROOT="$(pwd -P)"
+readonly ASSIGNED_WORKTREE_ROOT
+export RALPH_ASSIGNED_WORKTREE="$ASSIGNED_WORKTREE_ROOT"
+
+# Record primary checkout state so we can detect mutations during the run.
+# In a dedicated worktree setup, the primary checkout is one level up from
+# the loop worktree (e.g., /repo vs /repo-ralph). We only track the primary
+# if it's a valid git repo.
+if [[ -n "${RALPH_MAIN_REPO:-}" && -d "$RALPH_MAIN_REPO" ]]; then
+  PRIMARY_CHECKOUT_ROOT="$RALPH_MAIN_REPO"
+elif [[ -d "../.git" || -f "../.git" ]]; then
+  PRIMARY_CHECKOUT_ROOT="$(cd .. && pwd -P)"
+else
+  PRIMARY_CHECKOUT_ROOT=""
+fi
+
+if [[ -n "$PRIMARY_CHECKOUT_ROOT" ]]; then
+  PRIMARY_BRANCH_INITIAL="$(git -C "$PRIMARY_CHECKOUT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+  PRIMARY_HEAD_INITIAL="$(git -C "$PRIMARY_CHECKOUT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
+  readonly PRIMARY_CHECKOUT_ROOT PRIMARY_BRANCH_INITIAL PRIMARY_HEAD_INITIAL
+  export RALPH_PRIMARY_CHECKOUT="$PRIMARY_CHECKOUT_ROOT"
+fi
+
+# Safety check: verify we're still in the assigned worktree. Call this before
+# any operation that could have triggered a cd (e.g., after copilot runs).
+verify_worktree_isolation() {
+  local current_root
+  current_root="$(pwd -P)"
+  if [[ "$current_root" != "$ASSIGNED_WORKTREE_ROOT" ]]; then
+    echo "❌ CRITICAL: Worker escaped assigned worktree!" >&2
+    echo "   Assigned: $ASSIGNED_WORKTREE_ROOT" >&2
+    echo "   Current:  $current_root" >&2
+    echo "   This is a stop-the-line safety failure." >&2
+    return 1
+  fi
+  return 0
+}
+
+# Safety check: verify the primary checkout hasn't been mutated. Call this at
+# the end of an iteration to catch any inadvertent changes.
+verify_primary_checkout_unchanged() {
+  [[ -z "$PRIMARY_CHECKOUT_ROOT" ]] && return 0
+  
+  local branch_now head_now
+  branch_now="$(git -C "$PRIMARY_CHECKOUT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+  head_now="$(git -C "$PRIMARY_CHECKOUT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
+  
+  if [[ -n "$PRIMARY_BRANCH_INITIAL" && "$PRIMARY_BRANCH_INITIAL" != "$branch_now" ]]; then
+    echo "❌ CRITICAL: Primary checkout branch mutated during worker run!" >&2
+    echo "   Initial: $PRIMARY_BRANCH_INITIAL" >&2
+    echo "   Now:     $branch_now" >&2
+    echo "   This is a stop-the-line safety failure." >&2
+    return 1
+  fi
+  
+  if [[ -n "$PRIMARY_HEAD_INITIAL" && "$PRIMARY_HEAD_INITIAL" != "$head_now" ]]; then
+    echo "❌ CRITICAL: Primary checkout HEAD mutated during worker run!" >&2
+    echo "   Initial: $PRIMARY_HEAD_INITIAL" >&2
+    echo "   Now:     $head_now" >&2
+    echo "   This is a stop-the-line safety failure." >&2
+    return 1
+  fi
+  
+  return 0
+}
+
+# On startup, preserve the immutable preflight-approved base commit supplied by
+# launch.sh. Later iteration syncs advance from the configured remote branch so
+# workers can consume changes merged by earlier iterations.
+#
+# Wraps git fetch in a retry loop because N concurrent workers share a single
+# .git/ and can race on the remote-tracking ref lock. With set -euo pipefail,
+# a single ref-lock collision would kill the worker; nohup launches don't
+# respawn, silently degrading parallelism.
+sync_to_origin_main() {
+  local branch attempt rc approved_commit fetched_commit
+  branch=$(git rev-parse --abbrev-ref HEAD)
+
+  for attempt in 1 2 3 4 5; do
+    if git fetch "$BASE_REMOTE" "$BASE_BRANCH" >/dev/null 2>&1; then
+      rc=0
+      break
+    fi
+    rc=$?
+    # Jittered backoff: 0.5–1.5s × attempt
+    sleep "$(awk -v a="$attempt" 'BEGIN{srand(); printf "%.2f", a*(0.5+rand())}')"
+  done
+  if [[ "${rc:-1}" -ne 0 ]]; then
+    echo "⚠️  git fetch $BASE_REMOTE $BASE_BRANCH failed after 5 attempts (rc=$rc). Halting." >&2
+    return "$rc"
+  fi
+
+  fetched_commit=$(git rev-parse --verify "${BASE_REF}^{commit}" 2>/dev/null || true)
+  if [[ -z "$fetched_commit" ]]; then
+    echo "⚠️  Cannot resolve fetched base $BASE_REMOTE/$BASE_BRANCH. Halting." >&2
+    return 1
+  fi
+
+  if [[ -n "$BASE_COMMIT_PENDING" ]]; then
+    approved_commit=$(git rev-parse --verify "${BASE_COMMIT_PENDING}^{commit}" 2>/dev/null || true)
+    if [[ -z "$approved_commit" ]]; then
+      echo "⚠️  Approved base commit $BASE_COMMIT_PENDING is unavailable. Halting." >&2
+      return 1
+    fi
+    if ! git merge-base --is-ancestor "$approved_commit" "$fetched_commit"; then
+      echo "⚠️  Approved base commit $approved_commit does not belong to $BASE_REMOTE/$BASE_BRANCH at $fetched_commit. Halting." >&2
+      return 1
+    fi
+    git reset --hard "$approved_commit" >/dev/null
+    BASE_COMMIT_PENDING=""
+    return 0
+  fi
+
+  if [[ "$branch" == "$BASE_BRANCH" ]]; then
+    git checkout "$BASE_BRANCH" >/dev/null
+    git merge --ff-only "$fetched_commit" >/dev/null
+  else
+    # Dedicated loop worktree — force-sync its home branch to the configured base.
+    git reset --hard "$fetched_commit" >/dev/null
+  fi
+}
+
+# Per-worker singleton lock — prevents the same WORKER_ID from running twice.
+# Uses acquire_lockdir with the strict ralph-cmd predicate because this lock
+# can live for hours (an entire worker session), long enough for PID reuse
+# to be a real concern if a worker crashes ungracefully. The default
+# bare-liveness predicate would risk handing the lock to a recycled PID
+# inheriting some unrelated process.
+if ! acquire_lockdir "$LOCK_DIR" is_pid_alive_and_ralph; then
+  echo "⚠️  Worker $WORKER_ID already running (lock at $LOCK_DIR held by live ralph process). Exiting." >&2
+  exit 1
+fi
+# Release lock on exit. Also release any in-flight claim — see
+# CURRENT_CLAIM tracking below. (SIGKILL bypasses this trap; that's why
+# acquire_lockdir does stale-takeover on next launch.)
+CURRENT_CLAIM=""
+cleanup() {
+  if [[ -n "$CURRENT_CLAIM" ]]; then
+    state_lock && state_release "$CURRENT_CLAIM" && state_unlock || true
+  fi
+  release_lockdir "$LOCK_DIR"
+}
+trap cleanup EXIT
+
+# Portable timeout wrapper (macOS-safe)
+run_with_timeout() {
+  local secs="$1"; shift
+  if command -v gtimeout >/dev/null 2>&1; then
+    gtimeout --foreground "$secs" "$@"
+  else
+    perl -e 'my $secs = shift; $SIG{ALRM} = sub { kill "TERM", -$$; exit 124 }; alarm $secs; setpgrp(0,0); exec @ARGV or die "exec: $!"' "$secs" "$@"
+  fi
+}
+
+wait_for_issue_closed_by_merged_pr() {
+  local issue="$1"
+  local context="$2"
+  local closure state pr_numbers merged_count pr merged_at attempt
+  for attempt in 1 2 3 4 5 6; do
+    closure=$(gh issue view "$issue" --repo "$REPO" \
+      --json state,closedByPullRequestsReferences)
+    state=$(echo "$closure" | jq -r .state)
+    pr_numbers=$(echo "$closure" | jq -r '(.closedByPullRequestsReferences // [])[].number')
+    merged_count=0
+    for pr in $pr_numbers; do
+      merged_at=$(gh pr view "$pr" --repo "$REPO" --json mergedAt -q .mergedAt 2>/dev/null || echo "")
+      if [[ -n "$merged_at" && "$merged_at" != "null" ]]; then
+        merged_count=$((merged_count + 1))
+      fi
+    done
+    if [[ "$state" == "CLOSED" && "$merged_count" -ge 1 ]]; then
+      return 0
+    fi
+    if [[ "$attempt" -lt 6 ]]; then
+      echo "ℹ️  Issue #$issue closure metadata not yet propagated $context (state=$state, merged_prs=$merged_count); retry $attempt/5 in 5s..." >&2
+      sleep 5
+    fi
+  done
+  return 1
+}
+
+# Counts consecutive poll cycles where no claimable issue was found.
+# Reset to 0 whenever a worker successfully claims an issue.
+_idle_polls=0
+
+while true; do
+  # Resume short-circuit (issue #60). When the previous iteration detected
+  # a resumable state (copilot exited 0 but no merged PR + slice branch has
+  # commits since iter_start_ts), it set RESUME_NUM and `continue`d. Here we
+  # bypass preflight/sync/selection/claim entirely — the claim is already
+  # held, status is `running`, and we just need to relaunch copilot for the
+  # same issue, telling it to continue from the existing branch.
+  if [[ -n "${RESUME_NUM:-}" ]]; then
+    num="$RESUME_NUM"
+    _iter_resume_attempt="$RESUME_ATTEMPT"
+    _iter_resume_branch="$RESUME_BRANCH"
+
+    # Re-fetch title+body — the human may have edited the issue body to
+    # add steering between attempts.
+    _resume_json=$(gh issue view "$num" --repo "$REPO" --json title,body 2>/dev/null || echo '{}')
+    _refreshed_title=$(printf '%s' "$_resume_json" | jq -r '.title // empty')
+    if [[ -n "$_refreshed_title" ]]; then
+      title="$_refreshed_title"
+      body=$(printf '%s' "$_resume_json" | jq -r '.body // ""')
+    else
+      title="${RESUME_TITLE:-$title}"
+      body="${RESUME_BODY:-$body}"
+    fi
+    chosen_blockers=""
+    iter_start_ts=$(date -u +%FT%TZ)
+    ts="$(date +%Y%m%d-%H%M%S)"
+    log_file="$LOG_DIR/iter-${ts}-w${WORKER_ID}-issue-${num}.log"
+    : >"$log_file"
+    CURRENT_CLAIM="$num"
+    _iter_resume_active=1
+    unset RESUME_NUM RESUME_TITLE RESUME_BODY RESUME_BRANCH RESUME_ATTEMPT
+
+    if [[ -n "$RUN_ID" ]]; then
+      state_lock || true
+      # Status stays `running` (not `failed`) — this is what differentiates
+      # a resumable iteration from a terminal halt.
+      status_update_item "$num" "running" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+      state_unlock || true
+    fi
+  else
+    _iter_resume_active=0
+  # Preflight: clean tree, on main, up to date.
+  #
+  # If the tree is dirty AND we're on a recognised slice branch
+  # (BRANCH_PREFIX-prefixed), rescue the leftovers as a wip commit, push,
+  # then return to the worker branch — sync_to_origin_main below does a
+  # hard reset on the current branch which would otherwise orphan the
+  # rescue commit. See docs/resume-incomplete-iterations.md.
+  if [[ -n "$(git status --porcelain)" ]]; then
+    _cur_branch=$(git rev-parse --abbrev-ref HEAD)
+    if should_auto_commit_dirty "$_cur_branch" "$BRANCH_PREFIX"; then
+      _porcelain=$(git status --porcelain)
+      _sensitive=$(printf '%s\n' "$_porcelain" | any_sensitive_in_porcelain || true)
+      if [[ -n "$_sensitive" ]]; then
+        echo "⚠️  Refusing to auto-commit dirty tree on $_cur_branch: sensitive paths detected." >&2
+        printf '   %s\n' $_sensitive >&2
+        git status --short >&2
+        exit 1
+      fi
+      echo "🧹 Auto-committing dirty tree on $_cur_branch before resume..." >&2
+      git status --short >&2
+      git add -A
+      git commit -q -m "wip: ralph auto-commit before resume" \
+        --trailer "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+      if ! git push -q -u origin "$_cur_branch"; then
+        # Push failed (network / auth / non-FF). Undo our local commit so
+        # the working tree returns to its dirty state — that way, on
+        # operator-driven restart, the same dirty-tree-rescue path fires
+        # again instead of sync_to_origin_main's hard reset silently
+        # orphaning our local-only WIP commit.
+        git reset --quiet --mixed HEAD~1 || true
+        echo "⚠️  Push of wip commit to origin/$_cur_branch failed; reverted local commit so dirty state is preserved. Halting." >&2
+        exit 1
+      fi
+      if [[ -n "$INITIAL_BRANCH" && "$INITIAL_BRANCH" != "$_cur_branch" ]] \
+          && git show-ref --verify --quiet "refs/heads/$INITIAL_BRANCH"; then
+        git checkout -q "$INITIAL_BRANCH"
+      fi
+      echo "✅ Auto-committed leftover changes on $_cur_branch; returning to $(git rev-parse --abbrev-ref HEAD) for sync." >&2
+    else
+      echo "⚠️  Working tree is dirty. Halting." >&2
+      git status --short
+      exit 1
+    fi
+  fi
+  sync_to_origin_main
+
+  # Run-aware mode: consume queue.json instead of searching GitHub
+  if [[ -n "$RUN_ID" ]]; then
+    queue_file="$SCRIPT_DIR/runs/$RUN_ID/queue.json"
+    if [[ ! -f "$queue_file" ]]; then
+      echo "❌ Worker $WORKER_ID: run $RUN_ID queue file not found: $queue_file" >&2
+      exit 1
+    fi
+    
+    state_lock || { echo "⚠️  Couldn't acquire state lock; retrying." >&2; sleep "$POLL_SEC"; continue; }
+    state_reap_stale
+    status_reap_stale
+    claimed_set="$(state_claimed_issues | sort -u)"
+    state_unlock
+    
+    # Find next unclaimed issue from queue
+    queue_json=$(cat "$queue_file")
+    num=""; title=""; body=""; chosen_blockers=""
+    
+    for row in $(echo "$queue_json" | jq -r '.[] | @base64'); do
+      decoded=$(echo "$row" | tr -d '\r' | base64 --decode)
+      cand_num=$(echo "$decoded" | jq -r .number)
+      cand_title=$(echo "$decoded" | jq -r .title)
+      
+      # Skip if already claimed in state.json
+      if printf '%s\n' "$claimed_set" | grep -qx "$cand_num"; then
+        continue
+      fi
+      
+      # Skip if in terminal state in status.json
+      if status_is_terminal "$cand_num"; then
+        continue
+      fi
+      
+      # Skip if recoverable with active lease (not due yet)
+      if ledger_is_recoverable "$cand_num" && ! ledger_is_recovery_due "$cand_num"; then
+        [[ "$RALPH_VERBOSE" == "1" ]] && echo "↪️  Worker $WORKER_ID: #$cand_num is recoverable but lease not expired; deferring." >&2
+        continue
+      fi
+      
+      # Re-fetch state/labels/body from GitHub before claiming. Queue files can
+      # be stale or agent-supplied, so run-aware workers enforce the same
+      # canonical runnable boundary as direct-number queues.
+      cand_record=$("$GH" issue view "$cand_num" --repo "$REPO" \
+        --json number,state,title,labels,body,assignees 2>/dev/null | tr -d '\r' || echo "")
+      if [[ -z "$cand_record" ]]; then
+        echo "↪️  Worker $WORKER_ID: #$cand_num lookup failed; retrying later."
+        continue
+      fi
+      current_state=$(echo "$cand_record" | jq -r .state)
+      if [[ "$current_state" != "OPEN" ]]; then
+        # Mark as skipped and continue to next
+        state_lock || { echo "⚠️  Couldn't acquire state lock; retrying." >&2; sleep "$POLL_SEC"; continue; }
+        status_mark_skipped "$cand_num"
+        state_unlock
+        echo "ℹ️  Worker $WORKER_ID: #$cand_num already closed (state=$current_state); marked as skipped."
+        continue
+      fi
+
+      cand_blockers=""
+      if declare -F ralph_claimable_blocker_tags >/dev/null 2>&1; then
+        cand_blockers=$(ralph_claimable_blocker_tags "$cand_record")
+      fi
+      if [[ -n "$cand_blockers" ]]; then
+        state_lock || { echo "⚠️  Couldn't acquire state lock; retrying." >&2; sleep "$POLL_SEC"; continue; }
+        status_mark_rejected "$cand_num" "Issue is not canonical Ralph-runnable: $cand_blockers"
+        state_unlock
+        # Pre-launch rejection: do NOT apply ralph:failed label transition.
+        # The issue stays ralph:ready and will self-defer until blockers clear.
+        echo "🚫 Worker $WORKER_ID: #$cand_num not canonical Ralph-runnable ($cand_blockers); marked as rejected (no label change)."
+        continue
+      fi
+
+      cand_body=$(echo "$cand_record" | jq -r '.body // ""')
+      
+      num="$cand_num"
+      title="$cand_title"
+      body="$cand_body"
+      break
+    done
+    
+    if [[ -z "$num" ]]; then
+      # No claimable issue this pass. Decide whether to exit or wait:
+      # - If every queue item is in a terminal status (merged/failed/skipped),
+      #   the run is done — exit cleanly.
+      # - Recoverable items with active leases are counted as not-yet-claimable,
+      #   not terminal (they may become claimable after lease expiry).
+      # - Otherwise some items are claimed/in-progress on other workers; sleep.
+      total=$(echo "$queue_json" | jq -r 'length')
+      terminal_count=0
+      recoverable_leased_count=0
+      while IFS= read -r qnum; do
+        [[ -z "$qnum" ]] && continue
+        if status_is_terminal "$qnum"; then
+          terminal_count=$((terminal_count + 1))
+        elif ledger_is_recoverable "$qnum" && ! ledger_is_recovery_due "$qnum"; then
+          recoverable_leased_count=$((recoverable_leased_count + 1))
+        fi
+      done < <(echo "$queue_json" | jq -r '.[].number')
+      if [[ "$total" -eq 0 ]]; then
+        echo "✅ Worker $WORKER_ID: run $RUN_ID queue is empty. Done."
+        exit 0
+      fi
+      if [[ "$terminal_count" -eq "$total" ]]; then
+        echo "✅ Worker $WORKER_ID: run $RUN_ID queue fully resolved ($terminal_count/$total terminal). Done."
+        exit 0
+      fi
+      if [[ "$recoverable_leased_count" -gt 0 ]]; then
+        echo "⏸  Worker $WORKER_ID: no claimable issues in run $RUN_ID queue (terminal=$terminal_count/$total, recoverable_leased=$recoverable_leased_count); sleeping ${POLL_SEC}s."
+      else
+        echo "⏸  Worker $WORKER_ID: no claimable issues in run $RUN_ID queue (terminal=$terminal_count/$total); sleeping ${POLL_SEC}s."
+      fi
+      _idle_polls=$((_idle_polls + 1))
+      if [[ "$IDLE_EXIT_POLLS" -gt 0 && "$_idle_polls" -ge "$IDLE_EXIT_POLLS" ]]; then
+        echo "⏸  Worker $WORKER_ID: idle for $_idle_polls polls, exiting."
+        exit 0
+      fi
+      sleep "$POLL_SEC"
+      continue
+    fi
+  elif [[ ${#NUMBERS_QUEUE[@]} -gt 0 ]]; then
+    # Direct-numbers mode (issue #64): consume the configured `.issue.numbers`
+    # list when no RUN_ID is active. Honors the same canonical runnable guard
+    # as issueSearch — must be OPEN, canonical Ralph-runnable, and all
+    # blockers satisfied — so this mode is safe to enable by default.
+    state_lock || { echo "⚠️  Couldn't acquire state lock; retrying." >&2; sleep "$POLL_SEC"; continue; }
+    state_reap_stale
+    claimed_set="$(state_claimed_issues | sort -u)"
+    state_unlock
+
+    declare -A NUMBER_BLOCKER_CACHE=()
+    _nq_blocker_satisfied() {
+      local b="$1"
+      if [[ -n "${NUMBER_BLOCKER_CACHE[$b]+x}" ]]; then
+        printf '%s' "${NUMBER_BLOCKER_CACHE[$b]}"
+        return
+      fi
+      local v
+      v=$(is_issue_satisfied "$b")
+      NUMBER_BLOCKER_CACHE[$b]="$v"
+      printf '%s' "$v"
+    }
+
+    # Sort ascending so workers pick the lowest-numbered eligible issue first
+    # (matches legacy slice-N ordering when numbers correspond to slice order).
+    sorted_numbers=()
+    while IFS= read -r _qn; do
+      [[ -z "$_qn" ]] && continue
+      sorted_numbers+=("$_qn")
+    done < <(printf '%s\n' "${NUMBERS_QUEUE[@]}" | sort -n)
+
+    num=""; title=""; body=""; chosen_blockers=""
+    skip_reasons=()
+    for cand_num in "${sorted_numbers[@]}"; do
+      # Skip already-claimed by another worker.
+      if printf '%s\n' "$claimed_set" | grep -qx "$cand_num"; then
+        continue
+      fi
+
+      record=$(gh issue view "$cand_num" --repo "$REPO" \
+        --json number,state,title,labels,body,assignees 2>/dev/null | tr -d '\r' || echo "")
+      if [[ -z "$record" ]]; then
+        skip_reasons+=("#${cand_num}: lookup failed")
+        continue
+      fi
+      cand_state=$(echo "$record" | jq -r .state)
+      cand_title=$(echo "$record" | jq -r .title)
+      cand_body=$(echo "$record" | jq -r '.body // ""')
+
+      if [[ "$cand_state" != "OPEN" ]]; then
+        skip_reasons+=("#${cand_num}: not open (${cand_state})")
+        continue
+      fi
+      cand_blockers=""
+      if declare -F ralph_claimable_blocker_tags >/dev/null 2>&1; then
+        cand_blockers=$(ralph_claimable_blocker_tags "$record")
+      fi
+      if [[ -n "$cand_blockers" ]]; then
+        skip_reasons+=("#${cand_num}: not canonical Ralph-runnable (${cand_blockers})")
+        continue
+      fi
+
+      blockers=$(parse_blockers "$cand_body")
+      all_satisfied=1
+      for b in $blockers; do
+        if [[ "$(_nq_blocker_satisfied "$b")" != "1" ]]; then
+          all_satisfied=0
+          break
+        fi
+      done
+      if [[ "$all_satisfied" -ne 1 ]]; then
+        skip_reasons+=("#${cand_num}: unresolved blockers")
+        continue
+      fi
+
+      num="$cand_num"
+      title="$cand_title"
+      body="$cand_body"
+      chosen_blockers="$blockers"
+      break
+    done
+
+    if [[ -z "$num" ]]; then
+      total=${#NUMBERS_QUEUE[@]}
+      echo "⏸  Worker $WORKER_ID: no eligible issue in direct-numbers queue (size=$total)."
+      if [[ "${#skip_reasons[@]}" -gt 0 ]]; then
+        for _r in "${skip_reasons[@]}"; do
+          echo "    - $_r"
+        done
+        unset _r
+      fi
+      _idle_polls=$((_idle_polls + 1))
+      if [[ "$IDLE_EXIT_POLLS" -gt 0 && "$_idle_polls" -ge "$IDLE_EXIT_POLLS" ]]; then
+        echo "⏸  Worker $WORKER_ID: idle for $_idle_polls polls, exiting."
+        exit 0
+      fi
+      sleep "$POLL_SEC"
+      continue
+    fi
+  else
+    # Search GitHub for candidate issues. Canonical searches are label-driven
+    # (`ralph:ready` + work type) and may include work:standalone titles that do
+    # not match the legacy Slice regex. Non-canonical custom searches preserve
+    # the legacy titleRegex filter.
+    _gh_search_args=()
+    [[ -n "$ISSUE_SEARCH" ]] && _gh_search_args=(--search "$ISSUE_SEARCH")
+    _canonical_issue_search=0
+    if [[ "$ISSUE_SEARCH" == *"label:ralph:ready"* && "$ISSUE_SEARCH" == *"label:work:"* ]]; then
+      _canonical_issue_search=1
+    fi
+    open_json=$(gh issue list --repo "$REPO" --state open --limit 100 \
+      "${_gh_search_args[@]}" \
+      --json number,title,body,state,labels,assignees)
+
+    # Sort eligible issues by slice number ascending; pick the first one whose
+    # blockers are all closed AND that no other worker has already claimed.
+    state_lock || { echo "⚠️  Couldn't acquire state lock; retrying." >&2; sleep "$POLL_SEC"; continue; }
+    state_reap_stale
+    claimed_set="$(state_claimed_issues | sort -u)"
+    state_unlock
+
+    # Build a sorted list of (number, title, body) for matching issues.
+    # Use try-style operators (capture? | .x? | tonumber?) so titles whose
+    # captured group is missing or non-numeric don't crash jq via `set -e`
+    # in the calling shell. Fall back to the issue's GitHub number for
+    # ordering instead. Without this, a single issue whose title doesn't
+    # match TITLE_NUM_RE silently empties the entire candidate list and
+    # the worker prints "no eligible issue (remaining=N)" forever.
+    candidates=$(echo "$open_json" \
+      | TITLE_REGEX="$TITLE_REGEX" TITLE_NUM_RE="$TITLE_NUM_RE" RALPH_CANONICAL_SEARCH="$_canonical_issue_search" jq -r '
+          [ .[]
+            | select((env.RALPH_CANONICAL_SEARCH == "1") or (.title | test(env.TITLE_REGEX)))
+            | . + {n: ((.title | capture(env.TITLE_NUM_RE)? | .x? | tonumber?) // .number)} ]
+          | sort_by(.n)
+          | .[]
+          | @base64
+        ')
+
+    # Memoize blocker satisfaction across this selection round so M candidates
+    # × K blockers don't translate into M×K `gh issue view`/`gh pr view` calls.
+    # Cache lives only until the next polling cycle to stay fresh.
+    #
+    # BLOCKER_CACHE stores the structured detail line from
+    # issue_satisfaction_detail (`<satisfied>|<state>|<reason>|<prs>`) so the
+    # verbose skip diagnostic can read state/reason/prs without a second gh
+    # round-trip. `blocker_satisfied` returns just field 1.
+    declare -A BLOCKER_CACHE=()
+    blocker_detail() {
+      local b="$1"
+      if [[ -n "${BLOCKER_CACHE[$b]+x}" ]]; then
+        printf '%s' "${BLOCKER_CACHE[$b]}"
+        return
+      fi
+      local v
+      v=$(issue_satisfaction_detail "$b")
+      BLOCKER_CACHE[$b]="$v"
+      printf '%s' "$v"
+    }
+    blocker_satisfied() {
+      local detail
+      detail=$(blocker_detail "$1")
+      printf '%s' "${detail%%|*}"
+    }
+
+    num=""; title=""; body=""; chosen_blockers=""
+    while IFS= read -r row; do
+      [[ -z "$row" ]] && continue
+      decoded=$(echo "$row" | tr -d '\r' | base64 --decode)
+      cand_num=$(echo "$decoded" | jq -r .number)
+      cand_title=$(echo "$decoded" | jq -r .title)
+      cand_body=$(echo "$decoded" | jq -r .body)
+
+      # Skip issues other workers have claimed.
+      if printf '%s\n' "$claimed_set" | grep -qx "$cand_num"; then
+        [[ -n "${RALPH_VERBOSE:-}" ]] && echo "  ↳ skipping #$cand_num: claimed by another worker"
+        continue
+      fi
+
+      cand_blockers=""
+      if [[ "$_canonical_issue_search" -eq 1 ]] && declare -F ralph_claimable_blocker_tags >/dev/null 2>&1; then
+        cand_blockers=$(ralph_claimable_blocker_tags "$decoded")
+      elif declare -F ralph_legacy_safety_blocker_tags >/dev/null 2>&1; then
+        cand_blockers=$(ralph_legacy_safety_blocker_tags "$decoded")
+      fi
+      if [[ -n "$cand_blockers" ]]; then
+        [[ -n "${RALPH_VERBOSE:-}" ]] && echo "  ↳ skipping #$cand_num: not canonical Ralph-runnable ($cand_blockers)"
+        continue
+      fi
+
+      # Evaluate blockers — every #N referenced in the "## Blocked by" section
+      # must be closed by a merged PR (same predicate the iteration uses for
+      # itself, so manually-closed wontfix/duplicate blockers don't unblock
+      # downstream slices whose code never landed).
+      blockers=$(parse_blockers "$cand_body")
+      all_satisfied=1
+      unsatisfied_blocker=""
+      for b in $blockers; do
+        if [[ "$(blocker_satisfied "$b")" != "1" ]]; then
+          all_satisfied=0
+          unsatisfied_blocker="$b"
+          break
+        fi
+      done
+      if [[ "$all_satisfied" -ne 1 ]]; then
+        if [[ -n "${RALPH_VERBOSE:-}" ]]; then
+          # Cache hit guaranteed because blocker_satisfied just populated it.
+          IFS='|' read -r _bs _bstate _breason _bprs <<<"$(blocker_detail "$unsatisfied_blocker")"
+          echo "  ↳ skipping #$cand_num: blocker #$unsatisfied_blocker not satisfied (state=$_bstate reason=$_breason prs=$_bprs)"
+        fi
+        continue
+      fi
+
+      num="$cand_num"
+      title="$cand_title"
+      body="$cand_body"
+      chosen_blockers="$blockers"
+      break
+    done <<<"$candidates"
+
+    if [[ -z "$num" ]]; then
+      # Nothing actionable right now. If any issues are still open and not
+      # claimed, we're waiting on dependencies; sleep and retry. If everything
+      # is claimed by other workers, also sleep.
+      remaining=$(echo "$open_json" \
+        | TITLE_REGEX="$TITLE_REGEX" RALPH_CANONICAL_SEARCH="$_canonical_issue_search" jq -r '
+            [.[] | select((env.RALPH_CANONICAL_SEARCH == "1") or (.title | test(env.TITLE_REGEX)))] | length')
+      if [[ "$remaining" -eq 0 ]]; then
+        if [[ "$_canonical_issue_search" -eq 1 ]]; then
+          echo "✅ Worker $WORKER_ID: no open issues match canonical Ralph labels. Done."
+        else
+          echo "✅ Worker $WORKER_ID: no open issues match \"$TITLE_REGEX\". Done."
+        fi
+        exit 0
+      fi
+      claimed_n=$(count_claimed_issues <<<"$claimed_set")
+      echo "⏸  Worker $WORKER_ID: no eligible issue (remaining=$remaining, claimed=$claimed_n); sleeping ${POLL_SEC}s."
+      if [[ -z "${RALPH_VERBOSE:-}" && -z "${_idle_hint_shown:-}" ]]; then
+        echo "   (Set RALPH_VERBOSE=1 — or .worker.verbose:true in .ralph/config.json — to see per-candidate skip reasons.)"
+        _idle_hint_shown=1
+      fi
+      _idle_polls=$((_idle_polls + 1))
+      if [[ "$IDLE_EXIT_POLLS" -gt 0 && "$_idle_polls" -ge "$IDLE_EXIT_POLLS" ]]; then
+        echo "⏸  Worker $WORKER_ID: idle for $_idle_polls polls, exiting."
+        exit 0
+      fi
+      sleep "$POLL_SEC"
+      continue
+    fi
+  fi
+  # End of legacy/run-aware mode branching — both paths set num, title, body
+  iter_start_ts=$(date -u +%FT%TZ)
+
+  ts="$(date +%Y%m%d-%H%M%S)"
+  log_file="$LOG_DIR/iter-${ts}-w${WORKER_ID}-issue-${num}.log"
+  # Touch so dashboards pointing at logFile see a real (empty) file before
+  # the iteration body's tee starts writing.
+  : >"$log_file"
+
+  # Atomic claim: re-acquire lock, re-check that nobody else grabbed this
+  # issue between selection and now, AND re-validate state/labels/blockers
+  # against a fresh fetch. The selection-time snapshot can go stale: an
+  # operator may have changed Ralph state/work labels, added a new
+  # `## Blocked by`, or closed the issue between scan and claim. Re-fetch
+  # everything and re-validate before committing the claim.
+  state_lock || { echo "⚠️  Couldn't acquire state lock; retrying." >&2; sleep "$POLL_SEC"; continue; }
+  state_reap_stale
+  if state_claimed_issues | grep -qx "$num"; then
+    state_unlock
+    echo "↪️  Worker $WORKER_ID: #$num was claimed by another worker between selection and claim; retrying."
+    continue
+  fi
+  # Re-fetch state + labels + body so we can re-validate the canonical guard and
+  # re-parse blockers from the freshest body, not the stale chosen_blockers.
+  fresh_record=$("$GH" issue view "$num" --repo "$REPO" \
+    --json number,state,title,labels,body,assignees 2>/dev/null | tr -d '\r' || echo "")
+  if [[ -z "$fresh_record" ]]; then
+    state_unlock
+    echo "↪️  Worker $WORKER_ID: #$num lookup failed during claim re-check; retrying."
+    continue
+  fi
+  current_state=$(echo "$fresh_record" | jq -r .state)
+  if [[ "$current_state" != "OPEN" ]]; then
+    state_unlock
+    echo "↪️  Worker $WORKER_ID: #$num is no longer OPEN (state=$current_state); retrying."
+    continue
+  fi
+  fresh_body=$(echo "$fresh_record" | jq -r '.body // ""')
+  fresh_blocker_tags=""
+  if declare -F ralph_claimable_blocker_tags >/dev/null 2>&1; then
+    fresh_blocker_tags=$(ralph_claimable_blocker_tags "$fresh_record")
+  fi
+  if [[ -n "$fresh_blocker_tags" ]]; then
+    [[ -n "$RUN_ID" ]] && status_mark_rejected "$num" "Issue became non-runnable before claim: $fresh_blocker_tags"
+    state_unlock
+    # Pre-launch rejection: do NOT apply ralph:failed label transition.
+    # The issue stays ralph:ready and will self-defer until blockers clear.
+    echo "↪️  Worker $WORKER_ID: #$num became non-runnable during selection ($fresh_blocker_tags); marked as rejected (no label change)."
+    continue
+  fi
+  
+  # If this is a recoverable issue, try to claim the recovery lease
+  _is_recovery_claim=0
+  if ledger_is_recoverable "$num"; then
+    if ! ledger_try_claim_recovery "$num" "$WORKER_ID" "$$"; then
+      echo "↪️  Worker $WORKER_ID: #$num recovery lease already claimed by another worker; retrying later." >&2
+      state_unlock
+      continue
+    fi
+    _is_recovery_claim=1
+    echo "ℹ️  Worker $WORKER_ID: claimed recovery lease for #$num." >&2
+  fi
+  
+  state_claim "$num" "$WORKER_ID" "$$" "$(basename "$log_file")"
+  CURRENT_CLAIM="$num"
+  _idle_polls=0  # Reset idle counter: worker successfully claimed an issue
+  # In run-aware mode, also update status.json atomically under same lock
+  if [[ -n "$RUN_ID" ]]; then
+    status_update_item "$num" "claimed" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+  fi
+  state_unlock
+  if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
+    ralph_apply_label_transition "$num" claim || true
+  fi
+
+  # Use the freshest title/body for the prompt — the selection-time snapshot
+  # may be stale if the operator edited the issue between scan and claim.
+  fresh_title=$(echo "$fresh_record" | jq -r .title)
+  if [[ -n "$fresh_title" && "$fresh_title" != "null" ]]; then
+    title="$fresh_title"
+  fi
+  if [[ -n "$fresh_body" ]]; then
+    body="$fresh_body"
+  fi
+  
+  # If this is a recovery claim, load resume data from ledger and activate resume mode
+  if [[ "$_is_recovery_claim" == "1" ]]; then
+    _ledger_entry=$(ledger_load_entry "$num")
+    _resume_pr=$(echo "$_ledger_entry" | jq -r '.pr // empty')
+    _iter_resume_branch=$(echo "$_ledger_entry" | jq -r '.branch // empty')
+    _iter_resume_attempt=$(echo "$_ledger_entry" | jq -r '.attempt // 0')
+    _resume_reason=$(echo "$_ledger_entry" | jq -r '.reason // empty')
+    
+    if [[ -n "$_iter_resume_branch" ]]; then
+      _iter_resume_active=1
+      echo "ℹ️  Recovery: resuming from branch $_iter_resume_branch (attempt $_iter_resume_attempt)" >&2
+      if [[ -n "$_resume_pr" ]]; then
+        echo "ℹ️  Recovery: open PR #$_resume_pr exists for this branch" >&2
+      fi
+    else
+      echo "⚠️  Recovery: ledger entry exists but no branch found, treating as fresh work" >&2
+    fi
+  fi
+
+  default_branch=$(gh repo view "$REPO" --json defaultBranchRef -q .defaultBranchRef.name)
+  
+  # Determine target base branch for this run
+  if [[ -n "$RUN_ID" ]] && declare -F resolve_slice_pr_base >/dev/null 2>&1; then
+    target_base=$(resolve_slice_pr_base "$RUN_ID" "$default_branch")
+  else
+    target_base="$default_branch"
+  fi
+  
+  # Pre-claim fallback merge is available only when recovery already proved
+  # the exact worker branch and its pushed head SHA.
+  _preclaim_head=""
+  if [[ "$_iter_resume_active" == "1" ]]; then
+    _preclaim_head="${_iter_resume_branch:-}"
+  fi
+  _preclaim_sha=""
+  _preclaim_remote_sha=""
+  _preclaim_author=""
+  if [[ -n "$_preclaim_head" ]]; then
+    _preclaim_sha=$(git rev-parse --verify "refs/heads/${_preclaim_head}^{commit}" 2>/dev/null || true)
+    git fetch origin "$_preclaim_head" >/dev/null 2>&1 || true
+    _preclaim_remote_sha=$(git rev-parse --verify "refs/remotes/origin/${_preclaim_head}^{commit}" 2>/dev/null || true)
+    if [[ "$_preclaim_sha" != "$_preclaim_remote_sha" ]]; then
+      _preclaim_sha=""
+    fi
+    _preclaim_author=$(gh api user --jq .login 2>/dev/null || true)
+  fi
+  if [[ -n "$_preclaim_sha" && -n "$_preclaim_author" ]] \
+      && ralph_merge_ready_open_pr_for_issue \
+        "$num" "$target_base" "$_preclaim_head" "$_preclaim_sha" "$_preclaim_author"; then
+    if wait_for_issue_closed_by_merged_pr "$num" "after pre-claim fallback merge"; then
+      if [[ -n "$RUN_ID" ]]; then
+        state_lock || true
+        # Record appropriate status based on target base
+        if [[ "$target_base" != "$default_branch" ]]; then
+          # PRD integration: record slice-integrated (will be set properly in post-copilot flow)
+          status_update_item "$num" "merged" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+        else
+          status_update_item "$num" "merged" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+        fi
+        state_unlock || true
+        if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
+          ralph_apply_label_transition "$num" done || true
+        fi
+      fi
+      echo "✅ Worker $WORKER_ID: merged ready PR for #$num before launching Copilot."
+      state_lock && state_release "$num" && state_unlock || true
+      CURRENT_CLAIM=""
+      sync_to_origin_main
+      if [[ "$ONCE" -eq 1 ]]; then
+        echo "🛑 --once: exiting after one iteration."
+        exit 0
+      fi
+      continue
+    fi
+  fi
+
+  fi  # end of resume-short-circuit if/else (issue #60)
+
+  echo ""
+  echo "============================================================"
+  if [[ "$_iter_resume_active" == "1" ]]; then
+    echo "🔁 $(date -u +%FT%TZ)  Worker $WORKER_ID — Resuming #$num (attempt $_iter_resume_attempt/$RESUME_MAX, branch=$_iter_resume_branch): $title"
+  else
+    echo "▶️  $(date -u +%FT%TZ)  Worker $WORKER_ID — #$num: $title"
+  fi
+  echo "    log: $log_file"
+  echo "    model: $MODEL    timeout: ${TIMEOUT_SEC}s"
+  echo "============================================================"
+
+  # Reuse the title+body we already fetched while evaluating candidates.
+  issue_text="${title}
+
+${body}"
+
+  # Determine the target base branch for PRs
+  if [[ -n "$RUN_ID" ]] && declare -F resolve_slice_pr_base >/dev/null 2>&1; then
+    target_base=$(resolve_slice_pr_base "$RUN_ID" "$default_branch")
+  else
+    target_base="$default_branch"
+  fi
+
+  full_prompt="$(cat "$PROMPT_FILE")
+
+---
+ISSUE #${num}
+---
+${issue_text}"
+
+  # Inject target base branch for PRD runs
+  if [[ "$target_base" != "$default_branch" ]]; then
+    full_prompt="${full_prompt}
+
+---
+PRD_INTEGRATION_BRANCH
+---
+This slice is part of a PRD integration workflow. Pull requests MUST target the integration branch:
+
+  Base branch: $target_base
+
+Do NOT create PRs against 'main' or the default branch. The PR base must be '$target_base'.
+Use: gh pr create --base $target_base ...
+"
+  fi
+
+  if [[ "$_iter_resume_active" == "1" ]]; then
+    full_prompt="${full_prompt}
+
+---
+RALPH_RESUME
+---
+A prior iteration on this issue ended without producing a merged PR.
+Your previous work is preserved on branch '${_iter_resume_branch}' (already pushed to origin).
+This is resume attempt ${_iter_resume_attempt} of ${RESUME_MAX}.
+
+DO NOT re-plan or open a new branch. Instead:
+  1. \`git fetch origin && git checkout ${_iter_resume_branch}\`
+  2. Inspect existing commits to understand what's done.
+  3. If a PR already exists and CI is failing or pending, read the check logs, fix the branch, push, and re-watch checks.
+  4. Finish the remaining implementation work.
+  5. Run lints/tests, then push.
+  6. Open a PR (if not already open) and merge once green.
+"
+    export RALPH_RESUME=1 RALPH_RESUME_ATTEMPT="$_iter_resume_attempt" RALPH_RESUME_BRANCH="$_iter_resume_branch"
+  else
+    unset RALPH_RESUME RALPH_RESUME_ATTEMPT RALPH_RESUME_BRANCH || true
+  fi
+
+  # Update status to "running" before calling copilot (run-aware mode only)
+  if [[ -n "$RUN_ID" ]]; then
+    state_lock || { echo "⚠️  Couldn't acquire state lock before copilot" >&2; exit 1; }
+    status_update_item "$num" "running" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+    state_unlock
+  fi
+
+  copilot_session_id=""
+  copilot_session_name_value=""
+  copilot_session_args=()
+  if declare -F copilot_session_new_id >/dev/null 2>&1; then
+    copilot_session_id="$(copilot_session_new_id)"
+    copilot_session_name_value="$(copilot_session_name "$num" "$WORKER_ID" "$RUN_ID")"
+    copilot_session_args=(--session-id "$copilot_session_id" --name "$copilot_session_name_value" --no-remote)
+    copilot_session_record_start \
+      "$copilot_session_id" \
+      "$num" \
+      "$WORKER_ID" \
+      "$copilot_session_name_value" \
+      "$(pwd -P)" \
+      "$(basename "$log_file")" \
+      "$iter_start_ts" \
+      "$RUN_ID"
+  fi
+
+  set +e
+  run_with_timeout "$TIMEOUT_SEC" \
+    "$COPILOT" -p "$full_prompt" \
+      "${copilot_session_args[@]}" \
+      --allow-all \
+      --model "$MODEL" \
+      --max-autopilot-continues "$AUTOPILOT_CONTINUES" \
+      2>&1 | tee "$log_file"
+  rc=$?
+  set -e
+
+  # Safety check (issue #195): verify the worker didn't escape its worktree.
+  # Copilot runs with --allow-all, so shell commands in the prompt could
+  # theoretically cd to another directory. Catch that early.
+  if ! verify_worktree_isolation; then
+    echo "❌ Worker escaped worktree during copilot session. Halting." >&2
+    exit 125
+  fi
+
+  # Safety check (issue #195): verify primary checkout wasn't mutated.
+  # Call this immediately after copilot returns, before any early exits,
+  # so we catch mutations even on failure paths.
+  if ! verify_primary_checkout_unchanged; then
+    echo "❌ Primary checkout mutated during copilot session. Halting." >&2
+    exit 126
+  fi
+
+  if [[ "$rc" -ne 0 ]]; then
+    if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+      copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "failed" "$RUN_ID" || true
+    fi
+    # Mark as failed in status.json (run-aware mode only)
+    if [[ -n "$RUN_ID" ]]; then
+      state_lock || true
+      status_mark_failed "$num" "Copilot exited with code $rc"
+      state_unlock || true
+    fi
+    if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
+      ralph_apply_label_transition "$num" fail || true
+    fi
+    echo "⚠️  copilot exited $rc on #$num. See $log_file. Halting." >&2
+    exit 1
+  fi
+
+  expected_pr_head=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  expected_pr_sha=$(git rev-parse --verify HEAD 2>/dev/null || true)
+  expected_pr_author=$(gh api user --jq .login 2>/dev/null || true)
+
+  # Verify issue closed by a merged PR (not just manually closed).
+  # closedByPullRequestsReferences items contain {number, url, ...} but not .state,
+  # so we look up each referenced PR and require at least one with mergedAt != null.
+  #
+  # SHORT-CIRCUIT (issue #119): If the issue is CLOSED with stateReason=COMPLETED,
+  # accept unconditionally — the worker's PR merged and GitHub auto-closed the
+  # issue as expected, even if closedByPullRequestsReferences hasn't propagated yet.
+  #
+  # The closedByPullRequestsReferences link is eventually consistent — GitHub can
+  # take 1-30s to attach the PR after the merge commit lands. Retry with backoff,
+  # and as a final fallback scan recent merged PRs for "Closes #N" / "Fixes #N".
+  state=""
+  state_reason=""
+  merged_count=0
+  for attempt in 1 2 3 4 5 6; do
+    closure=$(gh issue view "$num" --repo "$REPO" \
+      --json state,stateReason,closedByPullRequestsReferences)
+    state=$(echo "$closure" | jq -r .state)
+    state_reason=$(echo "$closure" | jq -r '.stateReason // ""')
+    
+    # Short-circuit: CLOSED + COMPLETED → success
+    if [[ "$state" == "CLOSED" && "$state_reason" == "COMPLETED" ]]; then
+      echo "✅ Issue #$num CLOSED as COMPLETED — accepting (merge-detection short-circuit)." >&2
+      merged_count=1
+      break
+    fi
+    
+    pr_numbers=$(echo "$closure" | jq -r '(.closedByPullRequestsReferences // [])[].number')
+    merged_count=0
+    for pr in $pr_numbers; do
+      merged_at=$(gh pr view "$pr" --repo "$REPO" --json mergedAt -q .mergedAt 2>/dev/null || echo "")
+      if [[ -n "$merged_at" && "$merged_at" != "null" ]]; then
+        merged_count=$((merged_count + 1))
+      fi
+    done
+    if [[ "$state" == "CLOSED" && "$merged_count" -ge 1 ]]; then
+      break
+    fi
+    if [[ "$attempt" -lt 6 ]]; then
+      echo "ℹ️  Issue #$num closure metadata not yet propagated (state=$state, stateReason=$state_reason, merged_prs=$merged_count); retry $attempt/5 in 5s..." >&2
+      sleep 5
+    fi
+  done
+
+  # Fallback: scan recent merged PRs for one whose body closes this issue.
+  # Runs whenever the issue link still shows zero merged PRs — including the
+  # case where the issue is still OPEN because state propagation is slow but
+  # the squash-merge has already landed. We only halt if no merged PR exists;
+  # the issue state itself is eventually consistent and not load-bearing here.
+  #
+  # Two guards prevent false positives:
+  #  - mergedAt > iter_start_ts: rejects historical merges (e.g., a regression
+  #    on a reopened issue would otherwise match the original closing PR).
+  #  - baseRefName == default branch: GitHub only auto-closes via "Closes #N"
+  #    when the PR merged into the default branch, so non-default merges
+  #    couldn't have closed the issue and must not be credited here.
+  if [[ "$merged_count" -lt 1 ]]; then
+    if [[ "$state" != "CLOSED" ]] \
+        && ralph_merge_ready_open_pr_for_issue \
+          "$num" "$default_branch" "$expected_pr_head" "$expected_pr_sha" "$expected_pr_author"; then
+      if wait_for_issue_closed_by_merged_pr "$num" "after fallback merge"; then
+        merged_count=1
+      fi
+    fi
+
+    if [[ "$merged_count" -lt 1 ]]; then
+      echo "ℹ️  Issue #$num closure link empty after retries (state=$state); checking recent merged PRs for 'Closes #$num' on $default_branch since $iter_start_ts..." >&2
+      fallback_pr=$(gh pr list --repo "$REPO" --state merged --limit 20 --base "$default_branch" \
+        --search "in:body \"#$num\"" \
+        --json number,body,mergedAt,baseRefName \
+        --jq ".[] | select(.mergedAt > \"$iter_start_ts\") | select(.baseRefName == \"$default_branch\") | select(.body | test(\"(?i)(close[sd]?|fix(e[sd])?|resolve[sd]?)\\\\s+#$num\\\\b\")) | .number" \
+        | head -1)
+      if [[ -n "$fallback_pr" ]]; then
+        echo "✅ Found merged PR #$fallback_pr referencing 'Closes #$num' — accepting." >&2
+        merged_count=1
+      fi
+    fi
+
+    # Release-branch flow (opt-in via RALPH_RELEASE_BRANCH). GitHub does not
+    # auto-link `Closes #N` for PRs whose base != default branch, so closure
+    # has to be done explicitly. We try, in order:
+    #   (a) merge an open PR into the release branch + manually close issue;
+    #   (b) if BRANCH_PREFIX is set and a `${prefix}${num}-…` branch was pushed
+    #       with no PR, open one and retry (a);
+    #   (c) accept state=CLOSED + a release-branch PR merged in this iteration.
+    if [[ "$merged_count" -lt 1 && -n "$RELEASE_BRANCH" && "$state" != "CLOSED" ]]; then
+      if ralph_merge_release_branch_pr_for_issue \
+          "$num" "$RELEASE_BRANCH" "$expected_pr_head" "$expected_pr_sha" "$expected_pr_author"; then
+        state="CLOSED"
+        merged_count=1
+      elif [[ -n "$BRANCH_PREFIX" ]] \
+          && ralph_open_pr_for_pushed_branch \
+            "$num" "$RELEASE_BRANCH" "$BRANCH_PREFIX" "$expected_pr_head" "$expected_pr_sha"; then
+        sleep 15  # give the new PR a moment to register checks
+        if ralph_merge_release_branch_pr_for_issue \
+            "$num" "$RELEASE_BRANCH" "$expected_pr_head" "$expected_pr_sha" "$expected_pr_author"; then
+          state="CLOSED"
+          merged_count=1
+        fi
+      fi
+    fi
+    if [[ "$merged_count" -lt 1 && -n "$RELEASE_BRANCH" && "$state" == "CLOSED" ]]; then
+      echo "ℹ️  Issue #$num: checking recent merged PRs into release branch '$RELEASE_BRANCH' since $iter_start_ts..." >&2
+      release_pr=$(gh pr list --repo "$REPO" --state merged --limit 20 --base "$RELEASE_BRANCH" \
+        --search "in:body \"#$num\"" \
+        --json number,body,mergedAt,baseRefName \
+        --jq ".[] | select(.mergedAt > \"$iter_start_ts\") | select(.baseRefName == \"$RELEASE_BRANCH\") | select(.body | test(\"(?i)(close[sd]?|fix(e[sd])?|resolve[sd]?)\\\\s+#$num\\\\b\")) | .number" \
+        | head -1)
+      if [[ -n "$release_pr" ]]; then
+        echo "✅ Found merged PR #$release_pr into release branch '$RELEASE_BRANCH' referencing #$num — accepting." >&2
+        merged_count=1
+      fi
+    fi
+  fi
+
+  # PRD integration-branch flow (auto-detected via ownership record). Similar to
+  # release-branch flow: GitHub does not auto-link/auto-close for non-default bases.
+  # We try, in order:
+  #   (a) merge an open PR into the integration branch + manually close issue + record slice-integrated;
+  #   (b) accept a merged integration-branch PR found since iter_start_ts and manually close + record.
+  if [[ "$merged_count" -lt 1 && -n "$RUN_ID" ]] && declare -F resolve_slice_pr_base >/dev/null 2>&1; then
+    integration_base=$(resolve_slice_pr_base "$RUN_ID" "$default_branch")
+    if [[ "$integration_base" != "$default_branch" ]]; then
+      echo "ℹ️  Issue #$num: PRD integration branch detected ($integration_base), checking for merged PR..." >&2
+      
+      # Try to merge the exact worker-owned PR at the approved local head SHA.
+      prd_merge_result=0
+      if _ralph_merge_owned_open_pr_for_issue \
+          "$num" "$integration_base" "$expected_pr_head" "$expected_pr_sha" "$expected_pr_author" body; then
+        pr="$RALPH_MERGED_PR"
+        merge_commit=$(gh pr view "$pr" --repo "$REPO" --json mergeCommit -q '.mergeCommit.oid' 2>/dev/null || echo "")
+
+        if declare -F record_slice_integrated >/dev/null 2>&1; then
+          state_lock || true
+          record_slice_integrated "$num" "$pr" "$merge_commit" "$RUN_ID"
+          state_unlock || true
+        fi
+
+        if declare -F close_slice_issue >/dev/null 2>&1; then
+          close_slice_issue "$num" "$pr" "$REPO" || true
+        fi
+
+        state="CLOSED"
+        merged_count=1
+        prd_merge_result=1
+      fi
+      
+      # If no open PR was merged, check for recently merged PRs
+      if [[ "$prd_merge_result" -eq 0 ]]; then
+        prd_pr=$(gh pr list --repo "$REPO" --state merged --limit 20 --base "$integration_base" \
+          --search "in:body \"#$num\"" \
+          --json number,body,mergedAt,baseRefName,mergeCommit \
+          --jq ".[] | select(.mergedAt > \"$iter_start_ts\") | select(.baseRefName == \"$integration_base\") | select(.body | test(\"(?i)(close[sd]?|fix(e[sd])?|resolve[sd]?)\\\\s+#$num\\\\b\")) | {number, mergeCommit: .mergeCommit.oid} | @json" \
+          | head -1)
+        
+        if [[ -n "$prd_pr" ]]; then
+          pr_number=$(echo "$prd_pr" | jq -r '.number')
+          merge_commit=$(echo "$prd_pr" | jq -r '.mergeCommit')
+          echo "✅ Found merged PR #$pr_number into integration branch '$integration_base' referencing #$num — recording slice-integrated." >&2
+          
+          # Record slice-integrated lifecycle
+          if declare -F record_slice_integrated >/dev/null 2>&1; then
+            state_lock || true
+            record_slice_integrated "$num" "$pr_number" "$merge_commit" "$RUN_ID"
+            state_unlock || true
+          fi
+          
+          # Verify base branch before accepting
+          if declare -F verify_slice_pr_base >/dev/null 2>&1; then
+            if verify_slice_pr_base "$RUN_ID" "$integration_base"; then
+              # Explicitly close the issue
+              if declare -F close_slice_issue >/dev/null 2>&1; then
+                close_slice_issue "$num" "$pr_number" "$REPO" || true
+              fi
+              state="CLOSED"
+              merged_count=1
+            else
+              echo "⚠️  PR #$pr_number merged to wrong base; not accepting as slice-integrated." >&2
+            fi
+          else
+            # No verification function available, accept anyway
+            if declare -F close_slice_issue >/dev/null 2>&1; then
+              close_slice_issue "$num" "$pr_number" "$REPO" || true
+            fi
+            state="CLOSED"
+            merged_count=1
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  # If merge succeeded and this was a recovery claim, clean up the ledger
+  if [[ "$merged_count" -ge 1 && "$_is_recovery_claim" == "1" ]]; then
+    state_lock || true
+    ledger_remove_entry "$num"
+    ledger_release_recovery "$num"
+    state_unlock || true
+    echo "✅ Recovery successful for #$num — ledger entry removed." >&2
+  fi
+
+  if [[ "$merged_count" -lt 1 ]]; then
+    # Resume-incomplete-iterations (issue #60). Before marking the issue as
+    # terminally failed, check whether this iteration left commits on a
+    # slice branch. If so, we likely just hit the autopilot-continues cap
+    # mid-implementation — relaunch copilot on the same issue and tell it
+    # to finish from the existing branch.
+    if [[ -n "$BRANCH_PREFIX" && "$RESUME_MAX" -gt 0 ]]; then
+      # Resume counter persists on the state.json claim record. The claim
+      # is created in both run-aware and legacy modes, so this works in
+      # both. Status updates remain run-aware-only.
+      state_lock || true
+      _current_attempt=$(state_get_resume_attempt "$num" 2>/dev/null || echo 0)
+      state_unlock || true
+      _next_attempt=$((_current_attempt + 1))
+
+      _resume_branch=$(resume_branch_for_issue "$num" "$BRANCH_PREFIX" || true)
+      _resume_eligible=0
+      _resume_reason=""
+
+      if [[ -z "$_resume_branch" ]]; then
+        _resume_reason="no slice branch matching ${BRANCH_PREFIX}${num}-* found"
+      elif ! resume_branch_ahead_of_base "$_resume_branch" "$default_branch"; then
+        _resume_reason="branch '$_resume_branch' has no new commits vs $default_branch"
+      elif ! resume_branch_head_after "$_resume_branch" "$iter_start_ts"; then
+        _resume_reason="branch '$_resume_branch' HEAD predates this iteration (stale from prior run)"
+      else
+        _open_pr=$(open_pr_for_branch "$REPO" "$_resume_branch" || true)
+        if [[ -n "$_open_pr" && "$RALPH_RESUME_ON_OPEN_PR" != "1" ]]; then
+          _resume_base_branch="$default_branch"
+          [[ -n "$RELEASE_BRANCH" ]] && _resume_base_branch="$RELEASE_BRANCH"
+          _open_pr_block_reason=$(open_pr_default_resume_block_reason "$REPO" "$_resume_base_branch" "$num" "$_resume_branch" "$_open_pr" || true)
+          if [[ -n "$_open_pr_block_reason" ]]; then
+            _resume_reason="open PR #$_open_pr exists on '$_resume_branch' — $_open_pr_block_reason (set RALPH_RESUME_ON_OPEN_PR=1 to override)"
+          elif [[ "$_next_attempt" -gt "$RESUME_MAX" ]]; then
+            _resume_reason="open PR #$_open_pr has failing/pending checks but resume cap exhausted ($_current_attempt/$RESUME_MAX)"
+          else
+            echo "ℹ️  Open PR #$_open_pr on '$_resume_branch' appears Ralph-owned with failing/pending checks; resuming repair attempt $_next_attempt/$RESUME_MAX." >&2
+            _resume_eligible=1
+          fi
+        elif [[ "$_next_attempt" -gt "$RESUME_MAX" ]]; then
+          _resume_reason="resume cap exhausted ($_current_attempt/$RESUME_MAX)"
+        else
+          _resume_eligible=1
+        fi
+      fi
+
+      if [[ "$_resume_eligible" == "1" ]]; then
+        state_lock || true
+        state_set_resume_attempt "$num" "$_next_attempt" "$_resume_branch" || true
+        if [[ -n "$RUN_ID" ]]; then
+          # Keep status `running` (not `failed`) so this issue isn't skipped
+          # as terminal on the next selection pass.
+          status_update_item "$num" "running" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+        fi
+        state_unlock || true
+        if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+          copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "resumed" "$RUN_ID" || true
+          copilot_session_archive_id "$copilot_session_id" || true
+        fi
+        format_resume_log "$_next_attempt" "$RESUME_MAX" "$_resume_branch" "$num" >&2
+        # Stash resume context for the loop-top short-circuit.
+        export RESUME_NUM="$num"
+        export RESUME_TITLE="$title"
+        export RESUME_BODY="$body"
+        export RESUME_BRANCH="$_resume_branch"
+        export RESUME_ATTEMPT="$_next_attempt"
+        continue
+      else
+        echo "ℹ️  Not resuming #$num: $_resume_reason" >&2
+        
+        # Check if we have durable PR/branch evidence to park as recoverable
+        _has_recovery_evidence=0
+        if [[ -n "$_resume_branch" ]] && resume_branch_ahead_of_base "$_resume_branch" "$default_branch"; then
+          _has_recovery_evidence=1
+        fi
+        
+        if [[ "$_has_recovery_evidence" == "1" ]]; then
+          # If this was already a recovery attempt, increment the counter
+          if [[ "$_is_recovery_claim" == "1" ]]; then
+            echo "ℹ️  Recovery attempt failed for #$num, checking retry budget..." >&2
+            state_lock || true
+            if ! ledger_increment_attempt "$num"; then
+              # Budget exhausted - mark as terminal failure
+              echo "⚠️  Recovery retry budget exhausted for #$num - marking as failed." >&2
+              ledger_release_recovery "$num"
+              if [[ -n "$RUN_ID" ]]; then
+                status_mark_failed "$num" "Recovery retry budget exhausted after $_iter_resume_attempt attempts: $_resume_reason"
+              fi
+              state_unlock || true
+              if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
+                ralph_apply_label_transition "$num" failed || true
+              fi
+              if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+                copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "failed" "$RUN_ID" || true
+              fi
+              echo "❌ Issue #$num marked as terminally failed after exhausting retry budget." >&2
+              exit 1
+            fi
+            state_unlock || true
+            echo "ℹ️  Incremented retry attempt for #$num, will retry after cooldown." >&2
+            ledger_release_recovery "$num"
+          else
+            # First-time parking — record fresh recoverable entry
+            _recovery_cooldown=300  # 5 minutes in seconds
+            _next_recovery=$(date -u -v+${_recovery_cooldown}S +%FT%TZ 2>/dev/null || date -u -d "+${_recovery_cooldown} seconds" +%FT%TZ)
+            _recovery_pr=$(open_pr_for_branch "$REPO" "$_resume_branch" || true)
+            
+            echo "ℹ️  Parking #$num as recoverable (branch=$_resume_branch, pr=$_recovery_pr, cooldown=${_recovery_cooldown}s)" >&2
+            
+            if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+              copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "recoverable" "$RUN_ID" || true
+            fi
+            # Record recovery ledger regardless of run-aware mode
+            state_lock || true
+            _recovery_detail="Parked with PR/branch evidence: $_resume_reason"
+            ledger_record_recoverable "$num" "$_recovery_pr" "$_resume_branch" "$_current_attempt" "$_next_recovery" "$_resume_reason"
+            # Status is only tracked in run-aware mode
+            if [[ -n "$RUN_ID" ]]; then
+              status_mark_recoverable "$num" "$_recovery_detail"
+            fi
+            state_unlock || true
+            # Keep ralph:queued label (recoverable items use the same label but have a lease)
+            # No label transition needed — already queued
+            echo "⚠️  Issue #$num parked as recoverable with lease until $_next_recovery. Will retry after cooldown." >&2
+          fi
+          exit 1
+        fi
+      fi
+    fi
+
+    # No recovery evidence — mark as terminally failed
+    if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+      copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "failed" "$RUN_ID" || true
+    fi
+    if [[ -n "$RUN_ID" ]]; then
+      state_lock || true
+      _failure_detail="No merged PR found after copilot completed (issue state=$state, stateReason=$state_reason, merged_prs=$merged_count)"
+      if [[ -n "${_resume_reason:-}" ]]; then
+        _failure_detail="$_failure_detail; not resumed: $_resume_reason"
+      fi
+      status_mark_failed "$num" "$_failure_detail"
+      state_unlock || true
+    fi
+    if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
+      ralph_apply_label_transition "$num" fail || true
+    fi
+    echo "⚠️  Issue #$num not closed by a merged PR (state=$state, stateReason=$state_reason, merged_prs=$merged_count). Halting." >&2
+    exit 1
+  fi
+
+  # Success! Update status (run-aware mode only)
+  # Preserve slice-integrated status if already set by PRD flow
+  if [[ -n "$RUN_ID" ]]; then
+    state_lock || true
+    current_status=$(status_load_item "$num" "status" "$RUN_ID")
+    if [[ "$current_status" != "slice-integrated" ]]; then
+      status_update_item "$num" "merged" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+    fi
+    state_unlock || true
+  fi
+  if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
+    ralph_apply_label_transition "$num" done || true
+  fi
+
+  # Optional Slice 1 postcondition (alisterr-specific guard) — skipped when
+  # title doesn't match the legacy Slice format.
+  if [[ "$title" =~ ^Slice\ 1: ]]; then
+    if ! gh workflow list --repo "$REPO" --limit 20 | grep -qi 'ci'; then
+      echo "⚠️  Slice 1 merged but no CI workflow found. Halting." >&2
+      exit 1
+    fi
+    echo "✅ Slice 1 postcondition: CI workflow present."
+  fi
+  if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
+    copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "merged" "$RUN_ID" || true
+    copilot_session_archive_id "$copilot_session_id" || true
+  fi
+
+  echo "✅ #$num closed via merged PR."
+  # Release this issue's claim so other workers don't see it as in-flight.
+  state_lock && state_release "$num" && state_unlock || true
+  CURRENT_CLAIM=""
+  sync_to_origin_main
+
+  if [[ "$ONCE" -eq 1 ]]; then
+    echo "🛑 --once: exiting after one iteration."
+    exit 0
+  fi
+done

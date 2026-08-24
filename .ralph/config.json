@@ -1,0 +1,77 @@
+{
+  "profile": "generic",
+  "repo": "tjegbejimba/Glasswork",
+  "allowAgentLaunch": true,
+  "issue": {
+    "titleRegex": "^.+$",
+    "titleNumRegex": "^.*$",
+    "issueSearch": "is:open no:assignee -label:ralph:failed (label:ralph:ready OR label:ralph:queued) (label:work:slice OR label:work:standalone)",
+    "numbers": [
+      506
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "name": "Restore core",
+        "command": "dotnet restore src/Glasswork.Core/Glasswork.Core.csproj"
+      },
+      {
+        "name": "Build core",
+        "command": "dotnet build src/Glasswork.Core/Glasswork.Core.csproj --configuration Release"
+      },
+      {
+        "name": "Restore tests",
+        "command": "dotnet restore tests/Glasswork.Tests/Glasswork.Tests.csproj -p:EnableWindowsTargeting=true"
+      },
+      {
+        "name": "Run tests",
+        "command": "dotnet test tests/Glasswork.Tests/Glasswork.Tests.csproj --configuration Release -p:EnableWindowsTargeting=true"
+      }
+    ]
+  },
+  "stages": [
+    {
+      "id": "merging",
+      "label": "merging",
+      "icon": "✓",
+      "patterns": ["gh pr merge\\b"]
+    },
+    {
+      "id": "ci-wait",
+      "label": "waiting on CI",
+      "icon": "⏱",
+      "patterns": ["gh pr checks\\b"]
+    },
+    {
+      "id": "review",
+      "label": "code review",
+      "icon": "🔍",
+      "patterns": ["Code-review\\("]
+    },
+    {
+      "id": "pr-open",
+      "label": "PR opened",
+      "icon": "↑",
+      "patterns": ["gh pr create\\b"]
+    },
+    {
+      "id": "planning",
+      "label": "planning critique",
+      "icon": "🦆",
+      "patterns": ["Rubber-duck\\("]
+    },
+    {
+      "id": "testing",
+      "label": "running tests",
+      "icon": "🧪",
+      "patterns": ["\\b(test|pytest|unittest)\\b"]
+    },
+    {
+      "id": "implementing",
+      "label": "committing",
+      "icon": "✎",
+      "patterns": ["\\bgit (commit|push)\\b"]
+    }
+  ]
+}
