@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Glasswork.Core.Models;
 using Glasswork.Core.Research;
@@ -23,6 +24,7 @@ public sealed partial class VisualVerificationScenario
     public string? StartUri { get; init; }
     public string? StartPage { get; init; }
     public PlannerProfile? PlannerProfile { get; init; }
+    public VisualVerificationCalendarContext? CalendarContext { get; init; }
     public int LaunchTimeoutSeconds { get; init; } = 20;
     public int InitialWaitMilliseconds { get; init; } = 800;
     public string Theme { get; init; } = "system";
@@ -90,6 +92,8 @@ public sealed partial class VisualVerificationScenario
                     "plannerProfile calendar references must not contain URL-shaped values.");
             }
         }
+        if (CalendarContext is not null)
+            CalendarContext.Validate();
 
         foreach (var task in Tasks)
         {
@@ -153,6 +157,17 @@ public sealed partial class VisualVerificationScenario
         {
             if (string.IsNullOrWhiteSpace(action.Type))
                 throw new FormatException("Every scenario action requires a non-empty type.");
+            if (action.Type.Equals("set-value", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    action.AutomationId,
+                    "PlannerCalendarSecret",
+                    StringComparison.Ordinal)
+                && action.Value is not null
+                && IsUrlShapedReference(action.Value))
+            {
+                throw new FormatException(
+                    "A scenario cannot populate the protected calendar input with a URL-shaped value.");
+            }
             if (action.Type.Equals("replace-task-text", StringComparison.OrdinalIgnoreCase))
             {
                 if (string.IsNullOrWhiteSpace(action.TaskId) || !IsSafeTaskId(action.TaskId))
@@ -296,6 +311,83 @@ public sealed partial class VisualVerificationScenario
 
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._/-]*\.md$")]
     private static partial Regex SafeWikiPagePathRegex();
+
+}
+
+public sealed class VisualVerificationCalendarContext
+{
+    public string Status { get; init; } = string.Empty;
+    public string? DiagnosticCode { get; init; }
+    public string? RefreshStatus { get; init; }
+    public string? RefreshDiagnosticCode { get; init; }
+    public bool ResetStorageFailureOnce { get; init; }
+    public List<VisualVerificationCalendarInterval> Intervals { get; init; } = [];
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> AdditionalFields { get; init; } = [];
+
+    public void Validate()
+    {
+        if (AdditionalFields.Count > 0
+            || Intervals.Any(interval => interval.AdditionalFields.Count > 0))
+        {
+            throw new FormatException("calendarContext contains unsupported fields.");
+        }
+        if (!IsSupportedStatus(Status)
+            || RefreshStatus is not null && !IsSupportedStatus(RefreshStatus))
+        {
+            throw new FormatException("calendarContext has an unsupported status.");
+        }
+        if (!IsSafeCode(DiagnosticCode) || !IsSafeCode(RefreshDiagnosticCode))
+        {
+            throw new FormatException(
+                "calendarContext diagnostic codes must be safe codes.");
+        }
+        if (Status is not ("current" or "possibly-stale") && Intervals.Count > 0)
+        {
+            throw new FormatException(
+                "calendarContext intervals require a complete snapshot status.");
+        }
+        foreach (var interval in Intervals)
+        {
+            if (!TimeOnly.TryParse(interval.StartLocal, out var start)
+                || !TimeOnly.TryParse(interval.EndLocal, out var end)
+                || start >= end)
+            {
+                throw new FormatException(
+                    "calendarContext intervals require ordered local times.");
+            }
+            if (interval.Availability is not ("busy" or "tentative"))
+            {
+                throw new FormatException(
+                    "calendarContext interval availability must be busy or tentative.");
+            }
+        }
+    }
+
+    private static bool IsSupportedStatus(string status) =>
+        status is "current"
+            or "possibly-stale"
+            or "transient-failure"
+            or "protected-store-recovery"
+            or "setup-required";
+
+    private static bool IsSafeCode(string? code) =>
+        code is null || Regex.IsMatch(
+            code,
+            @"^[a-z][a-z0-9_]*$",
+            RegexOptions.CultureInvariant);
+}
+
+public sealed class VisualVerificationCalendarInterval
+{
+    public string StartLocal { get; init; } = string.Empty;
+    public string EndLocal { get; init; } = string.Empty;
+    public string Availability { get; init; } = string.Empty;
+    public bool IsAllDay { get; init; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> AdditionalFields { get; init; } = [];
 }
 
 public sealed class VisualVerificationTask

@@ -82,12 +82,21 @@ internal static partial class VisualVerificationRunner
         var captureRequestPath = Path.Combine(workDir, "capture.request");
         var captureOutputPath = Path.Combine(workDir, "capture.png");
         var wayfinderFixturePath = Path.Combine(workDir, "wayfinder-fixture.json");
+        var calendarContextFixturePath = Path.Combine(
+            workDir,
+            "calendar-context-fixture.json");
         Directory.CreateDirectory(todoPath);
 
         MaterializeVault(scenario, vaultRoot, todoPath);
         File.WriteAllText(
             wayfinderFixturePath,
             JsonSerializer.Serialize(scenario.WayfinderIssues));
+        if (scenario.CalendarContext is not null)
+        {
+            File.WriteAllText(
+                calendarContextFixturePath,
+                JsonSerializer.Serialize(scenario.CalendarContext));
+        }
         var initialUiState = new Dictionary<string, object?>
         {
             ["app.theme"] = scenario.Theme,
@@ -106,7 +115,8 @@ internal static partial class VisualVerificationRunner
             instanceKey,
             captureRequestPath,
             captureOutputPath,
-            wayfinderFixturePath);
+            wayfinderFixturePath,
+            scenario.CalendarContext is null ? null : calendarContextFixturePath);
 
         try
         {
@@ -315,7 +325,8 @@ internal static partial class VisualVerificationRunner
         string instanceKey,
         string captureRequestPath,
         string captureOutputPath,
-        string wayfinderFixturePath)
+        string wayfinderFixturePath,
+        string? calendarContextFixturePath)
     {
         var psi = new ProcessStartInfo(appExe)
         {
@@ -336,6 +347,11 @@ internal static partial class VisualVerificationRunner
         if (startPage is not null)
             psi.Environment[VerificationLaunchOptions.StartPageVariable] = startPage;
         psi.Environment["GLASSWORK_VISUAL_WAYFINDER_FIXTURE"] = wayfinderFixturePath;
+        if (calendarContextFixturePath is not null)
+        {
+            psi.Environment[VerificationLaunchOptions.CalendarContextFixturePathVariable] =
+                calendarContextFixturePath;
+        }
 
         return Process.Start(psi) ?? throw new InvalidOperationException("Failed to launch Glasswork.");
     }

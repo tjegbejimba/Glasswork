@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Glasswork.Core.CalendarContext;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.ViewModels;
@@ -59,6 +60,476 @@ public sealed class PlannerViewModelTests
         Assert.AreEqual(30, viewModel.SelectedWorkMinutes);
         Assert.AreEqual(1, viewModel.AssumedSizeCount);
         Assert.AreEqual(0, viewModel.UncertainSizeCount);
+    }
+
+    [TestMethod]
+    public async Task RefreshAsync_CurrentCalendar_ComposesWithoutChangingPlannerScopeOrTotals()
+    {
+        var task = TodayTask("calendar-scope", "Calendar scope stays actionable");
+        var vault = new VaultService(_todoPath);
+        vault.Save(task);
+        var index = new IndexService(vault);
+        index.EnsureLoaded();
+        var snapshot = new CalendarContextSnapshot(
+            1,
+            1,
+            DateOnly.FromDateTime(DateTime.Today),
+            TimeZoneInfo.Local.Id,
+            DateTimeOffset.Now,
+            "fixture-fingerprint",
+            true,
+            [
+                new CalendarContextInterval(
+                    DateTimeOffset.Now,
+                    DateTimeOffset.Now.AddMinutes(30),
+                    CalendarAvailability.Busy,
+                    false,
+                    "fixture-occurrence"),
+            ]);
+        var calendar = new StubCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.Current,
+            snapshot,
+            [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]));
+        var viewModel = new PlannerViewModel(
+            vault,
+            new TaskService(vault, index),
+            index,
+            new RecordingUiStateService(),
+            new ResourceMutationService(_todoPath, vault),
+            calendarContext: calendar);
+
+        await viewModel.RefreshAsync();
+
+        Assert.AreEqual("Calendar current · 1 busy interval", viewModel.CalendarStatus);
+        Assert.IsTrue(viewModel.CanRefreshCalendar);
+        Assert.IsTrue(viewModel.CanDisconnectCalendar);
+        Assert.IsFalse(viewModel.CanConnectCalendar);
+        Assert.HasCount(1, viewModel.Groups);
+        Assert.AreEqual(task.Title, viewModel.Groups[0].Leaves[0].Title);
+        Assert.AreEqual(30, viewModel.SelectedWorkMinutes);
+        Assert.AreEqual(1, viewModel.AssumedSizeCount);
+    }
+
+    [TestMethod]
+    public async Task RefreshAsync_ProtectedStoreRecovery_ExposesOnlyScopePreviewedReset()
+    {
+        var vault = new VaultService(_todoPath);
+        var index = new IndexService(vault);
+        index.EnsureLoaded();
+        var scope = new CalendarContextResetScope(
+            "fixture-token",
+            ["Published calendar connection", "Current-day calendar snapshot"]);
+        var calendar = new StubCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.ProtectedStoreRecovery,
+            null,
+            [CalendarContextAction.Reset],
+            new CalendarContextDiagnostic("protected_store_newer"),
+            scope));
+        var viewModel = new PlannerViewModel(
+            vault,
+            new TaskService(vault, index),
+            index,
+            new RecordingUiStateService(),
+            new ResourceMutationService(_todoPath, vault),
+            calendarContext: calendar);
+
+        await viewModel.RefreshAsync();
+
+        Assert.AreEqual("Calendar connection needs reset", viewModel.CalendarStatus);
+        Assert.IsTrue(viewModel.CanResetCalendar);
+        Assert.IsFalse(viewModel.CanConnectCalendar);
+        Assert.IsFalse(viewModel.CanRefreshCalendar);
+        Assert.AreEqual(
+            "Published calendar connection; Current-day calendar snapshot",
+            viewModel.CalendarResetScopeText);
+    }
+
+    [TestMethod]
+    public async Task RefreshAsync_CalendarStorageFailure_SurfacesSafeDegradedState()
+    {
+        var vault = new VaultService(_todoPath);
+        var index = new IndexService(vault);
+        index.EnsureLoaded();
+        var viewModel = new PlannerViewModel(
+            vault,
+            new TaskService(vault, index),
+            index,
+            new RecordingUiStateService(),
+            new ResourceMutationService(_todoPath, vault),
+            calendarContext: new ThrowingCalendarContext(
+                new IOException("Fixture storage path must not surface.")));
+
+        await viewModel.RefreshAsync();
+
+        Assert.AreEqual("Calendar refresh failed", viewModel.CalendarStatus);
+        Assert.AreEqual(
+            "Calendar Context storage could not be updated.",
+            viewModel.ErrorMessage);
+        Assert.DoesNotContain("Fixture storage path", viewModel.ErrorMessage);
+    }
+
+    [TestMethod]
+    public async Task RefreshAsync_AfterDayRolloverStorageFailure_DropsPriorCalendarSnapshot()
+    {
+        var now = new DateTimeOffset(2026, 8, 20, 9, 0, 0, TimeSpan.Zero);
+        var snapshot = CalendarSnapshotFor(
+            DateOnly.FromDateTime(now.LocalDateTime),
+            "source-a");
+        var calendar = new MutableCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.Current,
+            snapshot,
+            [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]));
+        var vault = new VaultService(_todoPath);
+        var index = new IndexService(vault);
+        index.EnsureLoaded();
+        var viewModel = new PlannerViewModel(
+            vault,
+            new TaskService(vault, index),
+            index,
+            new RecordingUiStateService(),
+            new ResourceMutationService(_todoPath, vault),
+            clock: () => now,
+            calendarContext: calendar);
+        await viewModel.RefreshAsync();
+        Assert.IsNotNull(viewModel.CalendarSnapshot);
+        now = now.AddDays(1);
+        calendar.Failure = new IOException("Fixture storage path must not surface.");
+
+        await viewModel.RefreshAsync();
+
+        Assert.IsNull(viewModel.CalendarSnapshot);
+        Assert.AreEqual("Calendar refresh failed", viewModel.CalendarStatus);
+    }
+
+    [TestMethod]
+    public async Task ConnectCalendarAsync_SourceChangeStorageFailure_DropsPriorCalendarSnapshot()
+    {
+        var now = new DateTimeOffset(2026, 8, 20, 9, 0, 0, TimeSpan.Zero);
+        var snapshot = CalendarSnapshotFor(
+            DateOnly.FromDateTime(now.LocalDateTime),
+            "source-a");
+        var calendar = new MutableCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.Current,
+            snapshot,
+            [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]));
+        var viewModel = CreatePlannerViewModel(calendar, () => now);
+        await viewModel.RefreshAsync();
+        Assert.IsNotNull(viewModel.CalendarSnapshot);
+        calendar.Failure = new IOException("Fixture storage path must not surface.");
+
+        await viewModel.ConnectCalendarAsync(
+            "https://calendar.example.test/source-b.ics");
+
+        Assert.IsNull(viewModel.CalendarSnapshot);
+        Assert.AreEqual("Calendar refresh failed", viewModel.CalendarStatus);
+    }
+
+    [TestMethod]
+    public async Task RefreshCalendarAsync_SameRequestStorageFailure_RetainsQualifiedSnapshot()
+    {
+        var now = new DateTimeOffset(2026, 8, 20, 9, 0, 0, TimeSpan.Zero);
+        var snapshot = CalendarSnapshotFor(
+            DateOnly.FromDateTime(now.LocalDateTime),
+            "source-a");
+        var calendar = new MutableCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.Current,
+            snapshot,
+            [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]));
+        var viewModel = CreatePlannerViewModel(calendar, () => now);
+        await viewModel.RefreshAsync();
+        calendar.Failure = new IOException("Fixture storage path must not surface.");
+
+        await viewModel.RefreshCalendarAsync();
+
+        Assert.AreSame(snapshot, viewModel.CalendarSnapshot);
+        Assert.AreEqual("Calendar refresh failed", viewModel.CalendarStatus);
+    }
+
+    [TestMethod]
+    public async Task RefreshAsync_DuringConnect_DoesNotCancelOrSupersedeLifecycleOperation()
+    {
+        var calendar = new BlockingLifecycleCalendarContext();
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+
+        var connect = viewModel.ConnectCalendarAsync(
+            "https://calendar.example.test/published.ics");
+        await calendar.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await viewModel.RefreshAsync();
+
+        Assert.AreEqual(0, calendar.GetTodayCallCount);
+        Assert.IsFalse(connect.IsCompleted);
+        Assert.IsFalse(calendar.ConnectCancellationObserved);
+        calendar.CompleteConnect(new CalendarContextResult(
+            CalendarContextStatus.Current,
+            null,
+            [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]));
+        await connect;
+        Assert.IsTrue(viewModel.CanDisconnectCalendar);
+        Assert.AreEqual("Calendar current", viewModel.CalendarStatus);
+    }
+
+    [TestMethod]
+    public async Task RefreshAsync_DuringDisconnect_DoesNotCancelOrSupersedeLifecycleOperation()
+    {
+        var calendar = new BlockingLifecycleCalendarContext
+        {
+            GetTodayResult = new CalendarContextResult(
+                CalendarContextStatus.Current,
+                null,
+                [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]),
+        };
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        await viewModel.RefreshAsync();
+        Assert.AreEqual(1, calendar.GetTodayCallCount);
+
+        var disconnect = viewModel.DisconnectCalendarAsync();
+        await calendar.DisconnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await viewModel.RefreshAsync();
+
+        Assert.AreEqual(1, calendar.GetTodayCallCount);
+        Assert.IsFalse(disconnect.IsCompleted);
+        Assert.IsFalse(calendar.DisconnectCancellationObserved);
+        calendar.CompleteDisconnect(new CalendarContextResult(
+            CalendarContextStatus.SetupRequired,
+            null,
+            [CalendarContextAction.Connect]));
+        await disconnect;
+        Assert.IsTrue(viewModel.CanConnectCalendar);
+    }
+
+    [TestMethod]
+    public async Task RefreshAsync_DuringReset_DoesNotCancelOrSupersedeLifecycleOperation()
+    {
+        var calendar = new BlockingLifecycleCalendarContext
+        {
+            GetTodayResult = new CalendarContextResult(
+                CalendarContextStatus.ProtectedStoreRecovery,
+                null,
+                [CalendarContextAction.Reset],
+                ResetScope: new CalendarContextResetScope(
+                    "fixture-reset",
+                    ["Published calendar connection"])),
+        };
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        await viewModel.RefreshAsync();
+        Assert.AreEqual(1, calendar.GetTodayCallCount);
+
+        var reset = viewModel.ResetCalendarAsync();
+        await calendar.ResetStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await viewModel.RefreshAsync();
+
+        Assert.AreEqual(1, calendar.GetTodayCallCount);
+        Assert.IsFalse(reset.IsCompleted);
+        Assert.IsFalse(calendar.ResetCancellationObserved);
+        calendar.CompleteReset(new CalendarContextResult(
+            CalendarContextStatus.SetupRequired,
+            null,
+            [CalendarContextAction.Connect]));
+        await reset;
+        Assert.IsTrue(viewModel.CanConnectCalendar);
+    }
+
+    [TestMethod]
+    public async Task ResetCalendarAsync_WhileLoading_PreservesResetActionAndScopePreview()
+    {
+        var resetScope = new CalendarContextResetScope(
+            "fixture-reset",
+            ["Published calendar connection", "Current-day calendar snapshot"]);
+        var calendar = new BlockingLifecycleCalendarContext
+        {
+            GetTodayResult = new CalendarContextResult(
+                CalendarContextStatus.ProtectedStoreRecovery,
+                null,
+                [CalendarContextAction.Reset],
+                ResetScope: resetScope),
+        };
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        await viewModel.RefreshAsync();
+
+        var reset = viewModel.ResetCalendarAsync();
+        await calendar.ResetStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.IsFalse(reset.IsCompleted);
+        Assert.AreEqual("Calendar loading", viewModel.CalendarStatus);
+        Assert.IsTrue(viewModel.CanResetCalendar);
+        Assert.IsFalse(viewModel.CanConnectCalendar);
+        Assert.IsFalse(viewModel.CanRefreshCalendar);
+        Assert.AreEqual(
+            "Published calendar connection; Current-day calendar snapshot",
+            viewModel.CalendarResetScopeText);
+
+        calendar.CompleteReset(new CalendarContextResult(
+            CalendarContextStatus.SetupRequired,
+            null,
+            [CalendarContextAction.Connect]));
+        await reset;
+
+        Assert.IsTrue(viewModel.CanConnectCalendar);
+        Assert.IsFalse(viewModel.CanResetCalendar);
+        Assert.AreEqual(string.Empty, viewModel.CalendarResetScopeText);
+        Assert.AreEqual(
+            "Calendar Context reset. Connect is available.",
+            viewModel.Announcement);
+    }
+
+    [TestMethod]
+    public async Task QueuedCalendarLifecycleOperation_NavigationCancellation_DoesNotEscape()
+    {
+        var calendar = new BlockingLifecycleCalendarContext();
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        var connect = viewModel.ConnectCalendarAsync(
+            "https://calendar.example.test/published.ics");
+        await calendar.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        using var navigationCancellation = new CancellationTokenSource();
+
+        var queuedDisconnect = viewModel.DisconnectCalendarAsync(
+            navigationCancellation.Token);
+        navigationCancellation.Cancel();
+
+        await queuedDisconnect;
+        Assert.IsFalse(calendar.DisconnectStarted.Task.IsCompleted);
+        calendar.CompleteConnect(new CalendarContextResult(
+            CalendarContextStatus.Current,
+            null,
+            [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]));
+        await connect;
+    }
+
+    [TestMethod]
+    public async Task RefreshAsync_CanceledBeforeGateAcquisition_DoesNotEscape()
+    {
+        var viewModel = CreatePlannerViewModel(
+            new BlockingLifecycleCalendarContext(),
+            () => DateTimeOffset.Now);
+        using var navigationCancellation = new CancellationTokenSource();
+        navigationCancellation.Cancel();
+
+        await viewModel.RefreshAsync(
+            cancellationToken: navigationCancellation.Token);
+    }
+
+    [TestMethod]
+    public async Task ConnectCalendarAsync_Current_AnnouncesConnectedState()
+    {
+        var calendar = new MutableCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.Current,
+            null,
+            [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]));
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+
+        await viewModel.ConnectCalendarAsync(
+            "https://calendar.example.test/published.ics");
+
+        Assert.AreEqual("Calendar connected.", viewModel.Announcement);
+    }
+
+    [TestMethod]
+    public async Task RefreshCalendarAsync_ProtectedStoreRecovery_AnnouncesResetAction()
+    {
+        var calendar = new MutableCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.Current,
+            null,
+            [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]));
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        await viewModel.RefreshAsync();
+        calendar.Result = new CalendarContextResult(
+            CalendarContextStatus.ProtectedStoreRecovery,
+            null,
+            [CalendarContextAction.Reset],
+            new CalendarContextDiagnostic("protected_store_newer"),
+            new CalendarContextResetScope(
+                "fixture-reset",
+                ["Published calendar connection"]));
+
+        await viewModel.RefreshCalendarAsync();
+
+        Assert.AreEqual(
+            "Calendar connection needs reset. Reset Calendar Context is available.",
+            viewModel.Announcement);
+    }
+
+    [TestMethod]
+    public async Task DisconnectCalendarAsync_SetupRequired_AnnouncesConnectAction()
+    {
+        var calendar = new MutableCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.Current,
+            null,
+            [CalendarContextAction.Refresh, CalendarContextAction.Disconnect]));
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        await viewModel.RefreshAsync();
+        calendar.Result = new CalendarContextResult(
+            CalendarContextStatus.SetupRequired,
+            null,
+            [CalendarContextAction.Connect]);
+
+        await viewModel.DisconnectCalendarAsync();
+
+        Assert.AreEqual(
+            "Calendar disconnected. Connect is available.",
+            viewModel.Announcement);
+    }
+
+    [TestMethod]
+    public async Task ResetCalendarAsync_SetupRequired_AnnouncesConnectAction()
+    {
+        var calendar = new MutableCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.ProtectedStoreRecovery,
+            null,
+            [CalendarContextAction.Reset],
+            ResetScope: new CalendarContextResetScope(
+                "fixture-reset",
+                ["Published calendar connection"])));
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        await viewModel.RefreshAsync();
+        calendar.Result = new CalendarContextResult(
+            CalendarContextStatus.SetupRequired,
+            null,
+            [CalendarContextAction.Connect]);
+
+        await viewModel.ResetCalendarAsync();
+
+        Assert.AreEqual(
+            "Calendar Context reset. Connect is available.",
+            viewModel.Announcement);
+    }
+
+    [TestMethod]
+    public async Task ResetCalendarAsync_StorageFailure_PreservesResetRecoveryAndAnnouncesRetry()
+    {
+        var resetScope = new CalendarContextResetScope(
+            "fixture-reset",
+            ["Published calendar connection", "Current-day calendar snapshot"]);
+        var calendar = new MutableCalendarContext(new CalendarContextResult(
+            CalendarContextStatus.ProtectedStoreRecovery,
+            null,
+            [CalendarContextAction.Reset],
+            ResetScope: resetScope));
+        var viewModel = CreatePlannerViewModel(calendar, () => DateTimeOffset.Now);
+        await viewModel.RefreshAsync();
+        calendar.Failure = new IOException(
+            "Fixture storage path must not surface.");
+
+        await viewModel.ResetCalendarAsync();
+
+        Assert.IsTrue(viewModel.CanResetCalendar);
+        Assert.IsFalse(viewModel.CanConnectCalendar);
+        Assert.IsFalse(viewModel.CanRefreshCalendar);
+        Assert.AreEqual(
+            "Published calendar connection; Current-day calendar snapshot",
+            viewModel.CalendarResetScopeText);
+        Assert.AreEqual(
+            "Calendar Context reset failed",
+            viewModel.CalendarStatus);
+        Assert.AreEqual(
+            "Calendar Context reset failed. Reset remains available.",
+            viewModel.Announcement);
+        Assert.AreEqual(
+            "Calendar Context storage could not be updated.",
+            viewModel.ErrorMessage);
+        Assert.DoesNotContain("Fixture storage path", viewModel.ErrorMessage);
     }
 
     [TestMethod]
@@ -587,6 +1058,36 @@ public sealed class PlannerViewModelTests
         Created = DateTime.Today,
     };
 
+    private static CalendarContextSnapshot CalendarSnapshotFor(
+        DateOnly day,
+        string sourceFingerprint) =>
+        new(
+            CalendarContextPersistenceContract.SnapshotSchemaVersion,
+            CalendarContextPersistenceContract.NormalizationVersion,
+            day,
+            TimeZoneInfo.Local.Id,
+            new DateTimeOffset(day.ToDateTime(new TimeOnly(8, 0)), TimeZoneInfo.Local.GetUtcOffset(day.ToDateTime(new TimeOnly(8, 0)))),
+            sourceFingerprint,
+            true,
+            []);
+
+    private PlannerViewModel CreatePlannerViewModel(
+        ICalendarContext calendarContext,
+        Func<DateTimeOffset> clock)
+    {
+        var vault = new VaultService(_todoPath);
+        var index = new IndexService(vault);
+        index.EnsureLoaded();
+        return new PlannerViewModel(
+            vault,
+            new TaskService(vault, index),
+            index,
+            new RecordingUiStateService(),
+            new ResourceMutationService(_todoPath, vault),
+            clock: clock,
+            calendarContext: calendarContext);
+    }
+
     private sealed class RecordingUiStateService : IUiStateService
     {
         private readonly Dictionary<string, JsonElement> _state = [];
@@ -602,6 +1103,182 @@ public sealed class PlannerViewModelTests
         public void Save() { }
 
         public void RemoveKeysNotIn(string keyPrefix, IReadOnlyCollection<string> liveSuffixes) { }
+    }
+
+    private sealed class StubCalendarContext(CalendarContextResult result) : ICalendarContext
+    {
+        public Task<CalendarContextResult> GetTodayAsync(
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(result);
+
+        public Task<CalendarContextResult> ConnectAsync(
+            CalendarContextConnection connection,
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(result);
+
+        public Task<CalendarContextResult> DisconnectAsync(
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(result);
+
+        public Task<CalendarContextResult> ResetAsync(
+            CalendarContextResetConfirmation confirmation,
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(result);
+    }
+
+    private sealed class MutableCalendarContext(CalendarContextResult result) : ICalendarContext
+    {
+        public Exception? Failure { get; set; }
+        public CalendarContextResult Result { get; set; } = result;
+
+        public Task<CalendarContextResult> GetTodayAsync(
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Complete();
+
+        public Task<CalendarContextResult> ConnectAsync(
+            CalendarContextConnection connection,
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Complete();
+
+        public Task<CalendarContextResult> DisconnectAsync(
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Complete();
+
+        public Task<CalendarContextResult> ResetAsync(
+            CalendarContextResetConfirmation confirmation,
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Complete();
+
+        private Task<CalendarContextResult> Complete() =>
+            Failure is null
+                ? Task.FromResult(Result)
+                : Task.FromException<CalendarContextResult>(Failure);
+    }
+
+    private sealed class BlockingLifecycleCalendarContext : ICalendarContext
+    {
+        private readonly TaskCompletionSource<CalendarContextResult> _connect =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<CalendarContextResult> _disconnect =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<CalendarContextResult> _reset =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ConnectStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource DisconnectStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ResetStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int GetTodayCallCount { get; private set; }
+        public bool ConnectCancellationObserved { get; private set; }
+        public bool DisconnectCancellationObserved { get; private set; }
+        public bool ResetCancellationObserved { get; private set; }
+        public CalendarContextResult GetTodayResult { get; set; } = new(
+            CalendarContextStatus.SetupRequired,
+            null,
+            [CalendarContextAction.Connect]);
+
+        public Task<CalendarContextResult> GetTodayAsync(
+            CalendarContextRequest request,
+            CancellationToken cancellationToken)
+        {
+            GetTodayCallCount++;
+            return Task.FromResult(GetTodayResult);
+        }
+
+        public async Task<CalendarContextResult> ConnectAsync(
+            CalendarContextConnection connection,
+            CalendarContextRequest request,
+            CancellationToken cancellationToken)
+        {
+            ConnectStarted.TrySetResult();
+            try
+            {
+                return await _connect.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                ConnectCancellationObserved = true;
+                throw;
+            }
+        }
+
+        public async Task<CalendarContextResult> DisconnectAsync(
+            CalendarContextRequest request,
+            CancellationToken cancellationToken)
+        {
+            DisconnectStarted.TrySetResult();
+            try
+            {
+                return await _disconnect.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                DisconnectCancellationObserved = true;
+                throw;
+            }
+        }
+
+        public async Task<CalendarContextResult> ResetAsync(
+            CalendarContextResetConfirmation confirmation,
+            CalendarContextRequest request,
+            CancellationToken cancellationToken)
+        {
+            ResetStarted.TrySetResult();
+            try
+            {
+                return await _reset.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                ResetCancellationObserved = true;
+                throw;
+            }
+        }
+
+        public void CompleteConnect(CalendarContextResult result) =>
+            _connect.TrySetResult(result);
+
+        public void CompleteDisconnect(CalendarContextResult result) =>
+            _disconnect.TrySetResult(result);
+
+        public void CompleteReset(CalendarContextResult result) =>
+            _reset.TrySetResult(result);
+    }
+
+    private sealed class ThrowingCalendarContext(Exception exception) : ICalendarContext
+    {
+        public Task<CalendarContextResult> GetTodayAsync(
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromException<CalendarContextResult>(exception);
+
+        public Task<CalendarContextResult> ConnectAsync(
+            CalendarContextConnection connection,
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromException<CalendarContextResult>(exception);
+
+        public Task<CalendarContextResult> DisconnectAsync(
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromException<CalendarContextResult>(exception);
+
+        public Task<CalendarContextResult> ResetAsync(
+            CalendarContextResetConfirmation confirmation,
+            CalendarContextRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromException<CalendarContextResult>(exception);
     }
 
     private sealed class ThrowDuringReplacement : IResourceMutationFaultInjector

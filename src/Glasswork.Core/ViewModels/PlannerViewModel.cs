@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
+using System.Security.Cryptography;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Glasswork.Core.CalendarContext;
 using Glasswork.Core.Models;
 using Glasswork.Core.Queries;
 using Glasswork.Core.Services;
@@ -9,12 +11,19 @@ namespace Glasswork.ViewModels;
 
 public sealed class PlannerViewModel : ObservableObject
 {
+    private const string CalendarStorageFailureMessage =
+        "Calendar Context storage could not be updated.";
+
     private readonly MyDayViewModel _myDay;
     private readonly PlannerProfileService _profiles;
     private readonly VaultService _vault;
     private readonly ResourceMutationService _mutations;
     private readonly IUiStateService _uiState;
+    private readonly ICalendarContext _calendarContext;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly SemaphoreSlim _calendarLifecycleGate = new(1, 1);
+    private CancellationTokenSource? _calendarRequestCancellation;
+    private int _calendarLifecycleOperationCount;
     private Dictionary<string, string?> _displayedRevisions = new(StringComparer.Ordinal);
     private PlannerNotTodayRecovery? _inlineUndo;
     private string? _focusTargetIdentity;
@@ -26,6 +35,11 @@ public sealed class PlannerViewModel : ObservableObject
     private int _assumedSizeCount;
     private int _uncertainSizeCount;
     private string? _errorMessage;
+    private CalendarContextResult _calendarResult = new(
+        CalendarContextStatus.Unavailable,
+        null,
+        []);
+    private string _calendarStatus = "Unknown calendar";
 
     public PlannerViewModel(
         VaultService vault,
@@ -34,12 +48,14 @@ public sealed class PlannerViewModel : ObservableObject
         IUiStateService uiState,
         ResourceMutationService mutations,
         ITaskQuery? taskQuery = null,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null,
+        ICalendarContext? calendarContext = null)
     {
         ArgumentNullException.ThrowIfNull(mutations);
         _vault = vault ?? throw new ArgumentNullException(nameof(vault));
         _mutations = mutations;
         _uiState = uiState ?? throw new ArgumentNullException(nameof(uiState));
+        _calendarContext = calendarContext ?? new UnavailableCalendarContext();
         _clock = clock ?? (() => DateTimeOffset.Now);
         _sessionDate = DateOnly.FromDateTime(_clock().LocalDateTime);
         _profiles = new PlannerProfileService(uiState);
@@ -79,7 +95,31 @@ public sealed class PlannerViewModel : ObservableObject
         private set => SetProperty(ref _profileDraft, value);
     }
 
-    public string CalendarStatus => "Unknown calendar";
+    public string CalendarStatus
+    {
+        get => _calendarStatus;
+        private set => SetProperty(ref _calendarStatus, value);
+    }
+
+    public CalendarContextSnapshot? CalendarSnapshot => _calendarResult.Snapshot;
+
+    public bool CanConnectCalendar =>
+        _calendarResult.Actions.Contains(CalendarContextAction.Connect);
+
+    public bool CanRefreshCalendar =>
+        _calendarResult.Actions.Contains(CalendarContextAction.Refresh);
+
+    public bool CanDisconnectCalendar =>
+        _calendarResult.Actions.Contains(CalendarContextAction.Disconnect);
+
+    public bool CanResetCalendar =>
+        _calendarResult.Actions.Contains(CalendarContextAction.Reset)
+        && _calendarResult.ResetScope is not null;
+
+    public string CalendarResetScopeText =>
+        _calendarResult.ResetScope is null
+            ? string.Empty
+            : string.Join("; ", _calendarResult.ResetScope.Resources);
 
     public int SelectedWorkMinutes
     {
@@ -131,6 +171,147 @@ public sealed class PlannerViewModel : ObservableObject
         SelectedWorkMinutes = leaves.Sum(leaf => leaf.CapacityMinutes);
         AssumedSizeCount = leaves.Count(leaf => leaf.IsAssumed);
         UncertainSizeCount = leaves.Count(leaf => leaf.IsUncertain);
+    }
+
+    public async Task RefreshAsync(
+        bool forceCalendarRefresh = false,
+        CancellationToken cancellationToken = default)
+    {
+        Refresh();
+        if (Volatile.Read(ref _calendarLifecycleOperationCount) > 0)
+            return;
+
+        try
+        {
+            if (!await _calendarLifecycleGate.WaitAsync(0, cancellationToken))
+                return;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+        try
+        {
+            if (Volatile.Read(ref _calendarLifecycleOperationCount) > 0)
+                return;
+
+            var request = CreateCalendarRequest(forceCalendarRefresh);
+            await RunCalendarRequestAsync(
+                token => _calendarContext.GetTodayAsync(request, token),
+                request,
+                preserveSnapshotForUnchangedSource: true,
+                cancellationToken);
+        }
+        finally
+        {
+            _calendarLifecycleGate.Release();
+        }
+    }
+
+    public Task ConnectCalendarAsync(
+        string secret,
+        CancellationToken cancellationToken = default)
+    {
+        var request = CreateCalendarRequest(forceRefresh: true);
+        return RunCalendarLifecycleRequestAsync(
+            token => _calendarContext.ConnectAsync(
+                new CalendarContextConnection(
+                    CalendarContextProviderKind.PublishedIcs,
+                    secret),
+                request,
+                token),
+            request,
+            preserveSnapshotForUnchangedSource: false,
+            CalendarLifecycleOperation.Connect,
+            cancellationToken);
+    }
+
+    public Task RefreshCalendarAsync(CancellationToken cancellationToken = default)
+    {
+        var request = CreateCalendarRequest(forceRefresh: true);
+        return RunCalendarLifecycleRequestAsync(
+            token => _calendarContext.GetTodayAsync(request, token),
+            request,
+            preserveSnapshotForUnchangedSource: true,
+            CalendarLifecycleOperation.Refresh,
+            cancellationToken);
+    }
+
+    public Task DisconnectCalendarAsync(CancellationToken cancellationToken = default)
+    {
+        var request = CreateCalendarRequest(forceRefresh: false);
+        return RunCalendarLifecycleRequestAsync(
+            token => _calendarContext.DisconnectAsync(request, token),
+            request,
+            preserveSnapshotForUnchangedSource: false,
+            CalendarLifecycleOperation.Disconnect,
+            cancellationToken);
+    }
+
+    public Task ResetCalendarAsync(CancellationToken cancellationToken = default)
+    {
+        var scope = _calendarResult.ResetScope;
+        if (scope is null)
+            return Task.CompletedTask;
+
+        var request = CreateCalendarRequest(forceRefresh: false);
+        return RunCalendarLifecycleRequestAsync(
+            token => _calendarContext.ResetAsync(
+                new CalendarContextResetConfirmation(scope.Token),
+                request,
+                token),
+            request,
+            preserveSnapshotForUnchangedSource: false,
+            CalendarLifecycleOperation.Reset,
+            cancellationToken);
+    }
+
+    private async Task RunCalendarLifecycleRequestAsync(
+        Func<CancellationToken, Task<CalendarContextResult>> operation,
+        CalendarContextRequest request,
+        bool preserveSnapshotForUnchangedSource,
+        CalendarLifecycleOperation lifecycleOperation,
+        CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _calendarLifecycleOperationCount);
+        try
+        {
+            try
+            {
+                await _calendarLifecycleGate.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            try
+            {
+                var applied = await RunCalendarRequestAsync(
+                    operation,
+                    request,
+                    preserveSnapshotForUnchangedSource,
+                    cancellationToken);
+                if (applied)
+                {
+                    if (lifecycleOperation == CalendarLifecycleOperation.Reset
+                        && _calendarResult.Status == CalendarContextStatus.TransientFailure)
+                    {
+                        CalendarStatus = "Calendar Context reset failed";
+                    }
+                    Announcement = DescribeCalendarAnnouncement(
+                        lifecycleOperation,
+                        _calendarResult);
+                }
+            }
+            finally
+            {
+                _calendarLifecycleGate.Release();
+            }
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _calendarLifecycleOperationCount);
+        }
     }
 
     public bool ConfirmProfile(PlannerProfileDraft draft)
@@ -248,9 +429,183 @@ public sealed class PlannerViewModel : ObservableObject
 
     public void EndSession()
     {
+        _calendarRequestCancellation?.Cancel();
+        _calendarRequestCancellation?.Dispose();
+        _calendarRequestCancellation = null;
         InlineUndo = null;
         NotTodayTray.Clear();
         FocusTargetIdentity = null;
+    }
+
+    private CalendarContextRequest CreateCalendarRequest(bool forceRefresh) =>
+        new(
+            DateOnly.FromDateTime(_clock().LocalDateTime),
+            TimeZoneInfo.Local,
+            forceRefresh);
+
+    private async Task<bool> RunCalendarRequestAsync(
+        Func<CancellationToken, Task<CalendarContextResult>> operation,
+        CalendarContextRequest request,
+        bool preserveSnapshotForUnchangedSource,
+        CancellationToken cancellationToken)
+    {
+        _calendarRequestCancellation?.Cancel();
+        _calendarRequestCancellation?.Dispose();
+        _calendarRequestCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var active = _calendarRequestCancellation;
+        var retainedSnapshot = preserveSnapshotForUnchangedSource
+            && IsQualifiedForRequest(_calendarResult.Snapshot, request)
+                ? _calendarResult.Snapshot
+                : null;
+        var retainedActions = _calendarResult.Actions;
+        var retainedResetScope =
+            retainedActions.Contains(CalendarContextAction.Reset)
+                ? _calendarResult.ResetScope
+                : null;
+        try
+        {
+            if (ErrorMessage == CalendarStorageFailureMessage)
+                ErrorMessage = null;
+            ApplyCalendarResult(new CalendarContextResult(
+                CalendarContextStatus.Loading,
+                retainedSnapshot,
+                retainedActions,
+                ResetScope: retainedResetScope));
+            var result = await operation(active.Token);
+            if (!active.IsCancellationRequested)
+            {
+                ApplyCalendarResult(result);
+                return true;
+            }
+        }
+        catch (OperationCanceledException) when (active.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex) when (IsCalendarPersistenceFailure(ex))
+        {
+            if (!active.IsCancellationRequested)
+            {
+                ApplyCalendarResult(new CalendarContextResult(
+                    CalendarContextStatus.TransientFailure,
+                    retainedSnapshot,
+                    retainedActions,
+                    new CalendarContextDiagnostic("storage_failure"),
+                    retainedResetScope));
+                ErrorMessage = CalendarStorageFailureMessage;
+                return true;
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_calendarRequestCancellation, active))
+            {
+                _calendarRequestCancellation = null;
+                active.Dispose();
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsQualifiedForRequest(
+        CalendarContextSnapshot? snapshot,
+        CalendarContextRequest request) =>
+        snapshot is
+        {
+            SchemaVersion: CalendarContextPersistenceContract.SnapshotSchemaVersion,
+            NormalizationVersion: CalendarContextPersistenceContract.NormalizationVersion,
+            IsComplete: true,
+        }
+        && snapshot.Day == request.Day
+        && string.Equals(
+            snapshot.TimeZoneId,
+            request.TimeZone.Id,
+            StringComparison.Ordinal)
+        && !string.IsNullOrWhiteSpace(snapshot.SourceFingerprint);
+
+    private void ApplyCalendarResult(CalendarContextResult result)
+    {
+        _calendarResult = result;
+        CalendarStatus = DescribeCalendar(result);
+        OnPropertyChanged(nameof(CalendarSnapshot));
+        OnPropertyChanged(nameof(CanConnectCalendar));
+        OnPropertyChanged(nameof(CanRefreshCalendar));
+        OnPropertyChanged(nameof(CanDisconnectCalendar));
+        OnPropertyChanged(nameof(CanResetCalendar));
+        OnPropertyChanged(nameof(CalendarResetScopeText));
+    }
+
+    private static string DescribeCalendar(CalendarContextResult result) =>
+        result.Status switch
+        {
+            CalendarContextStatus.Current => DescribeSnapshot("Calendar current", result.Snapshot),
+            CalendarContextStatus.PossiblyStale =>
+                DescribeSnapshot("Calendar may be stale", result.Snapshot),
+            CalendarContextStatus.Loading => "Calendar loading",
+            CalendarContextStatus.Incomplete => "Calendar feed incomplete",
+            CalendarContextStatus.TransientFailure => "Calendar refresh failed",
+            CalendarContextStatus.ProtectedStoreRecovery =>
+                "Calendar connection needs reset",
+            _ => "Unknown calendar",
+        };
+
+    private static string DescribeCalendarAnnouncement(
+        CalendarLifecycleOperation operation,
+        CalendarContextResult result)
+    {
+        if (result.Status == CalendarContextStatus.ProtectedStoreRecovery)
+        {
+            return "Calendar connection needs reset. "
+                + "Reset Calendar Context is available.";
+        }
+
+        if (result.Status == CalendarContextStatus.SetupRequired)
+        {
+            return operation == CalendarLifecycleOperation.Reset
+                ? "Calendar Context reset. Connect is available."
+                : operation == CalendarLifecycleOperation.Disconnect
+                    ? "Calendar disconnected. Connect is available."
+                    : "Calendar setup required. Connect is available.";
+        }
+
+        if (result.Status == CalendarContextStatus.Current)
+        {
+            return operation == CalendarLifecycleOperation.Connect
+                ? "Calendar connected."
+                : "Calendar refreshed.";
+        }
+
+        if (result.Status == CalendarContextStatus.PossiblyStale)
+            return "Calendar refresh failed. Showing the last complete snapshot.";
+
+        if (operation == CalendarLifecycleOperation.Reset)
+            return "Calendar Context reset failed. Reset remains available.";
+
+        return operation == CalendarLifecycleOperation.Connect
+            ? "Calendar connection failed. Check the link and try again."
+            : "Calendar refresh failed. Try again.";
+    }
+
+    private static string DescribeSnapshot(
+        string prefix,
+        CalendarContextSnapshot? snapshot)
+    {
+        if (snapshot is null)
+            return prefix;
+
+        var busy = snapshot.Intervals.Count(
+            interval => interval.Availability == CalendarAvailability.Busy);
+        var tentative = snapshot.Intervals.Count(
+            interval => interval.Availability == CalendarAvailability.Tentative);
+        var labels = new List<string>();
+        if (busy > 0)
+            labels.Add($"{busy} busy {(busy == 1 ? "interval" : "intervals")}");
+        if (tentative > 0)
+            labels.Add($"{tentative} tentative {(tentative == 1 ? "interval" : "intervals")}");
+        if (labels.Count == 0)
+            labels.Add("no busy intervals");
+        return $"{prefix} · {string.Join(", ", labels)}";
     }
 
     private bool ApplyNotToday(
@@ -551,4 +906,17 @@ public sealed class PlannerViewModel : ObservableObject
             or UnauthorizedAccessException
             or InvalidOperationException
             or JsonException;
+
+    private static bool IsCalendarPersistenceFailure(Exception exception) =>
+        exception is IOException
+            or UnauthorizedAccessException
+            or CryptographicException;
+
+    private enum CalendarLifecycleOperation
+    {
+        Connect,
+        Refresh,
+        Disconnect,
+        Reset,
+    }
 }

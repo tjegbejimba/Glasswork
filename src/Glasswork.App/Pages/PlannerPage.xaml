@@ -16,7 +16,7 @@
         <KeyboardAccelerator Key="U" Modifiers="Menu" Invoked="Undo_Accelerator" />
     </Page.KeyboardAccelerators>
 
-    <Grid Padding="32" RowDefinitions="Auto,Auto,Auto,*,Auto">
+    <Grid Padding="32" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto">
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
             <StackPanel>
                 <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="Planner" />
@@ -78,18 +78,65 @@
             </StackPanel>
         </Border>
 
-        <Grid Grid.Row="2" Margin="0,16,0,0" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="20">
+        <Border Grid.Row="2" Margin="0,16,0,0" Padding="16"
+                CornerRadius="8"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                AutomationProperties.AutomationId="PlannerCalendarContext">
+            <StackPanel Spacing="10">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                    <StackPanel>
+                       <TextBlock Text="Calendar Context" FontWeight="SemiBold" />
+                       <TextBlock x:Name="CalendarStateText"
+                                  AutomationProperties.AutomationId="PlannerUnknownCalendar" />
+                    </StackPanel>
+                    <Button x:Name="CalendarRefreshButton" Grid.Column="1"
+                           Content="Refresh calendar"
+                           Click="CalendarRefresh_Click"
+                           AutomationProperties.AutomationId="PlannerCalendarRefresh" />
+                    <Button x:Name="CalendarDisconnectButton" Grid.Column="2"
+                           Content="Disconnect"
+                           Click="CalendarDisconnect_Click"
+                           AutomationProperties.AutomationId="PlannerCalendarDisconnect" />
+                </Grid>
+                <StackPanel x:Name="CalendarSetupPanel" Spacing="8">
+                    <TextBlock Text="Paste a private published ICS link. Choose the least-detail publication option your calendar offers; Glasswork stores the link only in protected local storage and ignores event text."
+                              TextWrapping="Wrap" Opacity="0.7" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                       <PasswordBox x:Name="CalendarSecretBox"
+                                    PasswordRevealMode="Hidden"
+                                    PlaceholderText="Private published ICS link"
+                                    AutomationProperties.AutomationId="PlannerCalendarSecret" />
+                       <Button x:Name="CalendarConnectButton" Grid.Column="1"
+                               Content="Connect"
+                               Click="CalendarConnect_Click"
+                               AutomationProperties.AutomationId="PlannerCalendarConnect" />
+                    </Grid>
+                </StackPanel>
+                <StackPanel x:Name="CalendarRecoveryPanel" Spacing="8">
+                    <TextBlock Text="Protected Calendar Context data cannot be read. Reset removes only:"
+                              TextWrapping="Wrap" />
+                    <TextBlock x:Name="CalendarResetScopeText"
+                              TextWrapping="Wrap" Opacity="0.7"
+                              AutomationProperties.AutomationId="PlannerCalendarResetScope" />
+                    <Button x:Name="CalendarResetButton"
+                           Content="Reset Calendar Context"
+                           HorizontalAlignment="Left"
+                           Click="CalendarReset_Click"
+                           AutomationProperties.AutomationId="PlannerCalendarReset" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="3" Margin="0,16,0,0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="20">
             <TextBlock x:Name="ProfileStateText" FontWeight="SemiBold"
                        AutomationProperties.AutomationId="PlannerProfileState" />
-            <TextBlock Grid.Column="1" Text="Unknown calendar"
-                       AutomationProperties.AutomationId="PlannerUnknownCalendar" />
-            <TextBlock Grid.Column="2" x:Name="TotalsText"
+            <TextBlock Grid.Column="1" x:Name="TotalsText"
                        AutomationProperties.AutomationId="PlannerSelectedWorkTotal" />
-            <TextBlock Grid.Column="3" x:Name="UncertaintyText"
+            <TextBlock Grid.Column="2" x:Name="UncertaintyText"
                        AutomationProperties.AutomationId="PlannerUncertaintyTotal" />
         </Grid>
 
-        <ScrollViewer Grid.Row="3" Margin="0,16,0,0">
+        <ScrollViewer Grid.Row="4" Margin="0,16,0,0">
             <ItemsControl x:Name="GroupList"
                           AutomationProperties.AutomationId="PlannerScopeGroups">
                 <ItemsControl.ItemTemplate>
@@ -147,7 +194,7 @@
             </ItemsControl>
         </ScrollViewer>
 
-        <StackPanel Grid.Row="4" Margin="0,12,0,0" Spacing="8">
+        <StackPanel Grid.Row="5" Margin="0,12,0,0" Spacing="8">
             <InfoBar x:Name="ErrorBar" Severity="Error" IsOpen="False"
                      AutomationProperties.AutomationId="PlannerError" />
             <Grid x:Name="UndoPanel" Visibility="Collapsed"

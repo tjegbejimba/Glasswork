@@ -70,6 +70,82 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void FromJson_LoadsNormalizedCalendarContextFixture()
+    {
+        const string json = """
+        {
+          "name": "planner calendar",
+          "calendarContext": {
+            "status": "current",
+            "diagnosticCode": "current",
+            "intervals": [
+              {
+                "startLocal": "09:30:00",
+                "endLocal": "10:15:00",
+                "availability": "busy",
+                "isAllDay": false
+              }
+            ]
+          },
+          "captures": [{ "name": "planner-calendar" }]
+        }
+        """;
+
+        var scenario = VisualVerificationScenario.FromJson(json);
+
+        Assert.AreEqual("current", scenario.CalendarContext!.Status);
+        Assert.AreEqual("09:30:00", scenario.CalendarContext.Intervals[0].StartLocal);
+    }
+
+    [TestMethod]
+    public void FromJson_CalendarContextProviderDetailField_IsRejectedWithoutEchoingValue()
+    {
+        const string secret = "https://calendar.example.test/private.ics?token=fixture-secret";
+        var json = $$"""
+        {
+          "name": "planner calendar secret rejection",
+          "calendarContext": {
+            "status": "current",
+            "providerPayload": "{{secret}}",
+            "intervals": []
+          },
+          "captures": [{ "name": "planner-calendar" }]
+        }
+        """;
+
+        var exception = Assert.Throws<FormatException>(
+            () => VisualVerificationScenario.FromJson(json));
+
+        StringAssert.Contains(exception.Message, "unsupported fields");
+        Assert.DoesNotContain("fixture-secret", exception.Message);
+    }
+
+    [TestMethod]
+    public void FromJson_PlannerCalendarSecretSetValueWithUrl_IsRejectedWithoutEchoingValue()
+    {
+        const string secret = "https://calendar.example.test/private.ics?token=action-secret";
+        var json = $$"""
+        {
+          "name": "planner calendar action secret rejection",
+          "actions": [
+            {
+              "type": "set-value",
+              "automationId": "PlannerCalendarSecret",
+              "value": "{{secret}}"
+            }
+          ],
+          "captures": [{ "name": "planner-calendar" }]
+        }
+        """;
+
+        var exception = Assert.Throws<FormatException>(
+            () => VisualVerificationScenario.FromJson(json));
+
+        StringAssert.Contains(exception.Message, "protected calendar input");
+        Assert.DoesNotContain("action-secret", exception.Message);
+    }
+
+    [TestMethod]
     public void FromJson_LoadsTasksActionsAndCaptures()
     {
         const string json = """

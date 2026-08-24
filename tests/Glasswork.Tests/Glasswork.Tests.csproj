@@ -1,7 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('Windows'))">net10.0;net10.0-windows10.0.26100.0</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -9,6 +10,9 @@
 
   <ItemGroup>
     <PackageReference Include="MSTest" Version="4.0.2" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData"
+                      Version="10.0.0"
+                      Condition="'$(TargetFramework)' == 'net10.0-windows10.0.26100.0'" />
     <PackageReference Include="YamlDotNet" Version="17.0.1" />
   </ItemGroup>
 
@@ -27,6 +31,15 @@
              Link="ResearchPageRefreshPolicy.cs" />
     <Compile Include="..\..\src\Glasswork.App\Pages\ResearchContextSelectionPolicy.cs"
              Link="ResearchContextSelectionPolicy.cs" />
+    <Compile Include="..\..\src\Glasswork.App\Services\CalendarContext\CalendarDataProtector.cs" Link="CalendarDataProtector.cs" />
+    <Compile Include="..\..\src\Glasswork.App\Services\CalendarContext\BoundedPublishedIcsTransport.cs" Link="BoundedPublishedIcsTransport.cs" />
+    <Compile Include="..\..\src\Glasswork.App\Services\CalendarContext\DpapiCalendarContextStore.cs" Link="DpapiCalendarContextStore.cs" />
+    <Compile Include="..\..\src\Glasswork.App\Services\CalendarContext\DpapiCalendarDataProtector.cs"
+             Link="DpapiCalendarDataProtector.cs"
+             Condition="'$(TargetFramework)' == 'net10.0-windows10.0.26100.0'" />
+    <Compile Remove="DpapiCalendarContextStoreWindowsTests.cs" />
+    <Compile Include="DpapiCalendarContextStoreWindowsTests.cs"
+             Condition="'$(TargetFramework)' == 'net10.0-windows10.0.26100.0'" />
   </ItemGroup>
 
 </Project>

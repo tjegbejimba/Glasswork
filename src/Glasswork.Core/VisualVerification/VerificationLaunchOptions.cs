@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Glasswork.Core.CalendarContext;
 
 namespace Glasswork.Core.VisualVerification;
 
@@ -10,7 +11,8 @@ public sealed record VerificationLaunchOptions(
     string InstanceKey,
     bool SkipProtocolRegistration,
     bool SkipUpdateCheck,
-    string? StartPage = null)
+    string? StartPage = null,
+    bool IsProductionCalendarProbe = false)
 {
     public const string VaultPathVariable = "GLASSWORK_VERIFY_VAULT_PATH";
     public const string UiStatePathVariable = "GLASSWORK_VERIFY_UI_STATE_PATH";
@@ -20,17 +22,37 @@ public sealed record VerificationLaunchOptions(
     public const string CaptureRequestPathVariable = "GLASSWORK_VERIFY_CAPTURE_REQUEST";
     public const string CaptureOutputPathVariable = "GLASSWORK_VERIFY_CAPTURE_OUTPUT";
     public const string StartPageVariable = "GLASSWORK_VERIFY_START_PAGE";
+    public const string CalendarContextFixturePathVariable =
+        "GLASSWORK_VISUAL_CALENDAR_CONTEXT_FIXTURE";
+    public const string ProductionCalendarProbeVariable =
+        "GLASSWORK_PROBE_PRODUCTION_CALENDAR_CONTEXT";
 
     public bool IsVerificationRun =>
         !string.IsNullOrWhiteSpace(VaultPath) ||
         !string.IsNullOrWhiteSpace(UiStatePath) ||
         !string.IsNullOrWhiteSpace(InstanceKey) && InstanceKey != "main" ||
-        SkipProtocolRegistration ||
-        SkipUpdateCheck ||
         StartPage is not null;
 
     public static VerificationLaunchOptions FromProcessEnvironment() =>
         FromEnvironment(ToStringDictionary(Environment.GetEnvironmentVariables()));
+
+    public static ICalendarContext CreateCalendarContext(
+        VerificationLaunchOptions options,
+        string? fixturePath,
+        Func<string, ICalendarContext> fixtureFactory,
+        Func<ICalendarContext> productionFactory)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(fixtureFactory);
+        ArgumentNullException.ThrowIfNull(productionFactory);
+
+        if (!options.IsVerificationRun || options.IsProductionCalendarProbe)
+            return productionFactory();
+
+        return string.IsNullOrWhiteSpace(fixturePath)
+            ? new UnavailableCalendarContext()
+            : fixtureFactory(fixturePath);
+    }
 
     public static VerificationLaunchOptions FromEnvironment(IReadOnlyDictionary<string, string?> environment)
     {
@@ -38,6 +60,7 @@ public sealed record VerificationLaunchOptions(
         var uiStatePath = Read(environment, UiStatePathVariable);
         var instanceKey = Read(environment, InstanceKeyVariable) ?? "main";
         var startPage = Read(environment, StartPageVariable);
+        var isProductionCalendarProbe = ReadBool(environment, ProductionCalendarProbeVariable);
         if (startPage is not null && startPage != "planner")
             throw new FormatException($"Unsupported verification start page '{startPage}'.");
         if (startPage == "planner"
@@ -47,6 +70,17 @@ public sealed record VerificationLaunchOptions(
         {
             throw new FormatException(
                 "Planner verification start requires isolated Vault, UI state, and instance paths.");
+        }
+        if (isProductionCalendarProbe && startPage != "planner")
+        {
+            throw new FormatException(
+                "Production Calendar probe requires an isolated Planner launch.");
+        }
+        if (isProductionCalendarProbe
+            && Read(environment, CalendarContextFixturePathVariable) is not null)
+        {
+            throw new FormatException(
+                "Production Calendar probe cannot use a visual Calendar fixture.");
         }
 
         var explicitSkipProtocol = ReadBool(environment, SkipProtocolRegistrationVariable);
@@ -64,7 +98,8 @@ public sealed record VerificationLaunchOptions(
             instanceKey,
             explicitSkipProtocol || isVerificationRun,
             explicitSkipUpdate || isVerificationRun,
-            startPage);
+            startPage,
+            isProductionCalendarProbe);
     }
 
     private static string? Read(IReadOnlyDictionary<string, string?> environment, string key)

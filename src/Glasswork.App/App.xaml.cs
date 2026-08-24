@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using Glasswork.Core.CalendarContext;
 using Glasswork.Core.Diagnostics;
 using Glasswork.Core.Models;
 using Glasswork.Core.Queries;
@@ -10,6 +11,7 @@ using Glasswork.Core.Research;
 using Glasswork.Core.Services;
 using Glasswork.Core.VisualVerification;
 using Glasswork.Services;
+using Glasswork.Services.CalendarContext;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.Windows.AppLifecycle;
@@ -66,6 +68,7 @@ public partial class App : Application
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
     public static Glasswork.Core.AppUpdate.McpUpdateCheckService McpUpdater { get; private set; } = null!;
     public static IPerformanceTracer Performance { get; private set; } = PerformanceTracer.Disabled;
+    public static ICalendarContext CalendarContext { get; private set; } = null!;
 
     // Coalesces a burst of watcher-overflow events into a single full rehydrate.
     // An OS buffer overflow can fire repeatedly while a bulk write is still in
@@ -265,6 +268,15 @@ public partial class App : Application
         });
         UiState = new AutoSavingUiStateService(_uiStateImpl, uiStateDebouncer);
         SavedTaskViews = new SavedTaskViewService(UiState);
+        var calendarFixturePath = Environment.GetEnvironmentVariable(
+            VerificationLaunchOptions.CalendarContextFixturePathVariable);
+        CalendarContext = VerificationLaunchOptions.CreateCalendarContext(
+            launchOptions,
+            calendarFixturePath,
+            VisualVerificationCalendarContextAdapter.FromFile,
+            () => new PublishedIcsCalendarContext(
+                BoundedPublishedIcsTransport.CreateDefault(),
+                DpapiCalendarContextStore.CreateDefault()));
 
         // Initialize update checker. Read installed version from AssemblyInformationalVersion,
         // which matches the version shown in the status bar. Fire-and-forget startup check
