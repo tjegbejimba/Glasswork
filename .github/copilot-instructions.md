@@ -229,12 +229,12 @@ When assigned a user-reported issue (label `user-report`):
 <!-- ralph-loop-instructions -->
 ## Ralph Loop
 
-This repo may use Ralph Loop. If an agent needs to understand, install, refresh, operate, or troubleshoot Ralph here, load the `ralph-loop` skill.
+This repo uses Ralph Loop. If an agent needs to understand, install, refresh, operate, or troubleshoot Ralph here, load the `ralph-loop` skill.
 
-- Ralph source checkout on this machine: `/c/Users/toegbeji/Repos/ralph-loop-dashboard`
 - Repo worker prompt: `.ralph/RALPH.md`
 - Repo config: `.ralph/config.json`
-- Refresh scripts: `/c/Users/toegbeji/Repos/ralph-loop-dashboard/install.sh "/c/Users/toegbeji/Repos/Glasswork" --scripts-only`
 - Check/stop/cleanup workers: `.ralph/launch.sh --status`, `--stop`, or `--cleanup`
+
+To refresh `.ralph/` scripts from the Ralph source checkout, run `install.sh --scripts-only` against this repo from your local Ralph source.
 
 Do not overwrite `.ralph/RALPH.md` or `.ralph/config.json` unless explicitly asked.

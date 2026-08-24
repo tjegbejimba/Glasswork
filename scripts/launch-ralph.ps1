@@ -35,6 +35,13 @@
     warning. (Native parallelism requires either WSL or fixing the fork
     crash upstream.)
 
+.PARAMETER BaseBranch
+    Remote base branch the coordinator must exactly match. Defaults to
+    RALPH_RELEASE_BRANCH when set, otherwise main.
+
+.PARAMETER BaseRemote
+    Remote containing BaseBranch. Defaults to origin.
+
 .EXAMPLE
     pwsh -File scripts\launch-ralph.ps1
     # Default: shows status. Safe to run anytime.
@@ -51,7 +58,11 @@ param(
     [ValidateSet("Launch", "Status", "Stop")]
     [string]$Action = "Status",
 
-    [int]$Parallelism = 1
+    [int]$Parallelism = 1,
+
+    [string]$BaseBranch,
+
+    [string]$BaseRemote = "origin"
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,6 +77,72 @@ function Get-LauncherProcess {
     if (-not (Test-Path $PidFile)) { return $null }
     $launcherPid = [int]((Get-Content $PidFile -Raw).Trim())
     return Get-Process -Id $launcherPid -ErrorAction SilentlyContinue
+}
+
+function Get-ActiveRalphClaim {
+    $stateFile = Join-Path $RalphDir "state.json"
+    if (-not (Test-Path $stateFile)) { return $null }
+
+    $state = Get-Content $stateFile -Raw | ConvertFrom-Json
+    foreach ($claim in @($state.claims.PSObject.Properties)) {
+        $claimPid = 0
+        if (-not [int]::TryParse([string]$claim.Value.pid, [ref]$claimPid)) {
+            throw "Cannot verify Ralph state claim for issue $($claim.Name): invalid worker PID."
+        }
+
+        $processDetails = & $BashExe -lc "ps -p '$claimPid' -f" 2>&1
+        if (
+            $LASTEXITCODE -eq 0 -and
+            ($processDetails -join "`n") -match "(?i)(ralph\.sh|launch\.sh|copilot)"
+        ) {
+            return [pscustomobject]@{
+                Issue = $claim.Name
+                ProcessId = $claimPid
+            }
+        }
+    }
+
+    return $null
+}
+
+function Invoke-Git {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    $output = & git @Arguments 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "git $($Arguments -join ' ') failed:`n$($output -join "`n")"
+    }
+
+    return $output
+}
+
+function Resolve-RalphBase {
+    param(
+        [string]$BaseBranch = $script:BaseBranch,
+        [string]$BaseRemote = $script:BaseRemote
+    )
+
+    $resolvedBranch = $BaseBranch
+    if ([string]::IsNullOrWhiteSpace($resolvedBranch)) {
+        $resolvedBranch = $env:RALPH_RELEASE_BRANCH
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedBranch)) {
+        $resolvedBranch = "main"
+    }
+
+    $resolvedRemote = $BaseRemote
+    if ([string]::IsNullOrWhiteSpace($resolvedRemote)) {
+        $resolvedRemote = "origin"
+    }
+
+    return [pscustomobject]@{
+        Branch = $resolvedBranch.Trim()
+        Remote = $resolvedRemote.Trim()
+        Ref = "refs/remotes/$($resolvedRemote.Trim())/$($resolvedBranch.Trim())"
+    }
 }
 
 function Show-Status {
@@ -123,25 +200,71 @@ function Stop-Loop {
 }
 
 function Test-PreFlight {
+    param(
+        [string]$BaseBranch = $script:BaseBranch,
+        [string]$BaseRemote = $script:BaseRemote
+    )
+
     Push-Location $RepoRoot
     try {
+        $base = Resolve-RalphBase -BaseBranch $BaseBranch -BaseRemote $BaseRemote
+        if ($base.Remote.StartsWith("-", [System.StringComparison]::Ordinal)) {
+            throw "Configured base remote must not begin with '-'."
+        }
+        $remotes = @(Invoke-Git -Arguments @("remote"))
+        if ($remotes -notcontains $base.Remote) {
+            throw "Configured base remote '$($base.Remote)' does not exist."
+        }
+        Invoke-Git -Arguments @("check-ref-format", "--branch", $base.Branch) | Out-Null
+        Invoke-Git -Arguments @("check-ref-format", $base.Ref) | Out-Null
+        Invoke-Git -Arguments @(
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--",
+            $base.Remote,
+            "+refs/heads/$($base.Branch):$($base.Ref)"
+        ) | Out-Null
+
         if (-not (Test-Path $BashExe)) {
             throw "Git Bash not found at $BashExe. Install Git for Windows."
         }
         if (-not (Test-Path (Join-Path $RalphDir "launch.sh"))) {
             throw ".ralph\launch.sh not found. Re-run ralph-loop-dashboard\install.sh."
         }
-        $branch = (git branch --show-current).Trim()
-        if ($branch -ne "main") {
-            throw "Must be on main branch (currently on '$branch'). Switch branches before launching."
-        }
-        $dirty = git status --porcelain
+
+        $dirty = @(Invoke-Git -Arguments @("status", "--porcelain"))
         if ($dirty) {
             throw "Working tree is not clean. Commit or stash changes first.`n$dirty"
         }
+
+        $headCommit = [string](Invoke-Git -Arguments @("rev-parse", "--verify", "HEAD^{commit}"))
+        $baseCommit = [string](Invoke-Git -Arguments @("rev-parse", "--verify", "$($base.Ref)^{commit}"))
+        $headCommit = $headCommit.Trim()
+        $baseCommit = $baseCommit.Trim()
+        if ($headCommit -ne $baseCommit) {
+            throw "Coordinator HEAD $headCommit does not equal fetched base $($base.Ref) at $baseCommit."
+        }
+
         $existing = Get-LauncherProcess
         if ($existing) {
             throw ("Launcher PID {0} is already running. Run -Action Stop first." -f $existing.Id)
+        }
+
+        $activeClaim = Get-ActiveRalphClaim
+        if ($activeClaim) {
+            throw (
+                "Active Ralph state claim exists for issue {0} (PID {1}). Run -Action Stop first." -f
+                $activeClaim.Issue,
+                $activeClaim.ProcessId
+            )
+        }
+
+        return [pscustomobject]@{
+            BaseBranch = $base.Branch
+            BaseRemote = $base.Remote
+            BaseRef = $base.Ref
+            BaseCommit = $baseCommit
         }
     } finally {
         Pop-Location
@@ -149,7 +272,9 @@ function Test-PreFlight {
 }
 
 function Start-Loop {
-    Test-PreFlight
+    $preflight = Test-PreFlight -BaseBranch $BaseBranch -BaseRemote $BaseRemote
+    Write-Host ("  Base:    {0}" -f $preflight.BaseRef)
+    Write-Host ("  Commit:  {0}" -f $preflight.BaseCommit)
 
     if ($Parallelism -gt 1) {
         Write-Host "WARNING: --foreground only runs 1 worker. Falling back to Parallelism=1." -ForegroundColor Yellow
@@ -196,6 +321,26 @@ function Start-Loop {
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.WorkingDirectory = $RepoRoot
+    $psi.Environment["RALPH_MAIN_REPO"] = $RepoRoot
+    $psi.Environment["RALPH_PARALLELISM"] = "1"
+    $psi.Environment["RALPH_BASE_REMOTE"] = $preflight.BaseRemote
+    $psi.Environment["RALPH_BASE_BRANCH"] = $preflight.BaseBranch
+    $psi.Environment["RALPH_BASE_COMMIT"] = $preflight.BaseCommit
+    foreach ($unsafeOverride in @(
+        "RALPH_LOOP_REPO",
+        "RALPH_LOOP_BRANCH",
+        "RALPH_REPO",
+        "RALPH_GH_BIN",
+        "RALPH_TERMINAL_CLI",
+        "RALPH_COPILOT_BIN"
+    )) {
+        $psi.Environment.Remove($unsafeOverride)
+    }
+    $psi.Environment["RALPH_RELEASE_BRANCH"] = if ($preflight.BaseBranch -eq "main") {
+        ""
+    } else {
+        $preflight.BaseBranch
+    }
 
     $proc = [System.Diagnostics.Process]::Start($psi)
     $proc.Id | Set-Content $PidFile
@@ -210,8 +355,10 @@ function Start-Loop {
     Write-Host "  pwsh -File $PSCommandPath -Action Stop"
 }
 
-switch ($Action) {
-    "Launch" { Start-Loop }
-    "Status" { Show-Status }
-    "Stop"   { Stop-Loop }
+if ($MyInvocation.InvocationName -ne ".") {
+    switch ($Action) {
+        "Launch" { Start-Loop }
+        "Status" { Show-Status }
+        "Stop"   { Stop-Loop }
+    }
 }

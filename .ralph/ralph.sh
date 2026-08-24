@@ -28,6 +28,9 @@
 #   RALPH_RUN_ID         run identifier for queue-based mode (optional)
 #                        When set, worker consumes .ralph/runs/<RUN_ID>/queue.json
 #                        instead of searching GitHub with TITLE_REGEX
+#   RALPH_BASE_REMOTE    remote that owns the worker base (default: origin)
+#   RALPH_BASE_BRANCH    worker base branch (default: RALPH_RELEASE_BRANCH, then main)
+#   RALPH_BASE_COMMIT    immutable preflight-approved startup commit (optional)
 
 set -euo pipefail
 
@@ -61,11 +64,6 @@ TITLE_REGEX="${TITLE_REGEX:-^Slice [0-9]+:}"
 TITLE_NUM_RE="${RALPH_TITLE_NUM_REGEX:-$(config_get '.issue.titleNumRegex')}"
 TITLE_NUM_RE="${TITLE_NUM_RE:-^Slice (?<x>[0-9]+):}"
 ISSUE_SEARCH="${RALPH_ISSUE_SEARCH:-$(config_get '.issue.issueSearch')}"
-ALLOW_AGENT_LAUNCH=$(config_get '.allowAgentLaunch')
-if [[ "$ALLOW_AGENT_LAUNCH" != "true" ]]; then
-  echo "❌ Agent launch is disabled: allowAgentLaunch must be true in .ralph/config.json." >&2
-  exit 1
-fi
 
 # Direct-numbers queue. When `.issue.numbers` is non-empty and no RUN_ID is
 # set, the worker treats this list as the candidate set instead of running an
@@ -99,13 +97,36 @@ AUTOPILOT_CONTINUES="${RALPH_AUTOPILOT_CONTINUES:-15}"
 POLL_SEC="${RALPH_POLL_SEC:-30}"
 RUN_ID="${RALPH_RUN_ID:-}"
 # Release-branch flow (opt-in). When RALPH_RELEASE_BRANCH is set, the verifier
-# also accepts PRs merged into that branch as closing their referenced issue.
-# The worker remains responsible for the merge and explicit issue close.
+# also accepts PRs merged into that branch as closing their referenced issue,
+# and may call `gh pr merge` + `gh issue close` itself if copilot left a green
+# PR open or pushed a branch without opening a PR. See docs/release-branch.md.
 RELEASE_BRANCH="${RALPH_RELEASE_BRANCH:-}"
 BRANCH_PREFIX="${RALPH_BRANCH_PREFIX:-$(config_get '.issue.branchPrefix')}"
+BASE_REMOTE="${RALPH_BASE_REMOTE:-origin}"
+BASE_BRANCH="${RALPH_BASE_BRANCH:-${RELEASE_BRANCH:-main}}"
+BASE_COMMIT="${RALPH_BASE_COMMIT:-}"
+BASE_COMMIT_PENDING="$BASE_COMMIT"
+BASE_REF="refs/remotes/${BASE_REMOTE}/${BASE_BRANCH}"
+
+if ! [[ "$BASE_REMOTE" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+  echo "❌ RALPH_BASE_REMOTE is not a valid remote name: $BASE_REMOTE" >&2
+  exit 1
+fi
+if ! git check-ref-format --branch "$BASE_BRANCH" >/dev/null 2>&1; then
+  echo "❌ RALPH_BASE_BRANCH is not a valid branch name: $BASE_BRANCH" >&2
+  exit 1
+fi
+if ! git config --get "remote.${BASE_REMOTE}.url" >/dev/null 2>&1; then
+  echo "❌ RALPH_BASE_REMOTE is not configured in this repository: $BASE_REMOTE" >&2
+  exit 1
+fi
+if [[ -n "$BASE_COMMIT" && ! "$BASE_COMMIT" =~ ^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$ ]]; then
+  echo "❌ RALPH_BASE_COMMIT must be a full commit hash" >&2
+  exit 1
+fi
 
 # Source state.sh early so the boolean-normalisation helper is available
-# before we resolve the verbose and resume flags below.
+# before we resolve the verbose / acceptManuallyClosed / resume flags below.
 # state_init() (which has side effects) is invoked further down after cd.
 # shellcheck source=lib/state.sh
 . "$SCRIPT_DIR/lib/state.sh"
@@ -146,6 +167,13 @@ if ! [[ "$IDLE_EXIT_POLLS" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 unset _cfg_idle
+
+# Manually-closed blocker fallback (opt-in). When enabled, is_issue_satisfied
+# accepts CLOSED + stateReason=COMPLETED as satisfied even without a PR
+# linkage. See docs/manually-closed-blockers.md.
+_cfg_accept_manual=$(config_get '.worker.acceptManuallyClosed')
+RALPH_ACCEPT_MANUALLY_CLOSED=$(normalize_bool "${RALPH_ACCEPT_MANUALLY_CLOSED:-${_cfg_accept_manual:-}}") || exit 1
+unset _cfg_accept_manual
 
 # Verbose diagnostics. When enabled, the candidate-selection loop emits a
 # per-rejection skip line so a stalled worker is debuggable in seconds.
@@ -205,6 +233,15 @@ fi
 # Recovery ledger for parked recoverable work (issue #173).
 # shellcheck source=lib/recovery-ledger.sh
 . "$SCRIPT_DIR/lib/recovery-ledger.sh"
+# PRD slice integration lifecycle (issue #202).
+# shellcheck source=lib/prd-branch.sh
+if [[ -f "$SCRIPT_DIR/lib/prd-branch.sh" ]]; then
+  . "$SCRIPT_DIR/lib/prd-branch.sh"
+fi
+# shellcheck source=lib/slice-integration.sh
+if [[ -f "$SCRIPT_DIR/lib/slice-integration.sh" ]]; then
+  . "$SCRIPT_DIR/lib/slice-integration.sh"
+fi
 if [[ -n "$RUN_ID" ]]; then
   status_init
 fi
@@ -216,19 +253,90 @@ fi
 # sync_to_origin_main wipes a slice branch.
 INITIAL_BRANCH="${RALPH_INITIAL_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 
-# Sync the current branch to origin/main. Works both when run on `main` itself
-# (legacy single-checkout mode) and in a dedicated worktree on a non-main branch
-# (preferred — see .ralph/launch.sh, prevents collisions with local edits).
+# Worktree isolation guards (issue #195): record the assigned worktree root
+# at startup and verify the worker never escapes to the primary checkout.
+# Prevents the scenario where a git operation fails and the worker relocates
+# to the primary checkout, mutating it instead of halting cleanly.
+ASSIGNED_WORKTREE_ROOT="$(pwd -P)"
+readonly ASSIGNED_WORKTREE_ROOT
+export RALPH_ASSIGNED_WORKTREE="$ASSIGNED_WORKTREE_ROOT"
+
+# Record primary checkout state so we can detect mutations during the run.
+# In a dedicated worktree setup, the primary checkout is one level up from
+# the loop worktree (e.g., /repo vs /repo-ralph). We only track the primary
+# if it's a valid git repo.
+if [[ -n "${RALPH_MAIN_REPO:-}" && -d "$RALPH_MAIN_REPO" ]]; then
+  PRIMARY_CHECKOUT_ROOT="$RALPH_MAIN_REPO"
+elif [[ -d "../.git" || -f "../.git" ]]; then
+  PRIMARY_CHECKOUT_ROOT="$(cd .. && pwd -P)"
+else
+  PRIMARY_CHECKOUT_ROOT=""
+fi
+
+if [[ -n "$PRIMARY_CHECKOUT_ROOT" ]]; then
+  PRIMARY_BRANCH_INITIAL="$(git -C "$PRIMARY_CHECKOUT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+  PRIMARY_HEAD_INITIAL="$(git -C "$PRIMARY_CHECKOUT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
+  readonly PRIMARY_CHECKOUT_ROOT PRIMARY_BRANCH_INITIAL PRIMARY_HEAD_INITIAL
+  export RALPH_PRIMARY_CHECKOUT="$PRIMARY_CHECKOUT_ROOT"
+fi
+
+# Safety check: verify we're still in the assigned worktree. Call this before
+# any operation that could have triggered a cd (e.g., after copilot runs).
+verify_worktree_isolation() {
+  local current_root
+  current_root="$(pwd -P)"
+  if [[ "$current_root" != "$ASSIGNED_WORKTREE_ROOT" ]]; then
+    echo "❌ CRITICAL: Worker escaped assigned worktree!" >&2
+    echo "   Assigned: $ASSIGNED_WORKTREE_ROOT" >&2
+    echo "   Current:  $current_root" >&2
+    echo "   This is a stop-the-line safety failure." >&2
+    return 1
+  fi
+  return 0
+}
+
+# Safety check: verify the primary checkout hasn't been mutated. Call this at
+# the end of an iteration to catch any inadvertent changes.
+verify_primary_checkout_unchanged() {
+  [[ -z "$PRIMARY_CHECKOUT_ROOT" ]] && return 0
+  
+  local branch_now head_now
+  branch_now="$(git -C "$PRIMARY_CHECKOUT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+  head_now="$(git -C "$PRIMARY_CHECKOUT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
+  
+  if [[ -n "$PRIMARY_BRANCH_INITIAL" && "$PRIMARY_BRANCH_INITIAL" != "$branch_now" ]]; then
+    echo "❌ CRITICAL: Primary checkout branch mutated during worker run!" >&2
+    echo "   Initial: $PRIMARY_BRANCH_INITIAL" >&2
+    echo "   Now:     $branch_now" >&2
+    echo "   This is a stop-the-line safety failure." >&2
+    return 1
+  fi
+  
+  if [[ -n "$PRIMARY_HEAD_INITIAL" && "$PRIMARY_HEAD_INITIAL" != "$head_now" ]]; then
+    echo "❌ CRITICAL: Primary checkout HEAD mutated during worker run!" >&2
+    echo "   Initial: $PRIMARY_HEAD_INITIAL" >&2
+    echo "   Now:     $head_now" >&2
+    echo "   This is a stop-the-line safety failure." >&2
+    return 1
+  fi
+  
+  return 0
+}
+
+# On startup, preserve the immutable preflight-approved base commit supplied by
+# launch.sh. Later iteration syncs advance from the configured remote branch so
+# workers can consume changes merged by earlier iterations.
 #
 # Wraps git fetch in a retry loop because N concurrent workers share a single
-# .git/ and can race on refs/remotes/origin/main.lock. With set -euo pipefail,
+# .git/ and can race on the remote-tracking ref lock. With set -euo pipefail,
 # a single ref-lock collision would kill the worker; nohup launches don't
 # respawn, silently degrading parallelism.
 sync_to_origin_main() {
-  local branch attempt rc
+  local branch attempt rc approved_commit fetched_commit
   branch=$(git rev-parse --abbrev-ref HEAD)
+
   for attempt in 1 2 3 4 5; do
-    if git fetch origin main >/dev/null 2>&1; then
+    if git fetch "$BASE_REMOTE" "$BASE_BRANCH" >/dev/null 2>&1; then
       rc=0
       break
     fi
@@ -237,15 +345,37 @@ sync_to_origin_main() {
     sleep "$(awk -v a="$attempt" 'BEGIN{srand(); printf "%.2f", a*(0.5+rand())}')"
   done
   if [[ "${rc:-1}" -ne 0 ]]; then
-    echo "⚠️  git fetch origin main failed after 5 attempts (rc=$rc). Halting." >&2
+    echo "⚠️  git fetch $BASE_REMOTE $BASE_BRANCH failed after 5 attempts (rc=$rc). Halting." >&2
     return "$rc"
   fi
-  if [[ "$branch" == "main" ]]; then
-    git checkout main >/dev/null
-    git pull --ff-only origin main >/dev/null
+
+  fetched_commit=$(git rev-parse --verify "${BASE_REF}^{commit}" 2>/dev/null || true)
+  if [[ -z "$fetched_commit" ]]; then
+    echo "⚠️  Cannot resolve fetched base $BASE_REMOTE/$BASE_BRANCH. Halting." >&2
+    return 1
+  fi
+
+  if [[ -n "$BASE_COMMIT_PENDING" ]]; then
+    approved_commit=$(git rev-parse --verify "${BASE_COMMIT_PENDING}^{commit}" 2>/dev/null || true)
+    if [[ -z "$approved_commit" ]]; then
+      echo "⚠️  Approved base commit $BASE_COMMIT_PENDING is unavailable. Halting." >&2
+      return 1
+    fi
+    if ! git merge-base --is-ancestor "$approved_commit" "$fetched_commit"; then
+      echo "⚠️  Approved base commit $approved_commit does not belong to $BASE_REMOTE/$BASE_BRANCH at $fetched_commit. Halting." >&2
+      return 1
+    fi
+    git reset --hard "$approved_commit" >/dev/null
+    BASE_COMMIT_PENDING=""
+    return 0
+  fi
+
+  if [[ "$branch" == "$BASE_BRANCH" ]]; then
+    git checkout "$BASE_BRANCH" >/dev/null
+    git merge --ff-only "$fetched_commit" >/dev/null
   else
-    # Dedicated loop worktree — force-sync the branch to origin/main.
-    git reset --hard origin/main >/dev/null
+    # Dedicated loop worktree — force-sync its home branch to the configured base.
+    git reset --hard "$fetched_commit" >/dev/null
   fi
 }
 
@@ -284,7 +414,7 @@ run_with_timeout() {
 wait_for_issue_closed_by_merged_pr() {
   local issue="$1"
   local context="$2"
-  local closure state pr_numbers merged_count pr pr_record merged_at pr_body attempt
+  local closure state pr_numbers merged_count pr merged_at attempt
   for attempt in 1 2 3 4 5 6; do
     closure=$(gh issue view "$issue" --repo "$REPO" \
       --json state,closedByPullRequestsReferences)
@@ -292,11 +422,8 @@ wait_for_issue_closed_by_merged_pr() {
     pr_numbers=$(echo "$closure" | jq -r '(.closedByPullRequestsReferences // [])[].number')
     merged_count=0
     for pr in $pr_numbers; do
-      pr_record=$(gh pr view "$pr" --repo "$REPO" --json mergedAt,body 2>/dev/null || echo "")
-      merged_at=$(echo "$pr_record" | jq -r '.mergedAt // ""')
-      pr_body=$(echo "$pr_record" | jq -r '.body // ""')
-      if [[ -n "$merged_at" && "$merged_at" != "null" ]] \
-          && printf '%s\n' "$pr_body" | grep -qxE "Closes #${issue}[[:space:]]*"; then
+      merged_at=$(gh pr view "$pr" --repo "$REPO" --json mergedAt -q .mergedAt 2>/dev/null || echo "")
+      if [[ -n "$merged_at" && "$merged_at" != "null" ]]; then
         merged_count=$((merged_count + 1))
       fi
     done
@@ -875,11 +1002,45 @@ while true; do
   fi
 
   default_branch=$(gh repo view "$REPO" --json defaultBranchRef -q .defaultBranchRef.name)
-  if ralph_merge_ready_open_pr_for_issue "$num" "$default_branch"; then
+  
+  # Determine target base branch for this run
+  if [[ -n "$RUN_ID" ]] && declare -F resolve_slice_pr_base >/dev/null 2>&1; then
+    target_base=$(resolve_slice_pr_base "$RUN_ID" "$default_branch")
+  else
+    target_base="$default_branch"
+  fi
+  
+  # Pre-claim fallback merge is available only when recovery already proved
+  # the exact worker branch and its pushed head SHA.
+  _preclaim_head=""
+  if [[ "$_iter_resume_active" == "1" ]]; then
+    _preclaim_head="${_iter_resume_branch:-}"
+  fi
+  _preclaim_sha=""
+  _preclaim_remote_sha=""
+  _preclaim_author=""
+  if [[ -n "$_preclaim_head" ]]; then
+    _preclaim_sha=$(git rev-parse --verify "refs/heads/${_preclaim_head}^{commit}" 2>/dev/null || true)
+    git fetch origin "$_preclaim_head" >/dev/null 2>&1 || true
+    _preclaim_remote_sha=$(git rev-parse --verify "refs/remotes/origin/${_preclaim_head}^{commit}" 2>/dev/null || true)
+    if [[ "$_preclaim_sha" != "$_preclaim_remote_sha" ]]; then
+      _preclaim_sha=""
+    fi
+    _preclaim_author=$(gh api user --jq .login 2>/dev/null || true)
+  fi
+  if [[ -n "$_preclaim_sha" && -n "$_preclaim_author" ]] \
+      && ralph_merge_ready_open_pr_for_issue \
+        "$num" "$target_base" "$_preclaim_head" "$_preclaim_sha" "$_preclaim_author"; then
     if wait_for_issue_closed_by_merged_pr "$num" "after pre-claim fallback merge"; then
       if [[ -n "$RUN_ID" ]]; then
         state_lock || true
-        status_update_item "$num" "merged" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+        # Record appropriate status based on target base
+        if [[ "$target_base" != "$default_branch" ]]; then
+          # PRD integration: record slice-integrated (will be set properly in post-copilot flow)
+          status_update_item "$num" "merged" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+        else
+          status_update_item "$num" "merged" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+        fi
         state_unlock || true
         if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
           ralph_apply_label_transition "$num" done || true
@@ -915,12 +1076,35 @@ while true; do
 
 ${body}"
 
+  # Determine the target base branch for PRs
+  if [[ -n "$RUN_ID" ]] && declare -F resolve_slice_pr_base >/dev/null 2>&1; then
+    target_base=$(resolve_slice_pr_base "$RUN_ID" "$default_branch")
+  else
+    target_base="$default_branch"
+  fi
+
   full_prompt="$(cat "$PROMPT_FILE")
 
 ---
 ISSUE #${num}
 ---
 ${issue_text}"
+
+  # Inject target base branch for PRD runs
+  if [[ "$target_base" != "$default_branch" ]]; then
+    full_prompt="${full_prompt}
+
+---
+PRD_INTEGRATION_BRANCH
+---
+This slice is part of a PRD integration workflow. Pull requests MUST target the integration branch:
+
+  Base branch: $target_base
+
+Do NOT create PRs against 'main' or the default branch. The PR base must be '$target_base'.
+Use: gh pr create --base $target_base ...
+"
+  fi
 
   if [[ "$_iter_resume_active" == "1" ]]; then
     full_prompt="${full_prompt}
@@ -981,6 +1165,22 @@ DO NOT re-plan or open a new branch. Instead:
   rc=$?
   set -e
 
+  # Safety check (issue #195): verify the worker didn't escape its worktree.
+  # Copilot runs with --allow-all, so shell commands in the prompt could
+  # theoretically cd to another directory. Catch that early.
+  if ! verify_worktree_isolation; then
+    echo "❌ Worker escaped worktree during copilot session. Halting." >&2
+    exit 125
+  fi
+
+  # Safety check (issue #195): verify primary checkout wasn't mutated.
+  # Call this immediately after copilot returns, before any early exits,
+  # so we catch mutations even on failure paths.
+  if ! verify_primary_checkout_unchanged; then
+    echo "❌ Primary checkout mutated during copilot session. Halting." >&2
+    exit 126
+  fi
+
   if [[ "$rc" -ne 0 ]]; then
     if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
       copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "failed" "$RUN_ID" || true
@@ -998,14 +1198,21 @@ DO NOT re-plan or open a new branch. Instead:
     exit 1
   fi
 
+  expected_pr_head=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  expected_pr_sha=$(git rev-parse --verify HEAD 2>/dev/null || true)
+  expected_pr_author=$(gh api user --jq .login 2>/dev/null || true)
+
   # Verify issue closed by a merged PR (not just manually closed).
-  # closedByPullRequestsReferences items contain {number, url, ...} but not merge
-  # metadata or body text, so look up each PR and require both mergedAt and the
-  # worker contract's exact `Closes #N` line.
+  # closedByPullRequestsReferences items contain {number, url, ...} but not .state,
+  # so we look up each referenced PR and require at least one with mergedAt != null.
+  #
+  # SHORT-CIRCUIT (issue #119): If the issue is CLOSED with stateReason=COMPLETED,
+  # accept unconditionally — the worker's PR merged and GitHub auto-closed the
+  # issue as expected, even if closedByPullRequestsReferences hasn't propagated yet.
   #
   # The closedByPullRequestsReferences link is eventually consistent — GitHub can
   # take 1-30s to attach the PR after the merge commit lands. Retry with backoff,
-  # and as a final fallback scan recent merged PRs for the required "Closes #N".
+  # and as a final fallback scan recent merged PRs for "Closes #N" / "Fixes #N".
   state=""
   state_reason=""
   merged_count=0
@@ -1014,15 +1221,19 @@ DO NOT re-plan or open a new branch. Instead:
       --json state,stateReason,closedByPullRequestsReferences)
     state=$(echo "$closure" | jq -r .state)
     state_reason=$(echo "$closure" | jq -r '.stateReason // ""')
-
+    
+    # Short-circuit: CLOSED + COMPLETED → success
+    if [[ "$state" == "CLOSED" && "$state_reason" == "COMPLETED" ]]; then
+      echo "✅ Issue #$num CLOSED as COMPLETED — accepting (merge-detection short-circuit)." >&2
+      merged_count=1
+      break
+    fi
+    
     pr_numbers=$(echo "$closure" | jq -r '(.closedByPullRequestsReferences // [])[].number')
     merged_count=0
     for pr in $pr_numbers; do
-      pr_record=$(gh pr view "$pr" --repo "$REPO" --json mergedAt,body 2>/dev/null || echo "")
-      merged_at=$(echo "$pr_record" | jq -r '.mergedAt // ""')
-      pr_body=$(echo "$pr_record" | jq -r '.body // ""')
-      if [[ -n "$merged_at" && "$merged_at" != "null" ]] \
-          && printf '%s\n' "$pr_body" | grep -qxE "Closes #${num}[[:space:]]*"; then
+      merged_at=$(gh pr view "$pr" --repo "$REPO" --json mergedAt -q .mergedAt 2>/dev/null || echo "")
+      if [[ -n "$merged_at" && "$merged_at" != "null" ]]; then
         merged_count=$((merged_count + 1))
       fi
     done
@@ -1035,11 +1246,156 @@ DO NOT re-plan or open a new branch. Instead:
     fi
   done
 
-  # Do not infer delivery from PR body text. Final success requires GitHub to
-  # report the issue CLOSED with a linked closing PR whose mergedAt is non-null.
+  # Fallback: scan recent merged PRs for one whose body closes this issue.
+  # Runs whenever the issue link still shows zero merged PRs — including the
+  # case where the issue is still OPEN because state propagation is slow but
+  # the squash-merge has already landed. We only halt if no merged PR exists;
+  # the issue state itself is eventually consistent and not load-bearing here.
+  #
+  # Two guards prevent false positives:
+  #  - mergedAt > iter_start_ts: rejects historical merges (e.g., a regression
+  #    on a reopened issue would otherwise match the original closing PR).
+  #  - baseRefName == default branch: GitHub only auto-closes via "Closes #N"
+  #    when the PR merged into the default branch, so non-default merges
+  #    couldn't have closed the issue and must not be credited here.
+  if [[ "$merged_count" -lt 1 ]]; then
+    if [[ "$state" != "CLOSED" ]] \
+        && ralph_merge_ready_open_pr_for_issue \
+          "$num" "$default_branch" "$expected_pr_head" "$expected_pr_sha" "$expected_pr_author"; then
+      if wait_for_issue_closed_by_merged_pr "$num" "after fallback merge"; then
+        merged_count=1
+      fi
+    fi
+
+    if [[ "$merged_count" -lt 1 ]]; then
+      echo "ℹ️  Issue #$num closure link empty after retries (state=$state); checking recent merged PRs for 'Closes #$num' on $default_branch since $iter_start_ts..." >&2
+      fallback_pr=$(gh pr list --repo "$REPO" --state merged --limit 20 --base "$default_branch" \
+        --search "in:body \"#$num\"" \
+        --json number,body,mergedAt,baseRefName \
+        --jq ".[] | select(.mergedAt > \"$iter_start_ts\") | select(.baseRefName == \"$default_branch\") | select(.body | test(\"(?i)(close[sd]?|fix(e[sd])?|resolve[sd]?)\\\\s+#$num\\\\b\")) | .number" \
+        | head -1)
+      if [[ -n "$fallback_pr" ]]; then
+        echo "✅ Found merged PR #$fallback_pr referencing 'Closes #$num' — accepting." >&2
+        merged_count=1
+      fi
+    fi
+
+    # Release-branch flow (opt-in via RALPH_RELEASE_BRANCH). GitHub does not
+    # auto-link `Closes #N` for PRs whose base != default branch, so closure
+    # has to be done explicitly. We try, in order:
+    #   (a) merge an open PR into the release branch + manually close issue;
+    #   (b) if BRANCH_PREFIX is set and a `${prefix}${num}-…` branch was pushed
+    #       with no PR, open one and retry (a);
+    #   (c) accept state=CLOSED + a release-branch PR merged in this iteration.
+    if [[ "$merged_count" -lt 1 && -n "$RELEASE_BRANCH" && "$state" != "CLOSED" ]]; then
+      if ralph_merge_release_branch_pr_for_issue \
+          "$num" "$RELEASE_BRANCH" "$expected_pr_head" "$expected_pr_sha" "$expected_pr_author"; then
+        state="CLOSED"
+        merged_count=1
+      elif [[ -n "$BRANCH_PREFIX" ]] \
+          && ralph_open_pr_for_pushed_branch \
+            "$num" "$RELEASE_BRANCH" "$BRANCH_PREFIX" "$expected_pr_head" "$expected_pr_sha"; then
+        sleep 15  # give the new PR a moment to register checks
+        if ralph_merge_release_branch_pr_for_issue \
+            "$num" "$RELEASE_BRANCH" "$expected_pr_head" "$expected_pr_sha" "$expected_pr_author"; then
+          state="CLOSED"
+          merged_count=1
+        fi
+      fi
+    fi
+    if [[ "$merged_count" -lt 1 && -n "$RELEASE_BRANCH" && "$state" == "CLOSED" ]]; then
+      echo "ℹ️  Issue #$num: checking recent merged PRs into release branch '$RELEASE_BRANCH' since $iter_start_ts..." >&2
+      release_pr=$(gh pr list --repo "$REPO" --state merged --limit 20 --base "$RELEASE_BRANCH" \
+        --search "in:body \"#$num\"" \
+        --json number,body,mergedAt,baseRefName \
+        --jq ".[] | select(.mergedAt > \"$iter_start_ts\") | select(.baseRefName == \"$RELEASE_BRANCH\") | select(.body | test(\"(?i)(close[sd]?|fix(e[sd])?|resolve[sd]?)\\\\s+#$num\\\\b\")) | .number" \
+        | head -1)
+      if [[ -n "$release_pr" ]]; then
+        echo "✅ Found merged PR #$release_pr into release branch '$RELEASE_BRANCH' referencing #$num — accepting." >&2
+        merged_count=1
+      fi
+    fi
+  fi
+
+  # PRD integration-branch flow (auto-detected via ownership record). Similar to
+  # release-branch flow: GitHub does not auto-link/auto-close for non-default bases.
+  # We try, in order:
+  #   (a) merge an open PR into the integration branch + manually close issue + record slice-integrated;
+  #   (b) accept a merged integration-branch PR found since iter_start_ts and manually close + record.
+  if [[ "$merged_count" -lt 1 && -n "$RUN_ID" ]] && declare -F resolve_slice_pr_base >/dev/null 2>&1; then
+    integration_base=$(resolve_slice_pr_base "$RUN_ID" "$default_branch")
+    if [[ "$integration_base" != "$default_branch" ]]; then
+      echo "ℹ️  Issue #$num: PRD integration branch detected ($integration_base), checking for merged PR..." >&2
+      
+      # Try to merge the exact worker-owned PR at the approved local head SHA.
+      prd_merge_result=0
+      if _ralph_merge_owned_open_pr_for_issue \
+          "$num" "$integration_base" "$expected_pr_head" "$expected_pr_sha" "$expected_pr_author" body; then
+        pr="$RALPH_MERGED_PR"
+        merge_commit=$(gh pr view "$pr" --repo "$REPO" --json mergeCommit -q '.mergeCommit.oid' 2>/dev/null || echo "")
+
+        if declare -F record_slice_integrated >/dev/null 2>&1; then
+          state_lock || true
+          record_slice_integrated "$num" "$pr" "$merge_commit" "$RUN_ID"
+          state_unlock || true
+        fi
+
+        if declare -F close_slice_issue >/dev/null 2>&1; then
+          close_slice_issue "$num" "$pr" "$REPO" || true
+        fi
+
+        state="CLOSED"
+        merged_count=1
+        prd_merge_result=1
+      fi
+      
+      # If no open PR was merged, check for recently merged PRs
+      if [[ "$prd_merge_result" -eq 0 ]]; then
+        prd_pr=$(gh pr list --repo "$REPO" --state merged --limit 20 --base "$integration_base" \
+          --search "in:body \"#$num\"" \
+          --json number,body,mergedAt,baseRefName,mergeCommit \
+          --jq ".[] | select(.mergedAt > \"$iter_start_ts\") | select(.baseRefName == \"$integration_base\") | select(.body | test(\"(?i)(close[sd]?|fix(e[sd])?|resolve[sd]?)\\\\s+#$num\\\\b\")) | {number, mergeCommit: .mergeCommit.oid} | @json" \
+          | head -1)
+        
+        if [[ -n "$prd_pr" ]]; then
+          pr_number=$(echo "$prd_pr" | jq -r '.number')
+          merge_commit=$(echo "$prd_pr" | jq -r '.mergeCommit')
+          echo "✅ Found merged PR #$pr_number into integration branch '$integration_base' referencing #$num — recording slice-integrated." >&2
+          
+          # Record slice-integrated lifecycle
+          if declare -F record_slice_integrated >/dev/null 2>&1; then
+            state_lock || true
+            record_slice_integrated "$num" "$pr_number" "$merge_commit" "$RUN_ID"
+            state_unlock || true
+          fi
+          
+          # Verify base branch before accepting
+          if declare -F verify_slice_pr_base >/dev/null 2>&1; then
+            if verify_slice_pr_base "$RUN_ID" "$integration_base"; then
+              # Explicitly close the issue
+              if declare -F close_slice_issue >/dev/null 2>&1; then
+                close_slice_issue "$num" "$pr_number" "$REPO" || true
+              fi
+              state="CLOSED"
+              merged_count=1
+            else
+              echo "⚠️  PR #$pr_number merged to wrong base; not accepting as slice-integrated." >&2
+            fi
+          else
+            # No verification function available, accept anyway
+            if declare -F close_slice_issue >/dev/null 2>&1; then
+              close_slice_issue "$num" "$pr_number" "$REPO" || true
+            fi
+            state="CLOSED"
+            merged_count=1
+          fi
+        fi
+      fi
+    fi
+  fi
 
   # If merge succeeded and this was a recovery claim, clean up the ledger
-  if [[ "$state" == "CLOSED" && "$merged_count" -ge 1 && "$_is_recovery_claim" == "1" ]]; then
+  if [[ "$merged_count" -ge 1 && "$_is_recovery_claim" == "1" ]]; then
     state_lock || true
     ledger_remove_entry "$num"
     ledger_release_recovery "$num"
@@ -1047,7 +1403,7 @@ DO NOT re-plan or open a new branch. Instead:
     echo "✅ Recovery successful for #$num — ledger entry removed." >&2
   fi
 
-  if [[ "$state" != "CLOSED" || "$merged_count" -lt 1 ]]; then
+  if [[ "$merged_count" -lt 1 ]]; then
     # Resume-incomplete-iterations (issue #60). Before marking the issue as
     # terminally failed, check whether this iteration left commits on a
     # slice branch. If so, we likely just hit the autopilot-continues cap
@@ -1137,16 +1493,13 @@ DO NOT re-plan or open a new branch. Instead:
               fi
               state_unlock || true
               if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
-                ralph_apply_label_transition "$num" fail || true
+                ralph_apply_label_transition "$num" failed || true
               fi
               if [[ -n "$copilot_session_id" ]] && declare -F copilot_session_record_terminal >/dev/null 2>&1; then
                 copilot_session_record_terminal "$copilot_session_id" "$num" "$WORKER_ID" "failed" "$RUN_ID" || true
               fi
               echo "❌ Issue #$num marked as terminally failed after exhausting retry budget." >&2
               exit 1
-            fi
-            if [[ -n "$RUN_ID" ]]; then
-              status_mark_recoverable "$num" "Recovery attempt $_iter_resume_attempt parked for cooldown: $_resume_reason"
             fi
             state_unlock || true
             echo "ℹ️  Incremented retry attempt for #$num, will retry after cooldown." >&2
@@ -1171,10 +1524,9 @@ DO NOT re-plan or open a new branch. Instead:
               status_mark_recoverable "$num" "$_recovery_detail"
             fi
             state_unlock || true
+            # Keep ralph:queued label (recoverable items use the same label but have a lease)
+            # No label transition needed — already queued
             echo "⚠️  Issue #$num parked as recoverable with lease until $_next_recovery. Will retry after cooldown." >&2
-          fi
-          if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
-            ralph_apply_label_transition "$num" retry || true
           fi
           exit 1
         fi
@@ -1201,10 +1553,14 @@ DO NOT re-plan or open a new branch. Instead:
     exit 1
   fi
 
-  # Success! Update status to merged (run-aware mode only)
+  # Success! Update status (run-aware mode only)
+  # Preserve slice-integrated status if already set by PRD flow
   if [[ -n "$RUN_ID" ]]; then
     state_lock || true
-    status_update_item "$num" "merged" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+    current_status=$(status_load_item "$num" "status" "$RUN_ID")
+    if [[ "$current_status" != "slice-integrated" ]]; then
+      status_update_item "$num" "merged" "$WORKER_ID" "$$" "$(basename "$log_file")" "$iter_start_ts"
+    fi
     state_unlock || true
   fi
   if declare -F ralph_apply_label_transition >/dev/null 2>&1; then
