@@ -7,6 +7,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:conv="using:Glasswork.Converters"
     xmlns:controls="using:Glasswork.Controls"
+    xmlns:models="using:Glasswork.Core.Models"
     NavigationCacheMode="Enabled"
     mc:Ignorable="d">
 
@@ -17,7 +18,7 @@
         <conv:DueUrgencyForegroundBrushConverter x:Key="DueFg" />
         <conv:MyDayBrushConverter x:Key="MyDayBrush" />
 
-        <DataTemplate x:Key="BacklogTaskTemplate">
+        <DataTemplate x:Key="BacklogTaskTemplate" x:DataType="models:GlassworkTask">
             <Grid Padding="10,8" RowDefinitions="Auto,Auto"
                   DoubleTapped="TaskRow_DoubleTapped"
                   Background="Transparent">
@@ -37,14 +38,20 @@
                                      Padding="0" VerticalAlignment="Center"
                                      HorizontalAlignment="Stretch"
                                      HorizontalContentAlignment="Left" />
-                    <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}"
-                            Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                            Visibility="{Binding HasPriorityChip, Converter={StaticResource BoolVis}}">
+                    <Border
+                        x:Name="BacklogPriorityChip"
+                        x:Load="{x:Bind HasPriorityChip, Mode=OneWay}"
+                        Grid.Column="2"
+                        Style="{StaticResource ChipBorderStyle}"
+                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}">
                         <TextBlock Text="{Binding Priority}" Style="{StaticResource ChipTextStyle}" />
                     </Border>
-                    <Border Grid.Column="3" Style="{StaticResource ChipBorderStyle}"
-                            Background="{Binding DueUrgency, Converter={StaticResource DueBg}}"
-                            Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
+                    <Border
+                        x:Name="BacklogDueChip"
+                        x:Load="{x:Bind HasDue, Mode=OneWay}"
+                        Grid.Column="3"
+                        Style="{StaticResource ChipBorderStyle}"
+                        Background="{Binding DueUrgency, Converter={StaticResource DueBg}}">
                         <TextBlock Text="{Binding DueChipText}" Style="{StaticResource ChipTextStyle}"
                                    Foreground="{Binding DueUrgency, Converter={StaticResource DueFg}}" />
                     </Border>
@@ -71,8 +78,12 @@
                 </Grid>
 
                 <!-- Card details -->
-                <StackPanel Grid.Row="1" Spacing="6" Margin="32,6,0,2"
-                            Visibility="{Binding ShowCardDetails, Converter={StaticResource BoolVis}}">
+                <StackPanel
+                    x:Name="BacklogCardDetails"
+                    x:Load="{x:Bind ShowCardDetails, Mode=OneWay}"
+                    Grid.Row="1"
+                    Spacing="6"
+                    Margin="32,6,0,2">
                     <ItemsControl ItemsSource="{Binding Subtasks}"
                                   Visibility="{Binding UseSegmentedBar, Converter={StaticResource BoolVis}}">
                         <ItemsControl.ItemsPanel>

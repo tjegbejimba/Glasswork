@@ -387,4 +387,99 @@ public class VisualVerificationScenarioTests
         Assert.AreEqual(DateTimeOffset.Parse("2026-08-14T18:30:00Z"), seeded.CancelledAt);
         Assert.AreEqual("Superseded by the final plan", seeded.CancellationReason);
     }
+
+    [TestMethod]
+    public void FromJson_LoadsBoundedFixtureRepetition()
+    {
+        const string json = """
+        {
+          "name": "performance fixture",
+          "tasks": [
+            {
+              "id": "task",
+              "title": "Repeated task",
+              "repeat": 150,
+              "artifacts": [
+                {
+                  "name": "large.md",
+                  "markdown": "# Section",
+                  "repeatContent": 400
+                }
+              ]
+            }
+          ],
+          "captures": [{ "name": "screen" }]
+        }
+        """;
+
+        var task = VisualVerificationScenario.FromJson(json).Tasks.Single();
+
+        Assert.AreEqual(150, task.Repeat);
+        Assert.AreEqual(400, task.Artifacts.Single().RepeatContent);
+    }
+
+    [TestMethod]
+    public void FromJson_UnboundedFixtureRepetition_Throws()
+    {
+        const string json = """
+        {
+          "name": "performance fixture",
+          "tasks": [
+            {
+              "id": "task",
+              "title": "Repeated task",
+              "repeat": 1001
+            }
+          ],
+          "captures": [{ "name": "screen" }]
+        }
+        """;
+
+        Assert.ThrowsExactly<FormatException>(() =>
+            VisualVerificationScenario.FromJson(json));
+    }
+
+    [TestMethod]
+    public void FromJson_NonFinitePerformanceBudget_Throws()
+    {
+        const string json = """
+        {
+          "name": "performance fixture",
+          "actions": [
+            {
+              "type": "assert-scroll-xaml-frame-budget",
+              "automationId": "TaskList",
+              "value": "NaN"
+            }
+          ],
+          "captures": [{ "name": "screen" }]
+        }
+        """;
+
+        Assert.ThrowsExactly<FormatException>(() =>
+            VisualVerificationScenario.FromJson(json));
+    }
+
+    [TestMethod]
+    public void FromJson_CompletionMarkerRequiresBudget()
+    {
+        const string json = """
+        {
+          "name": "performance fixture",
+          "actions": [
+            {
+              "type": "assert-navigation-latency",
+              "name": "Task",
+              "automationId": "TaskTitle",
+              "value": "500",
+              "completionAutomationId": "ArtifactRow"
+            }
+          ],
+          "captures": [{ "name": "screen" }]
+        }
+        """;
+
+        Assert.ThrowsExactly<FormatException>(() =>
+            VisualVerificationScenario.FromJson(json));
+    }
 }

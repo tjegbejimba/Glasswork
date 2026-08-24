@@ -57,6 +57,20 @@ public class ArtifactRowTests
     }
 
     [TestMethod]
+    public void Project_NewestLargeArtifact_IsCollapsedByDefault()
+    {
+        var now = new DateTime(2026, 4, 21, 12, 0, 0, DateTimeKind.Utc);
+        var artifact = MakeArtifact("large", now) with
+        {
+            SizeBytes = ArtifactCaps.AutoExpandBytes + 1,
+        };
+
+        var row = ArtifactRow.Project([artifact], now).Single();
+
+        Assert.IsFalse(row.IsExpanded);
+    }
+
+    [TestMethod]
     public void Project_TimeBadge_UsesRelativeStrings()
     {
         var now = new DateTime(2026, 4, 21, 12, 0, 0, DateTimeKind.Utc);

@@ -99,6 +99,9 @@ public sealed partial class VisualVerificationScenario
                 throw new FormatException($"Scenario task id '{task.Id}' must be a safe filename slug.");
             if (string.IsNullOrWhiteSpace(task.Title))
                 throw new FormatException($"Scenario task '{task.Id}' requires a non-empty title.");
+            if (task.Repeat is < 1 or > 1000)
+                throw new FormatException(
+                    $"Scenario task '{task.Id}' repeat must be between 1 and 1000.");
             foreach (var subtask in task.Subtasks)
             {
                 if (string.IsNullOrWhiteSpace(subtask.Text))
@@ -109,6 +112,12 @@ public sealed partial class VisualVerificationScenario
                 if (!IsSafeWikiPagePath(related + ".md"))
                     throw new FormatException(
                         $"Scenario task '{task.Id}' has unsafe Related Wiki path '{related}'.");
+            }
+            foreach (var artifact in task.Artifacts)
+            {
+                if (artifact.RepeatContent is < 1 or > 1000)
+                    throw new FormatException(
+                        $"Artifact '{artifact.Name}' repeatContent must be between 1 and 1000.");
             }
         }
 
@@ -201,6 +210,61 @@ public sealed partial class VisualVerificationScenario
                         $"{action.Type} requires value between 0 and 100.");
                 }
             }
+            if (action.Type.Equals(
+                    "assert-scroll-xaml-frame-budget",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(action.AutomationId)
+                    || !double.TryParse(
+                        action.Value,
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out var milliseconds)
+                    || !double.IsFinite(milliseconds)
+                    || milliseconds <= 0)
+                {
+                    throw new FormatException(
+                        "assert-scroll-xaml-frame-budget requires automationId and a positive millisecond value.");
+                }
+            }
+            if (action.Type.Equals(
+                    "assert-navigation-latency",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(action.Name)
+                    || string.IsNullOrWhiteSpace(action.AutomationId)
+                    || !double.TryParse(
+                        action.Value,
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out var milliseconds)
+                    || !double.IsFinite(milliseconds)
+                    || milliseconds <= 0)
+                {
+                    throw new FormatException(
+                        "assert-navigation-latency requires source name, destination automationId, and a positive millisecond value.");
+                }
+                ValidateCompletionBudget(action);
+            }
+            if (action.Type.Equals(
+                    "assert-nav-selection-latency",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(action.Name)
+                    || string.IsNullOrWhiteSpace(action.AutomationId)
+                    || !double.TryParse(
+                        action.Value,
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out var milliseconds)
+                    || !double.IsFinite(milliseconds)
+                    || milliseconds <= 0)
+                {
+                    throw new FormatException(
+                        "assert-nav-selection-latency requires source automationId in name, destination automationId, and a positive millisecond value.");
+                }
+                ValidateCompletionBudget(action);
+            }
             if (action.Type.Equals("assert-selected", StringComparison.OrdinalIgnoreCase)
                 && string.IsNullOrWhiteSpace(action.Name))
             {
@@ -226,9 +290,10 @@ public sealed partial class VisualVerificationScenario
                 throw new FormatException("assert-clipboard-text requires value.");
             }
             if (action.Type.Equals("press-key", StringComparison.OrdinalIgnoreCase)
-                && action.Value is not ("Escape" or "Tab" or "Space" or "Alt+U"))
+                && action.Value is not ("Escape" or "Tab" or "Space" or "PageDown" or "Alt+U"))
             {
-                throw new FormatException("press-key requires value Escape, Tab, Space, or Alt+U.");
+                throw new FormatException(
+                    "press-key requires value Escape, Tab, Space, PageDown, or Alt+U.");
             }
             if (action.Type.Equals("assert-ui-state-missing", StringComparison.OrdinalIgnoreCase)
                 && string.IsNullOrWhiteSpace(action.Name))
@@ -267,6 +332,28 @@ public sealed partial class VisualVerificationScenario
             reference.Trim(),
             @"^[A-Za-z][A-Za-z0-9+.-]*:",
             RegexOptions.CultureInvariant);
+
+    private static void ValidateCompletionBudget(VisualVerificationAction action)
+    {
+        if (action.MaximumXamlFrameMilliseconds is double frameMilliseconds
+            && (!double.IsFinite(frameMilliseconds) || frameMilliseconds <= 0))
+        {
+            throw new FormatException(
+                $"{action.Type} maximumXamlFrameMilliseconds must be positive and finite.");
+        }
+        var hasCompletionMarker = !string.IsNullOrWhiteSpace(action.CompletionAutomationId)
+            || !string.IsNullOrWhiteSpace(action.CompletionName);
+        if (!hasCompletionMarker && action.CompletionBudgetMilliseconds is null)
+            return;
+        if (!hasCompletionMarker
+            || action.CompletionBudgetMilliseconds is not double milliseconds
+            || !double.IsFinite(milliseconds)
+            || milliseconds <= 0)
+        {
+            throw new FormatException(
+                $"{action.Type} completion marker requires a positive finite completionBudgetMilliseconds.");
+        }
+    }
 
     private static bool IsSafeTaskId(string taskId)
     {
@@ -318,6 +405,7 @@ public sealed class VisualVerificationTask
     public List<string> Related { get; init; } = [];
     public List<VisualVerificationSubtask> Subtasks { get; init; } = [];
     public List<VisualVerificationArtifact> Artifacts { get; init; } = [];
+    public int Repeat { get; init; } = 1;
 
     public GlassworkTask ToGlassworkTask(DateTime today)
     {
@@ -436,6 +524,7 @@ public sealed class VisualVerificationArtifact
     /// ignored.
     /// </summary>
     public string? Base64 { get; init; }
+    public int RepeatContent { get; init; } = 1;
 }
 
 public sealed class VisualVerificationWikiPage
@@ -480,6 +569,10 @@ public sealed class VisualVerificationAction
     public string? OldValue { get; init; }
     public string? Value { get; init; }
     public int TimeoutMilliseconds { get; init; } = 5000;
+    public string? CompletionAutomationId { get; init; }
+    public string? CompletionName { get; init; }
+    public double? CompletionBudgetMilliseconds { get; init; }
+    public double? MaximumXamlFrameMilliseconds { get; init; }
 }
 
 public sealed class VisualVerificationCapture

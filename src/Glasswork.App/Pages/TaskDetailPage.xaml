@@ -120,7 +120,10 @@
                      Message="Install Obsidian or register the obsidian:// protocol to enable Open in Obsidian." />
         </StackPanel>
 
-        <ScrollViewer Grid.Row="1" Padding="32">
+        <ScrollViewer
+            Grid.Row="1"
+            Padding="32"
+            AutomationProperties.AutomationId="TaskDetailScrollViewer">
             <StackPanel Spacing="16">
                 <!-- Title + Open in Obsidian -->
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">

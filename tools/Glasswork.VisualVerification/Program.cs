@@ -15,6 +15,7 @@ using System.Threading.Tasks;
 using System.Windows.Automation;
 using Glasswork.Core.Services;
 using Glasswork.Core.VisualVerification;
+using Microsoft.VisualBasic.FileIO;
 
 var exitCode = await VisualVerificationRunner.RunAsync(args);
 return exitCode;
@@ -126,6 +127,7 @@ internal static partial class VisualVerificationRunner
                         options.OutDir,
                         captureRequestPath,
                         captureOutputPath,
+                        process.Id,
                         action);
                 }
                 catch (Exception ex)
@@ -168,6 +170,7 @@ internal static partial class VisualVerificationRunner
             return new VerificationResult(
                 scenario.Name,
                 options.OutDir,
+                process.Id,
                 vaultRoot,
                 uiStatePath,
                 instanceKey,
@@ -192,32 +195,48 @@ internal static partial class VisualVerificationRunner
 
         foreach (var task in scenario.Tasks)
         {
-            vault.Save(task.ToGlassworkTask(today));
-
-            if (task.Artifacts.Count == 0) continue;
-            var artifactsDir = Path.Combine(vaultRoot, "wiki", "todo", task.Id + ".artifacts");
-            Directory.CreateDirectory(artifactsDir);
-            foreach (var artifact in task.Artifacts)
+            for (var copy = 1; copy <= task.Repeat; copy++)
             {
-                if (string.IsNullOrWhiteSpace(artifact.Name))
-                    throw new FormatException($"Artifact on task '{task.Id}' requires a non-empty name.");
-
-                // Use the name verbatim so scenarios can seed any extension
-                // (.md/.html/.txt/.svg/.png/...). Names with no extension default
-                // to .md to preserve the original markdown-only behavior.
-                var fileName = Path.HasExtension(artifact.Name)
-                    ? artifact.Name
-                    : artifact.Name + ".md";
-                var fullPath = Path.Combine(artifactsDir, SanitizeFileName(fileName));
-
-                if (!string.IsNullOrEmpty(artifact.Base64))
+                var materializedTask = task.ToGlassworkTask(today);
+                if (task.Repeat > 1)
                 {
-                    File.WriteAllBytes(fullPath, Convert.FromBase64String(artifact.Base64));
+                    materializedTask.Id = $"{task.Id}-{copy:D3}";
+                    materializedTask.Title = $"{task.Title} {copy:D3}";
                 }
-                else
+                vault.Save(materializedTask);
+
+                if (task.Artifacts.Count == 0) continue;
+                var artifactsDir = Path.Combine(
+                    vaultRoot,
+                    "wiki",
+                    "todo",
+                    materializedTask.Id + ".artifacts");
+                Directory.CreateDirectory(artifactsDir);
+                foreach (var artifact in task.Artifacts)
                 {
-                    var text = artifact.Content ?? artifact.Markdown;
-                    File.WriteAllText(fullPath, text);
+                    if (string.IsNullOrWhiteSpace(artifact.Name))
+                        throw new FormatException(
+                            $"Artifact on task '{materializedTask.Id}' requires a non-empty name.");
+
+                    // Use the name verbatim so scenarios can seed any extension
+                    // (.md/.html/.txt/.svg/.png/...). Names with no extension default
+                    // to .md to preserve the original markdown-only behavior.
+                    var fileName = Path.HasExtension(artifact.Name)
+                        ? artifact.Name
+                        : artifact.Name + ".md";
+                    var fullPath = Path.Combine(artifactsDir, SanitizeFileName(fileName));
+
+                    if (!string.IsNullOrEmpty(artifact.Base64))
+                    {
+                        File.WriteAllBytes(fullPath, Convert.FromBase64String(artifact.Base64));
+                    }
+                    else
+                    {
+                        var text = artifact.Content ?? artifact.Markdown;
+                        File.WriteAllText(
+                            fullPath,
+                            string.Concat(Enumerable.Repeat(text, artifact.RepeatContent)));
+                    }
                 }
             }
         }
@@ -366,6 +385,7 @@ internal static partial class VisualVerificationRunner
         string outDir,
         string captureRequestPath,
         string captureOutputPath,
+        int processId,
         VisualVerificationAction action)
     {
         switch (action.Type.Trim().ToLowerInvariant())
@@ -463,6 +483,28 @@ internal static partial class VisualVerificationRunner
                 return;
             case "scroll-percent":
                 ScrollToPercent(WaitForElement(hwnd, action), action);
+                return;
+            case "assert-scroll-xaml-frame-budget":
+                AssertScrollXamlFrameBudget(
+                    hwnd,
+                    WaitForElement(hwnd, action),
+                    action,
+                    outDir,
+                    processId);
+                return;
+            case "assert-navigation-latency":
+                AssertNavigationLatency(
+                    hwnd,
+                    action,
+                    outDir,
+                    processId);
+                return;
+            case "assert-nav-selection-latency":
+                AssertNavSelectionLatency(
+                    hwnd,
+                    action,
+                    outDir,
+                    processId);
                 return;
             case "assert-vertical-scroll-at-least":
                 AssertVerticalScrollAtLeast(WaitForElement(hwnd, action), action);
@@ -1149,6 +1191,7 @@ internal static partial class VisualVerificationRunner
             "Escape" => (byte)0x1B,
             "Tab" => (byte)0x09,
             "Space" => (byte)0x20,
+            "PageDown" => (byte)0x22,
             _ => throw new FormatException($"Unsupported key '{key}'."),
         };
         ForegroundWindowBestEffort(hwnd);
@@ -1328,6 +1371,441 @@ internal static partial class VisualVerificationRunner
 
         scroll.SetScrollPercent(ScrollPattern.NoScroll, percent);
         Thread.Sleep(200);
+    }
+
+    private static void AssertScrollXamlFrameBudget(
+        IntPtr hwnd,
+        AutomationElement element,
+        VisualVerificationAction action,
+        string outDir,
+        int processId)
+    {
+        const int scrollSteps = 20;
+        var frameBudgetMilliseconds = double.Parse(
+            action.Value!,
+            CultureInfo.InvariantCulture);
+        var scroll = FindScrollPattern(element);
+        if (scroll is null || !scroll.Current.VerticallyScrollable)
+        {
+            throw new InvalidOperationException(
+                $"Element '{element.Current.Name}' does not expose vertical scrolling.");
+        }
+
+        ForegroundWindowBestEffort(hwnd);
+        scroll.SetScrollPercent(ScrollPattern.NoScroll, 0);
+        Thread.Sleep(300);
+        var focusTarget = FindFocusableScrollDescendant(element);
+        FocusElement(focusTarget);
+
+        var durations = CaptureXamlFrameDurations(
+            outDir,
+            "scroll",
+            processId,
+            () =>
+            {
+            for (var i = 0; i < scrollSteps; i++)
+                PressKey(hwnd, "PageDown");
+            Thread.Sleep(300);
+            });
+        if (durations.Count < 10)
+        {
+            throw new InvalidOperationException(
+                $"XAML trace captured only {durations.Count} frames for process {processId}.");
+        }
+
+        durations.Sort();
+        var median = Percentile(durations, 0.50);
+        var p95 = Percentile(durations, 0.95);
+        var p99 = Percentile(durations, 0.99);
+        var maximum = durations[^1];
+        var overBudgetCount = durations.Count(value => value > frameBudgetMilliseconds);
+        var report = new
+        {
+            element = element.Current.Name,
+            scrollSteps,
+            frameCount = durations.Count,
+            medianMilliseconds = median,
+            p95Milliseconds = p95,
+            p99Milliseconds = p99,
+            maximumMilliseconds = maximum,
+            frameBudgetMilliseconds,
+            overBudgetCount,
+        };
+        var reportPath = Path.Combine(outDir, "scroll-xaml-frame-budget.json");
+        File.WriteAllText(
+            reportPath,
+            JsonSerializer.Serialize(
+                report,
+                new JsonSerializerOptions { WriteIndented = true }));
+        Console.WriteLine(
+            $"Scroll XAML frames: {durations.Count}, median {median:0.00} ms, p95 {p95:0.00} ms, p99 {p99:0.00} ms, max {maximum:0.00} ms, over budget {overBudgetCount}.");
+
+        if (p95 > frameBudgetMilliseconds)
+        {
+            throw new InvalidOperationException(
+                $"Scroll XAML-frame p95 was {p95:0.00} ms, exceeding the {frameBudgetMilliseconds:0.00} ms budget. Report: {reportPath}");
+        }
+    }
+
+    private static void AssertNavigationLatency(
+        IntPtr hwnd,
+        VisualVerificationAction action,
+        string outDir,
+        int processId)
+    {
+        var budgetMilliseconds = double.Parse(
+            action.Value!,
+            CultureInfo.InvariantCulture);
+        var source = WaitForElement(
+            hwnd,
+            new VisualVerificationAction
+            {
+                Type = "wait-for",
+                Name = action.Name,
+                TimeoutMilliseconds = action.TimeoutMilliseconds,
+            });
+        var stopwatch = new Stopwatch();
+        double shellElapsedMilliseconds = 0;
+        double? completionElapsedMilliseconds = null;
+        var durations = CaptureXamlFrameDurations(
+            outDir,
+            "navigation",
+            processId,
+            () =>
+            {
+                stopwatch.Start();
+                InvokeElement(source);
+                _ = WaitForElement(
+                    hwnd,
+                    new VisualVerificationAction
+                    {
+                        Type = "wait-for",
+                        AutomationId = action.AutomationId,
+                        TimeoutMilliseconds = action.TimeoutMilliseconds,
+                    });
+                stopwatch.Stop();
+                shellElapsedMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
+                if (!string.IsNullOrWhiteSpace(action.CompletionAutomationId)
+                    || !string.IsNullOrWhiteSpace(action.CompletionName))
+                {
+                    stopwatch.Start();
+                    _ = WaitForElement(
+                        hwnd,
+                        new VisualVerificationAction
+                        {
+                            Type = "wait-for",
+                            AutomationId = action.CompletionAutomationId,
+                            Name = action.CompletionName,
+                            TimeoutMilliseconds = action.TimeoutMilliseconds,
+                        });
+                    stopwatch.Stop();
+                    completionElapsedMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
+                }
+                Thread.Sleep(300);
+            });
+        durations.Sort();
+        if (durations.Count == 0)
+            throw new InvalidOperationException(
+                $"XAML trace captured no navigation frames for process {processId}.");
+        var maximum = durations[^1];
+        var report = new
+        {
+            source = action.Name,
+            destination = action.AutomationId,
+            elapsedMilliseconds = shellElapsedMilliseconds,
+            completionElapsedMilliseconds,
+            xamlFrameCount = durations.Count,
+            maximumXamlFrameMilliseconds = maximum,
+            action.MaximumXamlFrameMilliseconds,
+            budgetMilliseconds,
+        };
+        var reportPath = Path.Combine(outDir, "navigation-latency.json");
+        File.WriteAllText(
+            reportPath,
+            JsonSerializer.Serialize(
+                report,
+                new JsonSerializerOptions { WriteIndented = true }));
+        Console.WriteLine(
+            $"Navigation latency: {shellElapsedMilliseconds:0.00} ms, completion {completionElapsedMilliseconds:0.00} ms, max XAML frame {maximum:0.00} ms.");
+        if (shellElapsedMilliseconds > budgetMilliseconds)
+        {
+            throw new InvalidOperationException(
+                $"Navigation took {shellElapsedMilliseconds:0.00} ms, exceeding the {budgetMilliseconds:0.00} ms budget. Report: {reportPath}");
+        }
+        if (completionElapsedMilliseconds > action.CompletionBudgetMilliseconds)
+        {
+            throw new InvalidOperationException(
+                $"Navigation completion took {completionElapsedMilliseconds:0.00} ms, exceeding the {action.CompletionBudgetMilliseconds:0.00} ms budget. Report: {reportPath}");
+        }
+        if (maximum > action.MaximumXamlFrameMilliseconds)
+        {
+            throw new InvalidOperationException(
+                $"Navigation maximum XAML frame was {maximum:0.00} ms, exceeding the {action.MaximumXamlFrameMilliseconds:0.00} ms budget. Report: {reportPath}");
+        }
+    }
+
+    private static void AssertNavSelectionLatency(
+        IntPtr hwnd,
+        VisualVerificationAction action,
+        string outDir,
+        int processId)
+    {
+        var budgetMilliseconds = double.Parse(
+            action.Value!,
+            CultureInfo.InvariantCulture);
+        var source = WaitForElement(
+            hwnd,
+            new VisualVerificationAction
+            {
+                Type = "wait-for",
+                AutomationId = action.Name,
+                TimeoutMilliseconds = action.TimeoutMilliseconds,
+            });
+        var stopwatch = new Stopwatch();
+        double shellElapsedMilliseconds = 0;
+        double? completionElapsedMilliseconds = null;
+        var durations = CaptureXamlFrameDurations(
+            outDir,
+            "nav-selection",
+            processId,
+            () =>
+            {
+                stopwatch.Start();
+                SelectElement(source);
+                _ = WaitForElement(
+                    hwnd,
+                    new VisualVerificationAction
+                    {
+                        Type = "wait-for",
+                        AutomationId = action.AutomationId,
+                        TimeoutMilliseconds = action.TimeoutMilliseconds,
+                    });
+                stopwatch.Stop();
+                shellElapsedMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
+                if (!string.IsNullOrWhiteSpace(action.CompletionAutomationId)
+                    || !string.IsNullOrWhiteSpace(action.CompletionName))
+                {
+                    stopwatch.Start();
+                    _ = WaitForElement(
+                        hwnd,
+                        new VisualVerificationAction
+                        {
+                            Type = "wait-for",
+                            AutomationId = action.CompletionAutomationId,
+                            Name = action.CompletionName,
+                            TimeoutMilliseconds = action.TimeoutMilliseconds,
+                        });
+                    stopwatch.Stop();
+                    completionElapsedMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
+                }
+                Thread.Sleep(300);
+            });
+        durations.Sort();
+        if (durations.Count == 0)
+            throw new InvalidOperationException(
+                $"XAML trace captured no navigation frames for process {processId}.");
+        var maximum = durations[^1];
+        var report = new
+        {
+            source = action.Name,
+            destination = action.AutomationId,
+            elapsedMilliseconds = shellElapsedMilliseconds,
+            completionElapsedMilliseconds,
+            xamlFrameCount = durations.Count,
+            maximumXamlFrameMilliseconds = maximum,
+            action.MaximumXamlFrameMilliseconds,
+            budgetMilliseconds,
+        };
+        var reportPath = Path.Combine(outDir, "nav-selection-latency.json");
+        File.WriteAllText(
+            reportPath,
+            JsonSerializer.Serialize(
+                report,
+                new JsonSerializerOptions { WriteIndented = true }));
+        Console.WriteLine(
+            $"Navigation selection latency: {shellElapsedMilliseconds:0.00} ms, completion {completionElapsedMilliseconds:0.00} ms, max XAML frame {maximum:0.00} ms.");
+        if (shellElapsedMilliseconds > budgetMilliseconds)
+        {
+            throw new InvalidOperationException(
+                $"Navigation selection took {shellElapsedMilliseconds:0.00} ms, exceeding the {budgetMilliseconds:0.00} ms budget. Report: {reportPath}");
+        }
+        if (completionElapsedMilliseconds > action.CompletionBudgetMilliseconds)
+        {
+            throw new InvalidOperationException(
+                $"Navigation selection completion took {completionElapsedMilliseconds:0.00} ms, exceeding the {action.CompletionBudgetMilliseconds:0.00} ms budget. Report: {reportPath}");
+        }
+        if (maximum > action.MaximumXamlFrameMilliseconds)
+        {
+            throw new InvalidOperationException(
+                $"Navigation selection maximum XAML frame was {maximum:0.00} ms, exceeding the {action.MaximumXamlFrameMilliseconds:0.00} ms budget. Report: {reportPath}");
+        }
+    }
+
+    private static List<double> CaptureXamlFrameDurations(
+        string outDir,
+        string fileStem,
+        int processId,
+        Action action)
+    {
+        var sessionName = $"GwXaml-{Environment.ProcessId}-{Guid.NewGuid():N}"[..40];
+        var etlPath = Path.Combine(outDir, $"{fileStem}-xaml.etl");
+        var csvPath = Path.Combine(outDir, $"{fileStem}-xaml.csv");
+        File.Delete(etlPath);
+        File.Delete(csvPath);
+
+        var traceStarted = false;
+        try
+        {
+            RunProcess(
+                "logman",
+                "start",
+                sessionName,
+                "-p",
+                "{531A35AB-63CE-4BCF-AA98-F88C7A89E455}",
+                "0xffffffffffffffff",
+                "5",
+                "-o",
+                etlPath,
+                "-ets");
+            traceStarted = true;
+            action();
+        }
+        finally
+        {
+            if (traceStarted)
+                RunProcess("logman", "stop", sessionName, "-ets");
+        }
+
+        RunProcess("tracerpt", etlPath, "-of", "CSV", "-o", csvPath, "-y");
+        return ReadXamlFrameDurations(csvPath, processId);
+    }
+
+    private static AutomationElement FindFocusableScrollDescendant(AutomationElement element)
+    {
+        var listItem = element.FindFirst(
+                   TreeScope.Descendants,
+                   new AndCondition(
+                       new PropertyCondition(
+                           AutomationElement.ControlTypeProperty,
+                           ControlType.ListItem),
+                       new PropertyCondition(
+                           AutomationElement.IsKeyboardFocusableProperty,
+                           true)));
+        if (listItem is not null)
+            return listItem;
+        return element.FindFirst(
+                   TreeScope.Descendants,
+                   new PropertyCondition(
+                       AutomationElement.IsKeyboardFocusableProperty,
+                       true))
+               ?? throw new InvalidOperationException(
+                   "Scrollable surface has no focusable descendant.");
+    }
+
+    private static List<double> ReadXamlFrameDurations(string csvPath, int processId)
+    {
+        using var parser = new TextFieldParser(csvPath)
+        {
+            TextFieldType = FieldType.Delimited,
+            HasFieldsEnclosedInQuotes = true,
+        };
+        parser.SetDelimiters(",");
+        var headers = parser.ReadFields()
+            ?? throw new InvalidOperationException("XAML trace CSV has no header.");
+        var indexes = headers
+            .Select((header, index) => (header: header.Trim(), index))
+            .ToDictionary(item => item.header, item => item.index, StringComparer.Ordinal);
+        var events = new List<(string Type, string ThreadId, long Timestamp)>();
+        while (!parser.EndOfData)
+        {
+            var fields = parser.ReadFields();
+            if (fields is null || fields.Length < headers.Length)
+                continue;
+            if (!int.TryParse(fields[indexes["Task"]].Trim(), out var task)
+                || task != 22
+                || !TryParseHexProcessId(fields[indexes["PID"]], out var eventProcessId)
+                || eventProcessId != processId
+                || !long.TryParse(
+                    fields[indexes["Clock-Time"]].Trim(),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var timestamp))
+            {
+                continue;
+            }
+            events.Add((
+                fields[indexes["Type"]].Trim(),
+                fields[indexes["TID"]].Trim(),
+                timestamp));
+        }
+
+        var stacks = new Dictionary<string, Stack<long>>(StringComparer.Ordinal);
+        var durations = new List<double>();
+        foreach (var frameEvent in events.OrderBy(item => item.Timestamp))
+        {
+            if (!stacks.TryGetValue(frameEvent.ThreadId, out var stack))
+            {
+                stack = new Stack<long>();
+                stacks[frameEvent.ThreadId] = stack;
+            }
+            if (frameEvent.Type.Equals("Start", StringComparison.OrdinalIgnoreCase))
+            {
+                stack.Push(frameEvent.Timestamp);
+            }
+            else if (frameEvent.Type.Equals("Stop", StringComparison.OrdinalIgnoreCase)
+                     && stack.Count > 0)
+            {
+                durations.Add(
+                    (frameEvent.Timestamp - stack.Pop())
+                    / (double)TimeSpan.TicksPerMillisecond);
+            }
+        }
+        return durations;
+    }
+
+    private static bool TryParseHexProcessId(string value, out int processId)
+    {
+        var trimmed = value.Trim();
+        if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            trimmed = trimmed[2..];
+        return int.TryParse(
+            trimmed,
+            NumberStyles.HexNumber,
+            CultureInfo.InvariantCulture,
+            out processId);
+    }
+
+    private static void RunProcess(string fileName, params string[] arguments)
+    {
+        var startInfo = new ProcessStartInfo(fileName)
+        {
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+        };
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Failed to start {fileName}.");
+        var standardOutput = process.StandardOutput.ReadToEnd();
+        var standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"{fileName} exited with {process.ExitCode}.{Environment.NewLine}{standardOutput}{standardError}");
+        }
+    }
+
+    private static double Percentile(IReadOnlyList<double> sortedValues, double percentile)
+    {
+        var rank = (sortedValues.Count - 1) * percentile;
+        var lower = (int)Math.Floor(rank);
+        var upper = (int)Math.Ceiling(rank);
+        if (lower == upper)
+            return sortedValues[lower];
+        var weight = rank - lower;
+        return sortedValues[lower] + ((sortedValues[upper] - sortedValues[lower]) * weight);
     }
 
     private static void AssertVerticalScrollAtLeast(
@@ -1814,6 +2292,7 @@ internal sealed record RunnerOptions(
 internal sealed record VerificationResult(
     string Scenario,
     string OutputDirectory,
+    int ProcessId,
     string VaultPath,
     string UiStatePath,
     string InstanceKey,

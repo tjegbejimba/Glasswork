@@ -8,6 +8,13 @@ namespace Glasswork.Core.Models;
 public static class ArtifactCaps
 {
     /// <summary>
+    /// Maximum artifact size that Task Detail auto-expands on first display (64 KB).
+    /// Larger artifacts remain available inline but start collapsed so navigation
+    /// does not synchronously construct a large visual tree.
+    /// </summary>
+    public const long AutoExpandBytes = 64 * 1024;
+
+    /// <summary>
     /// Maximum size for inlining text/markdown/code artifact bodies (256 KB).
     /// Over-cap → Body = null, listed by reference only.
     /// </summary>
