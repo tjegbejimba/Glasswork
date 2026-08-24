@@ -44,6 +44,8 @@ public sealed partial class TaskDetailPage : Page
     /// </summary>
     private readonly Dictionary<string, bool> _artifactExpandState = new(StringComparer.OrdinalIgnoreCase);
     private string? _artifactsTaskId;
+    private EventHandler<object>? _deferredArtifactBindHandler;
+    private int _artifactBindGeneration;
 
     public TaskDetailPage()
     {
@@ -139,7 +141,8 @@ public sealed partial class TaskDetailPage : Page
 
         BindSubtasks(task.Subtasks);
         BindRelated(task.RelatedLinks);
-        BindArtifacts(task.Id);
+        ArtifactsSection.Visibility = Visibility.Collapsed;
+        ArtifactsList.ItemsSource = null;
         BindLinks(task.Links);
         BindChildren(task.Id);
         BindBacklinks(task.Id);
@@ -178,6 +181,38 @@ public sealed partial class TaskDetailPage : Page
         _pendingDiskNotes = string.Empty;
 
         _isLoading = false;
+        ScheduleInitialArtifactBind(task.Id);
+    }
+
+    private void ScheduleInitialArtifactBind(string taskId)
+    {
+        CancelDeferredArtifactBind();
+        var generation = ++_artifactBindGeneration;
+        _deferredArtifactBindHandler = (_, _) =>
+        {
+            CancelDeferredArtifactBind();
+            DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                () =>
+                {
+                    if (!_isNavigated
+                        || generation != _artifactBindGeneration
+                        || !string.Equals(Task?.Id, taskId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+                    BindArtifacts(taskId);
+                });
+        };
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += _deferredArtifactBindHandler;
+    }
+
+    private void CancelDeferredArtifactBind()
+    {
+        if (_deferredArtifactBindHandler is null)
+            return;
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _deferredArtifactBindHandler;
+        _deferredArtifactBindHandler = null;
     }
 
     private void ApplyNotesMode(NotesEditMode mode)
@@ -356,7 +391,7 @@ public sealed partial class TaskDetailPage : Page
         var rows = ArtifactRow.Project(artifacts, DateTime.UtcNow);
 
         // Prune expand state for artifacts that no longer exist, then apply any
-        // user-set state on top of the projection's default (newest expanded).
+        // user-set state on top of the projection's size-bounded auto-expand default.
         var livePaths = new HashSet<string>(rows.Select(r => r.Path), StringComparer.OrdinalIgnoreCase);
         foreach (var stale in _artifactExpandState.Keys.Where(k => !livePaths.Contains(k)).ToList())
         {
@@ -703,6 +738,8 @@ public sealed partial class TaskDetailPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         _isNavigated = false;
+        _artifactBindGeneration++;
+        CancelDeferredArtifactBind();
         base.OnNavigatedFrom(e);
         if (App.Watcher is not null)
         {

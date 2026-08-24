@@ -1,0 +1,52 @@
+{
+  "name": "Task Detail artifact navigation performance",
+  "startUri": "glasswork://backlog",
+  "windowWidth": 1000,
+  "windowHeight": 720,
+  "launchTimeoutSeconds": 45,
+  "initialWaitMilliseconds": 1000,
+  "tasks": [
+    {
+      "id": "large-artifact-task",
+      "title": "Large artifact performance task",
+      "description": "A short task description keeps the artifact renderer as the measured variable.",
+      "status": "todo",
+      "priority": "medium",
+      "artifacts": [
+        {
+          "name": "large-analysis.md",
+          "markdown": "## Performance section\n\nThis repeated artifact paragraph exercises markdown block creation, text measurement, and link-safe rendering on Task Detail.\n\n- first item\n- second item\n- third item\n\n",
+          "repeatContent": 400
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 15000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "BacklogTaskList",
+      "timeoutMilliseconds": 30000
+    },
+    {
+      "type": "assert-navigation-latency",
+      "name": "Large artifact performance task",
+      "automationId": "TaskTitleBox",
+      "value": "1000",
+      "completionAutomationId": "row:large-analysis",
+      "completionBudgetMilliseconds": 2000,
+      "maximumXamlFrameMilliseconds": 250,
+      "timeoutMilliseconds": 30000
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-detail-artifact-navigation-performance",
+      "waitMilliseconds": 500
+    }
+  ]
+}

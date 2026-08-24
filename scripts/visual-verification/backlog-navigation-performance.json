@@ -1,0 +1,38 @@
+{
+  "name": "Backlog navigation performance",
+  "windowWidth": 1000,
+  "windowHeight": 720,
+  "launchTimeoutSeconds": 45,
+  "initialWaitMilliseconds": 1000,
+  "tasks": [
+    {
+      "id": "navigation-performance-task",
+      "title": "Navigation performance task",
+      "status": "todo",
+      "priority": "medium",
+      "repeat": 250
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 15000
+    },
+    {
+      "type": "assert-nav-selection-latency",
+      "name": "NavBacklog",
+      "automationId": "BacklogHeader",
+      "value": "1500",
+      "completionName": "Navigation performance task 001",
+      "completionBudgetMilliseconds": 2000,
+      "maximumXamlFrameMilliseconds": 250,
+      "timeoutMilliseconds": 30000
+    }
+  ],
+  "captures": [
+    {
+      "name": "backlog-navigation-performance"
+    }
+  ]
+}

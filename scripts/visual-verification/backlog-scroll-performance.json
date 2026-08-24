@@ -1,0 +1,40 @@
+{
+  "name": "Backlog scroll performance",
+  "startUri": "glasswork://backlog",
+  "windowWidth": 1000,
+  "windowHeight": 720,
+  "launchTimeoutSeconds": 45,
+  "initialWaitMilliseconds": 1000,
+  "tasks": [
+    {
+      "id": "scroll-performance-task",
+      "title": "Scrolling performance task",
+      "status": "todo",
+      "priority": "medium",
+      "repeat": 150
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 15000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "BacklogTaskList",
+      "timeoutMilliseconds": 30000
+    },
+    {
+      "type": "assert-scroll-xaml-frame-budget",
+      "automationId": "BacklogTaskList",
+      "value": "18",
+      "timeoutMilliseconds": 15000
+    }
+  ],
+  "captures": [
+    {
+      "name": "backlog-scroll-performance"
+    }
+  ]
+}

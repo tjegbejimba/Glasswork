@@ -6,7 +6,8 @@ namespace Glasswork.Core.Models;
 
 /// <summary>
 /// View-model wrapper around an <see cref="Artifact"/> for the TaskDetail
-/// Artifacts section. Adds the per-row UI state (auto-expand for newest)
+/// Artifacts section. Adds the per-row UI state (auto-expand for the newest
+/// artifact when its render cost is bounded)
 /// and a relative-time badge so XAML can bind directly without converters.
 /// </summary>
 public sealed record ArtifactRow(
@@ -85,7 +86,8 @@ public sealed record ArtifactRow(
 
     /// <summary>
     /// Projects a time-ordered list of artifacts into rows. The newest
-    /// artifact row has <see cref="IsExpanded"/> true; the rest are collapsed.
+    /// artifact row has <see cref="IsExpanded"/> true when it is small enough
+    /// to render without blocking Task Detail navigation; the rest are collapsed.
     /// </summary>
     public static List<ArtifactRow> Project(IReadOnlyList<Artifact> artifacts, DateTime nowUtc)
     {
@@ -95,7 +97,10 @@ public sealed record ArtifactRow(
             .index ?? -1;
 
         return artifacts
-            .Select((a, i) => new ArtifactRow(a, IsExpanded: i == newestIndex, TimeBadge: FormatRelative(nowUtc - a.ModifiedUtc)))
+            .Select((a, i) => new ArtifactRow(
+                a,
+                IsExpanded: i == newestIndex && a.SizeBytes <= ArtifactCaps.AutoExpandBytes,
+                TimeBadge: FormatRelative(nowUtc - a.ModifiedUtc)))
             .ToList();
     }
 
