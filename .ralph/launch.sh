@@ -24,6 +24,9 @@
 #                      or just "<LOOP_REPO>" when parallelism=1 (back-compat).
 #   RALPH_LOOP_BRANCH  Base branch name for loop worktree(s) (default: ralph-loop)
 #                      Worker N's branch is "<LOOP_BRANCH>-<N>" when parallelism>1.
+#   RALPH_BASE_REMOTE  Remote that owns the worker base (default: origin)
+#   RALPH_BASE_BRANCH  Worker base branch (default: RALPH_RELEASE_BRANCH, then main)
+#   RALPH_BASE_COMMIT  Immutable preflight-approved base commit (optional)
 
 set -euo pipefail
 
@@ -37,6 +40,10 @@ DEFAULT_MAIN="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 MAIN_REPO="${RALPH_MAIN_REPO:-$DEFAULT_MAIN}"
 LOOP_REPO_BASE="${RALPH_LOOP_REPO:-${MAIN_REPO}-ralph}"
 PARALLELISM="${RALPH_PARALLELISM:-1}"
+BASE_REMOTE="${RALPH_BASE_REMOTE:-origin}"
+BASE_BRANCH="${RALPH_BASE_BRANCH:-${RALPH_RELEASE_BRANCH:-main}}"
+BASE_COMMIT="${RALPH_BASE_COMMIT:-}"
+BASE_REF="refs/remotes/${BASE_REMOTE}/${BASE_BRANCH}"
 
 # Compute a stable 12-char token from $MAIN_REPO's realpath. Used as the
 # default loop branch suffix so two worktrees of the same repo each get
@@ -197,6 +204,14 @@ if [[ -f "$_preflight_lib" ]]; then
 fi
 unset _preflight_lib
 
+# PRD integration branch ownership is optional for legacy installs, but a
+# run carrying a PRD reference must have it before workers may start.
+_prd_branch_lib="$MAIN_REPO/.ralph/lib/prd-branch.sh"
+if [[ -f "$_prd_branch_lib" ]]; then
+  # shellcheck disable=SC1090
+  . "$_prd_branch_lib"
+fi
+
 # Terminal CLI helper (optional). Provides resolve_terminal_cli /
 # invoke_terminal_cli for --status augmentation and the new --watch / --follow
 # commands. Sourcing is conditional so older installs still work.
@@ -347,6 +362,9 @@ Environment:
   RALPH_MAIN_REPO     Path to main checkout
   RALPH_LOOP_REPO     Base path for loop worktree(s)
   RALPH_LOOP_BRANCH   Base branch name for loop worktree(s)
+  RALPH_BASE_REMOTE   Remote that owns the worker base (default: origin)
+  RALPH_BASE_BRANCH   Worker base branch (default: RALPH_RELEASE_BRANCH, then main)
+  RALPH_BASE_COMMIT   Immutable preflight-approved base commit (optional)
   RALPH_REPO          owner/repo slug for gh calls (auto-detected from git remote)
   RALPH_GH_BIN        Path to gh binary (default: gh)
   RALPH_TERMINAL_CLI  Override path to the terminal CLI (extension/cli.mjs)
@@ -708,7 +726,7 @@ if [[ "${1:-}" == "--enqueue-prd" ]]; then
   if declare -F ralph_enqueueable_blocker_tags >/dev/null 2>&1; then
     while IFS= read -r _row; do
       [[ -z "$_row" ]] && continue
-      _record=$(printf '%s' "$_row" | tr -d '\r' | base64 --decode | tr -d '\r')
+      _record=$(echo "$_row" | base64 --decode | tr -d '\r')
       _num=$(echo "$_record" | jq -r '.number')
       _blockers=$(ralph_enqueueable_blocker_tags "$_record")
       [[ -z "$_blockers" && -n "$_num" ]] && _runnable_numbers+=("$_num")
@@ -844,14 +862,22 @@ for _flag in "$@"; do
 done
 unset _flag
 
-# Repository launch authorization is fail-closed. Read-only and enqueue commands
-# exit above this point, so operators can inspect and prepare a disabled install.
-_repo_launch_allowed=$(jq -r '.allowAgentLaunch // false' "$MAIN_REPO/.ralph/config.json" 2>/dev/null || echo "false")
-if [[ "$_repo_launch_allowed" != "true" ]]; then
-  echo "❌ Agent launch is disabled: set allowAgentLaunch=true in .ralph/config.json only after all launch preconditions are enforceable." >&2
+if ! [[ "$BASE_REMOTE" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+  echo "❌ RALPH_BASE_REMOTE is not a valid remote name: $BASE_REMOTE" >&2
   exit 1
 fi
-unset _repo_launch_allowed
+if ! git -C "$MAIN_REPO" check-ref-format --branch "$BASE_BRANCH" >/dev/null 2>&1; then
+  echo "❌ RALPH_BASE_BRANCH is not a valid branch name: $BASE_BRANCH" >&2
+  exit 1
+fi
+if ! git -C "$MAIN_REPO" config --get "remote.${BASE_REMOTE}.url" >/dev/null 2>&1; then
+  echo "❌ RALPH_BASE_REMOTE is not configured in this repository: $BASE_REMOTE" >&2
+  exit 1
+fi
+if [[ -n "$BASE_COMMIT" && ! "$BASE_COMMIT" =~ ^([0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$ ]]; then
+  echo "❌ RALPH_BASE_COMMIT must be a full commit hash" >&2
+  exit 1
+fi
 
 # Launcher-level mutex — prevents two concurrent `launch.sh` invocations from
 # both running setup (which mutates .git/info/exclude, worktrees, and branch
@@ -885,6 +911,74 @@ if ! acquire_lockdir "$COMMON_SETUP_LOCK"; then
 fi
 trap 'release_lockdir "$COMMON_SETUP_LOCK"; release_lockdir "$SETUP_LOCK"' EXIT
 
+initialize_prd_run() {
+  local run_id="${RALPH_RUN_ID:-}"
+  [[ -n "$run_id" ]] || return 0
+
+  local ralph_md="$MAIN_REPO/.ralph/RALPH.md"
+  [[ -f "$ralph_md" ]] || return 0
+
+  local prd_number
+  prd_number=$(sed -nE 's/.*<!-- RALPH_PRD_REF: #([1-9][0-9]*) -->.*/\1/p' "$ralph_md" | head -1)
+  [[ -n "$prd_number" ]] || return 0
+
+  if ! declare -F create_prd_branch >/dev/null 2>&1; then
+    echo "❌ PRD #$prd_number requires .ralph/lib/prd-branch.sh before workers can launch." >&2
+    return 1
+  fi
+
+  local config="$MAIN_REPO/.ralph/config.json"
+  local template="" remote="origin" delivery_branch="main"
+  if [[ -f "$config" ]]; then
+    template=$(jq -r '.prd.integrationBranchTemplate // ""' "$config")
+    remote=$(jq -r '.prd.remote // "origin"' "$config")
+    delivery_branch=$(jq -r '.prd.deliveryBranch // "main"' "$config")
+  fi
+
+  local prd_record prd_title
+  prd_record=$("$GH" issue view "$prd_number" --repo "$REPO" \
+    --json number,title,state 2>/dev/null || echo "")
+  prd_title=$(echo "$prd_record" | jq -r '.title // empty' 2>/dev/null)
+  if [[ -z "$prd_title" ]]; then
+    echo "❌ Cannot resolve title for PRD #$prd_number; refusing to launch workers." >&2
+    return 1
+  fi
+
+  if ! can_start_prd "$prd_number" "$run_id"; then
+    return 1
+  fi
+
+  local ownership_file="$MAIN_REPO/.ralph/runs/$run_id/ownership.json"
+  local ownership_existed=0
+  [[ -f "$ownership_file" ]] && ownership_existed=1
+
+  local branch_name
+  branch_name=$(resolve_prd_branch_name "$prd_number" "$prd_title" "$template")
+  if ! (
+    cd "$MAIN_REPO"
+    create_prd_branch \
+      "$run_id" "$prd_number" "$prd_title" "$remote" "$delivery_branch" "$template"
+  ); then
+    return 1
+  fi
+
+  if ! activate_prd_run "$run_id" "$prd_number"; then
+    echo "❌ Failed to activate PRD #$prd_number for run '$run_id'; rolling back new branch setup." >&2
+    if [[ "$ownership_existed" -eq 0 ]]; then
+      git -C "$MAIN_REPO" branch -D "$branch_name" >/dev/null 2>&1 || true
+      rm -f "$ownership_file"
+    fi
+    return 1
+  fi
+
+  echo "🌿 PRD #$prd_number run '$run_id' owns integration branch '$branch_name'."
+}
+
+if ! initialize_prd_run; then
+  exit 1
+fi
+unset _prd_branch_lib
+
 # Setup phase: create N worktrees and symlink .ralph in each.
 # Resolve the exclude file via git so worktree targets (where MAIN_REPO/.git
 # is a gitlink file) write to the common gitdir's info/exclude. The common
@@ -908,19 +1002,45 @@ if ! grep -qxF ".ralph" "$EXCLUDE_FILE" 2>/dev/null; then
 fi
 
 # Retry git fetch — independent loops from sibling worktrees share the
-# common gitdir's refs/remotes/origin/main.lock; a single collision under
+# common gitdir's remote-tracking ref lock; a single collision under
 # `set -e` would abort the entire setup. Mirrors the worker-side retry
 # loop in ralph/ralph.sh::sync_to_origin_main.
 _launch_git_fetch() {
   local repo="$1"
   local attempt rc=1
   for attempt in 1 2 3 4 5; do
-    git -C "$repo" fetch origin main >/dev/null 2>&1 && return 0
+    git -C "$repo" fetch "$BASE_REMOTE" "$BASE_BRANCH" >/dev/null 2>&1 && return 0
     rc=$?
     sleep "$(awk -v a="$attempt" 'BEGIN{srand(); printf "%.2f", a*(0.5+rand())}')"
   done
   return "$rc"
 }
+
+_launch_git_fetch "$MAIN_REPO" \
+  || { echo "❌ git fetch $BASE_REMOTE $BASE_BRANCH failed after 5 attempts; aborting setup." >&2; exit 1; }
+
+fetched_base_commit="$(git -C "$MAIN_REPO" rev-parse --verify "${BASE_REF}^{commit}" 2>/dev/null || true)"
+if [[ -z "$fetched_base_commit" ]]; then
+  echo "❌ Cannot resolve fetched base $BASE_REMOTE/$BASE_BRANCH; aborting setup." >&2
+  exit 1
+fi
+if [[ -n "$BASE_COMMIT" ]]; then
+  approved_base_commit="$(git -C "$MAIN_REPO" rev-parse --verify "${BASE_COMMIT}^{commit}" 2>/dev/null || true)"
+  if [[ -z "$approved_base_commit" ]]; then
+    echo "❌ Approved base commit $BASE_COMMIT is not available; aborting setup." >&2
+    exit 1
+  fi
+  if ! git -C "$MAIN_REPO" merge-base --is-ancestor "$approved_base_commit" "$fetched_base_commit"; then
+    echo "❌ Approved base commit $approved_base_commit does not belong to $BASE_REMOTE/$BASE_BRANCH at $fetched_base_commit." >&2
+    exit 1
+  fi
+  BASE_COMMIT="$approved_base_commit"
+else
+  BASE_COMMIT="$fetched_base_commit"
+fi
+export RALPH_BASE_REMOTE="$BASE_REMOTE"
+export RALPH_BASE_BRANCH="$BASE_BRANCH"
+export RALPH_BASE_COMMIT="$BASE_COMMIT"
 
 for ((i = 1; i <= PARALLELISM; i++)); do
   loop_repo=$(worker_repo "$i")
@@ -934,11 +1054,9 @@ for ((i = 1; i <= PARALLELISM; i++)); do
   if [[ ! -d "$loop_repo" ]]; then
     echo "🌱 Worker $i: creating worktree at $loop_repo on branch $loop_branch"
     cd "$MAIN_REPO"
-    _launch_git_fetch "$MAIN_REPO" \
-      || { echo "❌ git fetch origin main failed after 5 attempts; aborting setup." >&2; exit 1; }
-    git worktree add -B "$loop_branch" "$loop_repo" origin/main
+    git worktree add -B "$loop_branch" "$loop_repo" "$BASE_COMMIT"
     cd "$loop_repo"
-    git branch --set-upstream-to=origin/main "$loop_branch"
+    git branch --set-upstream-to="$BASE_REMOTE/$BASE_BRANCH" "$loop_branch"
   fi
 
   if [[ ! -L "$loop_repo/.ralph" ]]; then
@@ -948,17 +1066,17 @@ for ((i = 1; i <= PARALLELISM; i++)); do
 
   cd "$loop_repo"
   _launch_git_fetch "$loop_repo" \
-    || { echo "❌ git fetch origin main failed after 5 attempts; aborting setup." >&2; exit 1; }
+    || { echo "❌ git fetch $BASE_REMOTE $BASE_BRANCH failed after 5 attempts; aborting setup." >&2; exit 1; }
   # Legacy migration: pre-existing single-worktree installs may already be
   # checked out on the old default `ralph-loop` branch. If the expected
-  # hash-derived branch doesn't exist yet, create it from origin/main
+  # hash-derived branch doesn't exist yet, create it from the approved base
   # in-place rather than failing the checkout. Idempotent on re-launch.
   if ! git rev-parse --verify --quiet "refs/heads/$loop_branch" >/dev/null; then
-    git checkout -B "$loop_branch" origin/main >/dev/null
+    git checkout -B "$loop_branch" "$BASE_COMMIT" >/dev/null
   else
     git checkout "$loop_branch" >/dev/null
   fi
-  git reset --hard origin/main >/dev/null
+  git reset --hard "$BASE_COMMIT" >/dev/null
   echo "✅ Worker $i: on $(git rev-parse --abbrev-ref HEAD) at $(git rev-parse --short HEAD)"
 done
 
@@ -975,7 +1093,9 @@ if [[ "${1:-}" == "--foreground" ]]; then
   release_lockdir "$SETUP_LOCK"
   trap - EXIT
   spawn_caffeinate 1 "$$"
-  RALPH_WORKER_ID=1 exec "$MAIN_REPO/.ralph/ralph.sh" "${RALPH_WORKER_ARGS[@]}"
+  RALPH_MAIN_REPO="$MAIN_REPO" RALPH_WORKER_ID=1 \
+    RALPH_BASE_REMOTE="$BASE_REMOTE" RALPH_BASE_BRANCH="$BASE_BRANCH" RALPH_BASE_COMMIT="$BASE_COMMIT" \
+    exec "$MAIN_REPO/.ralph/ralph.sh" "${RALPH_WORKER_ARGS[@]}"
 fi
 
 echo "🚀 Launching $PARALLELISM worker(s) in background. Tail: tail -f $LOG"
@@ -988,7 +1108,9 @@ for ((i = 1; i <= PARALLELISM; i++)); do
   cd "$loop_repo"
   worker_log="$MAIN_REPO/.ralph/logs/worker-${i}.out"
   mkdir -p "$(dirname "$worker_log")"
-  RALPH_WORKER_ID=$i nohup "$MAIN_REPO/.ralph/ralph.sh" "${RALPH_WORKER_ARGS[@]}" \
+  RALPH_MAIN_REPO="$MAIN_REPO" RALPH_WORKER_ID=$i \
+    RALPH_BASE_REMOTE="$BASE_REMOTE" RALPH_BASE_BRANCH="$BASE_BRANCH" RALPH_BASE_COMMIT="$BASE_COMMIT" \
+    nohup "$MAIN_REPO/.ralph/ralph.sh" "${RALPH_WORKER_ARGS[@]}" \
     >>"$worker_log" 2>&1 < /dev/null &
   worker_pid=$!
   disown
