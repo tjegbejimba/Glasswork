@@ -617,12 +617,12 @@ function Invoke-PlanMode {
     Invoke-AppTokenGit `
         -Arguments @("fetch", "origin", "main", "--tags", "--force") `
         -FailureMessage "Unable to fetch release tags and current main" | Out-Null
-    $remoteMain = (
-        Invoke-Native `
+    $remoteMain = Get-RequiredNativeOutputLine `
+        -Output (Invoke-Native `
             -Command "git" `
             -Arguments @("rev-parse", "origin/main") `
-            -FailureMessage "Unable to resolve origin/main"
-    )[0].Trim()
+            -FailureMessage "Unable to resolve origin/main") `
+        -Description "origin/main revision"
     if ($CandidateSha -ne $remoteMain) {
         throw "Candidate '$CandidateSha' is not current origin/main '$remoteMain'."
     }
@@ -633,12 +633,12 @@ function Invoke-PlanMode {
         throw "$Stream project version '$projectVersion' does not match latest immutable tag '$($tag.Tag)'."
     }
 
-    $commitDateText = (
-        Invoke-Native `
+    $commitDateText = Get-RequiredNativeOutputLine `
+        -Output (Invoke-Native `
             -Command "git" `
             -Arguments @("show", "-s", "--format=%cI", $CandidateSha) `
-            -FailureMessage "Unable to read candidate commit time"
-    )[0].Trim()
+            -FailureMessage "Unable to read candidate commit time") `
+        -Description "candidate commit time"
     $commitDate = [datetimeoffset]::Parse($commitDateText)
     $quietPeriodSatisfied = [datetimeoffset]::UtcNow - $commitDate.ToUniversalTime() -ge
         [timespan]::FromHours(2)
@@ -843,12 +843,12 @@ function Invoke-ApplyMode {
                 -FailureMessage "Unable to inspect orphaned automation commit"
         ) -join "`n"
         $orphanMarker = Read-ReleaseMarker -Text $orphanCommitMessage
-        $orphanTree = (
-            Invoke-Native `
+        $orphanTree = Get-RequiredNativeOutputLine `
+            -Output (Invoke-Native `
                 -Command "git" `
                 -Arguments @("rev-parse", "$orphanBranchHead^{tree}") `
-                -FailureMessage "Unable to inspect orphaned automation tree"
-        )[0].Trim()
+                -FailureMessage "Unable to inspect orphaned automation tree") `
+            -Description "orphaned automation tree"
         if ($orphanTree -ne [string]$orphanMarker.treeSha) {
             throw "Orphaned automation branch tree does not match its signed marker."
         }
@@ -955,12 +955,12 @@ function Invoke-ApplyMode {
         -Arguments (@("add", "--") + $releasePaths) `
         -FailureMessage "Unable to stage generated Release PR files" | Out-Null
     $planHash = Get-PlanHash -Path $PlanPath
-    $treeSha = (
-        Invoke-Native `
+    $treeSha = Get-RequiredNativeOutputLine `
+        -Output (Invoke-Native `
             -Command "git" `
             -Arguments @("write-tree") `
-            -FailureMessage "Unable to resolve generated Release PR tree"
-    )[0].Trim()
+            -FailureMessage "Unable to resolve generated Release PR tree") `
+        -Description "generated Release PR tree"
     $payload = Get-ReleaseMarkerPayload `
         -Version $version `
         -Candidate $CandidateSha `
@@ -1009,8 +1009,8 @@ function Invoke-ApplyMode {
 
     $title = "Release $Stream v$version"
     if ($null -eq $existingPullRequest) {
-        $url = (
-            Invoke-Native `
+        $url = Get-RequiredNativeOutputLine `
+            -Output (Invoke-Native `
                 -Command "gh" `
                 -Arguments @(
                     "pr", "create",
@@ -1023,8 +1023,8 @@ function Invoke-ApplyMode {
                     "--label", $streamLabel,
                     "--label", "semver:$($plan.Bump)"
                 ) `
-                -FailureMessage "Unable to create $Stream Release PR"
-        )[0].Trim()
+                -FailureMessage "Unable to create $Stream Release PR") `
+            -Description "created $Stream Release PR URL"
         $pullRequest = Invoke-GhJson `
             -Arguments @("pr", "view", $url, "--repo", $Repository, "--json", "number,url") `
             -FailureMessage "Unable to resolve the created Release PR"
