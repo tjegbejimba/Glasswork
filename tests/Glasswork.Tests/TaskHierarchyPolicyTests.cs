@@ -61,6 +61,22 @@ public class TaskHierarchyPolicyTests
     }
 
     [TestMethod]
+    public void ValidateMutation_ChildRelationshipAlsoValidatesResolvedParent()
+    {
+        var parent = Parent("parent", "Parent");
+        parent.Subtasks.Add(new SubTask { Text = "Legacy inline work" });
+        var child = Task("child", "Child", "parent");
+        var policy = new TaskHierarchyPolicy(new[] { parent, child });
+
+        var diagnostic = policy.Validate(["child"]).Single();
+
+        Assert.AreEqual(
+            TaskHierarchyDiagnosticCodes.ParentInlineSubtasksNotAllowed,
+            diagnostic.Code);
+        CollectionAssert.AreEqual(new[] { "parent" }, diagnostic.TaskIds.ToArray());
+    }
+
+    [TestMethod]
     public void ResolveParent_CanonicalizesLocalAdoIdentityAndPreservesUnresolvedIdentity()
     {
         var local = Parent("local-parent", "Local title");

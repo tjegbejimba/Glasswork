@@ -59,6 +59,32 @@ public class ListSubtasksTests
     }
 
     [TestMethod]
+    public void ListSubtasks_LaterLocalAdoResolution_IncludesPreviouslyUnresolvedChild()
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var parent = new GlassworkTask
+        {
+            Id = "local-parent",
+            Title = "Local parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        parent.AdoLink = 42;
+        vault.Save(parent);
+        vault.Save(new GlassworkTask
+        {
+            Id = "unresolved-child",
+            Title = "Unresolved child",
+            Parent = "https://dev.azure.com/org/project/_workitems/edit/42",
+        });
+
+        var result = JsonDocument.Parse(_tools.ListSubtasks("local-parent", recursive: true))
+            .RootElement.GetProperty("subtasks");
+
+        Assert.AreEqual(1, result.GetArrayLength());
+        Assert.AreEqual("unresolved-child", result[0].GetProperty("id").GetString());
+    }
+
+    [TestMethod]
     public void ListSubtasks_ReturnsChildFieldsSizeAndRevisionFromOneSnapshot()
     {
         var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
