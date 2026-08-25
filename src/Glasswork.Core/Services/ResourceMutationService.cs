@@ -219,20 +219,41 @@ public sealed partial class ResourceMutationService
                 var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);
                 var requestedParent = task.Parent;
                 hierarchy.CanonicalizeParent(task);
+                if (!string.Equals(requestedParent, task.Parent, StringComparison.Ordinal))
+                    throw new ResourceRevisionConflictException(
+                        "Parent resolution changed before commit.");
                 var diagnostics = hierarchy.Validate([taskId]);
                 if (diagnostics.Count > 0)
                     throw new InvalidOperationException(diagnostics[0].Message);
 
-                var canonicalBytes = string.Equals(requestedParent, task.Parent, StringComparison.Ordinal)
-                    ? updated
-                    : Encoding.UTF8.GetBytes(_parser.Serialize(task));
-                CommitBytesUnsafe(taskId, canonicalBytes, notifications, expectedOriginal);
+                CommitBytesUnsafe(taskId, updated, notifications, expectedOriginal);
             }
+
         }
         finally
         {
             foreach (var id in notifications)
                 _vault.NotifyTaskWritten(id);
+        }
+    }
+
+    internal string? ResolveParentReference(string taskId, string? parentReference)
+    {
+        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+        {
+            RecoverUnsafe();
+            var bytes = _vault.TryReadBytesUnsafe(taskId);
+            if (bytes is null)
+                return null;
+            var task = _parser.Parse(Encoding.UTF8.GetString(bytes));
+            TaskService.EnsureCanMutate(task);
+            task.Parent = string.IsNullOrWhiteSpace(parentReference) ? null : parentReference.Trim();
+            var hierarchy = new TaskHierarchyPolicy(LoadHierarchyTasksUnsafe(taskId, task));
+            hierarchy.CanonicalizeParent(task);
+            var diagnostics = hierarchy.Validate([taskId]);
+            if (diagnostics.Count > 0)
+                throw new InvalidOperationException(diagnostics[0].Message);
+            return task.Parent;
         }
     }
 

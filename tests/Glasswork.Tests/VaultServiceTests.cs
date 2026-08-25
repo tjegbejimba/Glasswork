@@ -407,6 +407,19 @@ public class VaultServiceTests
         StringAssert.Contains(actual, "parent: https://dev.azure.com/org/proj/_workitems/edit/42");
     }
 
+    [DataRow("#123")]
+    [DataRow("foo: bar")]
+    [TestMethod]
+    public void SetParent_YamlSyntax_RoundTripsAsFreeText(string parent)
+    {
+        var task = new GlassworkTask { Id = "yaml-parent", Title = "YAML parent" };
+        _vault.Save(task);
+
+        _vault.SetParent(task.Id, parent);
+
+        Assert.AreEqual(parent, _vault.Load(task.Id)!.Parent);
+    }
+
     [TestMethod]
     public void SetParent_RejectsLeafOwnerAndCycleBeforeWriting()
     {

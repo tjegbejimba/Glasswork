@@ -477,10 +477,10 @@ public class VaultService
         }
         if (insertPos < 0) insertPos = newFront.Count;
 
-        var trimmed = parent?.Trim();
+        var trimmed = EnsureMutations().ResolveParentReference(taskId, parent);
         if (!string.IsNullOrEmpty(trimmed))
         {
-            newFront.Insert(insertPos, $"parent: {trimmed}");
+            newFront.Insert(insertPos, $"parent: {_parser.SerializeScalar("parent", trimmed)}");
         }
 
         var rebuilt = new List<string> { "---" };
