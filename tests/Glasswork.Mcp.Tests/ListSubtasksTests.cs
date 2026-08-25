@@ -32,7 +32,7 @@ public class ListSubtasksTests
     public void ListSubtasks_WithDirectChildren_ReturnsSubtasksArray()
     {
         // Arrange: create parent and two direct children
-        var parentJson = _tools.AddTask("Parent task");
+        var parentJson = _tools.AddTask("Parent task", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
         
         _tools.AddTask("Child 1", parent_task_id: parentId, size: "focus");
@@ -116,7 +116,7 @@ public class ListSubtasksTests
     public void ListSubtasks_WithStatusFilter_ReturnsOnlyMatchingStatus()
     {
         // Arrange: parent with children in different statuses
-        var parentJson = _tools.AddTask("Parent");
+        var parentJson = _tools.AddTask("Parent", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
         
         _tools.AddTask("Todo child", parent_task_id: parentId, status: "todo");
@@ -137,7 +137,7 @@ public class ListSubtasksTests
     [TestMethod]
     public void ListSubtasks_CancelledChildRequiresExplicitStatusFilter()
     {
-        var parent = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement;
+        var parent = JsonDocument.Parse(_tools.AddTask("Parent", type: "parent")).RootElement;
         var parentId = parent.GetProperty("task_id").GetString()!;
         var child = JsonDocument.Parse(
             _tools.AddTask("Cancelled child", parent_task_id: parentId)).RootElement;
@@ -164,7 +164,7 @@ public class ListSubtasksTests
     public void ListSubtasks_CompletionRate_CalculatedCorrectly()
     {
         // Arrange: parent with 2 done out of 4 children = 50%
-        var parentJson = _tools.AddTask("Parent");
+        var parentJson = _tools.AddTask("Parent", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
         
         _tools.AddTask("Todo 1", parent_task_id: parentId, status: "todo");
@@ -186,10 +186,10 @@ public class ListSubtasksTests
     public void ListSubtasks_Recursive_ReturnsDescendantsAtAllLevels()
     {
         // Arrange: parent → child1, child2; child1 → grandchild1
-        var parentJson = _tools.AddTask("Parent");
+        var parentJson = _tools.AddTask("Parent", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
         
-        var child1Json = _tools.AddTask("Child 1", parent_task_id: parentId);
+        var child1Json = _tools.AddTask("Child 1", parent_task_id: parentId, type: "parent");
         var child1Id = JsonDocument.Parse(child1Json).RootElement.GetProperty("task_id").GetString()!;
         
         _tools.AddTask("Child 2", parent_task_id: parentId);
@@ -209,10 +209,10 @@ public class ListSubtasksTests
     public void ListSubtasks_NonRecursive_ReturnsOnlyDirectChildren()
     {
         // Arrange: same hierarchy as above
-        var parentJson = _tools.AddTask("Parent");
+        var parentJson = _tools.AddTask("Parent", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
         
-        var child1Json = _tools.AddTask("Child 1", parent_task_id: parentId);
+        var child1Json = _tools.AddTask("Child 1", parent_task_id: parentId, type: "parent");
         var child1Id = JsonDocument.Parse(child1Json).RootElement.GetProperty("task_id").GetString()!;
         
         _tools.AddTask("Child 2", parent_task_id: parentId);

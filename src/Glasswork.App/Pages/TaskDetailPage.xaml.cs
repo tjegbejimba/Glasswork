@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Glasswork.Controls;
 using Glasswork.Core.Markdown;
@@ -321,7 +322,9 @@ public sealed partial class TaskDetailPage : Page
         }
 
         ParentLabel.Visibility = Visibility.Visible;
-        ParentTextRun.Text = p;
+        var hierarchy = new TaskHierarchyPolicy(App.Index.Tasks.Values);
+        var namedParent = hierarchy.ResolveParent(task);
+        ParentTextRun.Text = namedParent.DisplayTitle ?? p;
         EditParentButton.Content = "Edit parent";
 
         // Classify parent to determine link type
@@ -1032,13 +1035,32 @@ public sealed partial class TaskDetailPage : Page
 
     private void AddSubtask_Click(object sender, RoutedEventArgs e) => CommitNewSubtask();
 
-    private void CommitNewSubtask()
+    private async void CommitNewSubtask()
     {
         if (_isLoading) return;
         var title = AddSubtaskBox.Text?.Trim();
         if (string.IsNullOrEmpty(title)) return;
 
-        App.Vault.AddSubtask(Task.Id, title);
+        var subtasks = Task.Subtasks
+            .Append(new SubTask { Text = title })
+            .Select(subtask => new
+            {
+                text = subtask.Text,
+                is_completed = subtask.IsCompleted,
+                status = subtask.Status,
+                notes = subtask.Notes,
+                size = subtask.Size,
+                metadata = subtask.Metadata,
+            })
+            .ToArray();
+        var mutation = App.Mutations.TransactSingleTask(
+            $"app-add-subtask-{Guid.NewGuid():N}",
+            Task.Id,
+            Task.ResourceRevision,
+            JsonSerializer.SerializeToElement(new { subtasks }));
+        if (!await ApplyHierarchyMutationAsync(mutation, "Unable to add Subtask"))
+            return;
+
         AddSubtaskBox.Text = string.Empty;
 
         var reloaded = App.Vault.Load(Task.Id);
@@ -1433,10 +1455,39 @@ public sealed partial class TaskDetailPage : Page
         if (result != ContentDialogResult.Primary) return;
 
         var trimmed = box.Text?.Trim();
-        App.Vault.SetParent(Task.Id, string.IsNullOrEmpty(trimmed) ? null : trimmed);
+        var mutation = App.Mutations.TransactSingleTask(
+            $"app-set-parent-{Guid.NewGuid():N}",
+            Task.Id,
+            Task.ResourceRevision,
+            JsonSerializer.SerializeToElement(new
+            {
+                parent_task_id = string.IsNullOrEmpty(trimmed) ? null : trimmed,
+            }));
+        if (!await ApplyHierarchyMutationAsync(mutation, "Unable to update Parent"))
+            return;
+
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
 
+    }
+
+    private async Task<bool> ApplyHierarchyMutationAsync(
+        ResourceMutationOutcome outcome,
+        string title)
+    {
+        if (outcome.Outcome is "applied" or "no_op")
+            return true;
+        if (outcome.Outcome == "conflict")
+        {
+            ReloadBanner.IsOpen = true;
+            return false;
+        }
+
+        var message = outcome.Diagnostics?.FirstOrDefault()?.Message
+            ?? outcome.Error
+            ?? "The Task hierarchy change could not be saved.";
+        await ShowOperationErrorAsync(title, message);
+        return false;
     }
 
     private void StartWork_Click(object sender, RoutedEventArgs e)

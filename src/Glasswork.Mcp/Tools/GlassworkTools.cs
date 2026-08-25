@@ -259,7 +259,7 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("invalid_blocked_reason", "blocked_reason is required when status is blocked."));
             }
 
-            var safeParent = SanitizeId(parent_task_id);
+            var parentReference = NormalizeParentReference(parent_task_id);
 
             var baseId = VaultService.GenerateId(title);
             var id = baseId;
@@ -293,7 +293,7 @@ public sealed class GlassworkTools
                 SourceKind = source_kind,
                 Size = size,
                 Created = DateTime.Today,
-                Parent = safeParent,
+                Parent = parentReference,
                 Description = description ?? string.Empty,
                 Due = dueDate,
                 MyDay = myDayDate,
@@ -1738,11 +1738,8 @@ public sealed class GlassworkTools
                 if (!TryReadNullableString(parentElement, "parent_task_id", out var value, out var error))
                     return SerializeInputError(scope, error!);
 
-                var safeParent = SanitizeId(value);
-                if (!string.IsNullOrEmpty(safeParent) && !_vault.Exists(safeParent))
-                    return SerializeInputError(scope, new ErrorResult("invalid_parent", $"Parent task '{value}' not found."));
-
-                UpdateIfChanged(task.Parent, safeParent, v => task.Parent = v, "parent_task_id", updatedFields);
+                var parentReference = NormalizeParentReference(value);
+                UpdateIfChanged(task.Parent, parentReference, v => task.Parent = v, "parent_task_id", updatedFields);
             }
 
             if (hasFields && fields.TryGetProperty("ado_link", out var adoLinkElement))
@@ -2064,23 +2061,9 @@ public sealed class GlassworkTools
 
             var task = _vault.Load(safeId)!;
             var oldParentId = task.Parent;
-            var safeNewParent = SanitizeId(new_parent_id);
+            var parentReference = NormalizeParentReference(new_parent_id);
 
-            // Validate new parent exists
-            if (!string.IsNullOrEmpty(safeNewParent) && !_vault.Exists(safeNewParent))
-            {
-                scope?.SetResult("invalid_parent");
-                return JsonSerializer.Serialize(new ErrorResult("invalid_parent", $"Parent task '{new_parent_id}' not found."));
-            }
-
-            // Check for circular reparenting
-            if (!string.IsNullOrEmpty(safeNewParent) && WouldCreateCycle(safeId, safeNewParent))
-            {
-                scope?.SetResult("circular_parent");
-                return JsonSerializer.Serialize(new ErrorResult("circular_parent", $"Cannot move task '{task_id}': would create a circular parent relationship."));
-            }
-
-            task.Parent = safeNewParent;
+            task.Parent = parentReference;
             var mutation = _mutations.TransactSingleTask(
                 mutation_id,
                 safeId,
@@ -2094,7 +2077,7 @@ public sealed class GlassworkTools
                 TaskId: safeId,
                 Title: task.Title,
                 OldParentId: oldParentId,
-                NewParentId: safeNewParent,
+                NewParentId: mutation.Task?.Parent,
                 ResourceRevision: mutation.Task?.ResourceRevision));
         }
         catch
@@ -2104,35 +2087,8 @@ public sealed class GlassworkTools
         }
     }
 
-    /// <summary>
-    /// Returns true if setting taskId's parent to potentialParent would create a cycle.
-    /// Walks the ancestor chain of potentialParent to check if taskId appears.
-    /// Guards against existing cycles by tracking visited nodes.
-    /// </summary>
-    private bool WouldCreateCycle(string taskId, string potentialParent)
-    {
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var current = potentialParent;
-        
-        while (!string.IsNullOrEmpty(current))
-        {
-            // If we've seen this node before, there's a pre-existing cycle
-            // Treat this as safe (no cycle involving taskId), but stop walking
-            if (!visited.Add(current))
-                return false;
-
-            if (current == taskId)
-                return true;
-
-            var task = _vault.Load(current);
-            if (task is null)
-                break;
-
-            current = task.Parent;
-        }
-
-        return false;
-    }
+    private static string? NormalizeParentReference(string? parentReference) =>
+        string.IsNullOrWhiteSpace(parentReference) ? null : parentReference.Trim();
 
     private static string AppendNotes(string existing, string value)
     {

@@ -43,6 +43,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Do the thing", IsCompleted = false, Size = "focus" } }
         };
         _vault.Save(parent);
@@ -76,6 +77,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-future-size",
             Title = "Parent future size",
+            Type = GlassworkTask.Types.Parent,
             Subtasks =
             {
                 new SubTask { Text = "Future sized step", Size = "future_bucket" },
@@ -109,6 +111,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Only subtask", IsCompleted = false } }
         };
         _vault.Save(parent);
@@ -127,6 +130,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Already done", IsCompleted = true } }
         };
         _vault.Save(parent);
@@ -148,6 +152,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Subtask", IsCompleted = false } }
         };
         _vault.Save(parent);
@@ -166,6 +171,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Subtask", IsCompleted = false } }
         };
         _vault.Save(parent);

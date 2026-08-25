@@ -189,13 +189,8 @@ public class IndexService
         
         lock (_gate)
         {
-            var resolver = new TaskParentResolver(_store);
-            var children = _store.Values
-                .Where(t => string.Equals(
-                    resolver.ResolveTaskId(t.Parent),
-                    trimmedId,
-                    StringComparison.Ordinal))
-                .OrderBy(t => t.Title, StringComparer.Ordinal)
+            var hierarchy = new TaskHierarchyPolicy(_store.Values);
+            var children = hierarchy.GetChildren(trimmedId)
                 .Select(t => t.Clone())
                 .ToList();
             

@@ -735,6 +735,30 @@ public sealed partial class ResourceMutationService
                 new ResourceMutationOutcome(
                     mutationId, "validation_error", false, ifRevision, currentRevision, null, error));
 
+        var hierarchyTasks = LoadHierarchyTasksUnsafe(taskId, staged);
+        var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);
+        hierarchy.CanonicalizeParent(staged);
+        var hierarchyDiagnostics = hierarchy.Validate([taskId]);
+        if (hierarchyDiagnostics.Count > 0)
+        {
+            return Record(state, mutationId, requestHash,
+                new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    ifRevision,
+                    currentRevision,
+                    Snapshot(currentTask, currentRevision),
+                    "Task hierarchy validation failed.",
+                    Diagnostics: hierarchyDiagnostics
+                        .Select(diagnostic => new ResourceMutationDiagnostic(
+                            diagnostic.Code,
+                            0,
+                            diagnostic.TaskIds,
+                            diagnostic.Message))
+                        .ToArray()));
+        }
+
         _faults?.ThrowIfInjected(ResourceMutationFailurePoint.BeforeFinalValidation);
         var finalBytes = _vault.TryReadBytesUnsafe(taskId);
         if (finalBytes is null)
@@ -964,7 +988,21 @@ public sealed partial class ResourceMutationService
             }
         }
 
+        var hierarchy = new TaskHierarchyPolicy(staged.Values.Select(value => value.Task));
+        foreach (var taskId in touchedOperationIndexes.Keys)
+        {
+            if (staged.TryGetValue(taskId, out var touched))
+                hierarchy.CanonicalizeParent(touched.Task);
+        }
         diagnostics.AddRange(ValidateStagedGraph(staged, touchedOperationIndexes));
+        diagnostics.AddRange(hierarchy.Validate(touchedOperationIndexes.Keys).Select(diagnostic =>
+            new ResourceMutationDiagnostic(
+                diagnostic.Code,
+                diagnostic.TaskIds
+                    .Select(id => touchedOperationIndexes.GetValueOrDefault(id, 0))
+                    .FirstOrDefault(),
+                diagnostic.TaskIds,
+                diagnostic.Message)));
         if (diagnostics.Count > 0)
         {
             var outcome = diagnostics.Any(diagnostic => diagnostic.Code == "conflict")
@@ -1469,6 +1507,30 @@ public sealed partial class ResourceMutationService
             return Record(state, mutationId, requestHash,
                 new ResourceMutationOutcome(mutationId, "validation_error", false, null, null, null, "priority is invalid."));
 
+        var hierarchyTasks = LoadHierarchyTasksUnsafe(taskId, task);
+        var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);
+        hierarchy.CanonicalizeParent(task);
+        var hierarchyDiagnostics = hierarchy.Validate([taskId]);
+        if (hierarchyDiagnostics.Count > 0)
+        {
+            return Record(state, mutationId, requestHash,
+                new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    null,
+                    null,
+                    null,
+                    "Task hierarchy validation failed.",
+                    Diagnostics: hierarchyDiagnostics
+                        .Select(diagnostic => new ResourceMutationDiagnostic(
+                            diagnostic.Code,
+                            0,
+                            diagnostic.TaskIds,
+                            diagnostic.Message))
+                        .ToArray()));
+        }
+
         var createdBytes = Encoding.UTF8.GetBytes(_parser.Serialize(task));
         var journal = new JournalEntry(
             taskId,
@@ -1509,6 +1571,22 @@ public sealed partial class ResourceMutationService
         state.Outcomes[id] = new RecordedOutcome(hash, _clock(), outcome);
         WriteState(state);
         return outcome;
+    }
+
+    private IReadOnlyList<GlassworkTask> LoadHierarchyTasksUnsafe(
+        string replacementTaskId,
+        GlassworkTask replacement)
+    {
+        var tasks = new List<GlassworkTask>();
+        foreach (var path in Directory.EnumerateFiles(_vaultPath, "*.md", SearchOption.TopDirectoryOnly))
+        {
+            var id = Path.GetFileNameWithoutExtension(path);
+            if (string.Equals(id, replacementTaskId, StringComparison.Ordinal))
+                continue;
+            tasks.Add(_parser.Parse(File.ReadAllText(path)));
+        }
+        tasks.Add(replacement);
+        return tasks;
     }
 
     private string? ApplyFields(

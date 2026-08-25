@@ -6,7 +6,7 @@
       "id": "vv-ado-parent",
       "title": "Remove resource hydration code from ARM",
       "status": "doing",
-      "type": "pbi",
+      "type": "parent",
       "adoLink": 36083004
     },
     {

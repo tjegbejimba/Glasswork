@@ -98,7 +98,7 @@ public class GlassworkToolsTests
     [TestMethod]
     public void AddTask_WithParent_StoresParentInFrontmatter()
     {
-        var parentJson = _tools.AddTask("Parent Task");
+        var parentJson = _tools.AddTask("Parent Task", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
 
         var childJson = _tools.AddTask("Child Task", parent_task_id: parentId);
@@ -106,6 +106,45 @@ public class GlassworkToolsTests
 
         var content = File.ReadAllText(ResolveTodoPath(childPath));
         StringAssert.Contains(content, $"parent: {parentId}");
+    }
+
+    [TestMethod]
+    public void AddTask_LeafParent_ReturnsPreciseValidationWithoutWritingChild()
+    {
+        var leafId = JsonDocument.Parse(_tools.AddTask("Leaf"))
+            .RootElement.GetProperty("task_id").GetString()!;
+
+        var result = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: leafId));
+
+        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
+        Assert.AreEqual(
+            "parent_target_not_parent",
+            result.RootElement.GetProperty("diagnostics")[0].GetProperty("code").GetString());
+        Assert.IsFalse(_vault.Exists("child"));
+    }
+
+    [TestMethod]
+    public void AddTask_ExternalParent_PreservesIdentityThenCanonicalizesWhenLocalParentExists()
+    {
+        var unresolved = JsonDocument.Parse(_tools.AddTask("Unresolved child", parent_task_id: "77"));
+        var unresolvedId = unresolved.RootElement.GetProperty("task_id").GetString()!;
+        Assert.AreEqual("77", _vault.Load(unresolvedId)!.Parent);
+
+        var local = new GlassworkTask
+        {
+            Id = "feature-77",
+            Title = "Feature 77",
+            Type = GlassworkTask.Types.Parent,
+        };
+        local.AdoLink = 77;
+        _vault.Save(local);
+
+        var resolved = JsonDocument.Parse(_tools.AddTask(
+            "Resolved child",
+            parent_task_id: "https://dev.azure.com/org/project/_workitems/edit/77"));
+        var resolvedId = resolved.RootElement.GetProperty("task_id").GetString()!;
+
+        Assert.AreEqual("feature-77", _vault.Load(resolvedId)!.Parent);
     }
 
     [TestMethod]
@@ -613,7 +652,7 @@ public class GlassworkToolsTests
     public void ListTasks_FilterByParent_ReturnsMatchingTasksOnly()
     {
         _tools.AddTask("Parent");
-        var parentJson = _tools.AddTask("Parent For Filter");
+        var parentJson = _tools.AddTask("Parent For Filter", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
 
         _tools.AddTask("Child", parent_task_id: parentId);
@@ -1102,7 +1141,7 @@ public class GlassworkToolsTests
     [TestMethod]
     public void GetTask_WithParent_ReturnsParentId()
     {
-        var parentJson = _tools.AddTask("Parent");
+        var parentJson = _tools.AddTask("Parent", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
 
         var childJson = _tools.AddTask("Child", parent_task_id: parentId);
@@ -1789,7 +1828,7 @@ public class GlassworkToolsTests
     [TestMethod]
     public void UpdateTask_FullUpdate_WritesEverySupportedField()
     {
-        var parentJson = _tools.AddTask("Updated Parent");
+        var parentJson = _tools.AddTask("Updated Parent", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
         var taskJson = _tools.AddTask("Before", description: "Before desc", status: "todo");
         var taskId = JsonDocument.Parse(taskJson).RootElement.GetProperty("task_id").GetString()!;
@@ -1976,7 +2015,7 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
-    public void UpdateTask_InvalidParent_ReturnsStructuredError()
+    public void UpdateTask_UnresolvedExternalParent_RemainsExplicit()
     {
         var addJson = _tools.AddTask("Task");
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
@@ -1984,8 +2023,8 @@ public class GlassworkToolsTests
         var updateJson = UpdateTask(taskId, """{ "parent_task_id": "ghost" }""");
         var doc = JsonDocument.Parse(updateJson);
 
-        Assert.AreEqual("invalid_parent", doc.RootElement.GetProperty("error").GetString());
-        Assert.IsFalse(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("message").GetString()));
+        Assert.AreEqual("ghost", _vault.Load(taskId)!.Parent);
+        Assert.IsFalse(doc.RootElement.TryGetProperty("error", out _));
     }
 
     [TestMethod]
@@ -2001,7 +2040,7 @@ public class GlassworkToolsTests
     [TestMethod]
     public void UpdateTask_ParentEmptyOrNullClearsParent()
     {
-        var parentJson = _tools.AddTask("Parent");
+        var parentJson = _tools.AddTask("Parent", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
         var childJson = _tools.AddTask("Child", parent_task_id: parentId);
         var childId = JsonDocument.Parse(childJson).RootElement.GetProperty("task_id").GetString()!;
@@ -2359,9 +2398,9 @@ public class GlassworkToolsTests
     [TestMethod]
     public void LoadContext_WalksSubtasksToDepthOne()
     {
-        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
-        var childAId = JsonDocument.Parse(_tools.AddTask("Child A", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
-        var childBId = JsonDocument.Parse(_tools.AddTask("Child B", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent", type: "parent")).RootElement.GetProperty("task_id").GetString()!;
+        var childAId = JsonDocument.Parse(_tools.AddTask("Child A", parent_task_id: parentId, type: "parent")).RootElement.GetProperty("task_id").GetString()!;
+        var childBId = JsonDocument.Parse(_tools.AddTask("Child B", parent_task_id: parentId, type: "parent")).RootElement.GetProperty("task_id").GetString()!;
         _tools.AddTask("Grandchild A1", parent_task_id: childAId);
         _tools.AddTask("Grandchild B1", parent_task_id: childBId);
 
@@ -2379,8 +2418,8 @@ public class GlassworkToolsTests
     [TestMethod]
     public void LoadContext_WalksSubtasksToDepthTwo()
     {
-        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
-        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent", type: "parent")).RootElement.GetProperty("task_id").GetString()!;
+        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: parentId, type: "parent")).RootElement.GetProperty("task_id").GetString()!;
         _tools.AddTask("Grandchild", parent_task_id: childId);
 
         var json = _tools.LoadContext(parentId, depth: 2);
@@ -2395,7 +2434,7 @@ public class GlassworkToolsTests
     [TestMethod]
     public void LoadContext_DepthZero_ReturnsNoSubtasks()
     {
-        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent", type: "parent")).RootElement.GetProperty("task_id").GetString()!;
         _tools.AddTask("Child", parent_task_id: parentId);
 
         var json = _tools.LoadContext(parentId, depth: 0);
@@ -2407,10 +2446,10 @@ public class GlassworkToolsTests
     [TestMethod]
     public void LoadContext_DepthGreaterThanThree_Clamps()
     {
-        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
-        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
-        var gcId = JsonDocument.Parse(_tools.AddTask("Grandchild", parent_task_id: childId)).RootElement.GetProperty("task_id").GetString()!;
-        var ggcId = JsonDocument.Parse(_tools.AddTask("GGC", parent_task_id: gcId)).RootElement.GetProperty("task_id").GetString()!;
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent", type: "parent")).RootElement.GetProperty("task_id").GetString()!;
+        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: parentId, type: "parent")).RootElement.GetProperty("task_id").GetString()!;
+        var gcId = JsonDocument.Parse(_tools.AddTask("Grandchild", parent_task_id: childId, type: "parent")).RootElement.GetProperty("task_id").GetString()!;
+        var ggcId = JsonDocument.Parse(_tools.AddTask("GGC", parent_task_id: gcId, type: "parent")).RootElement.GetProperty("task_id").GetString()!;
         // Great-great-grandchild at depth 4 must NOT appear even at depth=99 (clamp to 3).
         _tools.AddTask("GGGC", parent_task_id: ggcId);
 
@@ -2484,8 +2523,8 @@ public class GlassworkToolsTests
     [TestMethod]
     public void LoadContext_Subtree_HasArtifactsAndNestedSubtasks_ButNoBacklinks()
     {
-        var parentId = JsonDocument.Parse(_tools.AddTask("Parent")).RootElement.GetProperty("task_id").GetString()!;
-        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: parentId)).RootElement.GetProperty("task_id").GetString()!;
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent", type: "parent")).RootElement.GetProperty("task_id").GetString()!;
+        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: parentId, type: "parent")).RootElement.GetProperty("task_id").GetString()!;
         _tools.AddTask("Grandchild", parent_task_id: childId);
 
         // Give the child an artifact to confirm subtree artifacts are inlined.
@@ -2624,13 +2663,13 @@ References [[{taskId}]].
     {
         // Create: grandparent -> parent1 -> child
         //         grandparent -> parent2
-        var grandparentJson = _tools.AddTask("Grandparent");
+        var grandparentJson = _tools.AddTask("Grandparent", type: "parent");
         var grandparentId = JsonDocument.Parse(grandparentJson).RootElement.GetProperty("task_id").GetString()!;
         
-        var parent1Json = _tools.AddTask("Parent 1", parent_task_id: grandparentId);
+        var parent1Json = _tools.AddTask("Parent 1", parent_task_id: grandparentId, type: "parent");
         var parent1Id = JsonDocument.Parse(parent1Json).RootElement.GetProperty("task_id").GetString()!;
         
-        var parent2Json = _tools.AddTask("Parent 2", parent_task_id: grandparentId);
+        var parent2Json = _tools.AddTask("Parent 2", parent_task_id: grandparentId, type: "parent");
         var parent2Id = JsonDocument.Parse(parent2Json).RootElement.GetProperty("task_id").GetString()!;
         
         var childJson = _tools.AddTask("Child", parent_task_id: parent1Id);
@@ -2654,22 +2693,23 @@ References [[{taskId}]].
     public void MoveTask_CircularReparenting_ReturnsError()
     {
         // Arrange: Create hierarchy grandparent -> parent -> child
-        var grandparentJson = _tools.AddTask("Grandparent Task");
+        var grandparentJson = _tools.AddTask("Grandparent Task", type: "parent");
         var grandparentId = JsonDocument.Parse(grandparentJson).RootElement.GetProperty("task_id").GetString()!;
 
-        var parentJson = _tools.AddTask("Parent Task", parent_task_id: grandparentId);
+        var parentJson = _tools.AddTask("Parent Task", parent_task_id: grandparentId, type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
 
-        var childJson = _tools.AddTask("Child Task", parent_task_id: parentId);
+        var childJson = _tools.AddTask("Child Task", parent_task_id: parentId, type: "parent");
         var childId = JsonDocument.Parse(childJson).RootElement.GetProperty("task_id").GetString()!;
 
         // Act: Try to make grandparent a child of child (circular)
         var json = _tools.MoveTask(grandparentId, childId);
         var result = JsonDocument.Parse(json);
 
-        // Assert: Should reject with circular_parent error
-        Assert.AreEqual("circular_parent", result.RootElement.GetProperty("error").GetString());
-        Assert.IsTrue(result.RootElement.GetProperty("message").GetString()!.Contains("circular"));
+        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
+        Assert.AreEqual(
+            "parent_cycle",
+            result.RootElement.GetProperty("diagnostics")[0].GetProperty("code").GetString());
 
         // Verify parent wasn't changed
         var grandparent = _vault.Load(grandparentId)!;
@@ -2677,10 +2717,44 @@ References [[{taskId}]].
     }
 
     [TestMethod]
+    public void UpdateTask_IndirectCycle_ReturnsPreciseValidationWithoutWriting()
+    {
+        var rootId = JsonDocument.Parse(_tools.AddTask("Root", type: "parent"))
+            .RootElement.GetProperty("task_id").GetString()!;
+        var middleId = JsonDocument.Parse(_tools.AddTask("Middle", parent_task_id: rootId, type: "parent"))
+            .RootElement.GetProperty("task_id").GetString()!;
+        var childId = JsonDocument.Parse(_tools.AddTask("Child", parent_task_id: middleId, type: "parent"))
+            .RootElement.GetProperty("task_id").GetString()!;
+
+        var result = JsonDocument.Parse(UpdateTask(rootId, $$"""{ "parent_task_id": "{{childId}}" }"""));
+
+        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
+        Assert.AreEqual(
+            "parent_cycle",
+            result.RootElement.GetProperty("diagnostics")[0].GetProperty("code").GetString());
+        Assert.IsNull(_vault.Load(rootId)!.Parent);
+    }
+
+    [TestMethod]
+    public void AddSubtask_ParentTask_ReturnsPreciseValidationWithoutWriting()
+    {
+        var parentId = JsonDocument.Parse(_tools.AddTask("Parent", type: "parent"))
+            .RootElement.GetProperty("task_id").GetString()!;
+
+        var result = JsonDocument.Parse(_tools.AddSubtask(parentId, "Inline work"));
+
+        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
+        Assert.AreEqual(
+            "parent_inline_subtasks_not_allowed",
+            result.RootElement.GetProperty("diagnostics")[0].GetProperty("code").GetString());
+        Assert.IsEmpty(_vault.Load(parentId)!.Subtasks);
+    }
+
+    [TestMethod]
     public void MoveTask_PromoteToTopLevel_ClearsParent()
     {
         // Arrange: Create parent -> child
-        var parentJson = _tools.AddTask("Parent Task");
+        var parentJson = _tools.AddTask("Parent Task", type: "parent");
         var parentId = JsonDocument.Parse(parentJson).RootElement.GetProperty("task_id").GetString()!;
 
         var childJson = _tools.AddTask("Child Task", parent_task_id: parentId);
@@ -2713,7 +2787,7 @@ References [[{taskId}]].
     }
 
     [TestMethod]
-    public void MoveTask_ParentNotFound_ReturnsError()
+    public void MoveTask_UnresolvedExternalParent_RemainsExplicit()
     {
         // Arrange: Create a task
         var taskJson = _tools.AddTask("Some Task");
@@ -2724,7 +2798,7 @@ References [[{taskId}]].
         var result = JsonDocument.Parse(json);
 
         // Assert: Should return invalid_parent error
-        Assert.AreEqual("invalid_parent", result.RootElement.GetProperty("error").GetString());
+        Assert.AreEqual("nonexistent-parent", result.RootElement.GetProperty("new_parent_id").GetString());
     }
 
     [TestMethod]
@@ -2745,17 +2819,16 @@ References [[{taskId}]].
         var cId = JsonDocument.Parse(cJson).RootElement.GetProperty("task_id").GetString()!;
 
         // Act: Try to move unrelated task C to the cyclic parent a
-        // This should complete (not hang) and succeed since c is not part of the cycle
+        // This should complete (not hang) and reject the invalid leaf owner.
         var json = _tools.MoveTask(cId, aId);
         var result = JsonDocument.Parse(json);
 
-        // Assert: Should succeed (c is not part of the a <-> b cycle)
-        Assert.AreEqual(cId, result.RootElement.GetProperty("task_id").GetString());
-        Assert.AreEqual(aId, result.RootElement.GetProperty("new_parent_id").GetString());
-
-        // Verify the file was updated
+        Assert.AreEqual("validation_error", result.RootElement.GetProperty("error").GetString());
+        Assert.AreEqual(
+            "parent_target_not_parent",
+            result.RootElement.GetProperty("diagnostics")[0].GetProperty("code").GetString());
         var updatedTask = _vault.Load(cId)!;
-        Assert.AreEqual(aId, updatedTask.Parent);
+        Assert.IsNull(updatedTask.Parent);
     }
 
     // ───────────────────────────── update_subtask ─────────────────────────────
