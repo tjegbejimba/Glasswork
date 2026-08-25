@@ -773,11 +773,16 @@ public class VaultService
     /// </summary>
     public void SetLinks(string taskId, IReadOnlyList<TaskLink> links)
     {
+        var originalBytes = TryReadBytes(taskId);
+        if (originalBytes is null) return;
         var task = Load(taskId);
         if (task is null) return;
         EnsureTaskIsMutable(task);
         task.Links = links.ToList();
-        Save(task);
+        EnsureMutations().CommitHierarchyBytes(
+            taskId,
+            Encoding.UTF8.GetBytes(_parser.Serialize(task)),
+            originalBytes);
     }
 
     /// <summary>

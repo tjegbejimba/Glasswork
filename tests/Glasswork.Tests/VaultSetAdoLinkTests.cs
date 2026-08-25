@@ -110,6 +110,37 @@ public class VaultSetAdoLinkTests
     }
 
     [TestMethod]
+    public void SetLinks_DuplicateParentAdoIdentity_IsRejected()
+    {
+        var first = new GlassworkTask
+        {
+            Id = "links-first-parent",
+            Title = "First",
+            Type = GlassworkTask.Types.Parent,
+        };
+        first.AdoLink = 77;
+        var second = new GlassworkTask
+        {
+            Id = "links-second-parent",
+            Title = "Second",
+            Type = GlassworkTask.Types.Parent,
+        };
+        _vault.Save(first);
+        _vault.Save(second);
+        _vault.Save(new GlassworkTask
+        {
+            Id = "links-external-child",
+            Title = "Child",
+            Parent = "77",
+        });
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => _vault.SetLinks(
+            second.Id,
+            [new TaskLink { Type = TaskLink.Types.Ado, Value = "77" }]));
+        Assert.IsNull(_vault.Load(second.Id)!.AdoLink);
+    }
+
+    [TestMethod]
     public void SetAdoLink_WithoutTitle_OnlyWritesAdoLink()
     {
         var taskId = "ado-no-title";

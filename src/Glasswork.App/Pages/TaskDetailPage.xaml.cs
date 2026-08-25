@@ -644,7 +644,15 @@ public sealed partial class TaskDetailPage : Page
 
         var newLink = new TaskLink { Type = type, Value = value, Label = label };
         var updatedLinks = Task.Links.Append(newLink).ToList();
-        App.Vault.SetLinks(Task.Id, updatedLinks);
+        try
+        {
+            App.Vault.SetLinks(Task.Id, updatedLinks);
+        }
+        catch (Exception ex) when (ResourceMutationService.IsExpectedPersistenceFailure(ex))
+        {
+            await ShowOperationErrorAsync("Unable to add link", ex.Message);
+            return;
+        }
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
 
@@ -686,12 +694,20 @@ public sealed partial class TaskDetailPage : Page
         var menu = new MenuFlyout();
 
         var deleteItem = new MenuFlyoutItem { Text = "Delete" };
-        deleteItem.Click += (_, __) =>
+        deleteItem.Click += async (_, __) =>
         {
             // Use ReferenceEquals to remove only the exact clicked instance
             // (guards against duplicate links with identical values).
             var updatedLinks = Task.Links.Where(l => !ReferenceEquals(l, row.Source)).ToList();
-            App.Vault.SetLinks(Task.Id, updatedLinks);
+            try
+            {
+                App.Vault.SetLinks(Task.Id, updatedLinks);
+            }
+            catch (Exception ex) when (ResourceMutationService.IsExpectedPersistenceFailure(ex))
+            {
+                await ShowOperationErrorAsync("Unable to delete link", ex.Message);
+                return;
+            }
             var reloaded = App.Vault.Load(Task.Id);
             if (reloaded is not null) ApplyTask(reloaded);
 
