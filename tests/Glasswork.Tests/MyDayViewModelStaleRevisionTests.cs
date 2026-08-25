@@ -480,6 +480,286 @@ public class MyDayViewModelStaleRevisionTests
         Assert.IsTrue(_vault.Load(task.Id)!.IsMyDay);
     }
 
+    // ---------------------------------------------------------------------
+    // 13. Review follow-up: a malformed Task file must not escape a command.
+    //
+    // ResourceMutationService parses the CURRENT Vault bytes before applying a
+    // field set, so a Task that is malformed on disk — hand-edited, truncated, or
+    // caught mid-write by another writer — throws out of the parse, not out of the
+    // optimistic-concurrency check. FormatException (bad delimiters) and
+    // YamlException (bad YAML) were both missing from the expected-failure
+    // predicate, so they escaped the RelayCommand exactly like the original
+    // ResourceRevisionConflictException did.
+    // ---------------------------------------------------------------------
+
+    [TestMethod]
+    public void AddToMyDay_TaskFileMissingFrontmatterDelimiters_ReportsInsteadOfThrowing()
+    {
+        var task = CreateSuggestion("Truncated on disk");
+
+        var vm = CreateViewModel();
+        vm.Refresh();
+        var row = vm.Suggestions.Single(t => t.Id == task.Id);
+
+        // A mid-write / truncated file: the frontmatter delimiters never close.
+        File.WriteAllText(PathFor(task.Id), $"---\nid: {task.Id}\ntitle: Truncated on disk\n");
+
+        vm.AddToMyDay(row);
+
+        Assert.IsNotNull(
+            vm.ErrorMessage,
+            "A malformed Task file must be reported, not thrown out of the command.");
+        StringAssert.Contains(
+            vm.ErrorMessage,
+            "Truncated on disk",
+            "The reported failure must name the Task the user acted on.");
+    }
+
+    [TestMethod]
+    public void CompleteTask_TaskFileHasMalformedYaml_ReportsInsteadOfThrowing()
+    {
+        var task = _taskService.CreateTask("Broken YAML", priority: GlassworkTask.Priorities.High);
+        _taskService.ToggleMyDay(task);
+
+        var vm = CreateViewModel();
+        vm.Refresh();
+        var row = vm.TodayTasks.Single(t => t.Id == task.Id);
+
+        // Well-formed delimiters, unparseable YAML: an unclosed flow sequence.
+        File.WriteAllText(
+            PathFor(task.Id),
+            $"---\nid: {task.Id}\ntitle: Broken YAML\ntags: [unclosed\n---\n");
+
+        vm.CompleteTask(row);
+
+        Assert.IsNotNull(
+            vm.ErrorMessage,
+            "Unparseable YAML must be reported, not thrown out of the command.");
+        StringAssert.Contains(
+            vm.ErrorMessage,
+            "Broken YAML",
+            "The reported failure must name the Task the user acted on.");
+    }
+
+    // ---------------------------------------------------------------------
+    // 14. Review follow-up: dismiss-for-today is UI state that must not run
+    //     ahead of the durable Vault write it is supposed to reflect.
+    // ---------------------------------------------------------------------
+
+    [TestMethod]
+    public void AddToMyDay_WhenTheVaultWriteFails_LeavesTheDismissalIntact()
+    {
+        // Due today, so the row is virtually promoted into Today unless dismissed.
+        var task = _taskService.CreateTask("Dismissed but due", priority: GlassworkTask.Priorities.High);
+        task.Due = DateTime.Today;
+        _vault.Save(task);
+        _index.Rehydrate();
+
+        var vm = CreateViewModel();
+        vm.Refresh();
+        var row = vm.TodayTasks.Single(t => t.Id == task.Id);
+
+        // The user dismissed it earlier today.
+        vm.RemoveFromMyDay(row);
+        Assert.IsNull(vm.ErrorMessage, $"Precondition failed: {vm.ErrorMessage}");
+        Assert.IsTrue(_uiState.Get<bool>(
+            MyDayDismissals.KeyFor(task.Id, DateOnly.FromDateTime(DateTime.Today))),
+            "Precondition: removal dismisses the virtually promoted row for today.");
+
+        // Now make the add fail: the row's revision goes stale behind its back.
+        WriteExternally(task.Id, $"""
+            id: {task.Id}
+            title: Dismissed but due
+            status: todo
+            priority: high
+            due: {DateTime.Today:yyyy-MM-dd}
+            created: {DateTime.Today:yyyy-MM-dd}
+            """);
+
+        vm.AddToMyDay(row);
+
+        Assert.IsNotNull(vm.ErrorMessage, "Precondition: the add must fail on the stale revision.");
+        Assert.IsTrue(
+            _uiState.Get<bool>(MyDayDismissals.KeyFor(task.Id, DateOnly.FromDateTime(DateTime.Today))),
+            "A failed add must not clear the dismissal: the durable my_day was never written, "
+            + "so clearing it would resurrect the row on a write that did not happen.");
+    }
+
+    [TestMethod]
+    public void RemoveFromMyDay_WhenTheVaultClearFails_DoesNotDismissTheRow()
+    {
+        var task = _taskService.CreateTask("Pinned and stale", priority: GlassworkTask.Priorities.High);
+        _taskService.ToggleMyDay(task);
+
+        var vm = CreateViewModel();
+        vm.Refresh();
+        var row = vm.TodayTasks.Single(t => t.Id == task.Id);
+        Assert.IsTrue(row.MyDay.HasValue, "Precondition: the row is durably pinned to My Day.");
+
+        WriteExternally(task.Id, $"""
+            id: {task.Id}
+            title: Pinned and stale
+            status: todo
+            priority: high
+            my_day: {DateTime.Today:yyyy-MM-dd}
+            created: {DateTime.Today:yyyy-MM-dd}
+            """);
+
+        vm.RemoveFromMyDay(row);
+
+        Assert.IsNotNull(vm.ErrorMessage, "Precondition: the durable clear must fail on the stale revision.");
+        Assert.IsFalse(
+            _uiState.Get<bool>(MyDayDismissals.KeyFor(task.Id, DateOnly.FromDateTime(DateTime.Today))),
+            "A failed clear must not dismiss the row. Dismissing it would hide the failure today "
+            + "and let the still-pinned Task recur tomorrow.");
+        Assert.IsTrue(
+            _vault.Load(task.Id)!.MyDay.HasValue,
+            "Precondition: my_day is still set on disk, which is why the row must stay visible.");
+    }
+
+    [TestMethod]
+    public void RemoveFromMyDay_VirtualRowWithNoDurableMyDay_StillDismisses()
+    {
+        // No my_day: PlanRemoval asks for dismissal only, so the dismissal IS the
+        // successful operation and must not be gated on a Vault write that never runs.
+        var task = _taskService.CreateTask("Due today only", priority: GlassworkTask.Priorities.High);
+        task.Due = DateTime.Today;
+        _vault.Save(task);
+        _index.Rehydrate();
+
+        var vm = CreateViewModel();
+        vm.Refresh();
+        var row = vm.TodayTasks.Single(t => t.Id == task.Id);
+        Assert.IsFalse(row.MyDay.HasValue, "Precondition: this row is promoted by its due date, not my_day.");
+
+        vm.RemoveFromMyDay(row);
+
+        Assert.IsNull(vm.ErrorMessage, $"A dismissal-only removal must succeed, but reported: {vm.ErrorMessage}");
+        Assert.IsTrue(
+            _uiState.Get<bool>(MyDayDismissals.KeyFor(task.Id, DateOnly.FromDateTime(DateTime.Today))),
+            "With no durable my_day to clear, applying the dismissal is the whole operation.");
+        Assert.IsFalse(
+            vm.TodayTasks.Any(t => t.Id == task.Id),
+            "The dismissed row must leave Today.");
+    }
+
+    [TestMethod]
+    public void RemoveFromMyDay_ContainerWithOneStaleChild_DismissesOnlyTheClearedTargets()
+    {
+        var epic = _taskService.CreateTask("Sprint epic");
+        epic.Type = GlassworkTask.Types.Pbi;
+        _vault.Save(epic);
+
+        var healthy = _taskService.CreateTask("Healthy child");
+        healthy.Parent = epic.Id;
+        _vault.Save(healthy);
+        _taskService.ToggleMyDay(_vault.Load(healthy.Id)!);
+
+        var stale = _taskService.CreateTask("Stale child");
+        stale.Parent = epic.Id;
+        _vault.Save(stale);
+        _taskService.ToggleMyDay(_vault.Load(stale.Id)!);
+
+        _index.Rehydrate();
+        var vm = CreateViewModel();
+        vm.Refresh();
+        var container = vm.TodayTasks.Single(t => t.Id == epic.Id);
+        Assert.AreEqual(2, container.TodaysChildren.Count, "Precondition: both children are in Today.");
+
+        WriteExternally(stale.Id, $"""
+            id: {stale.Id}
+            title: Stale child
+            status: todo
+            priority: medium
+            parent: {epic.Id}
+            my_day: {DateTime.Today:yyyy-MM-dd}
+            created: {DateTime.Today:yyyy-MM-dd}
+            """);
+
+        vm.RemoveFromMyDay(container);
+
+        Assert.IsNotNull(vm.ErrorMessage, "The failed child must be reported.");
+        StringAssert.Contains(vm.ErrorMessage, "Stale child",
+            "A partial failure must name the target that did not persist.");
+
+        Assert.IsFalse(_vault.Load(healthy.Id)!.MyDay.HasValue,
+            "The healthy sibling must still be removed: one failed target never aborts the group.");
+        Assert.IsTrue(
+            _uiState.Get<bool>(MyDayDismissals.KeyFor(healthy.Id, DateOnly.FromDateTime(DateTime.Today))),
+            "The sibling whose clear succeeded must be dismissed.");
+        Assert.IsFalse(
+            _uiState.Get<bool>(MyDayDismissals.KeyFor(stale.Id, DateOnly.FromDateTime(DateTime.Today))),
+            "The target whose clear failed must not be dismissed — hiding it would mask the failure.");
+    }
+
+    // ---------------------------------------------------------------------
+    // 15. Review follow-up: dismissing the error must stay dismissed.
+    //
+    // The page reopens the InfoBar from ErrorMessage on every Refreshed. If closing
+    // the bar leaves ErrorMessage set, the next unrelated refresh — a file-watcher
+    // tick, a nav, the Refresh button — resurrects a stale error the user already
+    // acknowledged.
+    // ---------------------------------------------------------------------
+
+    [TestMethod]
+    public void DismissError_ThenUnrelatedRefresh_DoesNotResurrectTheMessage()
+    {
+        var task = CreateSuggestion("Stale row");
+
+        var vm = CreateViewModel();
+        vm.Refresh();
+        var row = vm.Suggestions.Single(t => t.Id == task.Id);
+
+        WriteExternally(task.Id, $"""
+            id: {task.Id}
+            title: Stale row
+            status: todo
+            priority: high
+            created: {DateTime.Today:yyyy-MM-dd}
+            """);
+
+        vm.AddToMyDay(row);
+        Assert.IsNotNull(vm.ErrorMessage, "Precondition: the stale add reports a conflict.");
+
+        vm.DismissError();
+        Assert.IsNull(vm.ErrorMessage, "Dismissing must clear the view model's error state.");
+
+        vm.Refresh();
+
+        Assert.IsNull(
+            vm.ErrorMessage,
+            "An unrelated refresh must not resurrect an error the user already dismissed.");
+    }
+
+    [TestMethod]
+    public void DismissError_ThenANewFailure_ReportsTheNewMessage()
+    {
+        var task = CreateSuggestion("Second failure");
+
+        var vm = CreateViewModel();
+        vm.Refresh();
+        var row = vm.Suggestions.Single(t => t.Id == task.Id);
+
+        WriteExternally(task.Id, $"""
+            id: {task.Id}
+            title: Second failure
+            status: todo
+            priority: high
+            created: {DateTime.Today:yyyy-MM-dd}
+            """);
+
+        vm.AddToMyDay(row);
+        vm.DismissError();
+        Assert.IsNull(vm.ErrorMessage, "Precondition: the first error was dismissed.");
+
+        // The row is still stale, so the next attempt fails again.
+        vm.AddToMyDay(row);
+
+        Assert.IsNotNull(
+            vm.ErrorMessage,
+            "Dismissal must not suppress a genuinely new failure.");
+    }
+
     private sealed class InMemoryUiState : IUiStateService
     {
         private readonly Dictionary<string, object> _data = new(StringComparer.Ordinal);

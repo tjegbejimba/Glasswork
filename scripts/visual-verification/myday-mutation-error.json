@@ -36,12 +36,41 @@
       "type": "wait-for",
       "automationId": "MyDayError",
       "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "myday-mutation-error",
+      "waitMilliseconds": 1200
+    },
+    {
+      "type": "invoke",
+      "automationId": "MyDayErrorClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "MyDayError"
+    },
+    {
+      "type": "replace-task-text",
+      "taskId": "vv-vanishing-suggestion",
+      "oldValue": "Vanishing suggestion task",
+      "value": "Renamed after dismissal"
+    },
+    {
+      "type": "wait-for",
+      "name": "Add Renamed after dismissal to My Day",
+      "timeoutMilliseconds": 15000
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "MyDayError"
     }
   ],
   "captures": [
     {
-      "name": "myday-mutation-error",
-      "waitMilliseconds": 1200
+      "name": "myday-error-dismissed-survives-refresh",
+      "waitMilliseconds": 800
     }
   ]
 }

@@ -15,6 +15,18 @@
         <conv:SubtaskSegmentBrushConverter x:Key="SegBrush" />
         <conv:DueUrgencyBrushConverter x:Key="DueBg" />
         <conv:DueUrgencyForegroundBrushConverter x:Key="DueFg" />
+
+        <!-- The InfoBar close button is a template part, so it inherits the framework's
+             generic "Close" name and is indistinguishable from the window caption's Close
+             button to UI Automation (and to a screen-reader user). Naming it makes the
+             error bar's dismissal both announceable and addressable by the visual
+             verification harness, which searches the whole window by name. -->
+        <Style x:Key="MyDayErrorCloseButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource InfoBarCloseButtonStyle}">
+            <Setter Property="AutomationProperties.AutomationId" Value="MyDayErrorClose" />
+            <Setter Property="AutomationProperties.Name" Value="Dismiss My Day error" />
+        </Style>
     </Page.Resources>
 
     <Grid Padding="32" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
@@ -54,6 +66,8 @@
                      AutomationProperties.AutomationId="MyDayError"
                      IsOpen="False"
                      IsClosable="True"
+                     CloseButtonStyle="{StaticResource MyDayErrorCloseButtonStyle}"
+                     CloseButtonClick="ErrorBar_CloseButtonClick"
                      Severity="Error"
                      Title="Could not update My Day"
                      Margin="0,12,0,0" />

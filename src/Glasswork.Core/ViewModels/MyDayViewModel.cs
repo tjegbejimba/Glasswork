@@ -35,11 +35,21 @@ public partial class MyDayViewModel : ObservableObject
 
     /// <summary>
     /// Non-null when the last My Day mutation could not be applied — a Resource Revision
-    /// conflict, a missing Task, or a read-only (cancelled/blocked) Task. Surfaced by
-    /// <c>MyDayPage</c> in an error InfoBar, mirroring <c>PlannerViewModel.ErrorMessage</c>.
-    /// Cleared by the next fully successful mutation.
+    /// conflict, a missing Task, a malformed Task file, or a read-only (cancelled/blocked)
+    /// Task. Surfaced by <c>MyDayPage</c> in an error InfoBar, mirroring
+    /// <c>PlannerViewModel.ErrorMessage</c>. Cleared by the next fully successful mutation,
+    /// or by <see cref="DismissError"/> when the user closes the InfoBar.
     /// </summary>
     [ObservableProperty] public partial string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// Acknowledges the current error. The page re-opens its InfoBar from
+    /// <see cref="ErrorMessage"/> on every refresh, so closing the bar without clearing
+    /// the view model's state would let the next unrelated refresh — a file-watcher tick,
+    /// a navigation, the Refresh button — resurrect a message the user already dismissed.
+    /// Deliberately does not refresh: acknowledging an error is not a Vault operation.
+    /// </summary>
+    public void DismissError() => ErrorMessage = null;
 
     public MyDayViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
         : this(vault, taskService, EnsureSeededIndex(vault), uiState, null, null) { }
@@ -356,13 +366,18 @@ public partial class MyDayViewModel : ObservableObject
         if (task is null) return;
 
         var failures = new List<string>();
-        if (!task.IsMyDay)
+        // A Task already pinned to today needs no Vault write, so the dismissal clear IS the
+        // whole operation and must still run. Otherwise the dismissal may only be cleared
+        // once the durable my_day actually landed: clearing it on a write that never happened
+        // would resurrect the row in Today while disk still says it isn't there.
+        var persisted = task.IsMyDay || SetMyDay(task, DateTime.Today, "Add to My Day", failures);
+
+        if (persisted)
         {
-            SetMyDay(task, DateTime.Today, "Add to My Day", failures);
+            // Clear any prior dismiss for today so an "add" overrides it.
+            _uiState?.Remove(DismissKey(task.Id));
         }
 
-        // Clear any prior dismiss for today so an "add" overrides it.
-        _uiState?.Remove(DismissKey(task.Id));
         FinishMutation(failures);
     }
 
@@ -393,14 +408,20 @@ public partial class MyDayViewModel : ObservableObject
         foreach (var target in MyDayRemovalPolicy.RemovalTargets(task))
         {
             var plan = MyDayRemovalPolicy.PlanRemoval(target);
-            if (plan.ClearMyDayFlag)
-            {
+
+            // When the plan needs no durable clear (a virtual row surfaced by its due date,
+            // never pinned), the dismissal alone IS the removal and always applies. When it
+            // does need one, dismiss only if that clear landed — dismissing a target whose
+            // clear failed would hide the failure today and let the still-pinned Task recur
+            // tomorrow. Gating per target keeps a partial failure honest: the targets that
+            // cleared disappear, the one that didn't stays visible under the error bar.
+            var cleared = !plan.ClearMyDayFlag
                 // Explicit clear, not a toggle: a carryover row (my_day in the past) is not
                 // "in My Day today", so toggling it would PIN it to today — the inverse of
                 // what the user asked for.
-                SetMyDay(target, null, "Remove from My Day", failures);
-            }
-            if (plan.SetDismissForToday)
+                || SetMyDay(target, null, "Remove from My Day", failures);
+
+            if (plan.SetDismissForToday && cleared)
             {
                 _uiState?.Set(DismissKey(target.Id), true);
             }
@@ -437,9 +458,10 @@ public partial class MyDayViewModel : ObservableObject
 
     /// <summary>
     /// Applies an explicit My Day date (or clears it when <paramref name="value"/> is null)
-    /// to the Task's current Vault state under the mutation lease.
+    /// to the Task's current Vault state under the mutation lease. Returns false when the
+    /// change did not persist.
     /// </summary>
-    private void SetMyDay(GlassworkTask task, DateTime? value, string operation, List<string> failures) =>
+    private bool SetMyDay(GlassworkTask task, DateTime? value, string operation, List<string> failures) =>
         ApplyFields(
             task,
             operation,
@@ -452,9 +474,10 @@ public partial class MyDayViewModel : ObservableObject
     /// <summary>
     /// Applies an explicit target status. <c>set_task_fields</c> routes <c>status</c> through
     /// the same <see cref="TaskService"/> transition helper the in-app command used, so
-    /// <c>completed_at</c> stamping and the cancelled/blocked guards are preserved.
+    /// <c>completed_at</c> stamping and the cancelled/blocked guards are preserved. Returns
+    /// false when the change did not persist.
     /// </summary>
-    private void SetTaskStatus(GlassworkTask task, string status, string operation, List<string> failures) =>
+    private bool SetTaskStatus(GlassworkTask task, string status, string operation, List<string> failures) =>
         ApplyFields(
             task,
             operation,
@@ -477,7 +500,7 @@ public partial class MyDayViewModel : ObservableObject
     /// A conflict is reported, never retried: silently replaying against newer bytes would
     /// re-introduce the lost-update the optimistic-concurrency guard exists to prevent.
     /// </summary>
-    private void ApplyFields(
+    private bool ApplyFields(
         GlassworkTask task,
         string operation,
         List<string> failures,
@@ -498,12 +521,13 @@ public partial class MyDayViewModel : ObservableObject
         catch (Exception ex) when (IsMutationPersistenceFailure(ex))
         {
             failures.Add($"{operation} failed for \"{task.Title}\": {ex.Message}");
-            return;
+            return false;
         }
 
-        if (outcome.Outcome is "applied" or "no_op") return;
+        if (outcome.Outcome is "applied" or "no_op") return true;
 
         failures.Add(DescribeFailure(operation, task, outcome));
+        return false;
     }
 
     private static string DescribeFailure(
@@ -538,8 +562,5 @@ public partial class MyDayViewModel : ObservableObject
     }
 
     private static bool IsMutationPersistenceFailure(Exception exception) =>
-        exception is IOException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or JsonException;
+        ResourceMutationService.IsExpectedPersistenceFailure(exception);
 }

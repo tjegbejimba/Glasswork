@@ -254,6 +254,16 @@ public sealed partial class MyDayPage : Page
         ErrorBar.IsOpen = !string.IsNullOrWhiteSpace(message);
     }
 
+    /// <summary>
+    /// Clears the view model's error when the user closes the bar. Without this the bar
+    /// re-opens from the still-set <see cref="MyDayViewModel.ErrorMessage"/> on the next
+    /// unrelated refresh — a file-watcher tick, a navigation, the Refresh button — making a
+    /// dismissed message impossible to get rid of. <c>CloseButtonClick</c> rather than
+    /// <c>Closed</c>: <c>Closed</c> also fires for the programmatic close in
+    /// <see cref="UpdateErrorBar"/>, which would clear state the user never acknowledged.
+    /// </summary>
+    private void ErrorBar_CloseButtonClick(InfoBar sender, object args) => ViewModel.DismissError();
+
     private void UpdateEmptyState()
     {
         var hasToday = ViewModel.TodayTasks.Count > 0;
