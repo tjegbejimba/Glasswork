@@ -329,8 +329,16 @@ public sealed partial class TaskDetailPage : Page
 
         // Classify parent to determine link type
         var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim();
-        var classifier = new ParentLinkClassifier(App.Index);
-        _parentResolution = classifier.Classify(p, baseUrl);
+        if (namedParent.Kind == TaskParentResolutionKind.Local
+            && namedParent.CanonicalTaskId is { } parentTaskId)
+        {
+            _parentResolution = ParentLinkResolution.InAppTask(parentTaskId);
+        }
+        else
+        {
+            var classifier = new ParentLinkClassifier(App.Index);
+            _parentResolution = classifier.Classify(p, baseUrl);
+        }
 
         // Update button visibility and content based on resolution
         if (_parentResolution.Type == ParentLinkResolution.ResolutionType.InAppTask)

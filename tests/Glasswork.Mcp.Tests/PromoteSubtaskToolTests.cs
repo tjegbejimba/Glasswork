@@ -71,6 +71,30 @@ public class PromoteSubtaskToolTests
     }
 
     [TestMethod]
+    public void PromoteSubtask_ParentWithMultipleInlineSubtasks_DrainsOneMigrationStep()
+    {
+        var vault = new VaultService(TasksDir);
+        vault.Save(new GlassworkTask
+        {
+            Id = "migration-parent",
+            Title = "Migration parent",
+            Type = GlassworkTask.Types.Parent,
+            Subtasks =
+            {
+                new SubTask { Text = "First" },
+                new SubTask { Text = "Second" },
+            },
+        });
+
+        var result = JsonDocument.Parse(_tools.PromoteSubtask("migration-parent", 0));
+
+        Assert.IsFalse(result.RootElement.TryGetProperty("error", out _), result.RootElement.ToString());
+        var reloaded = vault.Load("migration-parent")!;
+        Assert.HasCount(1, reloaded.Subtasks);
+        Assert.AreEqual("Second", reloaded.Subtasks[0].Text);
+    }
+
+    [TestMethod]
     public void PromoteSubtask_PreservesUnknownExistingRawSize()
     {
         var parent = new GlassworkTask

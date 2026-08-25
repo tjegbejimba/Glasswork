@@ -4011,7 +4011,8 @@ public sealed class GlassworkTools
             var mutation = _mutations.TransactTasks(
                 mutation_id,
                 operations,
-                preserveExistingUnknownSizes: true);
+                preserveExistingUnknownSizes: true,
+                allowParentInlineSubtasks: true);
             if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
                 return SerializeMutationOutcome(mutation);
 

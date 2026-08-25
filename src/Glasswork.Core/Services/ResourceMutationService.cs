@@ -738,7 +738,11 @@ public sealed partial class ResourceMutationService
         var hierarchyTasks = LoadHierarchyTasksUnsafe(taskId, staged);
         var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);
         hierarchy.CanonicalizeParent(staged);
-        var hierarchyDiagnostics = hierarchy.Validate([taskId]);
+        var hierarchyValidationIds = HierarchyValidationScope(
+            hierarchyTasks,
+            currentTask,
+            staged);
+        var hierarchyDiagnostics = hierarchy.Validate(hierarchyValidationIds);
         if (hierarchyDiagnostics.Count > 0)
         {
             return Record(state, mutationId, requestHash,
@@ -835,7 +839,8 @@ public sealed partial class ResourceMutationService
         JsonElement operations,
         string? transactionRevision = null,
         JsonElement? assertions = null,
-        bool preserveExistingUnknownSizes = false)
+        bool preserveExistingUnknownSizes = false,
+        bool allowParentInlineSubtasks = false)
     {
         var notifications = new HashSet<string>(StringComparer.Ordinal);
         try
@@ -849,7 +854,8 @@ public sealed partial class ResourceMutationService
                     transactionRevision,
                     assertions,
                     notifications,
-                    preserveExistingUnknownSizes);
+                    preserveExistingUnknownSizes,
+                    allowParentInlineSubtasks);
                 return result;
             }
         }
@@ -880,7 +886,8 @@ public sealed partial class ResourceMutationService
         string? transactionRevision,
         JsonElement? assertions,
         ISet<string> notifications,
-        bool preserveExistingUnknownSizes)
+        bool preserveExistingUnknownSizes,
+        bool allowParentInlineSubtasks)
     {
         var state = ReadState();
         Prune(state);
@@ -990,13 +997,19 @@ public sealed partial class ResourceMutationService
         }
 
         var hierarchy = new TaskHierarchyPolicy(staged.Values.Select(value => value.Task));
+        var hierarchyValidationTaskIds = touchedOperationIndexes.Keys.ToHashSet(StringComparer.Ordinal);
         foreach (var taskId in touchedOperationIndexes.Keys)
         {
             if (staged.TryGetValue(taskId, out var touched))
+            {
                 hierarchy.CanonicalizeParent(touched.Task);
+                AddAdoIdentityAffectedTasks(touched, staged, hierarchyValidationTaskIds);
+            }
         }
         diagnostics.AddRange(ValidateStagedGraph(staged, touchedOperationIndexes));
-        diagnostics.AddRange(hierarchy.Validate(touchedOperationIndexes.Keys).Select(diagnostic =>
+        diagnostics.AddRange(hierarchy.Validate(
+            hierarchyValidationTaskIds,
+            allowParentInlineSubtasks).Select(diagnostic =>
             new ResourceMutationDiagnostic(
                 diagnostic.Code,
                 diagnostic.TaskIds
@@ -1338,6 +1351,38 @@ public sealed partial class ResourceMutationService
         return diagnostics;
     }
 
+    private void AddAdoIdentityAffectedTasks(
+        StagedTask touched,
+        IReadOnlyDictionary<string, StagedTask> staged,
+        ISet<string> validationTaskIds)
+    {
+        GlassworkTask? original = touched.OriginalBytes.Length == 0
+            ? null
+            : _parser.Parse(Encoding.UTF8.GetString(touched.OriginalBytes));
+        var oldAdoId = GlassworkTask.Types.IsParent(original?.Type) ? original?.AdoLink : null;
+        var newAdoId = GlassworkTask.Types.IsParent(touched.Task.Type) ? touched.Task.AdoLink : null;
+        if (oldAdoId == newAdoId
+            && string.Equals(
+                GlassworkTask.Types.Normalize(original?.Type),
+                GlassworkTask.Types.Normalize(touched.Task.Type),
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        foreach (var candidate in staged.Values)
+        {
+            var parentAdoId = AdoParentIdExtractor.TryExtractId(candidate.Task.Parent);
+            if (parentAdoId == oldAdoId || parentAdoId == newAdoId)
+                validationTaskIds.Add(candidate.Task.Id);
+        }
+
+        // A Parent ADO identity is a graph-wide resolution key. Validate the full
+        // snapshot so a newly ambiguous relationship cannot be hidden by a legacy
+        // free-text reference that the narrow extractor does not recognize.
+        validationTaskIds.UnionWith(staged.Keys);
+    }
+
     private static void DetectCycle(
         string id,
         IReadOnlyDictionary<string, StagedTask> byId,
@@ -1511,7 +1556,11 @@ public sealed partial class ResourceMutationService
         var hierarchyTasks = LoadHierarchyTasksUnsafe(taskId, task);
         var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);
         hierarchy.CanonicalizeParent(task);
-        var hierarchyDiagnostics = hierarchy.Validate([taskId]);
+        var hierarchyValidationIds = HierarchyValidationScope(
+            hierarchyTasks,
+            original: null,
+            task);
+        var hierarchyDiagnostics = hierarchy.Validate(hierarchyValidationIds);
         if (hierarchyDiagnostics.Count > 0)
         {
             return Record(state, mutationId, requestHash,
@@ -1588,6 +1637,23 @@ public sealed partial class ResourceMutationService
         }
         tasks.Add(replacement);
         return tasks;
+    }
+
+    private static IEnumerable<string> HierarchyValidationScope(
+        IReadOnlyList<GlassworkTask> tasks,
+        GlassworkTask? original,
+        GlassworkTask updated)
+    {
+        var oldAdoId = GlassworkTask.Types.IsParent(original?.Type) ? original?.AdoLink : null;
+        var newAdoId = GlassworkTask.Types.IsParent(updated.Type) ? updated.AdoLink : null;
+        var parentIdentityChanged = oldAdoId != newAdoId
+            || !string.Equals(
+                GlassworkTask.Types.Normalize(original?.Type),
+                GlassworkTask.Types.Normalize(updated.Type),
+                StringComparison.Ordinal);
+        return parentIdentityChanged
+            ? tasks.Select(task => task.Id)
+            : [updated.Id];
     }
 
     private string? ApplyFields(

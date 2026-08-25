@@ -84,6 +84,49 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_DuplicateParentAdoIdentity_RejectsAffectedExternalChildAmbiguity()
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var existingParent = new GlassworkTask
+        {
+            Id = "existing-parent",
+            Title = "Existing parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        existingParent.AdoLink = 77;
+        vault.Save(existingParent);
+        vault.Save(new GlassworkTask
+        {
+            Id = "external-child",
+            Title = "External child",
+            Parent = "77",
+        });
+        using var operations = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "duplicate-parent",
+          "if_absent": true,
+          "fields": {
+            "title": "Duplicate parent",
+            "type": "parent",
+            "ado_link": 77
+          }
+        }]
+        """);
+
+        var result = JsonDocument.Parse(_tools.TransactTasks("duplicate-ado-parent", operations.RootElement));
+
+        Assert.AreEqual(
+            "validation_error",
+            result.RootElement.GetProperty("error").GetString(),
+            result.RootElement.ToString());
+        Assert.AreEqual(
+            "parent_ambiguous_external",
+            result.RootElement.GetProperty("diagnostics")[0].GetProperty("code").GetString());
+        Assert.IsFalse(vault.Exists("duplicate-parent"));
+    }
+
+    [TestMethod]
     public void UpdateTask_RequiresMutationIdAndRevision()
     {
         using var create = JsonDocument.Parse("""

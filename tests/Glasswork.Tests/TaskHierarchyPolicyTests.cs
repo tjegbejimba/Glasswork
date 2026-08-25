@@ -124,6 +124,22 @@ public class TaskHierarchyPolicyTests
         Assert.AreEqual("Cached only", policy.ResolveParent("cached").DisplayTitle);
     }
 
+    [TestMethod]
+    public void Validate_AmbiguousParentAdoIdentity_RejectsExternalChild()
+    {
+        var first = Parent("first", "First");
+        first.AdoLink = 77;
+        var second = Parent("second", "Second");
+        second.AdoLink = 77;
+        var child = Task("child", "Child", "77");
+        var policy = new TaskHierarchyPolicy(new[] { first, second, child });
+
+        var diagnostic = policy.Validate(["first", "second", "child"])
+            .Single(result => result.Code == TaskHierarchyDiagnosticCodes.ParentAmbiguousExternal);
+
+        CollectionAssert.AreEqual(new[] { "child" }, diagnostic.TaskIds.ToArray());
+    }
+
     private static GlassworkTask Parent(string id, string title, string? parent = null) =>
         new() { Id = id, Title = title, Type = GlassworkTask.Types.Parent, Parent = parent };
 

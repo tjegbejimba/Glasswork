@@ -51,6 +51,11 @@
       "type": "wait-for",
       "automationId": "TaskTitleBox",
       "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Open task",
+      "timeoutMilliseconds": 10000
     }
   ],
   "captures": [
