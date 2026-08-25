@@ -1417,14 +1417,8 @@ public sealed partial class ResourceMutationService
             : _parser.Parse(Encoding.UTF8.GetString(touched.OriginalBytes));
         var oldAdoId = GlassworkTask.Types.IsParent(original?.Type) ? original?.AdoLink : null;
         var newAdoId = GlassworkTask.Types.IsParent(touched.Task.Type) ? touched.Task.AdoLink : null;
-        if (oldAdoId == newAdoId
-            && string.Equals(
-                GlassworkTask.Types.Normalize(original?.Type),
-                GlassworkTask.Types.Normalize(touched.Task.Type),
-                StringComparison.Ordinal))
-        {
+        if (oldAdoId == newAdoId)
             return;
-        }
 
         foreach (var candidate in staged.Values)
         {
@@ -1702,11 +1696,7 @@ public sealed partial class ResourceMutationService
     {
         var oldAdoId = GlassworkTask.Types.IsParent(original?.Type) ? original?.AdoLink : null;
         var newAdoId = GlassworkTask.Types.IsParent(updated.Type) ? updated.AdoLink : null;
-        var parentIdentityChanged = oldAdoId != newAdoId
-            || !string.Equals(
-                GlassworkTask.Types.Normalize(original?.Type),
-                GlassworkTask.Types.Normalize(updated.Type),
-                StringComparison.Ordinal);
+        var parentIdentityChanged = oldAdoId != newAdoId;
         return parentIdentityChanged
             ? tasks.Select(task => task.Id)
             : [updated.Id];

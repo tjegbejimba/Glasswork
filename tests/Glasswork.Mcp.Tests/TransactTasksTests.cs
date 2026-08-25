@@ -127,6 +127,24 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void AddTask_NativeParent_DoesNotValidateUnrelatedMigrationState()
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        vault.Save(new GlassworkTask
+        {
+            Id = "legacy-parent",
+            Title = "Legacy parent",
+            Type = GlassworkTask.Types.Parent,
+            Subtasks = { new SubTask { Text = "Pending migration" } },
+        });
+
+        var result = JsonDocument.Parse(_tools.AddTask("Unrelated parent", type: "parent"));
+
+        Assert.IsFalse(result.RootElement.TryGetProperty("error", out _), result.RootElement.ToString());
+        Assert.IsTrue(vault.Exists("unrelated-parent"));
+    }
+
+    [TestMethod]
     public void UpdateTask_RequiresMutationIdAndRevision()
     {
         using var create = JsonDocument.Parse("""
