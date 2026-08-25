@@ -2069,7 +2069,7 @@ public sealed partial class TaskDetailPage : Page
         menu.Items.Add(textItem);
 
         var promoteItem = new MenuFlyoutItem { Text = "Promote to top-level task" };
-        promoteItem.Click += (_, __) => PromoteSubtask(sub);
+        promoteItem.Click += async (_, __) => await PromoteSubtaskAsync(sub);
         menu.Items.Add(promoteItem);
 
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -2087,19 +2087,62 @@ public sealed partial class TaskDetailPage : Page
         menu.ShowAt(fe);
     }
 
-    private void PromoteSubtask(SubTask sub)
+    private async Task PromoteSubtaskAsync(SubTask sub)
     {
         var index = Task.Subtasks.IndexOf(sub);
         if (index < 0) return;
         try
         {
-            var promoted = App.Tasks.PromoteSubtask(Task, index);
+            var parent = Task.Clone();
+            parent.Type = GlassworkTask.Types.Parent;
+            parent.Subtasks.RemoveAt(index);
+            var newId = VaultService.GenerateId(sub.Text);
+            var suffix = 1;
+            while (App.Vault.Exists(newId))
+                newId = $"{VaultService.GenerateId(sub.Text)}-{suffix++}";
+
+            var createFields = new Dictionary<string, object?>
+            {
+                ["title"] = sub.Text,
+                ["parent_task_id"] = parent.Id,
+                ["status"] = sub.IsCompleted ? "done" : "todo",
+                ["size"] = sub.Size,
+            };
+            var operations = JsonSerializer.SerializeToElement(new object[]
+            {
+                new
+                {
+                    op = "create_task",
+                    task_id = newId,
+                    if_absent = true,
+                    fields = createFields,
+                },
+                new
+                {
+                    op = "set_task_fields",
+                    task_id = parent.Id,
+                    if_revision = Task.ResourceRevision,
+                    fields = BuildHierarchyMutationFields(parent),
+                },
+            });
+            var mutation = App.Mutations.TransactTasks(
+                $"app-promote-subtask-{Guid.NewGuid():N}",
+                operations,
+                allowParentInlineSubtasks: true);
+            if (!await ApplyHierarchyMutationAsync(mutation, "Unable to promote Subtask"))
+                return;
+
+            var promoted = App.Vault.Load(newId);
             var refreshed = App.Vault.Load(Task.Id);
             if (refreshed is not null) ApplyTask(refreshed);
 
             if (promoted is not null) Frame.Navigate(typeof(TaskDetailPage), promoted);
         }
-        catch (Exception ex) { Debug.WriteLine($"PromoteSubtask failed: {ex}"); }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"PromoteSubtask failed: {ex}");
+            await ShowOperationErrorAsync("Unable to promote Subtask", ex.Message);
+        }
     }
 
     private void AddStatusOption(MenuFlyoutSubItem parent, SubTask sub, string status, string label)
@@ -2223,12 +2266,9 @@ public sealed partial class TaskDetailPage : Page
         {
             try
             {
-                var promoted = App.Tasks.PromoteSubtask(Task, index);
-                var refreshed = App.Vault.Load(Task.Id);
-                if (refreshed is not null) ApplyTask(refreshed);
-
-                if (promoted is not null) Frame.Navigate(typeof(TaskDetailPage), promoted);
+                await PromoteSubtaskAsync(Task.Subtasks[index]);
             }
+
             catch (Exception ex) { Debug.WriteLine($"PromoteSubtask failed: {ex}"); }
             return;
         }
@@ -2265,6 +2305,29 @@ public sealed partial class TaskDetailPage : Page
         if (reloaded is not null) ApplyTask(reloaded);
 
     }
+
+    private static Dictionary<string, object?> BuildHierarchyMutationFields(GlassworkTask task) =>
+        new()
+        {
+            ["title"] = task.Title,
+            ["status"] = task.Status,
+            ["priority"] = task.Priority,
+            ["type"] = task.Type,
+            ["source_kind"] = task.SourceKind,
+            ["size"] = task.Size,
+            ["parent_task_id"] = task.Parent,
+            ["description"] = task.Description,
+            ["notes"] = task.Notes,
+            ["subtasks"] = task.Subtasks.Select(subtask => new
+            {
+                text = subtask.Text,
+                is_completed = subtask.IsCompleted,
+                status = subtask.Status,
+                notes = subtask.Notes,
+                size = subtask.Size,
+                metadata = subtask.Metadata,
+            }).ToArray(),
+        };
 
     private void ActiveSubtaskList_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {

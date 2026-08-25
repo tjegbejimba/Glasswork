@@ -666,6 +666,33 @@ public class GlassworkToolsTests
     }
 
     [TestMethod]
+    public void ParentFilteredQueries_UseLaterLocalAdoResolution()
+    {
+        var parent = new GlassworkTask
+        {
+            Id = "resolved-parent",
+            Title = "Resolved parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        parent.AdoLink = 77;
+        _vault.Save(parent);
+        _vault.Save(new GlassworkTask
+        {
+            Id = "external-child",
+            Title = "External child",
+            Parent = "77",
+        });
+
+        var listed = JsonDocument.Parse(_tools.ListTasks(parent_task_id: "resolved-parent"))
+            .RootElement.GetProperty("tasks");
+        var queried = JsonDocument.Parse(_tools.QueryTasks(parent_task_id: "resolved-parent"))
+            .RootElement.GetProperty("tasks");
+
+        Assert.AreEqual("external-child", listed[0].GetProperty("id").GetString());
+        Assert.AreEqual("external-child", queried[0].GetProperty("id").GetString());
+    }
+
+    [TestMethod]
     [DataRow("")]
     [DataRow(" ")]
     [DataRow(" parent ")]
