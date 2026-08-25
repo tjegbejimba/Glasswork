@@ -426,6 +426,19 @@ public class VaultService
     }
 
     /// <summary>
+    /// Migration-only escape hatch for repairing legacy hierarchy snapshots before validation.
+    /// Normal callers must use <see cref="SetParent"/>.
+    /// </summary>
+    public void SetParentForMigration(string taskId, string? parent)
+    {
+        var task = Load(taskId);
+        if (task is null)
+            return;
+        task.Parent = string.IsNullOrWhiteSpace(parent) ? null : parent.Trim();
+        CommitManagedBytes(taskId, _parser.Serialize(task));
+    }
+
+    /// <summary>
     /// Targeted edit: set or clear the <c>parent</c> frontmatter key without rewriting any
     /// other frontmatter keys or the body. Empty/whitespace value removes the line. Preserves
     /// line endings and the rest of the file byte-for-byte. No-op if the file does not exist.
@@ -482,7 +495,10 @@ public class VaultService
 
         if (output == content) return;
 
-        CommitManagedBytes(taskId, output, originalBytes);
+        EnsureMutations().CommitHierarchyBytes(
+            taskId,
+            Encoding.UTF8.GetBytes(output),
+            originalBytes);
     }
 
     /// <summary>

@@ -201,6 +201,39 @@ public sealed partial class ResourceMutationService
         }
     }
 
+    internal void CommitHierarchyBytes(
+        string taskId,
+        byte[] updated,
+        byte[] expectedOriginal)
+    {
+        var notifications = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+            {
+                notifications.UnionWith(RecoverUnsafe());
+                var task = _parser.Parse(Encoding.UTF8.GetString(updated));
+                var hierarchyTasks = LoadHierarchyTasksUnsafe(taskId, task);
+                var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);
+                var requestedParent = task.Parent;
+                hierarchy.CanonicalizeParent(task);
+                var diagnostics = hierarchy.Validate([taskId]);
+                if (diagnostics.Count > 0)
+                    throw new InvalidOperationException(diagnostics[0].Message);
+
+                var canonicalBytes = string.Equals(requestedParent, task.Parent, StringComparison.Ordinal)
+                    ? updated
+                    : Encoding.UTF8.GetBytes(_parser.Serialize(task));
+                CommitBytesUnsafe(taskId, canonicalBytes, notifications, expectedOriginal);
+            }
+        }
+        finally
+        {
+            foreach (var id in notifications)
+                _vault.NotifyTaskWritten(id);
+        }
+    }
+
     internal bool CommitDelete(string taskId)
     {
         if (string.IsNullOrWhiteSpace(taskId))

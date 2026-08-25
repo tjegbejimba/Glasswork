@@ -408,6 +408,25 @@ public class VaultServiceTests
     }
 
     [TestMethod]
+    public void SetParent_RejectsLeafOwnerAndCycleBeforeWriting()
+    {
+        var leaf = new GlassworkTask { Id = "leaf-owner", Title = "Leaf owner" };
+        var child = new GlassworkTask { Id = "child", Title = "Child" };
+        _vault.Save(leaf);
+        _vault.Save(child);
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => _vault.SetParent("child", "leaf-owner"));
+        Assert.IsNull(_vault.Load("child")!.Parent);
+
+        leaf = _vault.Load("leaf-owner")!;
+        leaf.Type = GlassworkTask.Types.Parent;
+        _vault.Save(leaf);
+        _vault.SetParent("child", "leaf-owner");
+        Assert.ThrowsExactly<InvalidOperationException>(() => _vault.SetParent("leaf-owner", "child"));
+        Assert.IsNull(_vault.Load("leaf-owner")!.Parent);
+    }
+
+    [TestMethod]
     public void SetParent_RegistersWriteWithCoordinator()
     {
         var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));

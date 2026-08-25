@@ -2837,9 +2837,9 @@ References [[{taskId}]].
         var aId = JsonDocument.Parse(aJson).RootElement.GetProperty("task_id").GetString()!;
         var bId = JsonDocument.Parse(bJson).RootElement.GetProperty("task_id").GetString()!;
 
-        // Create the cycle using VaultService.SetParent (bypasses all validation)
-        _vault.SetParent(aId, bId);
-        _vault.SetParent(bId, aId);
+        // Seed the corrupt legacy cycle through the dedicated migration-only bypass.
+        _vault.SetParentForMigration(aId, bId);
+        _vault.SetParentForMigration(bId, aId);
 
         // Create an unrelated task
         var cJson = _tools.AddTask("Task C");
