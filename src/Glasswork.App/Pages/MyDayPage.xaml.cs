@@ -238,6 +238,20 @@ public sealed partial class MyDayPage : Page
             t.IsManuallyCollapsed = App.UiState.Get<bool>($"{App.CollapsedTaskKeyPrefix}{t.Id}");
         }
         UpdateEmptyState();
+        UpdateErrorBar();
+    }
+
+    /// <summary>
+    /// Surfaces the outcome of the last My Day mutation. <c>MyDayViewModel</c> sets
+    /// <see cref="MyDayViewModel.ErrorMessage"/> before raising <c>Refreshed</c>, so every
+    /// mutation path lands here — a revision conflict, a deleted Task, or a read-only Task
+    /// is reported instead of escaping to <c>App.UnhandledException</c>.
+    /// </summary>
+    private void UpdateErrorBar()
+    {
+        var message = ViewModel.ErrorMessage;
+        ErrorBar.Message = message ?? string.Empty;
+        ErrorBar.IsOpen = !string.IsNullOrWhiteSpace(message);
     }
 
     private void UpdateEmptyState()
