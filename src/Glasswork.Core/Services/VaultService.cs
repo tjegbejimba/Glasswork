@@ -405,7 +405,7 @@ public class VaultService
         {
             var inserted = new List<string> { $"ado_link: {adoId.Value}" };
             if (!string.IsNullOrWhiteSpace(adoTitle))
-                inserted.Add($"ado_title: {adoTitle}");
+                inserted.Add($"ado_title: {_parser.SerializeScalar("ado_title", adoTitle.Trim())}");
             newFront.InsertRange(insertPos, inserted);
         }
 

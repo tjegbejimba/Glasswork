@@ -99,6 +99,17 @@ public class VaultSetAdoLinkTests
     }
 
     [TestMethod]
+    public void SetAdoLink_TitleWithYamlSyntax_RoundTrips()
+    {
+        var task = new GlassworkTask { Id = "yaml-ado-title", Title = "YAML ADO title" };
+        _vault.Save(task);
+
+        _vault.SetAdoLink(task.Id, 42, "Bug: Foo");
+
+        Assert.AreEqual("Bug: Foo", _vault.Load(task.Id)!.AdoTitle);
+    }
+
+    [TestMethod]
     public void SetAdoLink_WithoutTitle_OnlyWritesAdoLink()
     {
         var taskId = "ado-no-title";

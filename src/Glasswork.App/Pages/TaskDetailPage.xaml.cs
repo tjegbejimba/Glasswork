@@ -1406,7 +1406,15 @@ public sealed partial class TaskDetailPage : Page
         }
         var newTitle = string.IsNullOrWhiteSpace(titleBox.Text) ? null : titleBox.Text.Trim();
 
-        App.Vault.SetAdoLink(Task.Id, newId, newTitle);
+        try
+        {
+            App.Vault.SetAdoLink(Task.Id, newId, newTitle);
+        }
+        catch (Exception ex) when (ResourceMutationService.IsExpectedPersistenceFailure(ex))
+        {
+            await ShowOperationErrorAsync("Unable to update ADO link", ex.Message);
+            return;
+        }
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
 
