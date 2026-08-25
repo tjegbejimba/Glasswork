@@ -172,6 +172,7 @@ public class TaskService
             throw new ArgumentOutOfRangeException(nameof(subtaskIndex));
 
         var subtask = parent.Subtasks[subtaskIndex];
+        parent.Type = GlassworkTask.Types.Parent;
         var newTask = CreateTask(subtask.Text, parent: parent.Id, size: subtask.Size);
 
         if (subtask.IsCompleted)
