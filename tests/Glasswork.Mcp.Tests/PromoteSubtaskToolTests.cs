@@ -43,6 +43,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Do the thing", IsCompleted = false, Size = "focus" } }
         };
         _vault.Save(parent);
@@ -70,12 +71,54 @@ public class PromoteSubtaskToolTests
     }
 
     [TestMethod]
+    public void PromoteSubtask_NormalTask_ConvertsSourceToParent()
+    {
+        var vault = new VaultService(TasksDir);
+        vault.Save(new GlassworkTask
+        {
+            Id = "normal-source",
+            Title = "Normal source",
+            Subtasks = { new SubTask { Text = "Promoted child" } },
+        });
+
+        var result = JsonDocument.Parse(_tools.PromoteSubtask("normal-source", 0));
+
+        Assert.IsFalse(result.RootElement.TryGetProperty("error", out _), result.RootElement.ToString());
+        Assert.AreEqual(GlassworkTask.Types.Parent, vault.Load("normal-source")!.Type);
+    }
+
+    [TestMethod]
+    public void PromoteSubtask_ParentWithMultipleInlineSubtasks_DrainsOneMigrationStep()
+    {
+        var vault = new VaultService(TasksDir);
+        vault.Save(new GlassworkTask
+        {
+            Id = "migration-parent",
+            Title = "Migration parent",
+            Type = GlassworkTask.Types.Parent,
+            Subtasks =
+            {
+                new SubTask { Text = "First" },
+                new SubTask { Text = "Second" },
+            },
+        });
+
+        var result = JsonDocument.Parse(_tools.PromoteSubtask("migration-parent", 0));
+
+        Assert.IsFalse(result.RootElement.TryGetProperty("error", out _), result.RootElement.ToString());
+        var reloaded = vault.Load("migration-parent")!;
+        Assert.HasCount(1, reloaded.Subtasks);
+        Assert.AreEqual("Second", reloaded.Subtasks[0].Text);
+    }
+
+    [TestMethod]
     public void PromoteSubtask_PreservesUnknownExistingRawSize()
     {
         var parent = new GlassworkTask
         {
             Id = "parent-future-size",
             Title = "Parent future size",
+            Type = GlassworkTask.Types.Parent,
             Subtasks =
             {
                 new SubTask { Text = "Future sized step", Size = "future_bucket" },
@@ -109,6 +152,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Only subtask", IsCompleted = false } }
         };
         _vault.Save(parent);
@@ -127,6 +171,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Already done", IsCompleted = true } }
         };
         _vault.Save(parent);
@@ -148,6 +193,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Subtask", IsCompleted = false } }
         };
         _vault.Save(parent);
@@ -166,6 +212,7 @@ public class PromoteSubtaskToolTests
         {
             Id = "parent-task",
             Title = "Parent Task",
+            Type = GlassworkTask.Types.Parent,
             Subtasks = { new SubTask { Text = "Subtask", IsCompleted = false } }
         };
         _vault.Save(parent);

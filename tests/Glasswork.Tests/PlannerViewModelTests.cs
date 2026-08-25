@@ -313,7 +313,7 @@ public sealed class PlannerViewModelTests
     }
 
     [TestMethod]
-    public void NotToday_PbiInlineLeafDoesNotReappearWhenChildKeepsContainerVisible()
+    public void NotToday_InvalidParentWithInlineSubtask_IsRejected()
     {
         var pbi = TodayTask("pbi-inline-dismissal", "PBI inline dismissal");
         pbi.Type = GlassworkTask.Types.Pbi;
@@ -335,12 +335,8 @@ public sealed class PlannerViewModelTests
         var inlineLeaf = viewModel.Groups.Single().Leaves
             .Single(leaf => leaf.SourceTaskId == pbi.Id);
 
-        Assert.IsTrue(viewModel.NotToday(inlineLeaf), viewModel.ErrorMessage);
-
-        var remainingLeaves = viewModel.Groups.Single().Leaves;
-        CollectionAssert.AreEqual(
-            new[] { "task:pbi-sibling-child" },
-            remainingLeaves.Select(leaf => leaf.Identity).ToArray());
+        Assert.IsFalse(viewModel.NotToday(inlineLeaf));
+        StringAssert.Contains(viewModel.ErrorMessage, "cannot own inline Subtasks");
     }
 
     [TestMethod]

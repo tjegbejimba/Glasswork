@@ -201,6 +201,66 @@ public sealed partial class ResourceMutationService
         }
     }
 
+    internal void CommitHierarchyBytes(
+        string taskId,
+        byte[] updated,
+        byte[] expectedOriginal)
+    {
+        var notifications = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+            {
+                notifications.UnionWith(RecoverUnsafe());
+                var originalTask = _parser.Parse(Encoding.UTF8.GetString(expectedOriginal));
+                TaskService.EnsureCanMutate(originalTask);
+                var task = _parser.Parse(Encoding.UTF8.GetString(updated));
+                var hierarchyTasks = LoadHierarchyTasksUnsafe(taskId, task);
+                var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);
+                var requestedParent = task.Parent;
+                hierarchy.CanonicalizeParent(task);
+                if (!string.Equals(requestedParent, task.Parent, StringComparison.Ordinal))
+                    throw new ResourceRevisionConflictException(
+                        "Parent resolution changed before commit.");
+                var validationScope = HierarchyValidationScope(
+                    hierarchyTasks,
+                    originalTask,
+                    task);
+                var diagnostics = hierarchy.Validate(validationScope);
+                if (diagnostics.Count > 0)
+                    throw new InvalidOperationException(diagnostics[0].Message);
+
+                CommitBytesUnsafe(taskId, updated, notifications, expectedOriginal);
+            }
+
+        }
+        finally
+        {
+            foreach (var id in notifications)
+                _vault.NotifyTaskWritten(id);
+        }
+    }
+
+    internal string? ResolveParentReference(string taskId, string? parentReference)
+    {
+        using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+        {
+            RecoverUnsafe();
+            var bytes = _vault.TryReadBytesUnsafe(taskId);
+            if (bytes is null)
+                return null;
+            var task = _parser.Parse(Encoding.UTF8.GetString(bytes));
+            TaskService.EnsureCanMutate(task);
+            task.Parent = string.IsNullOrWhiteSpace(parentReference) ? null : parentReference.Trim();
+            var hierarchy = new TaskHierarchyPolicy(LoadHierarchyTasksUnsafe(taskId, task));
+            hierarchy.CanonicalizeParent(task);
+            var diagnostics = hierarchy.Validate([taskId]);
+            if (diagnostics.Count > 0)
+                throw new InvalidOperationException(diagnostics[0].Message);
+            return task.Parent;
+        }
+    }
+
     internal bool CommitDelete(string taskId)
     {
         if (string.IsNullOrWhiteSpace(taskId))
@@ -735,6 +795,34 @@ public sealed partial class ResourceMutationService
                 new ResourceMutationOutcome(
                     mutationId, "validation_error", false, ifRevision, currentRevision, null, error));
 
+        var hierarchyTasks = LoadHierarchyTasksUnsafe(taskId, staged);
+        var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);
+        hierarchy.CanonicalizeParent(staged);
+        var hierarchyValidationIds = HierarchyValidationScope(
+            hierarchyTasks,
+            currentTask,
+            staged);
+        var hierarchyDiagnostics = hierarchy.Validate(hierarchyValidationIds);
+        if (hierarchyDiagnostics.Count > 0)
+        {
+            return Record(state, mutationId, requestHash,
+                new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    ifRevision,
+                    currentRevision,
+                    Snapshot(currentTask, currentRevision),
+                    "Task hierarchy validation failed.",
+                    Diagnostics: hierarchyDiagnostics
+                        .Select(diagnostic => new ResourceMutationDiagnostic(
+                            diagnostic.Code,
+                            0,
+                            diagnostic.TaskIds,
+                            diagnostic.Message))
+                        .ToArray()));
+        }
+
         _faults?.ThrowIfInjected(ResourceMutationFailurePoint.BeforeFinalValidation);
         var finalBytes = _vault.TryReadBytesUnsafe(taskId);
         if (finalBytes is null)
@@ -811,7 +899,8 @@ public sealed partial class ResourceMutationService
         JsonElement operations,
         string? transactionRevision = null,
         JsonElement? assertions = null,
-        bool preserveExistingUnknownSizes = false)
+        bool preserveExistingUnknownSizes = false,
+        bool allowParentInlineSubtasks = false)
     {
         var notifications = new HashSet<string>(StringComparer.Ordinal);
         try
@@ -825,7 +914,8 @@ public sealed partial class ResourceMutationService
                     transactionRevision,
                     assertions,
                     notifications,
-                    preserveExistingUnknownSizes);
+                    preserveExistingUnknownSizes,
+                    allowParentInlineSubtasks);
                 return result;
             }
         }
@@ -856,7 +946,8 @@ public sealed partial class ResourceMutationService
         string? transactionRevision,
         JsonElement? assertions,
         ISet<string> notifications,
-        bool preserveExistingUnknownSizes)
+        bool preserveExistingUnknownSizes,
+        bool allowParentInlineSubtasks)
     {
         var state = ReadState();
         Prune(state);
@@ -920,8 +1011,6 @@ public sealed partial class ResourceMutationService
 
             var op = opElement.GetString()!;
             var taskId = ReadOptionalTaskId(operation);
-            if (taskId is not null)
-                touchedOperationIndexes.TryAdd(taskId, index);
             if (op is not "assert_task_revision" and not "assert_revision"
                 && string.IsNullOrWhiteSpace(taskId))
             {
@@ -936,6 +1025,7 @@ public sealed partial class ResourceMutationService
                     ApplyRevisionAssertion(staged, operation, taskId, index, diagnostics);
                     break;
                 case "set_task_fields":
+                    touchedOperationIndexes.TryAdd(taskId!, index);
                     ApplyStagedFields(
                         staged,
                         operation,
@@ -946,6 +1036,7 @@ public sealed partial class ResourceMutationService
                         preserveExistingUnknownSizes);
                     break;
                 case "create_task":
+                    touchedOperationIndexes.TryAdd(taskId!, index);
                     CreateStagedTask(
                         staged,
                         operation,
@@ -955,6 +1046,7 @@ public sealed partial class ResourceMutationService
                         preserveExistingUnknownSizes);
                     break;
                 case "replace_task_relationships":
+                    touchedOperationIndexes.TryAdd(taskId!, index);
                     ReplaceStagedRelationships(staged, operation, taskId!, index, diagnostics);
                     break;
                 default:
@@ -964,7 +1056,27 @@ public sealed partial class ResourceMutationService
             }
         }
 
+        var hierarchy = new TaskHierarchyPolicy(staged.Values.Select(value => value.Task));
+        var hierarchyValidationTaskIds = touchedOperationIndexes.Keys.ToHashSet(StringComparer.Ordinal);
+        foreach (var taskId in touchedOperationIndexes.Keys)
+        {
+            if (staged.TryGetValue(taskId, out var touched))
+            {
+                hierarchy.CanonicalizeParent(touched.Task);
+                AddAdoIdentityAffectedTasks(touched, staged, hierarchyValidationTaskIds);
+            }
+        }
         diagnostics.AddRange(ValidateStagedGraph(staged, touchedOperationIndexes));
+        diagnostics.AddRange(hierarchy.Validate(
+            hierarchyValidationTaskIds,
+            allowParentInlineSubtasks).Select(diagnostic =>
+            new ResourceMutationDiagnostic(
+                diagnostic.Code,
+                diagnostic.TaskIds
+                    .Select(id => touchedOperationIndexes.GetValueOrDefault(id, 0))
+                    .FirstOrDefault(),
+                diagnostic.TaskIds,
+                diagnostic.Message)));
         if (diagnostics.Count > 0)
         {
             var outcome = diagnostics.Any(diagnostic => diagnostic.Code == "conflict")
@@ -1299,6 +1411,32 @@ public sealed partial class ResourceMutationService
         return diagnostics;
     }
 
+    private void AddAdoIdentityAffectedTasks(
+        StagedTask touched,
+        IReadOnlyDictionary<string, StagedTask> staged,
+        ISet<string> validationTaskIds)
+    {
+        GlassworkTask? original = touched.OriginalBytes.Length == 0
+            ? null
+            : _parser.Parse(Encoding.UTF8.GetString(touched.OriginalBytes));
+        var oldAdoId = GlassworkTask.Types.IsParent(original?.Type) ? original?.AdoLink : null;
+        var newAdoId = GlassworkTask.Types.IsParent(touched.Task.Type) ? touched.Task.AdoLink : null;
+        if (oldAdoId == newAdoId)
+            return;
+
+        foreach (var candidate in staged.Values)
+        {
+            var parentAdoId = AdoParentIdExtractor.TryExtractId(candidate.Task.Parent);
+            if (parentAdoId == oldAdoId || parentAdoId == newAdoId)
+                validationTaskIds.Add(candidate.Task.Id);
+        }
+
+        // A Parent ADO identity is a graph-wide resolution key. Validate the full
+        // snapshot so a newly ambiguous relationship cannot be hidden by a legacy
+        // free-text reference that the narrow extractor does not recognize.
+        validationTaskIds.UnionWith(staged.Keys);
+    }
+
     private static void DetectCycle(
         string id,
         IReadOnlyDictionary<string, StagedTask> byId,
@@ -1469,6 +1607,34 @@ public sealed partial class ResourceMutationService
             return Record(state, mutationId, requestHash,
                 new ResourceMutationOutcome(mutationId, "validation_error", false, null, null, null, "priority is invalid."));
 
+        var hierarchyTasks = LoadHierarchyTasksUnsafe(taskId, task);
+        var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);
+        hierarchy.CanonicalizeParent(task);
+        var hierarchyValidationIds = HierarchyValidationScope(
+            hierarchyTasks,
+            original: null,
+            task);
+        var hierarchyDiagnostics = hierarchy.Validate(hierarchyValidationIds);
+        if (hierarchyDiagnostics.Count > 0)
+        {
+            return Record(state, mutationId, requestHash,
+                new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    null,
+                    null,
+                    null,
+                    "Task hierarchy validation failed.",
+                    Diagnostics: hierarchyDiagnostics
+                        .Select(diagnostic => new ResourceMutationDiagnostic(
+                            diagnostic.Code,
+                            0,
+                            diagnostic.TaskIds,
+                            diagnostic.Message))
+                        .ToArray()));
+        }
+
         var createdBytes = Encoding.UTF8.GetBytes(_parser.Serialize(task));
         var journal = new JournalEntry(
             taskId,
@@ -1509,6 +1675,35 @@ public sealed partial class ResourceMutationService
         state.Outcomes[id] = new RecordedOutcome(hash, _clock(), outcome);
         WriteState(state);
         return outcome;
+    }
+
+    private IReadOnlyList<GlassworkTask> LoadHierarchyTasksUnsafe(
+        string replacementTaskId,
+        GlassworkTask replacement)
+    {
+        var tasks = new List<GlassworkTask>();
+        foreach (var path in Directory.EnumerateFiles(_vaultPath, "*.md", SearchOption.TopDirectoryOnly))
+        {
+            var id = Path.GetFileNameWithoutExtension(path);
+            if (string.Equals(id, replacementTaskId, StringComparison.Ordinal))
+                continue;
+            tasks.Add(_parser.Parse(File.ReadAllText(path)));
+        }
+        tasks.Add(replacement);
+        return tasks;
+    }
+
+    private static IEnumerable<string> HierarchyValidationScope(
+        IReadOnlyList<GlassworkTask> tasks,
+        GlassworkTask? original,
+        GlassworkTask updated)
+    {
+        var oldAdoId = GlassworkTask.Types.IsParent(original?.Type) ? original?.AdoLink : null;
+        var newAdoId = GlassworkTask.Types.IsParent(updated.Type) ? updated.AdoLink : null;
+        var parentIdentityChanged = oldAdoId != newAdoId;
+        return parentIdentityChanged
+            ? tasks.Select(task => task.Id)
+            : [updated.Id];
     }
 
     private string? ApplyFields(

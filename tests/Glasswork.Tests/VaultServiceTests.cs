@@ -407,6 +407,56 @@ public class VaultServiceTests
         StringAssert.Contains(actual, "parent: https://dev.azure.com/org/proj/_workitems/edit/42");
     }
 
+    [DataRow("#123")]
+    [DataRow("foo: bar")]
+    [TestMethod]
+    public void SetParent_YamlSyntax_RoundTripsAsFreeText(string parent)
+    {
+        var task = new GlassworkTask { Id = "yaml-parent", Title = "YAML parent" };
+        _vault.Save(task);
+
+        _vault.SetParent(task.Id, parent);
+
+        Assert.AreEqual(parent, _vault.Load(task.Id)!.Parent);
+    }
+
+    [TestMethod]
+    public void SetParent_RejectsLeafOwnerAndCycleBeforeWriting()
+    {
+        var leaf = new GlassworkTask { Id = "leaf-owner", Title = "Leaf owner" };
+        var child = new GlassworkTask { Id = "child", Title = "Child" };
+        _vault.Save(leaf);
+        _vault.Save(child);
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => _vault.SetParent("child", "leaf-owner"));
+        Assert.IsNull(_vault.Load("child")!.Parent);
+
+        leaf = _vault.Load("leaf-owner")!;
+        leaf.Type = GlassworkTask.Types.Parent;
+        _vault.Save(leaf);
+        _vault.SetParent("child", "leaf-owner");
+        Assert.ThrowsExactly<InvalidOperationException>(() => _vault.SetParent("leaf-owner", "child"));
+        Assert.IsNull(_vault.Load("leaf-owner")!.Parent);
+    }
+
+    [TestMethod]
+    public void SetParent_CancelledTask_RemainsReadOnly()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "cancelled-parent-edit",
+            Title = "Cancelled",
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = DateTimeOffset.UtcNow,
+            CancellationReason = "No longer needed",
+        };
+        _vault.Save(task);
+
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => _vault.SetParent(task.Id, "77"));
+        Assert.IsNull(_vault.Load(task.Id)!.Parent);
+    }
+
     [TestMethod]
     public void SetParent_RegistersWriteWithCoordinator()
     {

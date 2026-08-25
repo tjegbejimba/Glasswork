@@ -405,7 +405,7 @@ public class VaultService
         {
             var inserted = new List<string> { $"ado_link: {adoId.Value}" };
             if (!string.IsNullOrWhiteSpace(adoTitle))
-                inserted.Add($"ado_title: {adoTitle}");
+                inserted.Add($"ado_title: {_parser.SerializeScalar("ado_title", adoTitle.Trim())}");
             newFront.InsertRange(insertPos, inserted);
         }
 
@@ -422,7 +422,23 @@ public class VaultService
 
         if (output == content) return;
 
-        CommitManagedBytes(taskId, output, originalBytes);
+        EnsureMutations().CommitHierarchyBytes(
+            taskId,
+            Encoding.UTF8.GetBytes(output),
+            originalBytes);
+    }
+
+    /// <summary>
+    /// Migration-only escape hatch for repairing legacy hierarchy snapshots before validation.
+    /// Normal callers must use <see cref="SetParent"/>.
+    /// </summary>
+    public void SetParentForMigration(string taskId, string? parent)
+    {
+        var task = Load(taskId);
+        if (task is null)
+            return;
+        task.Parent = string.IsNullOrWhiteSpace(parent) ? null : parent.Trim();
+        CommitManagedBytes(taskId, _parser.Serialize(task));
     }
 
     /// <summary>
@@ -464,10 +480,10 @@ public class VaultService
         }
         if (insertPos < 0) insertPos = newFront.Count;
 
-        var trimmed = parent?.Trim();
+        var trimmed = EnsureMutations().ResolveParentReference(taskId, parent);
         if (!string.IsNullOrEmpty(trimmed))
         {
-            newFront.Insert(insertPos, $"parent: {trimmed}");
+            newFront.Insert(insertPos, $"parent: {_parser.SerializeScalar("parent", trimmed)}");
         }
 
         var rebuilt = new List<string> { "---" };
@@ -482,7 +498,10 @@ public class VaultService
 
         if (output == content) return;
 
-        CommitManagedBytes(taskId, output, originalBytes);
+        EnsureMutations().CommitHierarchyBytes(
+            taskId,
+            Encoding.UTF8.GetBytes(output),
+            originalBytes);
     }
 
     /// <summary>
@@ -754,11 +773,16 @@ public class VaultService
     /// </summary>
     public void SetLinks(string taskId, IReadOnlyList<TaskLink> links)
     {
+        var originalBytes = TryReadBytes(taskId);
+        if (originalBytes is null) return;
         var task = Load(taskId);
         if (task is null) return;
         EnsureTaskIsMutable(task);
         task.Links = links.ToList();
-        Save(task);
+        EnsureMutations().CommitHierarchyBytes(
+            taskId,
+            Encoding.UTF8.GetBytes(_parser.Serialize(task)),
+            originalBytes);
     }
 
     /// <summary>

@@ -49,6 +49,102 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_ReadOnlyAssertion_DoesNotCanonicalizeParent()
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var parent = new GlassworkTask
+        {
+            Id = "local-parent",
+            Title = "Local parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        parent.AdoLink = 77;
+        vault.Save(parent);
+        vault.Save(new GlassworkTask
+        {
+            Id = "asserted-child",
+            Title = "Asserted child",
+            Parent = "https://dev.azure.com/org/project/_workitems/edit/77",
+        });
+        var child = vault.Load("asserted-child")!;
+        var path = Path.Combine(_vaultDir, "wiki", "todo", "asserted-child.md");
+        var before = File.ReadAllBytes(path);
+        using var operations = JsonDocument.Parse($$"""
+        [{
+          "op": "assert_task_revision",
+          "task_id": "asserted-child",
+          "if_revision": "{{child.ResourceRevision}}"
+        }]
+        """);
+
+        var result = JsonDocument.Parse(_tools.TransactTasks("assert-only", operations.RootElement));
+
+        Assert.AreEqual("no_op", result.RootElement.GetProperty("outcome").GetString());
+        CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+    }
+
+    [TestMethod]
+    public void TransactTasks_DuplicateParentAdoIdentity_RejectsAffectedExternalChildAmbiguity()
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var existingParent = new GlassworkTask
+        {
+            Id = "existing-parent",
+            Title = "Existing parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        existingParent.AdoLink = 77;
+        vault.Save(existingParent);
+        vault.Save(new GlassworkTask
+        {
+            Id = "external-child",
+            Title = "External child",
+            Parent = "77",
+        });
+        using var operations = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "duplicate-parent",
+          "if_absent": true,
+          "fields": {
+            "title": "Duplicate parent",
+            "type": "parent",
+            "ado_link": 77
+          }
+        }]
+        """);
+
+        var result = JsonDocument.Parse(_tools.TransactTasks("duplicate-ado-parent", operations.RootElement));
+
+        Assert.AreEqual(
+            "validation_error",
+            result.RootElement.GetProperty("error").GetString(),
+            result.RootElement.ToString());
+        Assert.AreEqual(
+            "parent_ambiguous_external",
+            result.RootElement.GetProperty("diagnostics")[0].GetProperty("code").GetString());
+        Assert.IsFalse(vault.Exists("duplicate-parent"));
+    }
+
+    [TestMethod]
+    public void AddTask_NativeParent_DoesNotValidateUnrelatedMigrationState()
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        vault.Save(new GlassworkTask
+        {
+            Id = "legacy-parent",
+            Title = "Legacy parent",
+            Type = GlassworkTask.Types.Parent,
+            Subtasks = { new SubTask { Text = "Pending migration" } },
+        });
+
+        var result = JsonDocument.Parse(_tools.AddTask("Unrelated parent", type: "parent"));
+
+        Assert.IsFalse(result.RootElement.TryGetProperty("error", out _), result.RootElement.ToString());
+        Assert.IsTrue(vault.Exists("unrelated-parent"));
+    }
+
+    [TestMethod]
     public void UpdateTask_RequiresMutationIdAndRevision()
     {
         using var create = JsonDocument.Parse("""

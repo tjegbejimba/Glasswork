@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Glasswork.Controls;
 using Glasswork.Core.Markdown;
@@ -321,13 +322,23 @@ public sealed partial class TaskDetailPage : Page
         }
 
         ParentLabel.Visibility = Visibility.Visible;
-        ParentTextRun.Text = p;
+        var hierarchy = new TaskHierarchyPolicy(App.Index.Tasks.Values);
+        var namedParent = hierarchy.ResolveParent(task);
+        ParentTextRun.Text = namedParent.DisplayTitle ?? p;
         EditParentButton.Content = "Edit parent";
 
         // Classify parent to determine link type
         var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim();
-        var classifier = new ParentLinkClassifier(App.Index);
-        _parentResolution = classifier.Classify(p, baseUrl);
+        if (namedParent.Kind == TaskParentResolutionKind.Local
+            && namedParent.CanonicalTaskId is { } parentTaskId)
+        {
+            _parentResolution = ParentLinkResolution.InAppTask(parentTaskId);
+        }
+        else
+        {
+            var classifier = new ParentLinkClassifier(App.Index);
+            _parentResolution = classifier.Classify(p, baseUrl);
+        }
 
         // Update button visibility and content based on resolution
         if (_parentResolution.Type == ParentLinkResolution.ResolutionType.InAppTask)
@@ -633,7 +644,15 @@ public sealed partial class TaskDetailPage : Page
 
         var newLink = new TaskLink { Type = type, Value = value, Label = label };
         var updatedLinks = Task.Links.Append(newLink).ToList();
-        App.Vault.SetLinks(Task.Id, updatedLinks);
+        try
+        {
+            App.Vault.SetLinks(Task.Id, updatedLinks);
+        }
+        catch (Exception ex) when (ResourceMutationService.IsExpectedPersistenceFailure(ex))
+        {
+            await ShowOperationErrorAsync("Unable to add link", ex.Message);
+            return;
+        }
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
 
@@ -675,12 +694,20 @@ public sealed partial class TaskDetailPage : Page
         var menu = new MenuFlyout();
 
         var deleteItem = new MenuFlyoutItem { Text = "Delete" };
-        deleteItem.Click += (_, __) =>
+        deleteItem.Click += async (_, __) =>
         {
             // Use ReferenceEquals to remove only the exact clicked instance
             // (guards against duplicate links with identical values).
             var updatedLinks = Task.Links.Where(l => !ReferenceEquals(l, row.Source)).ToList();
-            App.Vault.SetLinks(Task.Id, updatedLinks);
+            try
+            {
+                App.Vault.SetLinks(Task.Id, updatedLinks);
+            }
+            catch (Exception ex) when (ResourceMutationService.IsExpectedPersistenceFailure(ex))
+            {
+                await ShowOperationErrorAsync("Unable to delete link", ex.Message);
+                return;
+            }
             var reloaded = App.Vault.Load(Task.Id);
             if (reloaded is not null) ApplyTask(reloaded);
 
@@ -1032,13 +1059,32 @@ public sealed partial class TaskDetailPage : Page
 
     private void AddSubtask_Click(object sender, RoutedEventArgs e) => CommitNewSubtask();
 
-    private void CommitNewSubtask()
+    private async void CommitNewSubtask()
     {
         if (_isLoading) return;
         var title = AddSubtaskBox.Text?.Trim();
         if (string.IsNullOrEmpty(title)) return;
 
-        App.Vault.AddSubtask(Task.Id, title);
+        var subtasks = Task.Subtasks
+            .Append(new SubTask { Text = title })
+            .Select(subtask => new
+            {
+                text = subtask.Text,
+                is_completed = subtask.IsCompleted,
+                status = subtask.Status,
+                notes = subtask.Notes,
+                size = subtask.Size,
+                metadata = subtask.Metadata,
+            })
+            .ToArray();
+        var mutation = App.Mutations.TransactSingleTask(
+            $"app-add-subtask-{Guid.NewGuid():N}",
+            Task.Id,
+            Task.ResourceRevision,
+            JsonSerializer.SerializeToElement(new { subtasks }));
+        if (!await ApplyHierarchyMutationAsync(mutation, "Unable to add Subtask"))
+            return;
+
         AddSubtaskBox.Text = string.Empty;
 
         var reloaded = App.Vault.Load(Task.Id);
@@ -1376,7 +1422,15 @@ public sealed partial class TaskDetailPage : Page
         }
         var newTitle = string.IsNullOrWhiteSpace(titleBox.Text) ? null : titleBox.Text.Trim();
 
-        App.Vault.SetAdoLink(Task.Id, newId, newTitle);
+        try
+        {
+            App.Vault.SetAdoLink(Task.Id, newId, newTitle);
+        }
+        catch (Exception ex) when (ResourceMutationService.IsExpectedPersistenceFailure(ex))
+        {
+            await ShowOperationErrorAsync("Unable to update ADO link", ex.Message);
+            return;
+        }
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
 
@@ -1433,10 +1487,38 @@ public sealed partial class TaskDetailPage : Page
         if (result != ContentDialogResult.Primary) return;
 
         var trimmed = box.Text?.Trim();
-        App.Vault.SetParent(Task.Id, string.IsNullOrEmpty(trimmed) ? null : trimmed);
+        try
+        {
+            App.Vault.SetParent(Task.Id, string.IsNullOrEmpty(trimmed) ? null : trimmed);
+        }
+        catch (Exception ex) when (ResourceMutationService.IsExpectedPersistenceFailure(ex))
+        {
+            await ShowOperationErrorAsync("Unable to update Parent", ex.Message);
+            return;
+        }
+
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
 
+    }
+
+    private async Task<bool> ApplyHierarchyMutationAsync(
+        ResourceMutationOutcome outcome,
+        string title)
+    {
+        if (outcome.Outcome is "applied" or "no_op")
+            return true;
+        if (outcome.Outcome == "conflict")
+        {
+            ReloadBanner.IsOpen = true;
+            return false;
+        }
+
+        var message = outcome.Diagnostics?.FirstOrDefault()?.Message
+            ?? outcome.Error
+            ?? "The Task hierarchy change could not be saved.";
+        await ShowOperationErrorAsync(title, message);
+        return false;
     }
 
     private void StartWork_Click(object sender, RoutedEventArgs e)
@@ -2010,7 +2092,7 @@ public sealed partial class TaskDetailPage : Page
         menu.Items.Add(textItem);
 
         var promoteItem = new MenuFlyoutItem { Text = "Promote to top-level task" };
-        promoteItem.Click += (_, __) => PromoteSubtask(sub);
+        promoteItem.Click += async (_, __) => await PromoteSubtaskAsync(sub);
         menu.Items.Add(promoteItem);
 
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -2028,19 +2110,62 @@ public sealed partial class TaskDetailPage : Page
         menu.ShowAt(fe);
     }
 
-    private void PromoteSubtask(SubTask sub)
+    private async Task PromoteSubtaskAsync(SubTask sub)
     {
         var index = Task.Subtasks.IndexOf(sub);
         if (index < 0) return;
         try
         {
-            var promoted = App.Tasks.PromoteSubtask(Task, index);
+            var parent = Task.Clone();
+            parent.Type = GlassworkTask.Types.Parent;
+            parent.Subtasks.RemoveAt(index);
+            var newId = VaultService.GenerateId(sub.Text);
+            var suffix = 1;
+            while (App.Vault.Exists(newId))
+                newId = $"{VaultService.GenerateId(sub.Text)}-{suffix++}";
+
+            var createFields = new Dictionary<string, object?>
+            {
+                ["title"] = sub.Text,
+                ["parent_task_id"] = parent.Id,
+                ["status"] = sub.IsCompleted ? "done" : "todo",
+                ["size"] = sub.Size,
+            };
+            var operations = JsonSerializer.SerializeToElement(new object[]
+            {
+                new
+                {
+                    op = "create_task",
+                    task_id = newId,
+                    if_absent = true,
+                    fields = createFields,
+                },
+                new
+                {
+                    op = "set_task_fields",
+                    task_id = parent.Id,
+                    if_revision = Task.ResourceRevision,
+                    fields = BuildHierarchyMutationFields(parent),
+                },
+            });
+            var mutation = App.Mutations.TransactTasks(
+                $"app-promote-subtask-{Guid.NewGuid():N}",
+                operations,
+                allowParentInlineSubtasks: true);
+            if (!await ApplyHierarchyMutationAsync(mutation, "Unable to promote Subtask"))
+                return;
+
+            var promoted = App.Vault.Load(newId);
             var refreshed = App.Vault.Load(Task.Id);
             if (refreshed is not null) ApplyTask(refreshed);
 
             if (promoted is not null) Frame.Navigate(typeof(TaskDetailPage), promoted);
         }
-        catch (Exception ex) { Debug.WriteLine($"PromoteSubtask failed: {ex}"); }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"PromoteSubtask failed: {ex}");
+            await ShowOperationErrorAsync("Unable to promote Subtask", ex.Message);
+        }
     }
 
     private void AddStatusOption(MenuFlyoutSubItem parent, SubTask sub, string status, string label)
@@ -2164,12 +2289,9 @@ public sealed partial class TaskDetailPage : Page
         {
             try
             {
-                var promoted = App.Tasks.PromoteSubtask(Task, index);
-                var refreshed = App.Vault.Load(Task.Id);
-                if (refreshed is not null) ApplyTask(refreshed);
-
-                if (promoted is not null) Frame.Navigate(typeof(TaskDetailPage), promoted);
+                await PromoteSubtaskAsync(Task.Subtasks[index]);
             }
+
             catch (Exception ex) { Debug.WriteLine($"PromoteSubtask failed: {ex}"); }
             return;
         }
@@ -2206,6 +2328,29 @@ public sealed partial class TaskDetailPage : Page
         if (reloaded is not null) ApplyTask(reloaded);
 
     }
+
+    private static Dictionary<string, object?> BuildHierarchyMutationFields(GlassworkTask task) =>
+        new()
+        {
+            ["title"] = task.Title,
+            ["status"] = task.Status,
+            ["priority"] = task.Priority,
+            ["type"] = task.Type,
+            ["source_kind"] = task.SourceKind,
+            ["size"] = task.Size,
+            ["parent_task_id"] = task.Parent,
+            ["description"] = task.Description,
+            ["notes"] = task.Notes,
+            ["subtasks"] = task.Subtasks.Select(subtask => new
+            {
+                text = subtask.Text,
+                is_completed = subtask.IsCompleted,
+                status = subtask.Status,
+                notes = subtask.Notes,
+                size = subtask.Size,
+                metadata = subtask.Metadata,
+            }).ToArray(),
+        };
 
     private void ActiveSubtaskList_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {

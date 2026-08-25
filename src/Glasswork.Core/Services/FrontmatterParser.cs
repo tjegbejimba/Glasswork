@@ -35,6 +35,18 @@ public partial class FrontmatterParser
         "context_links", "tags", "links",
     };
 
+    public string SerializeScalar(string key, string value)
+    {
+        var yaml = YamlSerializer.Serialize(new Dictionary<string, string>
+        {
+            [key] = value,
+        }).TrimEnd();
+        var prefix = $"{key}: ";
+        if (!yaml.StartsWith(prefix, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Unable to serialize YAML scalar '{key}'.");
+        return yaml[prefix.Length..];
+    }
+
     [GeneratedRegex(@"^---\s*\n(.*?)\n---\s*\n?(.*)", RegexOptions.Singleline)]
     private static partial Regex FrontmatterRegex();
 

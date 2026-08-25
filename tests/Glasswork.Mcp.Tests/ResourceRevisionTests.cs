@@ -77,7 +77,7 @@ public sealed class ResourceRevisionTests
     [TestMethod]
     public void TaskBearingReadResults_IncludeResourceRevisions()
     {
-        var parent = JsonDocument.Parse(_tools.AddTask("Read contract parent", my_day: true));
+        var parent = JsonDocument.Parse(_tools.AddTask("Read contract parent", my_day: true, type: "parent"));
         var parentId = parent.RootElement.GetProperty("task_id").GetString()!;
         var child = JsonDocument.Parse(_tools.AddTask(
             "Read contract child",

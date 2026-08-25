@@ -145,6 +145,7 @@ internal static class TaskQueryPolicy
             ? null
             : TaskQueryValueMapper.Status(selection.Status.Value);
         var parentId = NormalizeId(selection.ParentTaskId);
+        var hierarchy = new TaskHierarchyPolicy(snapshot.Tasks);
         var fields = selection.Projection switch
         {
             null or DefaultTaskSummaryProjection => DefaultSummaryFields,
@@ -159,7 +160,7 @@ internal static class TaskQueryPolicy
             .Where(task => status is null
                 ? task.Status != GlassworkTask.Statuses.Cancelled
                 : task.Status == status)
-            .Where(task => parentId is null || string.Equals(task.Parent, parentId, StringComparison.Ordinal))
+            .Where(task => ParentMatches(hierarchy, task, parentId))
             .OrderBy(task => task.Created)
             .ThenBy(task => task.Id, StringComparer.Ordinal)
             .Select(task => Project(
@@ -185,6 +186,7 @@ internal static class TaskQueryPolicy
         }
 
         var parentId = NormalizeId(selection.ParentTaskId);
+        var hierarchy = new TaskHierarchyPolicy(snapshot.Tasks);
         var statuses = selection.Statuses?
             .Select(TaskQueryValueMapper.Status)
             .ToHashSet(StringComparer.Ordinal)
@@ -198,7 +200,7 @@ internal static class TaskQueryPolicy
 
         var scoped = snapshot.Tasks
             .Where(task => statuses.Count > 0 || task.Status != GlassworkTask.Statuses.Cancelled)
-            .Where(task => parentId is null || string.Equals(task.Parent, parentId, StringComparison.Ordinal))
+            .Where(task => ParentMatches(hierarchy, task, parentId))
             .Where(task => statuses.Count == 0 || statuses.Contains(task.Status))
             .Where(task => type is null || GlassworkTask.Types.Normalize(task.Type) == type)
             .Where(task => tags.All(tag =>
@@ -268,6 +270,17 @@ internal static class TaskQueryPolicy
             : null;
         return TaskQueryResult.Success(projected, readBasis, nextCursor);
     }
+
+    private static bool ParentMatches(
+        TaskHierarchyPolicy hierarchy,
+        GlassworkTask task,
+        string? requestedParentId) =>
+        requestedParentId is null
+        || string.Equals(task.Parent, requestedParentId, StringComparison.Ordinal)
+        || string.Equals(
+            hierarchy.ResolveParent(task).CanonicalTaskId,
+            requestedParentId,
+            StringComparison.Ordinal);
 
     private static TaskQueryResult SelectMyDay(
         TaskQuerySnapshot snapshot,

@@ -1,3 +1,4 @@
+using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 
 namespace Glasswork.Tests;
@@ -65,6 +66,78 @@ public class VaultSetAdoLinkTests
             "\n" +
             "### [ ] One\n";
         Assert.AreEqual(expected, actual);
+    }
+
+    [TestMethod]
+    public void SetAdoLink_DuplicateParentIdentity_IsRejected()
+    {
+        var first = new GlassworkTask
+        {
+            Id = "first-parent",
+            Title = "First parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        first.AdoLink = 77;
+        var second = new GlassworkTask
+        {
+            Id = "second-parent",
+            Title = "Second parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        _vault.Save(first);
+        _vault.Save(second);
+        _vault.Save(new GlassworkTask
+        {
+            Id = "external-child",
+            Title = "External child",
+            Parent = "77",
+        });
+
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => _vault.SetAdoLink(second.Id, 77, "Duplicate"));
+        Assert.IsNull(_vault.Load(second.Id)!.AdoLink);
+    }
+
+    [TestMethod]
+    public void SetAdoLink_TitleWithYamlSyntax_RoundTrips()
+    {
+        var task = new GlassworkTask { Id = "yaml-ado-title", Title = "YAML ADO title" };
+        _vault.Save(task);
+
+        _vault.SetAdoLink(task.Id, 42, "Bug: Foo");
+
+        Assert.AreEqual("Bug: Foo", _vault.Load(task.Id)!.AdoTitle);
+    }
+
+    [TestMethod]
+    public void SetLinks_DuplicateParentAdoIdentity_IsRejected()
+    {
+        var first = new GlassworkTask
+        {
+            Id = "links-first-parent",
+            Title = "First",
+            Type = GlassworkTask.Types.Parent,
+        };
+        first.AdoLink = 77;
+        var second = new GlassworkTask
+        {
+            Id = "links-second-parent",
+            Title = "Second",
+            Type = GlassworkTask.Types.Parent,
+        };
+        _vault.Save(first);
+        _vault.Save(second);
+        _vault.Save(new GlassworkTask
+        {
+            Id = "links-external-child",
+            Title = "Child",
+            Parent = "77",
+        });
+
+        Assert.ThrowsExactly<InvalidOperationException>(() => _vault.SetLinks(
+            second.Id,
+            [new TaskLink { Type = TaskLink.Types.Ado, Value = "77" }]));
+        Assert.IsNull(_vault.Load(second.Id)!.AdoLink);
     }
 
     [TestMethod]

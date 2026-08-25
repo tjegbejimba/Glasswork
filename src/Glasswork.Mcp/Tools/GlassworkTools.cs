@@ -259,7 +259,7 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("invalid_blocked_reason", "blocked_reason is required when status is blocked."));
             }
 
-            var safeParent = SanitizeId(parent_task_id);
+            var parentReference = NormalizeParentReference(parent_task_id);
 
             var baseId = VaultService.GenerateId(title);
             var id = baseId;
@@ -293,7 +293,7 @@ public sealed class GlassworkTools
                 SourceKind = source_kind,
                 Size = size,
                 Created = DateTime.Today,
-                Parent = safeParent,
+                Parent = parentReference,
                 Description = description ?? string.Empty,
                 Due = dueDate,
                 MyDay = myDayDate,
@@ -609,7 +609,8 @@ public sealed class GlassworkTools
 
             // Load all tasks and filter for children
             var all = _vault.LoadAll();
-            var subtasks = all.Where(t => t.Parent == sanitizedId).ToList();
+            var hierarchy = new TaskHierarchyPolicy(all);
+            var subtasks = hierarchy.GetChildren(sanitizedId).ToList();
 
             if (recursive)
             {
@@ -623,7 +624,7 @@ public sealed class GlassworkTools
                     if (processed.Contains(currentId)) continue;
                     processed.Add(currentId);
 
-                    var children = all.Where(t => t.Parent == currentId).ToList();
+                    var children = hierarchy.GetChildren(currentId).ToList();
                     expanded.AddRange(children);
                     foreach (var child in children)
                         toProcess.Enqueue(child.Id);
@@ -647,8 +648,8 @@ public sealed class GlassworkTools
                     Status: MapToExternalStatus(t.Status),
                     Priority: t.Priority,
                     Size: t.Size,
-                    Depth: CalculateDepth(t.Id, all),
-                    SubtaskCount: all.Count(child => child.Parent == t.Id),
+                    Depth: hierarchy.GetAncestors(t.Id).Count,
+                    SubtaskCount: hierarchy.GetChildren(t.Id).Count,
                     ResourceRevision: ManagedResourceRevision(t)))
                 .ToList();
 
@@ -753,20 +754,6 @@ public sealed class GlassworkTools
             scope?.SetResult("error");
             throw;
         }
-    }
-
-    private int CalculateDepth(string taskId, List<GlassworkTask> all)
-    {
-        var depth = 0;
-        var current = taskId;
-        while (true)
-        {
-            var task = all.FirstOrDefault(t => t.Id == current);
-            if (task?.Parent is null) break;
-            depth++;
-            current = task.Parent;
-        }
-        return depth;
     }
 
     [McpServerTool(Name = "search_tasks")]
@@ -1738,11 +1725,8 @@ public sealed class GlassworkTools
                 if (!TryReadNullableString(parentElement, "parent_task_id", out var value, out var error))
                     return SerializeInputError(scope, error!);
 
-                var safeParent = SanitizeId(value);
-                if (!string.IsNullOrEmpty(safeParent) && !_vault.Exists(safeParent))
-                    return SerializeInputError(scope, new ErrorResult("invalid_parent", $"Parent task '{value}' not found."));
-
-                UpdateIfChanged(task.Parent, safeParent, v => task.Parent = v, "parent_task_id", updatedFields);
+                var parentReference = NormalizeParentReference(value);
+                UpdateIfChanged(task.Parent, parentReference, v => task.Parent = v, "parent_task_id", updatedFields);
             }
 
             if (hasFields && fields.TryGetProperty("ado_link", out var adoLinkElement))
@@ -2064,23 +2048,9 @@ public sealed class GlassworkTools
 
             var task = _vault.Load(safeId)!;
             var oldParentId = task.Parent;
-            var safeNewParent = SanitizeId(new_parent_id);
+            var parentReference = NormalizeParentReference(new_parent_id);
 
-            // Validate new parent exists
-            if (!string.IsNullOrEmpty(safeNewParent) && !_vault.Exists(safeNewParent))
-            {
-                scope?.SetResult("invalid_parent");
-                return JsonSerializer.Serialize(new ErrorResult("invalid_parent", $"Parent task '{new_parent_id}' not found."));
-            }
-
-            // Check for circular reparenting
-            if (!string.IsNullOrEmpty(safeNewParent) && WouldCreateCycle(safeId, safeNewParent))
-            {
-                scope?.SetResult("circular_parent");
-                return JsonSerializer.Serialize(new ErrorResult("circular_parent", $"Cannot move task '{task_id}': would create a circular parent relationship."));
-            }
-
-            task.Parent = safeNewParent;
+            task.Parent = parentReference;
             var mutation = _mutations.TransactSingleTask(
                 mutation_id,
                 safeId,
@@ -2094,7 +2064,7 @@ public sealed class GlassworkTools
                 TaskId: safeId,
                 Title: task.Title,
                 OldParentId: oldParentId,
-                NewParentId: safeNewParent,
+                NewParentId: mutation.Task?.Parent,
                 ResourceRevision: mutation.Task?.ResourceRevision));
         }
         catch
@@ -2104,35 +2074,8 @@ public sealed class GlassworkTools
         }
     }
 
-    /// <summary>
-    /// Returns true if setting taskId's parent to potentialParent would create a cycle.
-    /// Walks the ancestor chain of potentialParent to check if taskId appears.
-    /// Guards against existing cycles by tracking visited nodes.
-    /// </summary>
-    private bool WouldCreateCycle(string taskId, string potentialParent)
-    {
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var current = potentialParent;
-        
-        while (!string.IsNullOrEmpty(current))
-        {
-            // If we've seen this node before, there's a pre-existing cycle
-            // Treat this as safe (no cycle involving taskId), but stop walking
-            if (!visited.Add(current))
-                return false;
-
-            if (current == taskId)
-                return true;
-
-            var task = _vault.Load(current);
-            if (task is null)
-                break;
-
-            current = task.Parent;
-        }
-
-        return false;
-    }
+    private static string? NormalizeParentReference(string? parentReference) =>
+        string.IsNullOrWhiteSpace(parentReference) ? null : parentReference.Trim();
 
     private static string AppendNotes(string existing, string value)
     {
@@ -2472,10 +2415,15 @@ public sealed class GlassworkTools
             }
 
             var all = _vault.LoadAll();
+            var hierarchy = new TaskHierarchyPolicy(all);
             var byParent = all
-                .Where(t => !string.IsNullOrEmpty(t.Parent))
-                .GroupBy(t => t.Parent!, StringComparer.Ordinal)
-                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+                .Select(task => new
+                {
+                    task.Id,
+                    Children = hierarchy.GetChildren(task.Id).ToList(),
+                })
+                .Where(entry => entry.Children.Count > 0)
+                .ToDictionary(entry => entry.Id, entry => entry.Children, StringComparer.Ordinal);
             scope?.RecordPhase("load_task", taskSw.ElapsedMilliseconds);
 
             // Phase: load_artifacts — for the root only; recursive snapshots load
@@ -4036,6 +3984,7 @@ public sealed class GlassworkTools
                 newId = $"{VaultService.GenerateId(subtask.Text)}-{suffix++}";
 
             parent.Subtasks.RemoveAt(subtask_index);
+            parent.Type = GlassworkTask.Types.Parent;
             var createFields = new Dictionary<string, object?>
             {
                 ["title"] = subtask.Text,
@@ -4063,7 +4012,8 @@ public sealed class GlassworkTools
             var mutation = _mutations.TransactTasks(
                 mutation_id,
                 operations,
-                preserveExistingUnknownSizes: true);
+                preserveExistingUnknownSizes: true,
+                allowParentInlineSubtasks: true);
             if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
                 return SerializeMutationOutcome(mutation);
 

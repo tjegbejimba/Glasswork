@@ -414,6 +414,7 @@ public class TaskServiceTests
         // Subtask removed from parent
         var reloaded = _vault.Load("parent-task")!;
         Assert.AreEqual(0, reloaded.Subtasks.Count);
+        Assert.AreEqual(GlassworkTask.Types.Parent, reloaded.Type);
     }
 
     [DataTestMethod]
