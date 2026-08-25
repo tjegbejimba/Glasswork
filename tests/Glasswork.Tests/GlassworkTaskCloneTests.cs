@@ -21,7 +21,8 @@ public class GlassworkTaskCloneTests
             Title = "Original",
             Status = GlassworkTask.Statuses.InProgress,
             Priority = GlassworkTask.Priorities.High,
-            Type = GlassworkTask.Types.Pbi,
+            Type = GlassworkTask.Types.Parent,
+            SourceKind = "Feature",
             Size = "future_bucket",
             Created = new DateTime(2024, 1, 2),
             CompletedAt = new DateTime(2024, 5, 1),
@@ -39,7 +40,8 @@ public class GlassworkTaskCloneTests
         Assert.AreEqual("Original", copy.Title);
         Assert.AreEqual(GlassworkTask.Statuses.InProgress, copy.Status);
         Assert.AreEqual(GlassworkTask.Priorities.High, copy.Priority);
-        Assert.AreEqual(GlassworkTask.Types.Pbi, copy.Type);
+        Assert.AreEqual(GlassworkTask.Types.Parent, copy.Type);
+        Assert.AreEqual("Feature", copy.SourceKind);
         Assert.AreEqual("future_bucket", copy.Size);
         Assert.AreEqual(new DateTime(2024, 1, 2), copy.Created);
         Assert.AreEqual(new DateTime(2024, 5, 1), copy.CompletedAt);

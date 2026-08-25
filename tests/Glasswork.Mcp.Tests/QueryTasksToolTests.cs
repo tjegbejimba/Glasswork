@@ -87,7 +87,7 @@ public sealed class QueryTasksToolTests
             new[]
             {
                 "blocked_by", "description", "id", "notes", "parent_id",
-                "resource_revision", "status", "tags", "title", "type",
+                "resource_revision", "source_kind", "status", "tags", "title", "type",
             },
             tasks[0].EnumerateObject()
                 .Select(property => property.Name)
@@ -293,7 +293,7 @@ public sealed class QueryTasksToolTests
         AssertError(
             document.RootElement,
             "invalid_type",
-            "type must be 'task', 'pbi', or 'bug'.");
+            "type must be 'task', 'parent' (or compatibility alias 'pbi'), or 'bug'.");
     }
 
     [TestMethod]

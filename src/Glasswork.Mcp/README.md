@@ -309,13 +309,17 @@ Task IDs. Duplicate IDs are canonicalized during parse and serialization.
 Internally this is a thin translation to Core's stateless fresh-Vault Task Query
 adapter; query policy, cursors, diagnostics, and read basis remain Core-owned.
 
+Canonical Task types are `task`, `parent`, and `bug`. Inputs also accept legacy
+`pbi` as a compatibility alias for `parent`; outputs always use `parent`.
+Optional `source_kind` is trimmed open display text and never controls behavior.
+
 **Input**
 
 ```json
 {
   "parent_task_id": "string | null",
   "status": ["todo", "doing", "blocked", "done"],
-  "type": "task | pbi | bug",
+  "type": "task | parent | bug (pbi compatibility alias accepted)",
   "tags": ["string", "..."],
   "blocked_by_empty": "boolean",
   "blocked_by_status": ["done"],
@@ -340,6 +344,7 @@ structured `validation_error` with diagnostic entries.
       "title": "Task title",
       "status": "todo",
       "type": "task",
+      "source_kind": null,
       "parent_id": null,
       "tags": ["workflow"],
       "blocked_by": ["dependency-id"],
@@ -354,6 +359,7 @@ structured `validation_error` with diagnostic entries.
       "title": "Dependency task",
       "status": "done",
       "type": "task",
+      "source_kind": null,
       "parent_id": null,
       "tags": [],
       "blocked_by": [],

@@ -36,6 +36,7 @@ public sealed record ResourceMutationTaskSnapshot(
     string Status,
     string Priority,
     string Type,
+    string? SourceKind,
     string? Size,
     DateTime Created,
     DateTime? Due,
@@ -1544,6 +1545,7 @@ public sealed partial class ResourceMutationService
                     break;
                 case "priority": task.Priority = ReadString(property.Value, property.Name) ?? string.Empty; break;
                 case "type": task.Type = GlassworkTask.Types.Normalize(ReadString(property.Value, property.Name)); break;
+                case "source_kind": task.SourceKind = ReadString(property.Value, property.Name); break;
                 case "size":
                 {
                     var requestedSize = ReadString(property.Value, property.Name);
@@ -1782,7 +1784,7 @@ public sealed partial class ResourceMutationService
 
     private ResourceMutationTaskSnapshot Snapshot(GlassworkTask task, string revision) =>
         new(task.Id, task.Title, task.Status == GlassworkTask.Statuses.InProgress ? "doing" : task.Status,
-            task.Priority, task.Type, task.Size, task.Created, task.Due, task.Start, task.MyDay, task.DeferUntil,
+            task.Priority, task.Type, task.SourceKind, task.Size, task.Created, task.Due, task.Start, task.MyDay, task.DeferUntil,
             task.Parent, task.Description, task.Notes, task.Tags, task.BlockedBy, task.CompletedAt,
             task.CancelledAt, task.CancellationReason, task.BlockedReason, revision,
             task.Subtasks.Select(subtask => new ResourceMutationSubtaskSnapshot(

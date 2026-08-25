@@ -1,11 +1,11 @@
 ---
 name: glasswork-backfill-types
-description: 'One-time, vault-wide backfill that stamps the `type:` frontmatter field (ADR 0016) onto ADO-imported tasks that predate it — so existing PBIs stop leaking into My Day. Use when the user says "backfill task types", "stamp type on existing PBIs", "fix PBIs showing in My Day", "retro-stamp type: pbi", or "run the type backfill". This is a maintenance/repair action, not a sprint import — for pulling the current sprint use glasswork-import-sprint instead.'
+description: 'One-time, vault-wide backfill that stamps canonical Parent Task `type:` frontmatter onto older ADO imports. Use for task-type backfills or PBIs leaking into My Day. This is maintenance, not a sprint import.'
 ---
 
 # Glasswork — Backfill Task Types
 
-You are retro-stamping the `type:` frontmatter field (`pbi` / `bug`) onto ADO-imported
+You are retro-stamping the `type:` frontmatter field (`parent` / `bug`) onto ADO-imported
 task files that were created **before** the field existed (PR #335 / ADR 0016). Without it
 those items default to `task` and a `pbi` leaks into My Day on its stale sprint-end `due`.
 This skill fixes the existing corpus once; new imports are already stamped by
@@ -31,18 +31,17 @@ TOOL:         tools/Glasswork.Maintenance/Glasswork.Maintenance.csproj   (run fr
 
 | ADO `System.WorkItemType`         | Action                 |
 |-----------------------------------|------------------------|
-| `Product Backlog Item`            | classify `type: pbi`   |
-| `User Story`                      | classify `type: pbi`   |
-| `Epic`                            | classify `type: pbi`   |
-| `Feature`                         | classify `type: pbi`   |
+| `Product Backlog Item`            | classify `type: parent` |
+| `User Story`                      | classify `type: parent` |
+| `Epic`                            | classify `type: parent` |
+| `Feature`                         | classify `type: parent` |
 | `Bug`                             | classify `type: bug`   |
 | `Task`                            | skip (default, omitted)|
 | anything else                     | skip + surface for review |
 
-`pbi` is the single **non-actionable container** bucket — Product Backlog Item, User Story,
-Epic, and Feature all map to it (ADR 0016). A container will not self-promote to My Day on
-its own `due`. `bug` behaves like `task` for My Day; it is stamped only for fidelity. The
-enum stays `task` / `pbi` / `bug` — there are no separate `epic` / `feature` values.
+`parent` is the single **Parent Task** behavior. Product Backlog Item, User Story,
+Epic, and Feature map to it. Legacy `pbi` remains accepted as an input alias, but
+new writes use `parent`. A Parent Task will not self-promote from its own `due`.
 
 ## Process
 
@@ -79,11 +78,11 @@ wit_get_work_items_batch_by_ids(project="One", ids=[...], fields=["System.WorkIt
 ```
 
 Apply the **ADO → Glasswork type map** above. Build a classifications array containing the
-`pbi` results (Product Backlog Item / User Story / Epic / Feature) and the `bug` results:
+`parent` results (Product Backlog Item / User Story / Epic / Feature) and the `bug` results:
 
 ```json
 [
-  { "relative_path": "general-arm-manifests-improvements.md", "ado_id": 14480984, "type": "pbi" },
+  { "relative_path": "general-arm-manifests-improvements.md", "ado_id": 14480984, "type": "parent" },
   { "relative_path": "some-bug.md", "ado_id": 31736539, "type": "bug" }
 ]
 ```
@@ -126,8 +125,8 @@ Report to chat:
 ```
 Type backfill complete:
 
-Stamped (N): pbi=<count>, bug=<count>
-  - <relative_path>  -> type: <pbi|bug>  (ADO <id>, <WorkItemType>)
+Stamped (N): parent=<count>, bug=<count>
+  - <relative_path>  -> type: <parent|bug>  (ADO <id>, <WorkItemType>)
   ...
 
 Needs manual review (M):
@@ -152,7 +151,7 @@ guardrails in `glasswork-import-sprint`.
 - Do not delete or move files in the wiki vault.
 - Do not modify any frontmatter field other than adding `type:` (never touch `id`,
   `created`, `ado_link`, `due`, `status`, `parent`, etc.).
-- Do not stamp a type other than `pbi` or `bug`, and never stamp `task` (it is the omitted
+- Do not stamp a type other than `parent` or `bug`, and never stamp `task` (it is the omitted
   default).
 - Do not edit task files directly with a text editor / generic file tools — always go
   through the maintenance console so writes are surgical and self-write-registered.
@@ -172,7 +171,7 @@ If a request would require breaking a HARD NO, refuse and name the guardrail.
 - **Does not** import or update tasks from ADO — it only adds a missing `type:` field. Use
   `glasswork-import-sprint` for imports.
 - **Does not** stamp `Task` items (the default is omitted). Containers — Product Backlog
-  Item, User Story, Epic, and Feature — all map to `pbi` (ADR 0016).
+  Item, User Story, Epic, and Feature — all map to `parent`.
 - **Does not** touch files with no resolvable ADO id, or with ambiguous ADO ids — those are
   surfaced for manual review.
 - **Does not** change `due`, `status`, or any other field; a stamped PBI keeps its dates.

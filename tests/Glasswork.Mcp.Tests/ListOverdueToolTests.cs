@@ -326,6 +326,6 @@ public class ListOverdueToolTests
         using var doc = JsonDocument.Parse(json);
         var tasks = doc.RootElement.GetProperty("tasks");
         Assert.AreEqual(1, tasks.GetArrayLength(), "Overdue PBI should be returned.");
-        Assert.AreEqual("pbi", tasks[0].GetProperty("type").GetString(), "Overdue item must carry its type.");
+        Assert.AreEqual("parent", tasks[0].GetProperty("type").GetString(), "Overdue item must carry its canonical type.");
     }
 }

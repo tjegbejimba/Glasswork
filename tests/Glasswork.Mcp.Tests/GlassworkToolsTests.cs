@@ -287,7 +287,50 @@ public class GlassworkToolsTests
         var task = _vault.Load(taskId);
         
         Assert.IsNotNull(task);
-        Assert.AreEqual("pbi", task.Type);
+        Assert.AreEqual("parent", task.Type);
+    }
+
+    [TestMethod]
+    public void AddTask_ParentWithSourceKind_WritesCanonicalContract()
+    {
+        var json = _tools.AddTask(
+            "Portfolio item",
+            type: "parent",
+            source_kind: "  Custom Portfolio Item  ");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+
+        var task = _vault.Load(taskId);
+        Assert.IsNotNull(task);
+        Assert.AreEqual(GlassworkTask.Types.Parent, task.Type);
+        Assert.AreEqual("Custom Portfolio Item", task.SourceKind);
+        var content = File.ReadAllText(Path.Combine(TasksDir, $"{taskId}.md"));
+        StringAssert.Contains(content, "type: parent");
+        StringAssert.Contains(content, "source_kind: Custom Portfolio Item");
+
+        using var exact = JsonDocument.Parse(_tools.GetTask(taskId));
+        Assert.AreEqual("parent", exact.RootElement.GetProperty("type").GetString());
+        Assert.AreEqual(
+            "Custom Portfolio Item",
+            exact.RootElement.GetProperty("source_kind").GetString());
+
+        using var context = JsonDocument.Parse(_tools.LoadContext(taskId));
+        var contextTask = context.RootElement.GetProperty("task");
+        Assert.AreEqual("parent", contextTask.GetProperty("type").GetString());
+        Assert.AreEqual(
+            "Custom Portfolio Item",
+            contextTask.GetProperty("source_kind").GetString());
+    }
+
+    [TestMethod]
+    public void AddTask_LegacyPbiInput_WritesCanonicalParent()
+    {
+        var json = _tools.AddTask("Legacy client", type: "pbi");
+        var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
+
+        Assert.AreEqual(GlassworkTask.Types.Parent, _vault.Load(taskId)!.Type);
+        StringAssert.Contains(
+            File.ReadAllText(Path.Combine(TasksDir, $"{taskId}.md")),
+            "type: parent");
     }
 
     [TestMethod]
@@ -309,7 +352,7 @@ public class GlassworkToolsTests
         var task = _vault.Load(taskId);
         
         Assert.IsNotNull(task);
-        Assert.AreEqual("pbi", task.Type);
+        Assert.AreEqual("parent", task.Type);
     }
 
     [TestMethod]
@@ -320,7 +363,7 @@ public class GlassworkToolsTests
         var task = _vault.Load(taskId);
         
         Assert.IsNotNull(task);
-        Assert.AreEqual("pbi", task.Type);
+        Assert.AreEqual("parent", task.Type);
     }
 
     [TestMethod]
@@ -331,7 +374,7 @@ public class GlassworkToolsTests
         var task = _vault.Load(taskId);
         
         Assert.IsNotNull(task);
-        Assert.AreEqual("pbi", task.Type);
+        Assert.AreEqual("parent", task.Type);
     }
 
     [TestMethod]
@@ -342,7 +385,7 @@ public class GlassworkToolsTests
         var task = _vault.Load(taskId);
         
         Assert.IsNotNull(task);
-        Assert.AreEqual("pbi", task.Type);
+        Assert.AreEqual("parent", task.Type);
     }
 
     [TestMethod]
@@ -378,6 +421,23 @@ public class GlassworkToolsTests
         var tasks = doc.RootElement.GetProperty("tasks");
         Assert.AreEqual(JsonValueKind.Array, tasks.ValueKind);
         Assert.AreEqual(0, tasks.GetArrayLength());
+    }
+
+    [TestMethod]
+    public void ListAndQueryTasks_ProjectParentAndSourceKind()
+    {
+        _tools.AddTask("Parent", type: "parent", source_kind: "Feature");
+
+        using var list = JsonDocument.Parse(_tools.ListTasks(fields: ["type", "source_kind"]));
+        var listed = list.RootElement.GetProperty("tasks")[0];
+        Assert.AreEqual("parent", listed.GetProperty("type").GetString());
+        Assert.AreEqual("Feature", listed.GetProperty("source_kind").GetString());
+
+        using var query = JsonDocument.Parse(_tools.QueryTasks(type: "pbi"));
+        var queried = query.RootElement.GetProperty("tasks");
+        Assert.AreEqual(1, queried.GetArrayLength());
+        Assert.AreEqual("parent", queried[0].GetProperty("type").GetString());
+        Assert.AreEqual("Feature", queried[0].GetProperty("source_kind").GetString());
     }
 
     [TestMethod]
@@ -2113,7 +2173,19 @@ public class GlassworkToolsTests
 
         CollectionAssert.Contains(updated, "type");
         var task = _vault.Load(taskId);
-        Assert.AreEqual("pbi", task!.Type);
+        Assert.AreEqual("parent", task!.Type);
+    }
+
+    [TestMethod]
+    public void UpdateTask_SourceKind_TrimsAndPersists()
+    {
+        var addJson = _tools.AddTask("Imported parent", type: "parent");
+        var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
+
+        var updateJson = UpdateTask(taskId, """{ "source_kind": "  Feature  " }""");
+
+        CollectionAssert.Contains(UpdatedFieldsFrom(updateJson), "source_kind");
+        Assert.AreEqual("Feature", _vault.Load(taskId)!.SourceKind);
     }
 
     [TestMethod]
@@ -2139,7 +2211,7 @@ public class GlassworkToolsTests
         var updateJson = UpdateTask(taskId, """{ "type": "Product Backlog Item" }""");
         
         var task = _vault.Load(taskId);
-        Assert.AreEqual("pbi", task!.Type);
+        Assert.AreEqual("parent", task!.Type);
     }
 
     [TestMethod]
@@ -2151,7 +2223,7 @@ public class GlassworkToolsTests
         var updateJson = UpdateTask(taskId, """{ "type": "User Story" }""");
         
         var task = _vault.Load(taskId);
-        Assert.AreEqual("pbi", task!.Type);
+        Assert.AreEqual("parent", task!.Type);
     }
 
     [TestMethod]
@@ -2163,7 +2235,7 @@ public class GlassworkToolsTests
         var updateJson = UpdateTask(taskId, """{ "type": "Epic" }""");
         
         var task = _vault.Load(taskId);
-        Assert.AreEqual("pbi", task!.Type);
+        Assert.AreEqual("parent", task!.Type);
     }
 
     [TestMethod]
@@ -2175,7 +2247,7 @@ public class GlassworkToolsTests
         var updateJson = UpdateTask(taskId, """{ "type": "Feature" }""");
         
         var task = _vault.Load(taskId);
-        Assert.AreEqual("pbi", task!.Type);
+        Assert.AreEqual("parent", task!.Type);
     }
 
     [TestMethod]

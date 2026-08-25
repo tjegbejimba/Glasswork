@@ -69,7 +69,7 @@ public class GetMyDayToolTests
             typesById[t.GetProperty("id").GetString()!] = t.GetProperty("type").GetString()!;
         }
 
-        Assert.AreEqual("pbi", typesById["container-pbi"], "PBI container must report type 'pbi'.");
+        Assert.AreEqual("parent", typesById["container-pbi"], "Parent container must report canonical type 'parent'.");
         Assert.AreEqual("task", typesById["leaf-task"], "Default leaf must report type 'task'.");
     }
 

@@ -1,6 +1,6 @@
 # ADR 0017: My Day groups child Tasks under their parent PBI as cross-file container cards
 
-**Status**: Accepted
+**Status**: Superseded in part by ADR 0025
 **Context slice**: `MyDayViewModel`, `MyDayContainerGrouper` (new), `MyDayRemovalPolicy`, `GlassworkTask.TodaysChildren` (new), `MyDayPage` card template, the in-memory `IndexService` task map
 **Relates to**: ADR 0016 (PBI type / containers — Phase 1), ADR 0008 (My Day virtual promotion + inline subtasks), ADR 0013 (date-scoped pins), ADR 0005 (backlinks — explicitly *not* the parent model)
 

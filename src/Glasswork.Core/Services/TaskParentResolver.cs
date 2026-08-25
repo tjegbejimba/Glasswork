@@ -16,7 +16,7 @@ internal sealed class TaskParentResolver
         var ambiguousAdoIds = new HashSet<int>();
         foreach (var (taskId, task) in tasks)
         {
-            if (task.Type != GlassworkTask.Types.Pbi || !task.AdoLink.HasValue)
+            if (!GlassworkTask.Types.IsParent(task.Type) || !task.AdoLink.HasValue)
                 continue;
 
             var adoId = task.AdoLink.Value;

@@ -80,7 +80,7 @@ public class TaskTypeBackfillServiceVaultTests
 
         Assert.IsTrue(byPath["typed.md"].HasType);
         Assert.AreEqual("pbi", byPath["typed.md"].RawType);
-        Assert.AreEqual("pbi", byPath["typed.md"].NormalizedType);
+        Assert.AreEqual("parent", byPath["typed.md"].NormalizedType);
     }
 
     // ----- Run (dry-run / apply) -----
@@ -109,7 +109,7 @@ public class TaskTypeBackfillServiceVaultTests
 
         CollectionAssert.Contains(report.Stamped.ToArray(), "pbi-file.md");
         var written = File.ReadAllText(Path.Combine(_todo, "pbi-file.md"));
-        StringAssert.Contains(written, "priority: medium\ntype: pbi\n");
+        StringAssert.Contains(written, "priority: medium\ntype: parent\n");
         StringAssert.Contains(written, "ado_link: 14480984"); // legacy field preserved
         Assert.IsTrue(selfWrites.IsOwnProcessWrite(Path.Combine(_todo, "pbi-file.md")),
             "the write must be registered with SelfWriteCoordinator (hard rule 5)");

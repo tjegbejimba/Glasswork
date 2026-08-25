@@ -202,10 +202,11 @@ public sealed class GlassworkTools
         bool? my_day = null,
         string? notes = null,
         string? type = null,
-        string? size = null)
+        string? size = null,
+        string? source_kind = null)
     {
         return AddTask(title, Guid.NewGuid().ToString("N"), true, description, parent_task_id, status,
-            blocked_reason, priority, due_date, scheduled, my_day, notes, type, size);
+            blocked_reason, priority, due_date, scheduled, my_day, notes, type, size, source_kind);
     }
 
     [McpServerTool(Name = "add_task")]
@@ -224,8 +225,9 @@ public sealed class GlassworkTools
         [Description("Optional scheduled date (yyyy-MM-dd format). Sets my_day to this future date.")] string? scheduled = null,
         [Description("If true, sets my_day to today.")] bool? my_day = null,
         [Description("Optional notes content. Becomes the Notes section (ADR 0002).")] string? notes = null,
-        [Description("Task type: task, pbi, or bug. Accepts broader aliases (Product Backlog Item/User Story/Epic/Feature → pbi). Defaults to task (ADR 0016).")] string? type = null,
-        [Description("Optional Size: quick, short, focus, deep, or break_down.")] string? size = null)
+        [Description("Task type: task, parent, or bug. Accepts pbi and broader ADO container names as compatibility aliases for parent. Defaults to task.")] string? type = null,
+        [Description("Optional Size: quick, short, focus, deep, or break_down.")] string? size = null,
+        [Description("Optional open display string describing the external source kind. Whitespace is trimmed.")] string? source_kind = null)
     {
         using var scope = _logger?.BeginCall("add_task");
         try
@@ -288,6 +290,7 @@ public sealed class GlassworkTools
                 Status = internalStatus == GlassworkTask.Statuses.Blocked ? GlassworkTask.Statuses.Todo : internalStatus,
                 Priority = taskPriority,
                 Type = taskType,
+                SourceKind = source_kind,
                 Size = size,
                 Created = DateTime.Today,
                 Parent = safeParent,
@@ -334,7 +337,7 @@ public sealed class GlassworkTools
     public string ListTasks(
         [Description("Filter by status: todo, doing, blocked, done, or cancelled. Cancelled Tasks are excluded when omitted.")] string? status = null,
         [Description("Filter by parent task ID.")] string? parent_task_id = null,
-        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values include title, status, type, size, parent_id, path, created, priority, due, start, my_day, defer_until, cancelled_at, cancellation_reason, ready, urgency_score, backlink_count, and in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
+        [Description("Optional field projection. When provided, each summary contains only these fields plus `id`. Allowed values include title, status, type, source_kind, size, parent_id, path, created, priority, due, start, my_day, defer_until, cancelled_at, cancellation_reason, ready, urgency_score, backlink_count, and in_my_day_today. Unknown names are silently dropped. Case-insensitive; whitespace trimmed.")] string[]? fields = null)
     {
         using var scope = _logger?.BeginCall("list_tasks");
         try
@@ -409,7 +412,7 @@ public sealed class GlassworkTools
     public string QueryTasks(
         [Description("Filter by parent Task ID.")] string? parent_task_id = null,
         [Description("Include Tasks whose status is in this set: todo, doing, blocked, done, or cancelled. Cancelled Tasks are excluded when omitted.")] string[]? status = null,
-        [Description("Filter by Task type: task, pbi, or bug.")] string? type = null,
+        [Description("Filter by Task type: task, parent, or bug. Accepts pbi as a compatibility alias for parent.")] string? type = null,
         [Description("Require every listed Tag to be present.")] string[]? tags = null,
         [Description("When true, select Tasks with an empty blocked_by relationship set.")] bool blocked_by_empty = false,
         [Description("Require every blocked_by target to have one of these statuses. An empty dependency set does not match this predicate.")] string[]? blocked_by_status = null,
@@ -471,7 +474,7 @@ public sealed class GlassworkTools
                 scope?.SetResult("error");
                 return JsonSerializer.Serialize(new ErrorResult(
                     "invalid_type",
-                    "type must be 'task', 'pbi', or 'bug'."));
+                    "type must be 'task', 'parent' (or compatibility alias 'pbi'), or 'bug'."));
             }
 
             TaskRelationshipPredicate? relationship = blocked_by_empty
@@ -1010,6 +1013,8 @@ public sealed class GlassworkTools
                 Id: task.Id,
                 Title: task.Title,
                 Status: MapToExternalStatus(task.Status),
+                Type: GlassworkTask.Types.Normalize(task.Type),
+                SourceKind: task.SourceKind,
                 ParentId: task.Parent,
                 Description: task.Description,
                 Notes: task.Notes,
@@ -1711,6 +1716,14 @@ public sealed class GlassworkTools
                 UpdateIfChanged(task.Type, normalizedType, v => task.Type = v, "type", updatedFields);
             }
 
+            if (hasFields && fields.TryGetProperty("source_kind", out var sourceKindElement))
+            {
+                if (!TryReadNullableString(sourceKindElement, "source_kind", out var value, out var error))
+                    return SerializeInputError(scope, error!);
+                var normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+                UpdateIfChanged(task.SourceKind, normalized, v => task.SourceKind = v, "source_kind", updatedFields);
+            }
+
             if (hasFields && fields.TryGetProperty("size", out var sizeElement))
             {
                 if (!TryReadNullableString(sizeElement, "size", out var value, out var error))
@@ -2135,6 +2148,7 @@ public sealed class GlassworkTools
             ["status"] = task.Status,
             ["priority"] = task.Priority,
             ["type"] = task.Type,
+            ["source_kind"] = task.SourceKind,
             ["size"] = task.Size,
             ["parent_task_id"] = task.Parent,
             ["description"] = task.Description,
@@ -2658,6 +2672,8 @@ public sealed class GlassworkTools
         Id: task.Id,
         Title: task.Title,
         Status: MapToExternalStatus(task.Status),
+        Type: GlassworkTask.Types.Normalize(task.Type),
+        SourceKind: task.SourceKind,
         ParentId: task.Parent,
         Description: task.Description,
         Notes: task.Notes,
@@ -2784,6 +2800,7 @@ public sealed class GlassworkTools
                 "title" => TaskQueryField.Title,
                 "status" => TaskQueryField.Status,
                 "type" => TaskQueryField.Type,
+                "source_kind" => TaskQueryField.SourceKind,
                 "parent_id" => TaskQueryField.ParentId,
                 "path" => TaskQueryField.Path,
                 "created" => TaskQueryField.Created,
@@ -2835,6 +2852,7 @@ public sealed class GlassworkTools
         if (task.Includes(TaskQueryField.Title)) dict["title"] = task.Title;
         if (task.Includes(TaskQueryField.Status)) dict["status"] = MapToExternalStatus(task.RawStatus);
         if (task.Includes(TaskQueryField.Type)) dict["type"] = MapToExternalType(task.Type);
+        if (task.Includes(TaskQueryField.SourceKind)) dict["source_kind"] = task.SourceKind;
         if (task.Includes(TaskQueryField.ParentId)) dict["parent_id"] = task.ParentId;
         if (task.Includes(TaskQueryField.Path)) dict["path"] = task.Path;
         if (task.Includes(TaskQueryField.Created)) dict["created"] = task.Created.ToString("yyyy-MM-dd");
@@ -2889,6 +2907,7 @@ public sealed class GlassworkTools
             ["title"] = task.Title,
             ["status"] = MapToExternalStatus(task.RawStatus),
             ["type"] = MapToExternalType(task.Type),
+            ["source_kind"] = task.SourceKind,
             ["parent_id"] = task.ParentId,
             ["tags"] = task.Tags.ToArray(),
             ["blocked_by"] = task.BlockedBy.ToArray(),
@@ -2982,7 +3001,8 @@ public sealed class GlassworkTools
         queryType = value.Trim().ToLowerInvariant() switch
         {
             "task" => TaskQueryType.Task,
-            "pbi" => TaskQueryType.Pbi,
+            "parent" => TaskQueryType.Parent,
+            "pbi" => TaskQueryType.Parent,
             "bug" => TaskQueryType.Bug,
             _ => null,
         };
@@ -3123,6 +3143,7 @@ public sealed class GlassworkTools
             status = task.Status,
             priority = task.Priority,
             type = task.Type,
+            source_kind = task.SourceKind,
             size = task.Size,
             created = task.Created.ToString("yyyy-MM-dd"),
             due = task.Due?.ToString("yyyy-MM-dd"),
@@ -3184,7 +3205,8 @@ public sealed class GlassworkTools
     private static string MapToExternalType(TaskQueryType type) => type switch
     {
         TaskQueryType.Task => "task",
-        TaskQueryType.Pbi => "pbi",
+        TaskQueryType.Parent => "parent",
+        TaskQueryType.Pbi => "parent",
         TaskQueryType.Bug => "bug",
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
     };
@@ -3258,6 +3280,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("title")] string Title,
         [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("type")] string Type,
+        [property: JsonPropertyName("source_kind"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceKind,
         [property: JsonPropertyName("parent_id")] string? ParentId,
         [property: JsonPropertyName("description")] string Description,
         [property: JsonPropertyName("notes")] string Notes,
@@ -3342,6 +3366,8 @@ public sealed class GlassworkTools
         [property: JsonPropertyName("id")] string Id,
         [property: JsonPropertyName("title")] string Title,
         [property: JsonPropertyName("status")] string Status,
+        [property: JsonPropertyName("type")] string Type,
+        [property: JsonPropertyName("source_kind"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceKind,
         [property: JsonPropertyName("parent_id")] string? ParentId,
         [property: JsonPropertyName("description")] string Description,
         [property: JsonPropertyName("notes")] string Notes,
