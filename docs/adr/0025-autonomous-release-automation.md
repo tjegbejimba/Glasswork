@@ -45,16 +45,19 @@ and relies on the existing required `ci` check and conversation resolution.
 App work is evaluated first; MCP evaluation still runs if App evaluation fails.
 
 Release notes come from merged PRs in the exact tag-to-candidate range and are
-grouped as breaking changes, features, fixes, and maintenance. Copilot inference
-may rewrite only those human-facing notes. Untrusted PR text is normalized and
-delimited, model output is schema-checked, and deterministic notes are used on
-any inference or validation failure. Eligibility, stream selection, and version
-selection never depend on model output.
+grouped as breaking changes, features, fixes, and maintenance. A pinned Copilot
+CLI plus SHA-pinned `actions/ai-inference` v3 may rewrite only those
+human-facing notes through the built-in workflow token. Copilot receives no
+tools. Untrusted PR text is normalized and delimited, model output is
+schema-checked, and deterministic notes are used on any installation,
+authentication, inference, model, or validation failure. Eligibility, stream
+selection, and version selection never depend on model output.
 
-When an automation Release PR merges, a separate workflow dispatches the
-matching publication workflow with that exact merge commit. Both publication
-workflows verify the commit belongs to `main`, check it out detached, and
-serialize by stream. Moving `main` after merge cannot change published bits.
+Only after an automation Release PR merges, a separate merge listener validates
+its signed state and invokes the matching publication workflow's
+`workflow_dispatch` with that exact merge commit. Both publication workflows
+verify the commit belongs to `main`, check it out detached, and serialize by
+stream. Moving `main` after merge cannot change published bits.
 
 App publication adopts MCP's resumable integrity model: a matching draft can be
 resumed, a complete existing asset pair is downloaded and verified, partial or
@@ -69,10 +72,12 @@ closes it. Successful and no-op evaluations emit a 90-day machine-readable
 Release plan artifact plus job summary.
 
 A dedicated least-privilege GitHub App installation token owns branch, PR,
-issue, auto-merge, and workflow-dispatch mutations. The workflow token is
-separate and grants `copilot-requests: write` only for inference. Global and
-per-stream repository variables are kill switches. No token bypasses branch
-protection.
+issue, auto-merge, workflow-dispatch, and authenticated git tag mutations. The
+built-in workflow token is separate: the evaluator grants it
+`copilot-requests: write` for Copilot inference, while the App and MCP
+publication workflows grant it `contents: write` for GitHub Release
+create/edit/upload/download/publish operations. Global and per-stream
+repository variables are kill switches. No token bypasses branch protection.
 
 ## Consequences
 
@@ -82,4 +87,8 @@ protection.
   stream.
 - Release PRs and publication remain auditable through normal GitHub controls.
 - Repository setup must install the GitHub App, create labels, add secrets and
-  variables, and enable auto-merge before the global kill switch is enabled.
+  variables, allow organization-billed Copilot CLI requests, and enable both
+  auto-merge and squash merge before the global kill switch is enabled.
+- Rotating the App private key while an automation Release PR is open
+  invalidates that PR's signed provenance marker; open automation PRs must be
+  merged or closed before rotation and reconciled afterward.

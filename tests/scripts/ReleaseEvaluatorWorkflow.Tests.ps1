@@ -28,19 +28,43 @@ Describe "Release evaluator workflow" {
         $workflow | Should -Match "always\(\)"
     }
 
-    It "uses separate least-privilege tokens for repository mutation and inference" {
+    It "uses separate least-privilege tokens for repository mutation and Copilot inference" {
         $workflow = Get-Content $script:WorkflowPath -Raw
 
         $workflow | Should -Match "actions/create-github-app-token@v2"
         $workflow | Should -Match "RELEASE_AUTOMATION_APP_ID"
         $workflow | Should -Match "RELEASE_AUTOMATION_PRIVATE_KEY"
         $workflow | Should -Match "copilot-requests: write"
-        $workflow | Should -Match "actions/ai-inference@v1"
+        ([regex]::Matches(
+                $workflow,
+                "npm install -g @github/copilot@1\.0\.80")).Count |
+            Should -Be 2
+        ([regex]::Matches(
+                $workflow,
+                "actions/ai-inference@2c43c91ae16266ca159d311430343c67a5ffa222 # v3")).Count |
+            Should -Be 2
+        ([regex]::Matches($workflow, "provider: copilot")).Count | Should -Be 2
         $workflow | Should -Match "model: gpt-5\.6-luna"
-        $workflow | Should -Match "COPILOT_GITHUB_TOKEN"
+        $workflow | Should -Match 'GITHUB_TOKEN: \$\{\{ github\.token \}\}'
+        $workflow | Should -Match (
+            "(?s)name: Install Copilot CLI.*?continue-on-error: true.*?" +
+            "name: Rewrite App release notes")
+        $workflow | Should -Match (
+            "(?s)name: Rewrite App release notes.*?continue-on-error: true.*?" +
+            "name: Reconcile App Release PR")
+        $workflow | Should -Match (
+            "(?s)name: Install Copilot CLI.*?continue-on-error: true.*?" +
+            "name: Rewrite MCP release notes")
+        $workflow | Should -Match (
+            "(?s)name: Rewrite MCP release notes.*?continue-on-error: true.*?" +
+            "name: Reconcile MCP Release PR")
+        $workflow | Should -Not -Match "actions/ai-inference@v1"
+        $workflow | Should -Not -Match "COPILOT_GITHUB_TOKEN"
+        $workflow | Should -Not -Match "copilot-allow-tools"
+        $workflow | Should -Not -Match "models:\s*read"
+        $workflow | Should -Not -Match "models\.github\.ai"
         $workflow | Should -Match "persist-credentials: false"
         $workflow | Should -Not -Match "permissions:\s*\n\s+contents: write"
-        $workflow | Should -Not -Match "npm install -g @github/copilot"
         $evaluator = Get-Content (
             Join-Path $script:RepoRoot "scripts\Invoke-ReleaseEvaluation.ps1") -Raw
         $evaluator | Should -Match "SignData"
