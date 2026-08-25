@@ -1,5 +1,28 @@
 #Requires -Version 7.0
 
+function Get-RequiredNativeOutputLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object[]]$Output,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Description
+    )
+
+    $lines = @($Output)
+    if ($lines.Count -ne 1) {
+        throw "Expected exactly one line for $Description; received $($lines.Count)."
+    }
+
+    $line = ([string]$lines[0]).Trim()
+    if ([string]::IsNullOrWhiteSpace($line)) {
+        throw "Expected a non-empty line for $Description."
+    }
+    return $line
+}
+
 function Test-ReleaseScheduleGate {
     param(
         [Parameter(Mandatory = $true)]

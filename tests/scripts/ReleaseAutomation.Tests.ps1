@@ -27,6 +27,24 @@ Describe "Test-ReleaseScheduleGate" {
     }
 }
 
+Describe "Get-RequiredNativeOutputLine" {
+    It "preserves a complete single line from a real native command" {
+        Push-Location $script:RepoRoot
+        try {
+            $nativeOutput = & git rev-parse HEAD
+            $nativeOutput.GetType().FullName | Should -Be "System.String"
+
+            Get-RequiredNativeOutputLine `
+                -Output $nativeOutput `
+                -Description "current commit" |
+                Should -Match '^[0-9a-f]{40}$'
+        }
+        finally {
+            Pop-Location
+        }
+    }
+}
+
 Describe "Get-LatestPublishedReleaseTag" {
     It "selects the highest published stable tag for each stream" {
         $releases = @(
