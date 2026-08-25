@@ -49,6 +49,41 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_ReadOnlyAssertion_DoesNotCanonicalizeParent()
+    {
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var parent = new GlassworkTask
+        {
+            Id = "local-parent",
+            Title = "Local parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        parent.AdoLink = 77;
+        vault.Save(parent);
+        vault.Save(new GlassworkTask
+        {
+            Id = "asserted-child",
+            Title = "Asserted child",
+            Parent = "https://dev.azure.com/org/project/_workitems/edit/77",
+        });
+        var child = vault.Load("asserted-child")!;
+        var path = Path.Combine(_vaultDir, "wiki", "todo", "asserted-child.md");
+        var before = File.ReadAllBytes(path);
+        using var operations = JsonDocument.Parse($$"""
+        [{
+          "op": "assert_task_revision",
+          "task_id": "asserted-child",
+          "if_revision": "{{child.ResourceRevision}}"
+        }]
+        """);
+
+        var result = JsonDocument.Parse(_tools.TransactTasks("assert-only", operations.RootElement));
+
+        Assert.AreEqual("no_op", result.RootElement.GetProperty("outcome").GetString());
+        CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+    }
+
+    [TestMethod]
     public void UpdateTask_RequiresMutationIdAndRevision()
     {
         using var create = JsonDocument.Parse("""

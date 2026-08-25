@@ -944,8 +944,6 @@ public sealed partial class ResourceMutationService
 
             var op = opElement.GetString()!;
             var taskId = ReadOptionalTaskId(operation);
-            if (taskId is not null)
-                touchedOperationIndexes.TryAdd(taskId, index);
             if (op is not "assert_task_revision" and not "assert_revision"
                 && string.IsNullOrWhiteSpace(taskId))
             {
@@ -960,6 +958,7 @@ public sealed partial class ResourceMutationService
                     ApplyRevisionAssertion(staged, operation, taskId, index, diagnostics);
                     break;
                 case "set_task_fields":
+                    touchedOperationIndexes.TryAdd(taskId!, index);
                     ApplyStagedFields(
                         staged,
                         operation,
@@ -970,6 +969,7 @@ public sealed partial class ResourceMutationService
                         preserveExistingUnknownSizes);
                     break;
                 case "create_task":
+                    touchedOperationIndexes.TryAdd(taskId!, index);
                     CreateStagedTask(
                         staged,
                         operation,
@@ -979,6 +979,7 @@ public sealed partial class ResourceMutationService
                         preserveExistingUnknownSizes);
                     break;
                 case "replace_task_relationships":
+                    touchedOperationIndexes.TryAdd(taskId!, index);
                     ReplaceStagedRelationships(staged, operation, taskId!, index, diagnostics);
                     break;
                 default:
