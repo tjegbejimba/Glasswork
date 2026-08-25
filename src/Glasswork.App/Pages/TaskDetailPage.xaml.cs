@@ -1463,16 +1463,15 @@ public sealed partial class TaskDetailPage : Page
         if (result != ContentDialogResult.Primary) return;
 
         var trimmed = box.Text?.Trim();
-        var mutation = App.Mutations.TransactSingleTask(
-            $"app-set-parent-{Guid.NewGuid():N}",
-            Task.Id,
-            Task.ResourceRevision,
-            JsonSerializer.SerializeToElement(new
-            {
-                parent_task_id = string.IsNullOrEmpty(trimmed) ? null : trimmed,
-            }));
-        if (!await ApplyHierarchyMutationAsync(mutation, "Unable to update Parent"))
+        try
+        {
+            App.Vault.SetParent(Task.Id, string.IsNullOrEmpty(trimmed) ? null : trimmed);
+        }
+        catch (Exception ex) when (ResourceMutationService.IsExpectedPersistenceFailure(ex))
+        {
+            await ShowOperationErrorAsync("Unable to update Parent", ex.Message);
             return;
+        }
 
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null) ApplyTask(reloaded);
