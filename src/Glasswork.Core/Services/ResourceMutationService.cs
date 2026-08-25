@@ -222,7 +222,11 @@ public sealed partial class ResourceMutationService
                 if (!string.Equals(requestedParent, task.Parent, StringComparison.Ordinal))
                     throw new ResourceRevisionConflictException(
                         "Parent resolution changed before commit.");
-                var diagnostics = hierarchy.Validate([taskId]);
+                var validationScope = HierarchyValidationScope(
+                    hierarchyTasks,
+                    originalTask,
+                    task);
+                var diagnostics = hierarchy.Validate(validationScope);
                 if (diagnostics.Count > 0)
                     throw new InvalidOperationException(diagnostics[0].Message);
 

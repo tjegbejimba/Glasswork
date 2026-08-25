@@ -1,3 +1,4 @@
+using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 
 namespace Glasswork.Tests;
@@ -65,6 +66,36 @@ public class VaultSetAdoLinkTests
             "\n" +
             "### [ ] One\n";
         Assert.AreEqual(expected, actual);
+    }
+
+    [TestMethod]
+    public void SetAdoLink_DuplicateParentIdentity_IsRejected()
+    {
+        var first = new GlassworkTask
+        {
+            Id = "first-parent",
+            Title = "First parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        first.AdoLink = 77;
+        var second = new GlassworkTask
+        {
+            Id = "second-parent",
+            Title = "Second parent",
+            Type = GlassworkTask.Types.Parent,
+        };
+        _vault.Save(first);
+        _vault.Save(second);
+        _vault.Save(new GlassworkTask
+        {
+            Id = "external-child",
+            Title = "External child",
+            Parent = "77",
+        });
+
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => _vault.SetAdoLink(second.Id, 77, "Duplicate"));
+        Assert.IsNull(_vault.Load(second.Id)!.AdoLink);
     }
 
     [TestMethod]

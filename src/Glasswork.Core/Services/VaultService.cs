@@ -422,7 +422,10 @@ public class VaultService
 
         if (output == content) return;
 
-        CommitManagedBytes(taskId, output, originalBytes);
+        EnsureMutations().CommitHierarchyBytes(
+            taskId,
+            Encoding.UTF8.GetBytes(output),
+            originalBytes);
     }
 
     /// <summary>
