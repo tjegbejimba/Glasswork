@@ -212,6 +212,8 @@ public sealed partial class ResourceMutationService
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
                 notifications.UnionWith(RecoverUnsafe());
+                var originalTask = _parser.Parse(Encoding.UTF8.GetString(expectedOriginal));
+                TaskService.EnsureCanMutate(originalTask);
                 var task = _parser.Parse(Encoding.UTF8.GetString(updated));
                 var hierarchyTasks = LoadHierarchyTasksUnsafe(taskId, task);
                 var hierarchy = new TaskHierarchyPolicy(hierarchyTasks);

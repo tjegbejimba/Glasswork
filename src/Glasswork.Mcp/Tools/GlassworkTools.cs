@@ -3984,6 +3984,7 @@ public sealed class GlassworkTools
                 newId = $"{VaultService.GenerateId(subtask.Text)}-{suffix++}";
 
             parent.Subtasks.RemoveAt(subtask_index);
+            parent.Type = GlassworkTask.Types.Parent;
             var createFields = new Dictionary<string, object?>
             {
                 ["title"] = subtask.Text,

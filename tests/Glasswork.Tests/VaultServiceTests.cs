@@ -427,6 +427,24 @@ public class VaultServiceTests
     }
 
     [TestMethod]
+    public void SetParent_CancelledTask_RemainsReadOnly()
+    {
+        var task = new GlassworkTask
+        {
+            Id = "cancelled-parent-edit",
+            Title = "Cancelled",
+            Status = GlassworkTask.Statuses.Cancelled,
+            CancelledAt = DateTimeOffset.UtcNow,
+            CancellationReason = "No longer needed",
+        };
+        _vault.Save(task);
+
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => _vault.SetParent(task.Id, "77"));
+        Assert.IsNull(_vault.Load(task.Id)!.Parent);
+    }
+
+    [TestMethod]
     public void SetParent_RegistersWriteWithCoordinator()
     {
         var coord = new SelfWriteCoordinator(TimeSpan.FromSeconds(1));

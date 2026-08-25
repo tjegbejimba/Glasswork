@@ -71,6 +71,23 @@ public class PromoteSubtaskToolTests
     }
 
     [TestMethod]
+    public void PromoteSubtask_NormalTask_ConvertsSourceToParent()
+    {
+        var vault = new VaultService(TasksDir);
+        vault.Save(new GlassworkTask
+        {
+            Id = "normal-source",
+            Title = "Normal source",
+            Subtasks = { new SubTask { Text = "Promoted child" } },
+        });
+
+        var result = JsonDocument.Parse(_tools.PromoteSubtask("normal-source", 0));
+
+        Assert.IsFalse(result.RootElement.TryGetProperty("error", out _), result.RootElement.ToString());
+        Assert.AreEqual(GlassworkTask.Types.Parent, vault.Load("normal-source")!.Type);
+    }
+
+    [TestMethod]
     public void PromoteSubtask_ParentWithMultipleInlineSubtasks_DrainsOneMigrationStep()
     {
         var vault = new VaultService(TasksDir);
