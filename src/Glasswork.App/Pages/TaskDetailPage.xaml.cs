@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Glasswork.Controls;
 using Glasswork.Core.Markdown;
@@ -46,6 +47,7 @@ public sealed partial class TaskDetailPage : Page
     private string? _artifactsTaskId;
     private EventHandler<object>? _deferredArtifactBindHandler;
     private int _artifactBindGeneration;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _clipboardStatusTimer;
 
     public TaskDetailPage()
     {
@@ -93,6 +95,7 @@ public sealed partial class TaskDetailPage : Page
     {
         _isLoading = true;
         Task = task;
+        HideClipboardStatus();
         // Refresh compiled x:Bind expressions (Title, Description, Notes use TwoWay bindings
         // that captured the previous Task object at initialization; Update() re-roots them on
         // the new task so the UI reflects the agent's changes and subsequent saves are correct).
@@ -155,6 +158,7 @@ public sealed partial class TaskDetailPage : Page
             ? $"Cancelled: {task.CancelledAt?.ToLocalTime():yyyy-MM-dd HH:mm} - {task.CancellationReason}"
             : "";
         IdText.Text = $"ID: {task.Id}";
+        AutomationProperties.SetName(CopyTaskIdButton, $"Copy Task ID {task.Id}");
 
         if (task.AdoLink.HasValue)
         {
@@ -738,6 +742,7 @@ public sealed partial class TaskDetailPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         _isNavigated = false;
+        HideClipboardStatus();
         _artifactBindGeneration++;
         CancelDeferredArtifactBind();
         base.OnNavigatedFrom(e);
@@ -1133,10 +1138,28 @@ public sealed partial class TaskDetailPage : Page
     {
         var uri = Glasswork.Core.Models.GlassworkUriParser.Build(
             new Glasswork.Core.Models.GlassworkUri.Task(Task.Id));
-        var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
-        pkg.SetText(uri);
-        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
-        ClipboardHint.Text = $"Copied — {uri}";
+        CopyToClipboard(
+            uri,
+            "Task link copied",
+            uri);
+    }
+
+    private void CopyTaskId_Click(object sender, RoutedEventArgs e)
+        => CopyToClipboard(
+            Task.Id,
+            "Task ID copied",
+            Task.Id);
+
+    private void CopyIdButton_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is Button { Content: TextBlock text })
+            text.TextDecorations = Windows.UI.Text.TextDecorations.Underline;
+    }
+
+    private void CopyIdButton_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is Button { Content: TextBlock text })
+            text.TextDecorations = Windows.UI.Text.TextDecorations.None;
     }
 
     private async void OpenArtifactInObsidian_Click(object sender, RoutedEventArgs e)
@@ -1208,7 +1231,13 @@ public sealed partial class TaskDetailPage : Page
             return;
         }
 
-        ClipboardHint.Text = message;
+        var isError = message.StartsWith("Couldn't", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("No ", StringComparison.OrdinalIgnoreCase);
+        var isClipboardCopy = message.StartsWith("Copied", StringComparison.OrdinalIgnoreCase);
+        ShowClipboardStatus(
+            isClipboardCopy ? "Artifact copied" : isError ? "Artifact action failed" : "Artifact action completed",
+            message,
+            isError ? InfoBarSeverity.Error : InfoBarSeverity.Success);
     }
 
     private static string? ToVaultRelativePath(string absolutePath)
@@ -1421,10 +1450,58 @@ public sealed partial class TaskDetailPage : Page
 
     private void CopyInvocation(string line)
     {
-        var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
-        pkg.SetText(line);
-        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
-        ClipboardHint.Text = "Copied — paste into your Copilot CLI session.";
+        CopyToClipboard(
+            line,
+            "Copilot CLI command copied",
+            "Paste into your Copilot CLI session.");
+    }
+
+    private void CopyToClipboard(string text, string title, string message)
+    {
+        var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        package.SetText(text);
+        try
+        {
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+            ShowClipboardStatus(title, message, InfoBarSeverity.Success);
+        }
+        catch (COMException)
+        {
+            ShowClipboardStatus(
+                "Copy failed",
+                "Glasswork could not copy to the clipboard. Try again.",
+                InfoBarSeverity.Error);
+        }
+    }
+
+    private void ShowClipboardStatus(
+        string title,
+        string message,
+        InfoBarSeverity severity)
+    {
+        ClipboardSuccessBanner.Title = title;
+        ClipboardSuccessBanner.Message = message;
+        ClipboardSuccessBanner.Severity = severity;
+        ClipboardSuccessBanner.IsOpen = true;
+
+        _clipboardStatusTimer ??= CreateClipboardStatusTimer();
+        _clipboardStatusTimer.Stop();
+        _clipboardStatusTimer.Start();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer CreateClipboardStatusTimer()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(3);
+        timer.Tick += (_, _) => HideClipboardStatus();
+        return timer;
+    }
+
+    private void HideClipboardStatus()
+    {
+        _clipboardStatusTimer?.Stop();
+        if (ClipboardSuccessBanner is not null)
+            ClipboardSuccessBanner.IsOpen = false;
     }
 
     private async Task<bool> SaveAsync(bool overwrite = false)

@@ -1,0 +1,42 @@
+{
+  "name": "Research copy Topic ID",
+  "theme": "dark",
+  "startUri": "glasswork://research/copy-topic-id",
+  "wikiPages": [
+    {
+      "relativePath": "concepts/copy-topic-id.md",
+      "id": "copy-topic-id",
+      "title": "Copy Topic ID",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-08-24",
+      "expires": "9999-12-31",
+      "markdown": "# Copy Topic ID"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "CopyResearchTopicIdButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "CopyResearchTopicIdButton"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ResearchSessionClipboardFeedback"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "copy-topic-id"
+    }
+  ],
+  "captures": [
+    {
+      "name": "research-copy-topic-id",
+      "waitMilliseconds": 400
+    }
+  ]
+}
