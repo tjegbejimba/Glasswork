@@ -42,6 +42,7 @@ public sealed partial class ResearchPage : Page
     private string? _previewTopicId;
     private string? _previewInvokerPageId;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _focusRestoreTimer;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _copyStatusTimer;
     private int _focusRestoreGeneration;
     private ResearchCatalogSnapshot _snapshot =
         new(Array.Empty<ResearchTopic>(), Array.Empty<ResearchCatalogDiagnostic>());
@@ -93,6 +94,7 @@ public sealed partial class ResearchPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        HideCopyStatus();
         CloseRemoveTopicOverlay();
         CloseOpenDrawer(restoreFocus: false);
         App.Research.TopicsChanged -= OnResearchTopicsChanged;
@@ -334,8 +336,10 @@ public sealed partial class ResearchPage : Page
         _selectedTopic = topic;
         _selectedTopicId = topic.Id;
         if (topicChanged)
-            SessionClipboardHint.IsOpen = false;
+            HideCopyStatus();
         TopicTitle.Text = topic.Title;
+        TopicId.Text = $"ID: {topic.Id}";
+        AutomationProperties.SetName(CopyTopicIdButton, $"Copy Research Topic ID {topic.Id}");
         TopicType.Text = CultureInfo.InvariantCulture.TextInfo.ToTitleCase(topic.WikiType);
         TopicConfidence.Text = $"Confidence: {topic.Confidence ?? "not set"}";
         TopicUpdated.Text = topic.Updated is { } updated
@@ -1018,7 +1022,7 @@ public sealed partial class ResearchPage : Page
         ContextSelectionRows.Add(ResearchContextSelectionRow.Topic(_selectedTopic, mode));
         if (IsTransientContextSelection(mode))
         {
-            SessionClipboardHint.IsOpen = false;
+            HideCopyStatus();
             var prepared = App.Research.PreparedSessionContext;
             var preparedIds = string.Equals(
                     prepared?.TopicId,
@@ -1218,7 +1222,6 @@ public sealed partial class ResearchPage : Page
     {
         if (_selectedTopic is null)
             return;
-        var launchedSession = false;
         if (IsTransientContextSelection(_drawerMode))
         {
             var selectedIds = ContextSelectionRows
@@ -1268,18 +1271,77 @@ public sealed partial class ResearchPage : Page
                 ContextSelectionError.IsOpen = true;
                 return;
             }
-            launchedSession = true;
-            SessionClipboardHint.Title = isWayfinder
-                ? "Wayfinder command copied"
-                : "Research Session command copied";
-            SessionClipboardHint.Message = isWayfinder
-                ? "Paste into Copilot CLI to explore this ambiguity with the selected Topic context."
-                : "Paste into Copilot CLI to begin the governed Research Session.";
+            ShowCopyStatus(
+                isWayfinder ? "Wayfinder command copied" : "Research Session command copied",
+                isWayfinder
+                    ? "Paste into Copilot CLI to explore this ambiguity with the selected Topic context."
+                    : "Paste into Copilot CLI to begin the governed Research Session.");
             UpdateContextSummary(_selectedTopic);
         }
         CloseContextSelectionDrawer(restoreFocus: true);
-        if (launchedSession)
-            SessionClipboardHint.IsOpen = true;
+    }
+
+    private void CopyTopicIdButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedTopic is null)
+            return;
+
+        var package = new DataPackage();
+        package.SetText(_selectedTopic.Id);
+        try
+        {
+            Clipboard.SetContent(package);
+            ShowCopyStatus("Research Topic ID copied", _selectedTopic.Id);
+        }
+        catch (COMException)
+        {
+            ShowCopyStatus(
+                "Copy failed",
+                "Glasswork could not copy to the clipboard. Try again.",
+                InfoBarSeverity.Error);
+        }
+    }
+
+    private void CopyIdButton_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is Button { Content: TextBlock text })
+            text.TextDecorations = Windows.UI.Text.TextDecorations.Underline;
+    }
+
+    private void CopyIdButton_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is Button { Content: TextBlock text })
+            text.TextDecorations = Windows.UI.Text.TextDecorations.None;
+    }
+
+    private void ShowCopyStatus(
+        string title,
+        string message,
+        InfoBarSeverity severity = InfoBarSeverity.Success)
+    {
+        CopySuccessBanner.Title = title;
+        CopySuccessBanner.Message = message;
+        CopySuccessBanner.Severity = severity;
+        CopySuccessBanner.IsOpen = true;
+
+        _copyStatusTimer ??= CreateCopyStatusTimer();
+        _copyStatusTimer.Stop();
+        _copyStatusTimer.Start();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer CreateCopyStatusTimer()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(3);
+        timer.Tick += (_, _) => HideCopyStatus();
+        return timer;
+    }
+
+    private void HideCopyStatus()
+    {
+        _copyStatusTimer?.Stop();
+        if (CopySuccessBanner is not null)
+            CopySuccessBanner.IsOpen = false;
     }
 
     private void ContextSelectionCloseButton_Click(object sender, RoutedEventArgs e) =>

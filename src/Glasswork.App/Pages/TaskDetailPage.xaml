@@ -75,6 +75,14 @@
              Spacing slot in a StackPanel). -->
         <StackPanel Grid.Row="0" Spacing="8">
 
+            <InfoBar x:Name="ClipboardSuccessBanner"
+                     AutomationProperties.AutomationId="TaskClipboardFeedback"
+                     AutomationProperties.LiveSetting="Polite"
+                     IsOpen="False"
+                     Visibility="{x:Bind ClipboardSuccessBanner.IsOpen, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                     IsClosable="True"
+                     Severity="Success" />
+
             <!-- Reload banner: shown when the open file is changed externally -->
             <InfoBar x:Name="ReloadBanner"
                      IsOpen="False"
@@ -596,7 +604,18 @@
                     <TextBlock x:Name="CreatedText" FontSize="12" />
                     <TextBlock x:Name="CompletedText" FontSize="12" />
                     <TextBlock x:Name="CancelledText" FontSize="12" />
-                    <TextBlock x:Name="IdText" FontSize="12" />
+                    <Button x:Name="CopyTaskIdButton"
+                            AutomationProperties.AutomationId="CopyTaskIdButton"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="CopyTaskId_Click"
+                            HorizontalAlignment="Left"
+                            Padding="0"
+                            PointerEntered="CopyIdButton_PointerEntered"
+                            PointerExited="CopyIdButton_PointerExited"
+                            ToolTipService.ToolTip="Copy ID">
+                        <TextBlock x:Name="IdText" FontSize="12" />
+                    </Button>
                 </StackPanel>
 
                 <!-- Agent invocation buttons (copy one-liner to clipboard, paste into Copilot CLI) -->
@@ -615,7 +634,6 @@
                             Content="Cancel task..."
                             Click="CancelTask_Click"
                             Visibility="Collapsed" />
-                    <TextBlock x:Name="ClipboardHint" VerticalAlignment="Center" Opacity="0.6" FontSize="12" />
                 </StackPanel>
 
                 <!-- Related (slice 5) -->

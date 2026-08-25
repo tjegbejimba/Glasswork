@@ -5,8 +5,13 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:Glasswork.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:local="using:Glasswork.Pages"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
+
+    <Page.Resources>
+        <local:BoolToVisibilityConverter x:Key="BoolToVis" />
+    </Page.Resources>
 
     <Grid x:Name="RootGrid">
     <VisualStateManager.VisualStateGroups>
@@ -190,20 +195,30 @@
                 Grid.Column="1"
                 RowDefinitions="Auto,*"
                 RowSpacing="12">
-                <InfoBar
-                    x:Name="TopicWarning"
-                    AutomationProperties.AutomationId="ResearchMalformedWarning"
-                    IsClosable="False"
-                    IsOpen="False"
-                    Severity="Warning"
-                    Title="Latest refresh could not be read">
-                    <InfoBar.ActionButton>
-                        <Button
-                            AutomationProperties.AutomationId="ResearchRepairInObsidian"
-                            Click="OpenInObsidianButton_Click"
-                            Content="Open in Obsidian" />
-                    </InfoBar.ActionButton>
-                </InfoBar>
+                <StackPanel Spacing="8">
+                    <InfoBar
+                        x:Name="CopySuccessBanner"
+                        AutomationProperties.AutomationId="ResearchSessionClipboardFeedback"
+                        AutomationProperties.LiveSetting="Polite"
+                        IsClosable="True"
+                        IsOpen="False"
+                        Severity="Success"
+                        Visibility="{x:Bind CopySuccessBanner.IsOpen, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+                    <InfoBar
+                        x:Name="TopicWarning"
+                        AutomationProperties.AutomationId="ResearchMalformedWarning"
+                        IsClosable="False"
+                        IsOpen="False"
+                        Severity="Warning"
+                        Title="Latest refresh could not be read">
+                        <InfoBar.ActionButton>
+                            <Button
+                                AutomationProperties.AutomationId="ResearchRepairInObsidian"
+                                Click="OpenInObsidianButton_Click"
+                                Content="Open in Obsidian" />
+                        </InfoBar.ActionButton>
+                    </InfoBar>
+                </StackPanel>
                 <Grid
                     Grid.Row="1"
                     ColumnSpacing="24">
@@ -255,6 +270,20 @@
                         x:Name="ResearchTopicMetadata"
                         Orientation="Horizontal"
                         Spacing="16">
+                        <Button
+                            x:Name="CopyTopicIdButton"
+                            AutomationProperties.AutomationId="CopyResearchTopicIdButton"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="CopyTopicIdButton_Click"
+                            HorizontalAlignment="Left"
+                            Opacity="0.72"
+                            Padding="0"
+                            PointerEntered="CopyIdButton_PointerEntered"
+                            PointerExited="CopyIdButton_PointerExited"
+                            ToolTipService.ToolTip="Copy ID">
+                            <TextBlock x:Name="TopicId" />
+                        </Button>
                         <TextBlock x:Name="TopicType" Opacity="0.72" />
                         <TextBlock x:Name="TopicConfidence" Opacity="0.72" />
                         <TextBlock x:Name="TopicUpdated" Opacity="0.72" />
@@ -290,15 +319,6 @@
                                 Click="ImprovePageAction_Click"
                                 Content="Improve this page" />
                         </StackPanel>
-                        <InfoBar
-                            x:Name="SessionClipboardHint"
-                            AutomationProperties.AutomationId="ResearchSessionClipboardFeedback"
-                            AutomationProperties.LiveSetting="Polite"
-                            IsClosable="True"
-                            IsOpen="False"
-                            Message="Paste into Copilot CLI to begin the governed Research Session."
-                            Severity="Success"
-                            Title="Research Session command copied" />
                         <StackPanel
                             x:Name="OpenQuestionsPanel"
                             AutomationProperties.AutomationId="ResearchOpenQuestions"

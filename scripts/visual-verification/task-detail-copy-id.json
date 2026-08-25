@@ -1,0 +1,74 @@
+{
+  "name": "Task Detail copy ID",
+  "theme": "dark",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "vv-copy-task-id",
+      "title": "Copy this Task ID",
+      "description": "The Task detail metadata exposes its stable ID as a copy action.",
+      "status": "todo",
+      "priority": "medium"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Copy this Task ID",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Copy this Task ID",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "CopyTaskIdButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "CopyTaskIdButton"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskClipboardFeedback"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "vv-copy-task-id"
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 3300
+    },
+    {
+      "type": "assert-not-present",
+      "automationId": "TaskClipboardFeedback"
+    },
+    {
+      "type": "invoke",
+      "name": "Start work"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskClipboardFeedback"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Start work on Glasswork task: vv-copy-task-id"
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-detail-copy-id",
+      "waitMilliseconds": 400
+    }
+  ]
+}
