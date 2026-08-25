@@ -14,6 +14,7 @@ Describe "Publish MCP workflow" {
 
         $workflow | Should -Match "workflow_dispatch:"
         $workflow | Should -Match "(?m)^\s+version:"
+        $workflow | Should -Match "(?m)^\s+source_ref:"
         $workflow | Should -Match "ref: main"
         $workflow | Should -Match "origin/main"
         $workflow | Should -Match 'source_revision=\$sourceRevision'
@@ -23,6 +24,21 @@ Describe "Publish MCP workflow" {
         $workflow | Should -Match "Test-McpReleasePublicationInputs"
         $workflow | Should -Match "Resolve-McpPublicationState"
         $workflow | Should -Match "mcp-v"
+        $workflow | Should -Match "RecordFailure"
+        $workflow | Should -Match "CloseBlocker"
+    }
+
+    It "serializes publication and accepts only a source revision in main history" {
+        $workflow = Get-Content $script:WorkflowPath -Raw
+
+        $workflow | Should -Match "(?m)^concurrency:"
+        $workflow | Should -Match "publish-mcp"
+        $workflow | Should -Match "cancel-in-progress: false"
+        $workflow | Should -Match "inputs\.source_ref"
+        $workflow | Should -Match "merge-base --is-ancestor"
+        $workflow | Should -Match "persist-credentials: false"
+        $workflow | Should -Match 'APP_TOKEN: \$\{\{ steps\.app-token\.outputs\.token \}\}'
+        $workflow | Should -Match "AUTHORIZATION: basic"
     }
 
     It "runs serial tests, Release build, clean pack, and package identity validation" {

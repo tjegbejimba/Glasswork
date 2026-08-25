@@ -3,6 +3,8 @@
 **Status**: Accepted
 **Amended**: ADR 0023 replaces `/releases/latest` selection with explicit
 `vX.Y.Z` app-stream filtering so MCP GitHub Releases cannot become App updates.
+ADR 0025 automates evaluation, Release PR reconciliation, and exact-SHA
+publication while preserving the review and immutability boundaries below.
 **Context slice**: Release publication for App Update
 
 ## Context

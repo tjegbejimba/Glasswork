@@ -9,12 +9,12 @@ Describe "Release workflow" {
         $script:WorkflowPath = Join-Path $script:RepoRoot ".github\workflows\release.yml"
     }
 
-    It "exposes only a version input for manual Release publication" {
+    It "accepts a version and optional pinned source revision" {
         $workflow = Get-Content $script:WorkflowPath -Raw
 
         $workflow | Should -Match "workflow_dispatch:"
         $workflow | Should -Match "(?m)^\s+version:"
-        $workflow | Should -Not -Match "(?m)^\s+target_ref:"
+        $workflow | Should -Match "(?m)^\s+source_ref:"
         $workflow | Should -Not -Match "(?m)^\s+notes:"
         $workflow | Should -Not -Match "(?m)^\s+prerelease:"
     }
@@ -33,10 +33,21 @@ Describe "Release workflow" {
         $workflow | Should -Match "MSTest\.Parallelize\.Workers=1"
         $workflow | Should -Match "dotnet publish src\\Glasswork\.App\\Glasswork\.csproj"
         $workflow | Should -Match "New-ReleasePackage"
-        $workflow | Should -Match "gh release create"
+        $workflow | Should -Match "Resolve-AppPublicationState"
+        $workflow | Should -Match "ResumeDraft"
+        $workflow | Should -Match "--draft"
+        $workflow | Should -Match "gh release upload"
+        $workflow | Should -Match "--clobber"
+        $workflow | Should -Match "Test-AppReleaseAssetIntegrity"
+        $workflow | Should -Match '\$expectedSha256 = \$env:LOCAL_PACKAGE_SHA256'
+        $workflow | Should -Match "Tagged draft App Release is missing its anchored assets"
+        $workflow | Should -Match "git tag -a"
+        $workflow | Should -Match "gh release edit"
         $workflow | Should -Match '--notes-file \$notesPath'
         $workflow | Should -Match "Glasswork-win-x64\.zip"
         $workflow | Should -Match "Glasswork-win-x64\.zip\.sha256"
+        $workflow | Should -Match "RecordFailure"
+        $workflow | Should -Match "CloseBlocker"
     }
 
     It "does not interpolate the version input inside PowerShell scripts" {
@@ -52,8 +63,22 @@ Describe "Release workflow" {
 
         $workflow | Should -Match 'PSNativeCommandUseErrorActionPreference = \$false'
         $workflow | Should -Match 'IsNullOrWhiteSpace\(\$matchingRefs\)'
-        $workflow | Should -Match "SkipHttpErrorCheck"
-        $workflow | Should -Match "StatusCode -eq 200"
-        $workflow | Should -Match "StatusCode -ne 404"
+        $workflow | Should -Match 'releaseExists = \$releases\.Count -eq 1'
+        $workflow | Should -Match "Resolve-AppPublicationState"
+    }
+
+    It "pins publication to an exact commit in main history and serializes runs" {
+        $workflow = Get-Content $script:WorkflowPath -Raw
+
+        $workflow | Should -Match "source_ref"
+        $workflow | Should -Match "merge-base --is-ancestor"
+        $workflow | Should -Match "source_revision"
+        $workflow | Should -Match "git checkout --detach"
+        $workflow | Should -Match "(?m)^concurrency:"
+        $workflow | Should -Match "publish-app"
+        $workflow | Should -Match "cancel-in-progress: false"
+        $workflow | Should -Match "persist-credentials: false"
+        $workflow | Should -Match 'APP_TOKEN: \$\{\{ steps\.app-token\.outputs\.token \}\}'
+        $workflow | Should -Match "AUTHORIZATION: basic"
     }
 }

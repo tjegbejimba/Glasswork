@@ -274,13 +274,14 @@ See ADR 0020 (supersedes ADR 0011's apply mechanism).
 Turns an intentionally chosen commit on `main` into the GitHub Release tag that
 App Update consumes as the **Available version**.
 
-- **Owns**: the agent-prepared **Release PR** that bumps the app version in
+- **Owns**: the evaluator-prepared **Release PR** that bumps the app version in
   `src\Glasswork.App\Glasswork.csproj` and commits **Release notes** at
   `docs\releases\vX.Y.Z.md`, and the
-  **Release workflow** whose only input is `version` in `X.Y.Z` form. The
+  **Release workflow** whose inputs are `version` in `X.Y.Z` form and an
+  optional exact `source_ref`. The
   workflow derives tag `vX.Y.Z`, validates the requested tag matches the
   committed version, reads `docs\releases\vX.Y.Z.md`, and creates the GitHub
-  Release for the current `main` HEAD with those notes, a stable-named
+  Release for that reviewed commit in `main` history with those notes, a stable-named
   `Glasswork-win-x64.zip` asset, and its SHA-256 sidecar.
   The workflow also runs Core tests and a Windows Release x64 app publish before
   tagging, so the app release stream never advertises a version that cannot build.
@@ -290,21 +291,20 @@ App Update consumes as the **Available version**.
   **Self-update**.
 - **Boundary rule**: merging a normal PR to `main` is not an app-visible update.
   Only an explicit **Release publication** creates a new **Available version**.
-  Existing release tags are immutable: the **Release workflow** fails if the
-  requested tag or release already exists, rather than moving a tag or
-  rewriting the app-visible version. When a user asks an agent to release
-  without specifying a version, the agent prepares a patch bump by default;
-  minor or major bumps require explicit user instruction. The agent may
-  auto-merge a clean **Release PR** after required checks; it must stop if
-  checks fail or the PR diff contains anything beyond version and Release
-  notes changes. If there are no substantive changes since the latest release
+  Existing release tags are immutable: the **Release workflow** resumes only a
+  matching draft and otherwise fails rather than moving a tag or rewriting the
+  app-visible version. The weekday **Release evaluator** derives SemVer from
+  explicit PR metadata, defaults missing metadata to patch, and reconciles a
+  clean **Release PR** before enabling auto-merge through required checks. It
+  stops if checks fail or the PR diff exceeds the stream allowlist. If there
+  are no substantive net changes since the latest release
   tag, the agent stops with "nothing to release" instead of creating a no-op
   app-visible update. **Release notes** summarize the range from the latest
   published release tag to `main`, preferring merged PRs and linked issues when
   available and falling back to commit messages for direct commits; the Release
   PR itself is excluded. The notes file uses a concise template: release title,
   short summary, grouped `Changes`, and `Validation`; raw commit dumps are
-  avoided.
+  avoided. See ADR 0025.
 
 ### 9. MCP publication
 
@@ -324,7 +324,9 @@ version. See ADR 0023.
 - **Boundary rule**: every changed published MCP binary has a new `0.x` semantic
   version. Public tool/CLI shape changes bump minor; compatible implementation
   changes bump patch. Publication runs only from current reviewed `main`, and
-  MCP releases never participate in the app `vX.Y.Z` stream.
+  MCP releases never participate in the app `vX.Y.Z` stream. The Release
+  evaluator maps a major/breaking marker to an MCP minor bump so the stream
+  remains in `0.x`; publication is pinned to the Release PR merge commit.
 
 ### 10. MCP Update
 
