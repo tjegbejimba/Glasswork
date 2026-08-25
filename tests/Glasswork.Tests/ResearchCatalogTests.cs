@@ -2990,6 +2990,57 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void Capture_ResearchContextResolvesExistingObsidianFileReferences()
+    {
+        WritePage(
+            "wiki/concepts/topic-id.md",
+            """
+            ---
+            id: topic-id
+            title: Topic
+            type: concept
+            sources:
+              - wiki/sources/path-source.md
+            glasswork:
+              research: {}
+            ---
+            [[bare-target]] [[file-name-target]]
+            """);
+        WritePage(
+            "wiki/concepts/bare-target.md",
+            "---\nid: bare-target\ntitle: Bare target\ntype: concept\n---\nKnowledge.");
+        WritePage(
+            "wiki/systems/file-name-target.md",
+            "---\nid: different-stable-id\ntitle: File name target\ntype: system\n---\nKnowledge.");
+        WritePage(
+            "wiki/sources/path-source.md",
+            "---\nid: path-source\ntitle: Path source\ntype: source\n---\nKnowledge.");
+        WritePage(
+            "wiki/decisions/incoming.md",
+            "---\nid: incoming-page\ntitle: Incoming page\ntype: decision\n---\n[[topic-id]]");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var context = catalog.Capture().Topics.Single().Context;
+
+        CollectionAssert.AreEquivalent(
+            new[] { "bare-target", "different-stable-id", "path-source", "incoming-page" },
+            context.RelatedPages.Select(page => page.Id).ToArray());
+        Assert.AreEqual(
+            ResearchContextRelation.OutgoingWikiLink,
+            context.RelatedPages.Single(page => page.Id == "bare-target").Relations);
+        Assert.AreEqual(
+            ResearchContextRelation.OutgoingWikiLink,
+            context.RelatedPages.Single(page => page.Id == "different-stable-id").Relations);
+        Assert.AreEqual(
+            ResearchContextRelation.Provenance,
+            context.RelatedPages.Single(page => page.Id == "path-source").Relations);
+        Assert.AreEqual(
+            ResearchContextRelation.Backlink,
+            context.RelatedPages.Single(page => page.Id == "incoming-page").Relations);
+        Assert.IsEmpty(context.Warnings);
+    }
+
+    [TestMethod]
     public void Capture_ResearchContextStopsAfterOneOutgoingWikiLinkHop()
     {
         WritePage(

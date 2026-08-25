@@ -1753,12 +1753,72 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 return;
             }
 
-            var resolution = _wikiLinkResolver.Resolve(reference);
+            var resolution = _wikiLinkResolver.Resolve(normalized);
             if (resolution is WikiLinkResolution.Task)
                 return;
 
             if (resolution is not WikiLinkResolution.VaultPage resolved)
             {
+                var barePathDescriptors = normalized.Contains('/')
+                    ? Array.Empty<WikiReferenceDescriptor>()
+                    : referenceDescriptors
+                        .Where(descriptor => string.Equals(
+                            Path.GetFileNameWithoutExtension(descriptor.VaultRelativePath),
+                            normalized,
+                            StringComparison.OrdinalIgnoreCase))
+                        .ToArray();
+                var bareTargets = pages
+                    .Where(page => barePathDescriptors.Any(descriptor =>
+                        string.Equals(
+                            descriptor.VaultRelativePath,
+                            page.VaultRelativePath,
+                            StringComparison.OrdinalIgnoreCase)))
+                    .ToArray();
+                if (bareTargets.Length > 1)
+                {
+                    AddWarning(
+                        reference,
+                        relation,
+                        ResearchContextWarningCode.AmbiguousTarget,
+                        $"Wiki reference '{reference}' matches more than one Wiki Page file.");
+                    return;
+                }
+                if (bareTargets.Length == 1)
+                {
+                    var bareDescriptor = barePathDescriptors.First(candidate =>
+                        string.Equals(
+                            candidate.VaultRelativePath,
+                            bareTargets[0].VaultRelativePath,
+                            StringComparison.OrdinalIgnoreCase));
+                    if (bareDescriptor.Status is WikiReferenceStatus.Malformed
+                        or WikiReferenceStatus.Unreadable)
+                    {
+                        AddWarning(
+                            reference,
+                            relation,
+                            ResearchContextWarningCode.MalformedPage,
+                            $"Related Wiki Page '{reference}' is malformed or unreadable.");
+                    }
+                    AddTarget(bareTargets[0], reference, relation);
+                    return;
+                }
+                if (barePathDescriptors.Any(descriptor =>
+                        descriptor.Status is WikiReferenceStatus.Malformed
+                            or WikiReferenceStatus.Unreadable))
+                {
+                    AddWarning(
+                        reference,
+                        relation,
+                        ResearchContextWarningCode.MalformedPage,
+                        $"Related Wiki Page '{reference}' is malformed or unreadable.");
+                    return;
+                }
+                if (barePathDescriptors.Any(descriptor =>
+                        descriptor.Status == WikiReferenceStatus.Excluded))
+                {
+                    return;
+                }
+
                 var rawProvenanceTarget = pages.SingleOrDefault(page =>
                     rawProvenanceTargetIds.Contains(page.Id)
                     && string.Equals(
@@ -1893,7 +1953,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             }
             else if (!Uri.TryCreate(source, UriKind.Absolute, out _))
             {
-                AddIdentityReference(source, ResearchContextRelation.Provenance);
+                if (source.Contains('/') || source.Contains('\\'))
+                    AddWikiLinkReference(source, ResearchContextRelation.Provenance);
+                else
+                    AddIdentityReference(source, ResearchContextRelation.Provenance);
             }
         }
 
@@ -1905,15 +1968,42 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             if (string.Equals(page.Id, topic.Id, StringComparison.OrdinalIgnoreCase))
                 continue;
             if (WikiLinkParser.Find(page.Markdown).Any(link =>
-                    _wikiLinkResolver.Resolve(link.Stem)
-                        is WikiLinkResolution.VaultPage resolved
-                    && string.Equals(
-                        resolved.VaultRelativePath,
-                        topic.VaultRelativePath,
-                        StringComparison.OrdinalIgnoreCase)))
+                    ResolvesToTopic(link.Stem)))
             {
                 AddTarget(page, page.VaultRelativePath, ResearchContextRelation.Backlink);
             }
+        }
+
+        bool ResolvesToTopic(string reference)
+        {
+            var normalized = NormalizeReference(reference);
+            var resolution = _wikiLinkResolver.Resolve(normalized);
+            if (resolution is WikiLinkResolution.Task)
+                return false;
+            if (resolution is WikiLinkResolution.VaultPage resolved)
+            {
+                return string.Equals(
+                    resolved.VaultRelativePath,
+                    topic.VaultRelativePath,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            if (normalized.Contains('/'))
+                return false;
+
+            var matchingPaths = referenceDescriptors
+                .Where(descriptor => descriptor.Status != WikiReferenceStatus.Excluded)
+                .Where(descriptor => string.Equals(
+                    Path.GetFileNameWithoutExtension(descriptor.VaultRelativePath),
+                    normalized,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(descriptor => descriptor.VaultRelativePath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return matchingPaths.Length == 1
+                && string.Equals(
+                    matchingPaths[0],
+                    topic.VaultRelativePath,
+                    StringComparison.OrdinalIgnoreCase);
         }
 
         foreach (var includedId in includedIds)
