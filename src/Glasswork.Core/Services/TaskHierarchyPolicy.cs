@@ -168,7 +168,16 @@ public sealed class TaskHierarchyPolicy
         var touched = touchedTaskIds
             .Where(_tasks.ContainsKey)
             .Distinct(StringComparer.Ordinal)
-            .ToArray();
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var taskId in touched.ToArray())
+        {
+            var parent = ResolveParent(_tasks[taskId]);
+            if (parent.Kind == TaskParentResolutionKind.Local
+                && parent.CanonicalTaskId is { } parentId)
+            {
+                touched.Add(parentId);
+            }
+        }
 
         foreach (var taskId in touched)
         {
@@ -222,7 +231,13 @@ public sealed class TaskHierarchyPolicy
         }
 
         return diagnostics
-            .GroupBy(diagnostic => (diagnostic.Code, string.Join('\0', diagnostic.TaskIds)))
+            .GroupBy(diagnostic => (
+                diagnostic.Code,
+                string.Join(
+                    '\0',
+                    diagnostic.TaskIds
+                        .Distinct(StringComparer.Ordinal)
+                        .Order(StringComparer.Ordinal))))
             .Select(group => group.First())
             .ToArray();
     }

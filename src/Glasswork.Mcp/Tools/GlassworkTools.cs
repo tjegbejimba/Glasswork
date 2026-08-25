@@ -609,7 +609,8 @@ public sealed class GlassworkTools
 
             // Load all tasks and filter for children
             var all = _vault.LoadAll();
-            var subtasks = all.Where(t => t.Parent == sanitizedId).ToList();
+            var hierarchy = new TaskHierarchyPolicy(all);
+            var subtasks = hierarchy.GetChildren(sanitizedId).ToList();
 
             if (recursive)
             {
@@ -623,7 +624,7 @@ public sealed class GlassworkTools
                     if (processed.Contains(currentId)) continue;
                     processed.Add(currentId);
 
-                    var children = all.Where(t => t.Parent == currentId).ToList();
+                    var children = hierarchy.GetChildren(currentId).ToList();
                     expanded.AddRange(children);
                     foreach (var child in children)
                         toProcess.Enqueue(child.Id);
@@ -647,8 +648,8 @@ public sealed class GlassworkTools
                     Status: MapToExternalStatus(t.Status),
                     Priority: t.Priority,
                     Size: t.Size,
-                    Depth: CalculateDepth(t.Id, all),
-                    SubtaskCount: all.Count(child => child.Parent == t.Id),
+                    Depth: hierarchy.GetAncestors(t.Id).Count,
+                    SubtaskCount: hierarchy.GetChildren(t.Id).Count,
                     ResourceRevision: ManagedResourceRevision(t)))
                 .ToList();
 
@@ -753,20 +754,6 @@ public sealed class GlassworkTools
             scope?.SetResult("error");
             throw;
         }
-    }
-
-    private int CalculateDepth(string taskId, List<GlassworkTask> all)
-    {
-        var depth = 0;
-        var current = taskId;
-        while (true)
-        {
-            var task = all.FirstOrDefault(t => t.Id == current);
-            if (task?.Parent is null) break;
-            depth++;
-            current = task.Parent;
-        }
-        return depth;
     }
 
     [McpServerTool(Name = "search_tasks")]
@@ -2428,10 +2415,15 @@ public sealed class GlassworkTools
             }
 
             var all = _vault.LoadAll();
+            var hierarchy = new TaskHierarchyPolicy(all);
             var byParent = all
-                .Where(t => !string.IsNullOrEmpty(t.Parent))
-                .GroupBy(t => t.Parent!, StringComparer.Ordinal)
-                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+                .Select(task => new
+                {
+                    task.Id,
+                    Children = hierarchy.GetChildren(task.Id).ToList(),
+                })
+                .Where(entry => entry.Children.Count > 0)
+                .ToDictionary(entry => entry.Id, entry => entry.Children, StringComparer.Ordinal);
             scope?.RecordPhase("load_task", taskSw.ElapsedMilliseconds);
 
             // Phase: load_artifacts — for the root only; recursive snapshots load
