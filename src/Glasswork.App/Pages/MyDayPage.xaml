@@ -15,6 +15,18 @@
         <conv:SubtaskSegmentBrushConverter x:Key="SegBrush" />
         <conv:DueUrgencyBrushConverter x:Key="DueBg" />
         <conv:DueUrgencyForegroundBrushConverter x:Key="DueFg" />
+
+        <!-- The InfoBar close button is a template part, so it inherits the framework's
+             generic "Close" name and is indistinguishable from the window caption's Close
+             button to UI Automation (and to a screen-reader user). Naming it makes the
+             error bar's dismissal both announceable and addressable by the visual
+             verification harness, which searches the whole window by name. -->
+        <Style x:Key="MyDayErrorCloseButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource InfoBarCloseButtonStyle}">
+            <Setter Property="AutomationProperties.AutomationId" Value="MyDayErrorClose" />
+            <Setter Property="AutomationProperties.Name" Value="Dismiss My Day error" />
+        </Style>
     </Page.Resources>
 
     <Grid Padding="32" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
@@ -48,6 +60,17 @@
                     </StackPanel>
                 </Button>
             </Grid>
+
+            <!-- Mutation failures (revision conflict / missing / read-only), mirroring PlannerPage -->
+            <InfoBar x:Name="ErrorBar"
+                     AutomationProperties.AutomationId="MyDayError"
+                     IsOpen="False"
+                     IsClosable="True"
+                     CloseButtonStyle="{StaticResource MyDayErrorCloseButtonStyle}"
+                     CloseButtonClick="ErrorBar_CloseButtonClick"
+                     Severity="Error"
+                     Title="Could not update My Day"
+                     Margin="0,12,0,0" />
         </StackPanel>
 
         <!-- Today's tasks header -->
@@ -379,6 +402,7 @@
                         <Button Grid.Column="1" Click="AddToDay_Click"
                                 Background="Transparent" BorderThickness="0"
                                 Padding="6" VerticalAlignment="Center"
+                                AutomationProperties.Name="{Binding AddToMyDayLabel}"
                                 ToolTipService.ToolTip="Add to My Day">
                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE710;" FontSize="14" />
                         </Button>
@@ -420,6 +444,7 @@
                             <Button Grid.Column="3" Click="AddToDay_Click"
                                     Background="Transparent" BorderThickness="0"
                                     Padding="6,2" VerticalAlignment="Center" Margin="6,0,0,0"
+                                    AutomationProperties.Name="{Binding AddToMyDayLabel}"
                                     ToolTipService.ToolTip="Add to My Day">
                                 <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE710;" FontSize="13" />
                             </Button>

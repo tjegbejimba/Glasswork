@@ -97,6 +97,14 @@ public class VaultService
         _mutations = mutations ?? throw new ArgumentNullException(nameof(mutations));
     }
 
+    /// <summary>
+    /// The <see cref="ResourceMutationService"/> backing this Vault — the same instance
+    /// <see cref="Save"/> commits through, so its journal, mutation lease, and
+    /// <c>SelfWriteCoordinator</c> registration are shared. View models that need explicit
+    /// optimistic-concurrency transactions rather than whole-object saves use this.
+    /// </summary>
+    internal ResourceMutationService Mutations => EnsureMutations();
+
     private ResourceMutationService EnsureMutations()
     {
         if (_mutations is not null) return _mutations;

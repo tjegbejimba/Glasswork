@@ -1,0 +1,76 @@
+{
+  "name": "My Day mutation error bar",
+  "startUri": "glasswork://myday",
+  "tasks": [
+    {
+      "id": "vv-vanishing-suggestion",
+      "title": "Vanishing suggestion task",
+      "description": "A high-priority suggestion whose file is re-identified out from under the bound row, so the add fails with a reported error instead of crashing.",
+      "status": "todo",
+      "priority": "high"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Add Vanishing suggestion task to My Day",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "replace-task-text",
+      "taskId": "vv-vanishing-suggestion",
+      "oldValue": "id: vv-vanishing-suggestion",
+      "value": "id: vv-reidentified-suggestion"
+    },
+    {
+      "type": "invoke",
+      "name": "Add Vanishing suggestion task to My Day",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "MyDayError",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "myday-mutation-error",
+      "waitMilliseconds": 1200
+    },
+    {
+      "type": "invoke",
+      "automationId": "MyDayErrorClose",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "MyDayError"
+    },
+    {
+      "type": "replace-task-text",
+      "taskId": "vv-vanishing-suggestion",
+      "oldValue": "Vanishing suggestion task",
+      "value": "Renamed after dismissal"
+    },
+    {
+      "type": "wait-for",
+      "name": "Add Renamed after dismissal to My Day",
+      "timeoutMilliseconds": 15000
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "MyDayError"
+    }
+  ],
+  "captures": [
+    {
+      "name": "myday-error-dismissed-survives-refresh",
+      "waitMilliseconds": 800
+    }
+  ]
+}

@@ -238,7 +238,31 @@ public sealed partial class MyDayPage : Page
             t.IsManuallyCollapsed = App.UiState.Get<bool>($"{App.CollapsedTaskKeyPrefix}{t.Id}");
         }
         UpdateEmptyState();
+        UpdateErrorBar();
     }
+
+    /// <summary>
+    /// Surfaces the outcome of the last My Day mutation. <c>MyDayViewModel</c> sets
+    /// <see cref="MyDayViewModel.ErrorMessage"/> before raising <c>Refreshed</c>, so every
+    /// mutation path lands here — a revision conflict, a deleted Task, or a read-only Task
+    /// is reported instead of escaping to <c>App.UnhandledException</c>.
+    /// </summary>
+    private void UpdateErrorBar()
+    {
+        var message = ViewModel.ErrorMessage;
+        ErrorBar.Message = message ?? string.Empty;
+        ErrorBar.IsOpen = !string.IsNullOrWhiteSpace(message);
+    }
+
+    /// <summary>
+    /// Clears the view model's error when the user closes the bar. Without this the bar
+    /// re-opens from the still-set <see cref="MyDayViewModel.ErrorMessage"/> on the next
+    /// unrelated refresh — a file-watcher tick, a navigation, the Refresh button — making a
+    /// dismissed message impossible to get rid of. <c>CloseButtonClick</c> rather than
+    /// <c>Closed</c>: <c>Closed</c> also fires for the programmatic close in
+    /// <see cref="UpdateErrorBar"/>, which would clear state the user never acknowledged.
+    /// </summary>
+    private void ErrorBar_CloseButtonClick(InfoBar sender, object args) => ViewModel.DismissError();
 
     private void UpdateEmptyState()
     {

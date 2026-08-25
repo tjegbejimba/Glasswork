@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Glasswork.Core.Models;
@@ -15,6 +17,7 @@ public partial class MyDayViewModel : ObservableObject
     private readonly TaskService _taskService;
     private readonly VaultService _vault;
     private readonly IndexService _index;
+    private readonly ResourceMutationService _mutations;
     private readonly IUiStateService? _uiState;
     private readonly IPerformanceTracer _performanceTracer;
     private readonly ITaskQuery _taskQuery;
@@ -29,6 +32,24 @@ public partial class MyDayViewModel : ObservableObject
     public ObservableCollection<GlassworkTask> Suggestions { get; } = [];
 
     [ObservableProperty] public partial bool ShowSuggestions { get; set; }
+
+    /// <summary>
+    /// Non-null when the last My Day mutation could not be applied — a Resource Revision
+    /// conflict, a missing Task, a malformed Task file, or a read-only (cancelled/blocked)
+    /// Task. Surfaced by <c>MyDayPage</c> in an error InfoBar, mirroring
+    /// <c>PlannerViewModel.ErrorMessage</c>. Cleared by the next fully successful mutation,
+    /// or by <see cref="DismissError"/> when the user closes the InfoBar.
+    /// </summary>
+    [ObservableProperty] public partial string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// Acknowledges the current error. The page re-opens its InfoBar from
+    /// <see cref="ErrorMessage"/> on every refresh, so closing the bar without clearing
+    /// the view model's state would let the next unrelated refresh — a file-watcher tick,
+    /// a navigation, the Refresh button — resurrect a message the user already dismissed.
+    /// Deliberately does not refresh: acknowledging an error is not a Vault operation.
+    /// </summary>
+    public void DismissError() => ErrorMessage = null;
 
     public MyDayViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
         : this(vault, taskService, EnsureSeededIndex(vault), uiState, null, null) { }
@@ -52,6 +73,7 @@ public partial class MyDayViewModel : ObservableObject
         _vault = vault ?? throw new ArgumentNullException(nameof(vault));
         _taskService = taskService ?? throw new ArgumentNullException(nameof(taskService));
         _index = index ?? throw new ArgumentNullException(nameof(index));
+        _mutations = _vault.Mutations;
         _uiState = uiState;
         _performanceTracer = performanceTracer ?? PerformanceTracer.Disabled;
         _taskQuery = taskQuery ?? new WarmIndexTaskQuery(index, new BacklinkIndex());
@@ -252,29 +274,26 @@ public partial class MyDayViewModel : ObservableObject
         return -1;
     }
 
+    /// <summary>
+    /// Refreshes a bound row in place while keeping its object identity, so WinUI does not
+    /// tear down and rebuild the visual for a Task that is merely being updated.
+    ///
+    /// Durable state comes from <see cref="GlassworkTask.CopyDurableStateFrom"/> — the single
+    /// definition of a Task's serialized state — so the row can never end up showing refreshed
+    /// content while carrying a stale <see cref="GlassworkTask.ResourceRevision"/> or dropped
+    /// durable fields. That drift was the v1.4.11 My Day crash: a suggestion row that looked
+    /// current but failed its next optimistic-concurrency precondition.
+    ///
+    /// Only documented transient UI state is handled here: <see cref="GlassworkTask.IsManuallyCollapsed"/>
+    /// is preserved from the existing row (it is per-page state owned by <c>IUiStateService</c>),
+    /// while the My Day presentation fields are taken from the freshly computed source.
+    /// </summary>
     private static void CopyTaskState(GlassworkTask target, GlassworkTask source)
     {
         var isManuallyCollapsed = target.IsManuallyCollapsed;
 
-        target.Id = source.Id;
-        target.Title = source.Title;
-        target.Status = source.Status;
-        target.Type = source.Type;
-        target.Priority = source.Priority;
-        target.Size = source.Size;
-        target.Created = source.Created;
-        target.CompletedAt = source.CompletedAt;
-        target.Due = source.Due;
-        target.MyDay = source.MyDay;
-        target.Links = [.. source.Links];
-        target.Parent = source.Parent;
-        target.Description = source.Description;
-        target.Notes = source.Notes;
-        target.ContextLinks = [.. source.ContextLinks];
-        target.Tags = [.. source.Tags];
-        target.Subtasks = source.Subtasks;
-        target.RelatedLinks = source.RelatedLinks;
-        target.IsV1Format = source.IsV1Format;
+        target.CopyDurableStateFrom(source);
+
         target.TodaysSubtasks = source.TodaysSubtasks;
         target.TodaysChildren = source.TodaysChildren;
         target.IsManuallyCollapsed = isManuallyCollapsed;
@@ -345,29 +364,43 @@ public partial class MyDayViewModel : ObservableObject
     public void AddToMyDay(GlassworkTask? task)
     {
         if (task is null) return;
-        if (!task.IsMyDay)
+
+        var failures = new List<string>();
+        // A Task already pinned to today needs no Vault write, so the dismissal clear IS the
+        // whole operation and must still run. Otherwise the dismissal may only be cleared
+        // once the durable my_day actually landed: clearing it on a write that never happened
+        // would resurrect the row in Today while disk still says it isn't there.
+        var persisted = task.IsMyDay || SetMyDay(task, DateTime.Today, "Add to My Day", failures);
+
+        if (persisted)
         {
-            _taskService.ToggleMyDay(task);
+            // Clear any prior dismiss for today so an "add" overrides it.
+            _uiState?.Remove(DismissKey(task.Id));
         }
-        // Clear any prior dismiss for today so an "add" overrides it.
-        _uiState?.Remove(DismissKey(task.Id));
-        Refresh();
+
+        FinishMutation(failures);
     }
 
     [RelayCommand]
     public void CarryAll()
     {
+        var failures = new List<string>();
         foreach (var task in Suggestions.ToList())
         {
-            _taskService.ToggleMyDay(task);
+            // Carry forward is an explicit "put this in today", never a toggle: a carryover
+            // row's my_day is a PAST date, so toggling would clear it instead of carrying it.
+            SetMyDay(task, DateTime.Today, "Carry to My Day", failures);
         }
-        Refresh();
+
+        FinishMutation(failures);
     }
 
     [RelayCommand]
     public void RemoveFromMyDay(GlassworkTask? task)
     {
         if (task is null) return;
+
+        var failures = new List<string>();
         // A PBI container's X removes the WHOLE group: apply the removal plan to each
         // nested child (so the group leaves My Day) and to the container PBI itself (so
         // an independently promoted PBI can't pop back as a standalone row). For a plain
@@ -375,16 +408,26 @@ public partial class MyDayViewModel : ObservableObject
         foreach (var target in MyDayRemovalPolicy.RemovalTargets(task))
         {
             var plan = MyDayRemovalPolicy.PlanRemoval(target);
-            if (plan.ClearMyDayFlag)
-            {
-                _taskService.ToggleMyDay(target);
-            }
-            if (plan.SetDismissForToday)
+
+            // When the plan needs no durable clear (a virtual row surfaced by its due date,
+            // never pinned), the dismissal alone IS the removal and always applies. When it
+            // does need one, dismiss only if that clear landed — dismissing a target whose
+            // clear failed would hide the failure today and let the still-pinned Task recur
+            // tomorrow. Gating per target keeps a partial failure honest: the targets that
+            // cleared disappear, the one that didn't stays visible under the error bar.
+            var cleared = !plan.ClearMyDayFlag
+                // Explicit clear, not a toggle: a carryover row (my_day in the past) is not
+                // "in My Day today", so toggling it would PIN it to today — the inverse of
+                // what the user asked for.
+                || SetMyDay(target, null, "Remove from My Day", failures);
+
+            if (plan.SetDismissForToday && cleared)
             {
                 _uiState?.Set(DismissKey(target.Id), true);
             }
         }
-        Refresh();
+
+        FinishMutation(failures);
     }
 
     [RelayCommand]
@@ -397,15 +440,127 @@ public partial class MyDayViewModel : ObservableObject
     public void CompleteTask(GlassworkTask? task)
     {
         if (task is null) return;
-        _taskService.SetStatus(task, GlassworkTask.Statuses.Done);
-        Refresh();
+
+        var failures = new List<string>();
+        SetTaskStatus(task, GlassworkTask.Statuses.Done, "Complete task", failures);
+        FinishMutation(failures);
     }
 
     [RelayCommand]
     public void UncompleteTask(GlassworkTask? task)
     {
         if (task is null) return;
-        _taskService.SetStatus(task, GlassworkTask.Statuses.Todo);
+
+        var failures = new List<string>();
+        SetTaskStatus(task, GlassworkTask.Statuses.Todo, "Reopen task", failures);
+        FinishMutation(failures);
+    }
+
+    /// <summary>
+    /// Applies an explicit My Day date (or clears it when <paramref name="value"/> is null)
+    /// to the Task's current Vault state under the mutation lease. Returns false when the
+    /// change did not persist.
+    /// </summary>
+    private bool SetMyDay(GlassworkTask task, DateTime? value, string operation, List<string> failures) =>
+        ApplyFields(
+            task,
+            operation,
+            failures,
+            new Dictionary<string, object?>
+            {
+                ["scheduled"] = value?.ToString("yyyy-MM-dd"),
+            });
+
+    /// <summary>
+    /// Applies an explicit target status. <c>set_task_fields</c> routes <c>status</c> through
+    /// the same <see cref="TaskService"/> transition helper the in-app command used, so
+    /// <c>completed_at</c> stamping and the cancelled/blocked guards are preserved. Returns
+    /// false when the change did not persist.
+    /// </summary>
+    private bool SetTaskStatus(GlassworkTask task, string status, string operation, List<string> failures) =>
+        ApplyFields(
+            task,
+            operation,
+            failures,
+            new Dictionary<string, object?>
+            {
+                ["status"] = status,
+            });
+
+    /// <summary>
+    /// Commits an explicit-intent field set against the Task's <b>current</b> Vault state,
+    /// guarded by the revision the row is displaying.
+    ///
+    /// This replaces the previous read-modify-write-the-whole-object path
+    /// (<c>TaskService.ToggleMyDay</c>/<c>SetStatus</c> → <c>VaultService.Save</c>), which
+    /// serialized the entire in-memory row and therefore let any field the row failed to
+    /// refresh overwrite newer Vault bytes. Sending only the intended fields means a
+    /// concurrent external edit to an unrelated field is preserved rather than clobbered.
+    ///
+    /// A conflict is reported, never retried: silently replaying against newer bytes would
+    /// re-introduce the lost-update the optimistic-concurrency guard exists to prevent.
+    /// </summary>
+    private bool ApplyFields(
+        GlassworkTask task,
+        string operation,
+        List<string> failures,
+        Dictionary<string, object?> fields)
+    {
+        var mutationId = $"my-day-{Guid.NewGuid():N}";
+        var payload = JsonSerializer.SerializeToElement(fields);
+
+        ResourceMutationOutcome outcome;
+        try
+        {
+            outcome = _mutations.TransactSingleTask(
+                mutationId,
+                task.Id,
+                task.ResourceRevision,
+                payload);
+        }
+        catch (Exception ex) when (IsMutationPersistenceFailure(ex))
+        {
+            failures.Add($"{operation} failed for \"{task.Title}\": {ex.Message}");
+            return false;
+        }
+
+        if (outcome.Outcome is "applied" or "no_op") return true;
+
+        failures.Add(DescribeFailure(operation, task, outcome));
+        return false;
+    }
+
+    private static string DescribeFailure(
+        string operation,
+        GlassworkTask task,
+        ResourceMutationOutcome outcome)
+    {
+        var detail = outcome.Outcome switch
+        {
+            "conflict" =>
+                "it changed in the vault after this view loaded. Refresh and try again.",
+            "not_found" => "it no longer exists in the vault.",
+            "precondition_required" =>
+                "its vault revision is unknown here. Refresh and try again.",
+            _ => outcome.Diagnostics?.FirstOrDefault()?.Message
+                 ?? outcome.Error
+                 ?? $"the vault reported '{outcome.Outcome}'.",
+        };
+
+        return $"{operation} failed for \"{task.Title}\" — {detail}";
+    }
+
+    /// <summary>
+    /// Refreshes the view and publishes the outcome of the mutation batch. Multi-target
+    /// operations (Carry all, container removal) run every target before reporting, so one
+    /// conflicting Task never silently aborts the rest of the group.
+    /// </summary>
+    private void FinishMutation(List<string> failures)
+    {
+        ErrorMessage = failures.Count == 0 ? null : string.Join(" ", failures);
         Refresh();
     }
+
+    private static bool IsMutationPersistenceFailure(Exception exception) =>
+        ResourceMutationService.IsExpectedPersistenceFailure(exception);
 }

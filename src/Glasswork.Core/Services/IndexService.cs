@@ -346,6 +346,17 @@ public class IndexService
                     BumpVersion(id);
                     changes.Add(new TaskChange(old, task.Clone()));
                 }
+                else
+                {
+                    // Content-equal, so no delta — but the file's bytes (and therefore its
+                    // Resource Revision) may still have moved, e.g. an external tool that
+                    // reordered frontmatter keys or normalized whitespace. The revision is
+                    // an optimistic-concurrency token, not content: leaving the stale one in
+                    // the snapshot would hand every consumer a row that renders correctly yet
+                    // can never commit. Refresh the token in place; emitting no change keeps
+                    // ContentEquals's conservative semantics intact.
+                    existing.ResourceRevision = task.ResourceRevision;
+                }
             }
 
             _loaded = true;

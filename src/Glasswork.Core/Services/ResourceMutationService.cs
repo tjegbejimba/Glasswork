@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Glasswork.Core.Models;
+using YamlDotNet.Core;
 
 namespace Glasswork.Core.Services;
 
@@ -86,6 +87,29 @@ public sealed partial class ResourceMutationService
     private readonly FrontmatterParser _parser = new();
     private readonly HashSet<string> _recoveredDeletes = new(StringComparer.Ordinal);
     private readonly object _recoveredDeletesGate = new();
+
+    /// <summary>
+    /// True when <paramref name="exception"/> is an <b>expected</b> failure of committing a
+    /// mutation against the Vault, and therefore something a caller should report rather than
+    /// let escape. Callers use this as an exception filter so unexpected faults still crash
+    /// loudly instead of being swallowed by a broad catch.
+    ///
+    /// <para>It lives here because this service owns the failure modes: it reads and
+    /// <b>parses the current Vault bytes</b> before applying a field set, so a Task that is
+    /// malformed on disk — hand-edited, truncated, or caught mid-write by another writer —
+    /// throws out of the parse (<see cref="FormatException"/> for bad frontmatter delimiters,
+    /// <see cref="YamlException"/> for unparseable YAML) rather than out of the
+    /// optimistic-concurrency check. Those two were previously missing from the view models'
+    /// duplicated copies of this predicate, so a malformed Task file escaped a WinUI command
+    /// handler exactly like a stale Resource Revision did.</para>
+    /// </summary>
+    public static bool IsExpectedPersistenceFailure(Exception exception) =>
+        exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or JsonException
+            or FormatException
+            or YamlException;
 
     public ResourceMutationService(
         string vaultPath,

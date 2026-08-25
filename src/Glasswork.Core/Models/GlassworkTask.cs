@@ -15,6 +15,7 @@ public partial class GlassworkTask : ObservableObject
     public string? ResourceRevision { get; internal set; }
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(RemoveFromMyDayLabel))]
+    [NotifyPropertyChangedFor(nameof(AddToMyDayLabel))]
     public partial string Title { get; set; } = string.Empty;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDone))]
@@ -370,6 +371,13 @@ public partial class GlassworkTask : ObservableObject
     public string RemoveFromMyDayLabel => $"Remove {Title} from My Day";
 
     /// <summary>
+    /// Accessible label for a Suggestions row's "add to My Day" button. Mirrors
+    /// <see cref="RemoveFromMyDayLabel"/> so screen readers (and UI-automation, e.g.
+    /// visual-verification scenarios) can tell one suggestion's add button from another.
+    /// </summary>
+    public string AddToMyDayLabel => $"Add {Title} to My Day";
+
+    /// <summary>
     /// True when this row is a PBI rendered as a My Day container — a <c>pbi</c> hosting
     /// in-My-Day cross-file children (issue #337 / ADR 0017).
     /// </summary>
@@ -389,13 +397,101 @@ public partial class GlassworkTask : ObservableObject
     public bool ShowTodaysChildren => HasTodaysChildren && !IsManuallyCollapsed;
 
     /// <summary>
+    /// Copies every **durable** (serialized) field from <paramref name="source"/> onto this
+    /// task in place, deep-copying all collections so the two instances never share mutable
+    /// state. This includes <see cref="ResourceRevision"/>: durable state and the optimistic
+    /// concurrency token are a single atomic unit. Copying one without the other produces a
+    /// row that either fails its next commit (stale revision — the v1.4.11 My Day crash) or,
+    /// worse, passes the precondition while carrying dropped fields and silently overwrites
+    /// whole-document state.
+    ///
+    /// Transient UI state is deliberately **not** touched, so callers own it explicitly:
+    /// <list type="bullet">
+    ///   <item><description><see cref="IsManuallyCollapsed"/> — per-page UI state tracked in
+    ///     <c>IUiStateService</c>.</description></item>
+    ///   <item><description><see cref="TodaysSubtasks"/> / <see cref="TodaysChildren"/> —
+    ///     recomputed per My Day refresh by <c>MyDayPromotionPolicy</c> /
+    ///     <c>MyDayContainerGrouper</c>.</description></item>
+    /// </list>
+    ///
+    /// This is the single definition of "the durable state of a Task"; <see cref="Clone"/>
+    /// and every in-place row refresh go through it so the two can never drift.
+    /// </summary>
+    public void CopyDurableStateFrom(GlassworkTask source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (ReferenceEquals(this, source)) return;
+
+        Id = source.Id;
+        ResourceRevision = source.ResourceRevision;
+        Title = source.Title;
+        Status = source.Status;
+        Priority = source.Priority;
+        Type = source.Type;
+        Size = source.Size;
+        Created = source.Created;
+        CompletedAt = source.CompletedAt;
+        CancelledAt = source.CancelledAt;
+        CancellationReason = source.CancellationReason;
+        BlockedReason = source.BlockedReason;
+        BlockedAt = source.BlockedAt;
+        BlockedFromStatus = source.BlockedFromStatus;
+        BlockedMetadataState = source.BlockedMetadataState;
+        Due = source.Due;
+        Start = source.Start;
+        MyDay = source.MyDay;
+        DeferUntil = source.DeferUntil;
+        Parent = source.Parent;
+        BlockedBy = [.. source.BlockedBy];
+        Description = source.Description;
+        Notes = source.Notes;
+        IsV1Format = source.IsV1Format;
+
+        // TaskLink is an immutable record; the references can be shared, but the
+        // List wrapper must be a new instance.
+        Links = [.. source.Links];
+
+        Tags = [.. source.Tags];
+        ContextLinks = [.. source.ContextLinks];
+        FrontmatterExtensions =
+            new Dictionary<string, object?>(source.FrontmatterExtensions, StringComparer.Ordinal);
+
+        var subtasks = new List<SubTask>(source.Subtasks.Count);
+        foreach (var sub in source.Subtasks)
+        {
+            subtasks.Add(new SubTask
+            {
+                Text = sub.Text,
+                IsCompleted = sub.IsCompleted,
+                Status = sub.Status,
+                Notes = sub.Notes,
+                Metadata = new Dictionary<string, string>(sub.Metadata),
+                PlannerIdentity = sub.PlannerIdentity,
+            });
+        }
+        Subtasks = subtasks;
+
+        var relatedLinks = new List<RelatedLink>(source.RelatedLinks.Count);
+        foreach (var rl in source.RelatedLinks)
+        {
+            relatedLinks.Add(new RelatedLink
+            {
+                Slug = rl.Slug,
+                DisplayName = rl.DisplayName,
+            });
+        }
+        RelatedLinks = relatedLinks;
+    }
+
+    /// <summary>
     /// Returns a deep, defensive copy of this task suitable for storing in (or
     /// returning from) the in-memory <c>IndexService</c> snapshot store
-    /// (see issue #184). Subtasks, Links, RelatedLinks, Tags, ContextLinks, and
-    /// each subtask's Metadata dictionary are all deep-copied so that mutating
-    /// the clone never affects the original.
+    /// (see issue #184). Delegates to <see cref="CopyDurableStateFrom"/>, so
+    /// Subtasks, Links, RelatedLinks, Tags, ContextLinks, FrontmatterExtensions,
+    /// and each subtask's Metadata dictionary are all deep-copied.
     ///
-    /// Transient UI fields are intentionally **reset** on the clone:
+    /// Transient UI fields are left at their defaults on the fresh instance, i.e.
+    /// intentionally **reset**:
     /// <list type="bullet">
     ///   <item><description><see cref="IsManuallyCollapsed"/> — per-page UI state
     ///     tracked separately in <c>IUiStateService</c>; the Index must not
@@ -409,67 +505,8 @@ public partial class GlassworkTask : ObservableObject
     /// </summary>
     public GlassworkTask Clone()
     {
-        var copy = new GlassworkTask
-        {
-            Id = Id,
-            ResourceRevision = ResourceRevision,
-            Title = Title,
-            Status = Status,
-            Priority = Priority,
-            Type = Type,
-            Size = Size,
-            Created = Created,
-            CompletedAt = CompletedAt,
-            CancelledAt = CancelledAt,
-            CancellationReason = CancellationReason,
-            BlockedReason = BlockedReason,
-            BlockedAt = BlockedAt,
-            BlockedFromStatus = BlockedFromStatus,
-            BlockedMetadataState = BlockedMetadataState,
-            Due = Due,
-            Start = Start,
-            MyDay = MyDay,
-            DeferUntil = DeferUntil,
-            Parent = Parent,
-            BlockedBy = [.. BlockedBy],
-            Description = Description,
-            Notes = Notes,
-            IsV1Format = IsV1Format,
-            // Transient UI state intentionally not copied — see remarks above.
-        };
-
-        // TaskLink is an immutable record; the references can be shared, but the
-        // List wrapper must be a new instance.
-        copy.Links = [.. Links];
-
-        copy.Tags = [.. Tags];
-        copy.ContextLinks = [.. ContextLinks];
-        copy.FrontmatterExtensions = new Dictionary<string, object?>(FrontmatterExtensions, StringComparer.Ordinal);
-
-        copy.Subtasks = new List<SubTask>(Subtasks.Count);
-        foreach (var sub in Subtasks)
-        {
-            copy.Subtasks.Add(new SubTask
-            {
-                Text = sub.Text,
-                IsCompleted = sub.IsCompleted,
-                Status = sub.Status,
-                Notes = sub.Notes,
-                Metadata = new Dictionary<string, string>(sub.Metadata),
-                PlannerIdentity = sub.PlannerIdentity,
-            });
-        }
-
-        copy.RelatedLinks = new List<RelatedLink>(RelatedLinks.Count);
-        foreach (var rl in RelatedLinks)
-        {
-            copy.RelatedLinks.Add(new RelatedLink
-            {
-                Slug = rl.Slug,
-                DisplayName = rl.DisplayName,
-            });
-        }
-
+        var copy = new GlassworkTask();
+        copy.CopyDurableStateFrom(this);
         return copy;
     }
 

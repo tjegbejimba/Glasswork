@@ -1,0 +1,61 @@
+{
+  "name": "My Day add after external edit",
+  "startUri": "glasswork://myday",
+  "tasks": [
+    {
+      "id": "vv-stale-suggestion",
+      "title": "Stale suggestion task",
+      "description": "A high-priority suggestion. An external agent rewrites its file while the row stays bound, then the row is added to My Day.",
+      "status": "todo",
+      "priority": "high"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Add Stale suggestion task to My Day",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "replace-task-text",
+      "taskId": "vv-stale-suggestion",
+      "oldValue": "priority: high",
+      "value": "priority: urgent"
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "type": "invoke",
+      "name": "Add Stale suggestion task to My Day",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "MyDayTodayHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "MyDayError",
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "type": "wait-for",
+      "name": "Remove Stale suggestion task from My Day",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "myday-added-after-external-edit",
+      "waitMilliseconds": 1200
+    }
+  ]
+}

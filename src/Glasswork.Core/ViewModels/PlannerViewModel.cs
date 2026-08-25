@@ -547,8 +547,5 @@ public sealed class PlannerViewModel : ObservableObject
     }
 
     private static bool IsMutationPersistenceFailure(Exception exception) =>
-        exception is IOException
-            or UnauthorizedAccessException
-            or InvalidOperationException
-            or JsonException;
+        ResourceMutationService.IsExpectedPersistenceFailure(exception);
 }
