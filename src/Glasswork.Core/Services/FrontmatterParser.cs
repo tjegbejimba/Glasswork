@@ -28,7 +28,7 @@ public partial class FrontmatterParser
 
     private static readonly HashSet<string> KnownFrontmatterKeys = new(StringComparer.Ordinal)
     {
-        "id", "title", "status", "priority", "type", "size", "created", "completed_at",
+        "id", "title", "status", "priority", "type", "source_kind", "size", "created", "completed_at",
         "cancelled_at", "cancellation_reason",
         "blocked_reason", "blocked_at", "blocked_from_status", "due", "start",
         "my_day", "defer_until", "ado_link", "ado_title", "parent", "blocked_by",
@@ -86,6 +86,7 @@ public partial class FrontmatterParser
             Status = frontmatter.Status ?? GlassworkTask.Statuses.Todo,
             Priority = frontmatter.Priority ?? GlassworkTask.Priorities.Medium,
             Type = GlassworkTask.Types.Normalize(frontmatter.Type),
+            SourceKind = frontmatter.SourceKind,
             Size = frontmatter.Size,
             Created = ParseDate(frontmatter.Created) ?? DateTime.Today,
             CompletedAt = ParseDate(frontmatter.CompletedAt),
@@ -158,8 +159,10 @@ public partial class FrontmatterParser
             Title = task.Title,
             Status = task.Status,
             Priority = task.Priority,
-            // Default "task" is omitted to avoid churning legacy files; only pbi/bug are written.
-            Type = task.Type == GlassworkTask.Types.Task ? null : task.Type,
+            Type = GlassworkTask.Types.Normalize(task.Type) == GlassworkTask.Types.Task
+                ? null
+                : GlassworkTask.Types.Normalize(task.Type),
+            SourceKind = task.SourceKind,
             Size = task.Size,
             Created = task.Created.ToString("yyyy-MM-dd"),
             CompletedAt = task.CompletedAt?.ToString("yyyy-MM-dd"),
@@ -451,6 +454,8 @@ public partial class FrontmatterParser
         public string? Status { get; set; }
         public string? Priority { get; set; }
         public string? Type { get; set; }
+        [YamlMember(Alias = "source_kind")]
+        public string? SourceKind { get; set; }
         public string? Size { get; set; }
         public string? Created { get; set; }
         [YamlMember(Alias = "completed_at")]

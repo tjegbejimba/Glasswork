@@ -141,10 +141,10 @@ If you encounter an ADO state not in this table, **skip the item** and surface i
 |------------------------|------------------|----------|
 | `Task`                 | `task`           | omitted (default) |
 | `Bug`                  | `bug`            | `type: bug` |
-| `Product Backlog Item` | `pbi`            | `type: pbi` |
-| `User Story`           | `pbi`            | `type: pbi` |
+| `Product Backlog Item` | `parent`         | `type: parent` |
+| `User Story`           | `parent`         | `type: parent` |
 
-A `pbi` is a **container** and will not self-promote to My Day on its sprint-end `due` (ADR 0016). `task` and `bug` are actionable leaves.
+A `parent` is a **Parent Task** and will not self-promote to My Day on its sprint-end `due`. `task` and `bug` are actionable leaves. Preserve the exact ADO type in `source_kind`.
 
 **Decide the action:**
 
@@ -174,7 +174,8 @@ id: <slug>
 title: <System.Title verbatim>
 status: <mapped status>
 <if System.WorkItemType != 'Task'>type: <mapped type>
-</if>priority: medium
+</if>source_kind: <System.WorkItemType verbatim>
+priority: medium
 created: <today YYYY-MM-DD>
 due: <SPRINT_END>
 <if status == 'done'>completed_at: <today YYYY-MM-DD>
@@ -196,8 +197,8 @@ Imported from ADO sprint pull (sprint <SPRINT_LEAF>).
 
 Notes:
 - `priority: medium` always — do **not** map from ADO Priority (it's too noisy at Microsoft to trust).
-- `type:` maps from `System.WorkItemType`: **Product Backlog Item** / **User Story** → `type: pbi`, **Bug** → `type: bug`, **Task** → omit the line (`task` is the default, omitted to match the serializer and avoid churn). A `type: pbi` is a **container**: it will **not** self-promote to My Day on its sprint-end `due` (ADR 0016) — its work surfaces through child tasks — which is the whole reason this field is stamped. `bug` behaves like `task` for My Day.
-- `due:` is the sprint end date — always set, even for `done` imports. (PBIs still get it for reference; the `type: pbi` stamp is what keeps it from polluting My Day.)
+- `type:` maps behavior: **Product Backlog Item** / **User Story** → `type: parent`, **Bug** → `type: bug`, **Task** → omit the line. `source_kind:` always preserves `System.WorkItemType` exactly for display and never controls behavior.
+- `due:` is the sprint end date — always set, even for `done` imports. Parent Tasks still get it for reference; `type: parent` keeps them from polluting My Day.
 - `my_day:` is NOT set. The user owns that field.
 - No copy of the ADO description. Click the link if you need context.
 - The single `## Notes` entry is provenance — it gives `glasswork-resume` something to anchor on if the user resumes this task later.
@@ -228,7 +229,7 @@ restore. This keeps actionable Tasks aligned with their current sprint and
 prevents stale sprint dates from making My Day appear overdue. Never add, remove,
 or change `my_day:`. Do not edit a Task while it remains cancelled or done.
 
-**Type backfill (every already-imported non-cancelled item, regardless of status change).** If the existing file has no `type:` frontmatter field and the item's `System.WorkItemType` maps to `pbi` or `bug` (per the ADO → Glasswork type map above), add the single `type:` field in place — an additive single-field edit, same tier as a status promotion (do **not** rewrite the file, do **not** touch other fields). This retro-stamps PBIs that were imported before the `type` field existed so they stop polluting My Day on their stale sprint-end `due` (ADR 0016). Items that map to `task` need no edit (default is omitted). A cancelled Task must be restored before this ordinary mutation.
+**Type backfill (every already-imported non-cancelled item, regardless of status change).** If the existing file has no `type:` frontmatter field and the item's `System.WorkItemType` maps to `parent` or `bug`, add that single field in place. Add `source_kind:` when absent so the exact ADO display kind is preserved. Existing `type: pbi` remains readable and is canonicalized to `parent` by managed writes. Items that map to `task` need no `type:` edit. A cancelled Task must be restored before this ordinary mutation.
 
 > This per-sprint backfill only reaches items the current pull re-encounters. To stamp the **entire existing corpus** in one pass — including PBIs that aren't in any current sprint — use the `glasswork-backfill-types` skill (an ADO-authoritative, dry-run-then-apply maintenance pass over the whole vault). Both honor the same strict ADR 0016 mapping.
 

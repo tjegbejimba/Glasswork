@@ -71,7 +71,7 @@ public sealed class WayfinderWorkflowProofTests
         var mapResult = JsonDocument.Parse(tools.TransactTasks("map-1", map.RootElement)).RootElement;
         Assert.AreEqual("applied", mapResult.GetProperty("outcome").GetString());
         Assert.AreEqual(4, mapResult.GetProperty("tasks").GetArrayLength());
-        Assert.AreEqual(GlassworkTask.Types.Pbi, Load("parent-pbi").Type);
+        Assert.AreEqual(GlassworkTask.Types.Parent, Load("parent-pbi").Type);
         CollectionAssert.AreEquivalent(
             new[] { "wayfinder-map", "reserved:pbi" },
             Load("parent-pbi").Tags);

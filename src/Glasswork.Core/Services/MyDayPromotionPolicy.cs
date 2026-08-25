@@ -29,7 +29,7 @@ public static class MyDayPromotionPolicy
         // Task is due today or overdue and not done. PBIs are containers and
         // must not self-promote on their own due date (the ADO import stamps a
         // sprint-end due on every PBI); their work surfaces via child tasks.
-        if (task.Type != GlassworkTask.Types.Pbi
+        if (!GlassworkTask.Types.IsParent(task.Type)
             && task.Due.HasValue
             && DateOnly.FromDateTime(task.Due.Value.Date) <= today
             && task.Status != GlassworkTask.Statuses.Done) return true;

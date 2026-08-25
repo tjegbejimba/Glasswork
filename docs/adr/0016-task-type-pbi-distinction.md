@@ -1,6 +1,6 @@
 # ADR 0016: Tasks carry an explicit `type` (`task` / `pbi` / `bug`); PBIs are containers and don't self-promote to My Day
 
-**Status**: Accepted
+**Status**: Superseded in part by ADR 0025
 **Context slice**: `GlassworkTask`, `FrontmatterParser`, `MyDayPromotionPolicy`, Task Query, `MyDayViewModel`, the ADO import skill
 **Relates to**: ADR 0008 (My Day promotion model), ADR 0013 (date-scoped pins)
 

@@ -89,8 +89,8 @@ public static class PlannerScopeResolver
 
         var groups = snapshot.MyDayTasks
             .DistinctBy(task => task.Id, StringComparer.Ordinal)
-            .Where(task => task.Type == GlassworkTask.Types.Pbi || IsActionableTask(task))
-            .Select(task => task.Type == GlassworkTask.Types.Pbi
+            .Where(task => GlassworkTask.Types.IsParent(task.Type) || IsActionableTask(task))
+            .Select(task => GlassworkTask.Types.IsParent(task.Type)
                 ? CreatePbiGroup(task, snapshot)
                 : CreateTaskGroup(
                     task,
@@ -152,7 +152,7 @@ public static class PlannerScopeResolver
 
         foreach (var childRow in row.TodaysChildren ?? [])
         {
-            if (childRow.Type == GlassworkTask.Types.Pbi || !IsActionableTask(childRow))
+            if (GlassworkTask.Types.IsParent(childRow.Type) || !IsActionableTask(childRow))
                 continue;
 
             var childSource = snapshot.TasksById.TryGetValue(childRow.Id, out var sourceChild)
@@ -267,7 +267,7 @@ public static class PlannerScopeResolver
         new(task.Id, task.Title, task.Type, task.Parent);
 
     private static bool IsActionableTask(GlassworkTask task) =>
-        task.Type != GlassworkTask.Types.Pbi
+        !GlassworkTask.Types.IsParent(task.Type)
         && task.Status is not GlassworkTask.Statuses.Done
             and not GlassworkTask.Statuses.Cancelled
             and not GlassworkTask.Statuses.Blocked;

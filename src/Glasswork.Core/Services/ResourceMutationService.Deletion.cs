@@ -568,7 +568,7 @@ public sealed partial class ResourceMutationService
                     + $"'{resolvedAdoParentId}' in the Hard-deletion subtree rooted at '{rootTaskId}'.");
             }
 
-            if (mismatch.Source.Task.Type == GlassworkTask.Types.Pbi
+            if (GlassworkTask.Types.IsParent(mismatch.Source.Task.Type)
                 && mismatch.Source.Task.AdoLink is int mismatchAdoId
                 && pbiIdByAdoId.TryGetValue(mismatchAdoId, out var resolvedPbiId))
             {
@@ -651,7 +651,7 @@ public sealed partial class ResourceMutationService
         var ambiguous = new HashSet<int>();
         foreach (var source in tasks.Values)
         {
-            if (source.Task.Type != GlassworkTask.Types.Pbi || !source.Task.AdoLink.HasValue)
+            if (!GlassworkTask.Types.IsParent(source.Task.Type) || !source.Task.AdoLink.HasValue)
                 continue;
 
             var adoId = source.Task.AdoLink.Value;

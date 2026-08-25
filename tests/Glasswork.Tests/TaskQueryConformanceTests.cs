@@ -158,6 +158,38 @@ public sealed class TaskQueryConformanceTests
     [DataTestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
+    public void Execute_ParentFilterAndProjectionCarryCanonicalTypeAndSourceKind(string adapter)
+    {
+        using var fixture = TaskQueryFixture.Create(adapter);
+        fixture.Save(
+            new GlassworkTask
+            {
+                Id = "parent",
+                Title = "Parent",
+                Type = GlassworkTask.Types.Parent,
+                SourceKind = "Feature",
+            },
+            new GlassworkTask
+            {
+                Id = "leaf",
+                Title = "Leaf",
+                Type = GlassworkTask.Types.Task,
+            });
+
+        var result = fixture.Query.Execute(new TaskQueryRequest(
+            QueryTime,
+            new RelationTaskSelection(
+                Type: TaskQueryType.Parent)));
+
+        var parent = result.Tasks.Single();
+        Assert.AreEqual("parent", parent.Id);
+        Assert.AreEqual(TaskQueryType.Parent, parent.Type);
+        Assert.AreEqual("Feature", parent.SourceKind);
+    }
+
+    [DataTestMethod]
+    [DataRow("warm")]
+    [DataRow("fresh")]
     public void Execute_InvalidRelationshipsReturnDeterministicDiagnosticsAndNoPartialResult(string adapter)
     {
         using var fixture = TaskQueryFixture.Create(adapter);

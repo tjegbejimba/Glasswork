@@ -85,6 +85,7 @@ public enum TaskQueryStatus
 public enum TaskQueryType
 {
     Task,
+    Parent,
     Pbi,
     Bug,
 }
@@ -102,6 +103,7 @@ public enum TaskQueryField
     Title,
     Status,
     Type,
+    SourceKind,
     ParentId,
     Path,
     Created,
@@ -178,6 +180,7 @@ public sealed class TaskQueryItem
             ? status
             : null;
         Type = TaskQueryValueMapper.Type(task.Type);
+        SourceKind = task.SourceKind;
         ParentId = task.Parent;
         Path = $"{task.Id}.md";
         Created = task.Created;
@@ -226,6 +229,7 @@ public sealed class TaskQueryItem
     public string RawStatus { get; }
     public TaskQueryStatus? Status { get; }
     public TaskQueryType Type { get; }
+    public string? SourceKind { get; }
     public string? ParentId { get; }
     public string Path { get; }
     public DateTime Created { get; }
@@ -356,7 +360,7 @@ internal static class TaskQueryValueMapper
     public static TaskQueryType Type(string type) => GlassworkTask.Types.Normalize(type) switch
     {
         GlassworkTask.Types.Task => TaskQueryType.Task,
-        GlassworkTask.Types.Pbi => TaskQueryType.Pbi,
+        GlassworkTask.Types.Parent => TaskQueryType.Parent,
         GlassworkTask.Types.Bug => TaskQueryType.Bug,
         _ => throw new InvalidOperationException($"Unknown Task type '{type}'."),
     };
@@ -364,7 +368,8 @@ internal static class TaskQueryValueMapper
     public static string Type(TaskQueryType type) => type switch
     {
         TaskQueryType.Task => GlassworkTask.Types.Task,
-        TaskQueryType.Pbi => GlassworkTask.Types.Pbi,
+        TaskQueryType.Parent => GlassworkTask.Types.Parent,
+        TaskQueryType.Pbi => GlassworkTask.Types.Parent,
         TaskQueryType.Bug => GlassworkTask.Types.Bug,
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
     };

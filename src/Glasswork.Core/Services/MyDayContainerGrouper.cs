@@ -10,8 +10,8 @@ namespace Glasswork.Core.Services;
 ///
 /// Given the already-promoted set of today's tasks, nests each promoted child Task
 /// whose <c>parent</c> resolves by Glasswork id or ADO identity to an in-app
-/// <c>type: pbi</c> task under that PBI as a container card
-/// (<see cref="GlassworkTask.TodaysChildren"/>). The PBI is pulled in to host its
+/// <c>type: parent</c> task under that Parent Task as a container card
+/// (<see cref="GlassworkTask.TodaysChildren"/>). The Parent Task is pulled in to host its
 /// children even when it would not independently promote — a
 /// <i>container-only host</i>. This never changes the promotion policy
 /// (<see cref="MyDayPromotionPolicy"/> / Task Query);
@@ -41,7 +41,7 @@ public static class MyDayContainerGrouper
         {
             var parentId = parentResolver.ResolveTaskId(t.Parent);
             if (parentId is null || !allTasks.TryGetValue(parentId, out var parent)) continue;
-            if (parent.Type != GlassworkTask.Types.Pbi) continue;
+            if (!GlassworkTask.Types.IsParent(parent.Type)) continue;
 
             if (!childrenByPbi.TryGetValue(parentId, out var bucket))
             {
@@ -74,7 +74,7 @@ public static class MyDayContainerGrouper
         // so they are omitted even when directly pinned. Original promoted order is preserved.
         var standalone = promoted
             .Where(t => !nestedChildIds.Contains(t.Id) && !hostPbiIds.Contains(t.Id))
-            .Where(t => t.Type != GlassworkTask.Types.Pbi || t.TodaysSubtasks?.Count > 0)
+            .Where(t => !GlassworkTask.Types.IsParent(t.Type) || t.TodaysSubtasks?.Count > 0)
             .ToList();
 
         // Container rows: reuse the promoted PBI instance when it independently promoted,

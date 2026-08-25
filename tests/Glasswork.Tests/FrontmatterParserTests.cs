@@ -1048,7 +1048,7 @@ public class FrontmatterParserTests
     // ===== type field (PBI vs Task distinction) =====
 
     [TestMethod]
-    public void Parse_TypePbi_ReturnsPbi()
+    public void Parse_TypePbi_ReturnsParent()
     {
         var markdown = """
             ---
@@ -1060,7 +1060,56 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(GlassworkTask.Types.Pbi, task.Type);
+        Assert.AreEqual(GlassworkTask.Types.Parent, task.Type);
+    }
+
+    [TestMethod]
+    public void Parse_LegacyPbi_NormalizesToCanonicalParent()
+    {
+        var task = _parser.Parse("""
+            ---
+            id: legacy-parent
+            title: Legacy parent
+            type: pbi
+            source_kind: "  Product Backlog Item  "
+            ---
+            """);
+
+        Assert.AreEqual(GlassworkTask.Types.Parent, task.Type);
+        Assert.AreEqual("Product Backlog Item", task.SourceKind);
+    }
+
+    [TestMethod]
+    public void Serialize_ParentAndSourceKind_WritesCanonicalTrimmedValues()
+    {
+        var markdown = _parser.Serialize(new GlassworkTask
+        {
+            Id = "parent-1",
+            Title = "Parent",
+            Type = GlassworkTask.Types.Parent,
+            SourceKind = "  Custom Portfolio Item  ",
+            Created = new DateTime(2026, 4, 17),
+        });
+
+        StringAssert.Contains(markdown, "type: parent");
+        StringAssert.Contains(markdown, "source_kind: Custom Portfolio Item");
+        Assert.IsFalse(markdown.Contains("type: pbi", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void SerializeParse_WhitespaceSourceKind_OmitsIt()
+    {
+        var markdown = _parser.Serialize(new GlassworkTask
+        {
+            Id = "parent-1",
+            Title = "Parent",
+            Type = GlassworkTask.Types.Parent,
+            SourceKind = "   ",
+            Created = new DateTime(2026, 4, 17),
+        });
+
+        Assert.IsFalse(markdown.Contains("source_kind:", StringComparison.Ordinal));
+        Assert.IsNull(_parser.Parse(markdown).SourceKind);
     }
 
     [TestMethod]
@@ -1094,7 +1143,7 @@ public class FrontmatterParserTests
     }
 
     [TestMethod]
-    public void Serialize_PbiType_WritesTypeKey()
+    public void Serialize_PbiAlias_WritesCanonicalParentType()
     {
         var task = new GlassworkTask
         {
@@ -1106,11 +1155,11 @@ public class FrontmatterParserTests
 
         var markdown = _parser.Serialize(task);
 
-        Assert.IsTrue(markdown.Contains("type: pbi"), "PBI type should be written to YAML");
+        StringAssert.Contains(markdown, "type: parent");
     }
 
     [TestMethod]
-    public void SerializeParse_PbiType_RoundTrips()
+    public void SerializeParse_PbiAlias_RoundTripsAsParent()
     {
         var original = new GlassworkTask
         {
@@ -1122,6 +1171,6 @@ public class FrontmatterParserTests
 
         var roundTripped = _parser.Parse(_parser.Serialize(original));
 
-        Assert.AreEqual(GlassworkTask.Types.Pbi, roundTripped.Type);
+        Assert.AreEqual(GlassworkTask.Types.Parent, roundTripped.Type);
     }
 }

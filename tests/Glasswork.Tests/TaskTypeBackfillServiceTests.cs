@@ -30,7 +30,7 @@ public class TaskTypeBackfillServiceTests
         var (result, changed) = TaskTypeBackfillService.StampType(content, "pbi");
 
         Assert.IsTrue(changed);
-        StringAssert.Contains(result, "priority: medium\ntype: pbi\ncreated: 2026-05-18");
+        StringAssert.Contains(result, "priority: medium\ntype: parent\ncreated: 2026-05-18");
         // Legacy ado_link survives — no serializer round-trip / no churn (ADR 0016).
         StringAssert.Contains(result, "ado_link: 14480984");
         StringAssert.Contains(result, "parent: 6417195");
@@ -80,7 +80,7 @@ public class TaskTypeBackfillServiceTests
         var (result, changed) = TaskTypeBackfillService.StampType(content, "pbi");
 
         Assert.IsTrue(changed);
-        StringAssert.Contains(result, "priority: medium\ntype: pbi\nlinks:");
+        StringAssert.Contains(result, "priority: medium\ntype: parent\nlinks:");
         StringAssert.Contains(result, "- type: ado");
     }
 
@@ -103,7 +103,7 @@ public class TaskTypeBackfillServiceTests
         var (result, changed) = TaskTypeBackfillService.StampType(content, "pbi");
 
         Assert.IsTrue(changed);
-        StringAssert.Contains(result, "priority: medium\ntype: pbi\n");
+        StringAssert.Contains(result, "priority: medium\ntype: parent\n");
         StringAssert.Contains(result, "type: weird in prose.");
     }
 
@@ -115,7 +115,7 @@ public class TaskTypeBackfillServiceTests
         var (result, changed) = TaskTypeBackfillService.StampType(content, "pbi");
 
         Assert.IsTrue(changed);
-        StringAssert.Contains(result, "priority: medium\r\ntype: pbi\r\n---");
+        StringAssert.Contains(result, "priority: medium\r\ntype: parent\r\n---");
         // Every LF is preceded by a CR — no lone LF was introduced.
         Assert.IsFalse(System.Text.RegularExpressions.Regex.IsMatch(result, "(?<!\r)\n"));
     }
@@ -149,7 +149,7 @@ public class TaskTypeBackfillServiceTests
         var (result, changed) = TaskTypeBackfillService.StampType(content, "pbi");
 
         Assert.IsTrue(changed);
-        StringAssert.Contains(result, "status: todo\ntype: pbi\ncreated: 2026-01-01");
+        StringAssert.Contains(result, "status: todo\ntype: parent\ncreated: 2026-01-01");
     }
 
     [TestMethod]
@@ -168,7 +168,7 @@ public class TaskTypeBackfillServiceTests
         var (result, changed) = TaskTypeBackfillService.StampType(content, "pbi");
 
         Assert.IsTrue(changed);
-        StringAssert.Contains(result, "created: 2026-01-01\ntype: pbi\n---");
+        StringAssert.Contains(result, "created: 2026-01-01\ntype: parent\n---");
     }
 
     [TestMethod]

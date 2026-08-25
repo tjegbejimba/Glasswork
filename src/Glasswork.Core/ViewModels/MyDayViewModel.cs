@@ -141,11 +141,11 @@ public partial class MyDayViewModel : ObservableObject
             // when surfaced via a child subtask.
             var directlyPromoted =
                 task.MyDay.HasValue ||
-                (task.Type != GlassworkTask.Types.Pbi
+                (!GlassworkTask.Types.IsParent(task.Type)
                  && task.Due.HasValue
                  && System.DateOnly.FromDateTime(task.Due.Value.Date) <= today
                  && task.Status != GlassworkTask.Statuses.Done);
-            task.TodaysSubtasks = task.Type == GlassworkTask.Types.Pbi || !directlyPromoted
+            task.TodaysSubtasks = GlassworkTask.Types.IsParent(task.Type) || !directlyPromoted
                 ? MyDayPromotionPolicy.TodaysSubtasks(task, today)
                 : null;
             targetTodayTasks.Add(task);

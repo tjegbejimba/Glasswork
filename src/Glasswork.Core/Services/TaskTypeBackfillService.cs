@@ -81,8 +81,8 @@ public partial class TaskTypeBackfillService
     /// </summary>
     public static (string Content, bool Changed) StampType(string content, string type)
     {
-        // Default "task" is omitted to match the serializer and avoid churn (ADR 0016).
-        if (type == GlassworkTask.Types.Task) return (content, false);
+        var normalizedType = GlassworkTask.Types.Normalize(type);
+        if (normalizedType == GlassworkTask.Types.Task) return (content, false);
 
         if (!TryGetFrontmatterSpan(content, out var yamlStart, out var yamlEnd))
             return (content, false);
@@ -93,7 +93,7 @@ public partial class TaskTypeBackfillService
         if (TopLevelTypeKeyRegex().IsMatch(yaml)) return (content, false);
 
         var newline = content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
-        var line = $"type: {type}{newline}";
+        var line = $"type: {normalizedType}{newline}";
 
         var insertAt = FindInsertionPoint(yaml, yamlStart, yamlEnd);
         var updated = content[..insertAt] + line + content[insertAt..];
@@ -302,7 +302,9 @@ public partial class TaskTypeBackfillService
                 invalid.Add(new BackfillRejection(c.RelativePath, "duplicate_classification"));
                 continue;
             }
-            if (c.Type != GlassworkTask.Types.Pbi && c.Type != GlassworkTask.Types.Bug)
+            var normalizedType = GlassworkTask.Types.Normalize(c.Type);
+            if (normalizedType != GlassworkTask.Types.Parent
+                && normalizedType != GlassworkTask.Types.Bug)
             {
                 invalid.Add(new BackfillRejection(c.RelativePath, $"invalid_type:{c.Type}"));
                 continue;
@@ -332,7 +334,7 @@ public partial class TaskTypeBackfillService
                 continue;
             }
 
-            var (updated, changed) = StampType(content, c.Type);
+            var (updated, changed) = StampType(content, normalizedType);
             if (!changed)
             {
                 // A top-level type was already ruled out above, so a no-op here means the
@@ -371,7 +373,7 @@ public partial class TaskTypeBackfillService
 
 /// <summary>A caller's decision that the file at <paramref name="RelativePath"/> (whose own
 /// ADO id is <paramref name="AdoId"/>) should be stamped <paramref name="Type"/>
-/// (<c>pbi</c> or <c>bug</c>).</summary>
+/// (<c>parent</c>, compatibility alias <c>pbi</c>, or <c>bug</c>).</summary>
 public sealed record BackfillClassification(string RelativePath, int AdoId, string Type);
 
 /// <summary>A classification rejected during preflight, with a machine-readable reason.</summary>

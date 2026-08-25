@@ -163,6 +163,36 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_LegacyPbiAndSourceKindUseCanonicalParentContract()
+    {
+        using var operations = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "portfolio-parent",
+          "if_absent": true,
+          "fields": {
+            "title": "Portfolio parent",
+            "type": "pbi",
+            "source_kind": "  Custom Portfolio Item  "
+          }
+        }]
+        """);
+
+        using var result = JsonDocument.Parse(_tools.TransactTasks(
+            "create-parent-contract",
+            operations.RootElement));
+        var task = result.RootElement.GetProperty("task");
+        Assert.AreEqual("parent", task.GetProperty("type").GetString());
+        Assert.AreEqual("Custom Portfolio Item", task.GetProperty("source_kind").GetString());
+
+        var saved = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"))
+            .Load("portfolio-parent");
+        Assert.IsNotNull(saved);
+        Assert.AreEqual(GlassworkTask.Types.Parent, saved.Type);
+        Assert.AreEqual("Custom Portfolio Item", saved.SourceKind);
+    }
+
+    [TestMethod]
     public void TransactTasks_CreateCarriesRawTaskAndSubtaskSize()
     {
         using var operations = JsonDocument.Parse("""

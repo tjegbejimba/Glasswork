@@ -29,6 +29,12 @@ public partial class GlassworkTask : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsMyDayContainer))]
     [NotifyPropertyChangedFor(nameof(ShowLeafCompleteAffordance))]
     public partial string Type { get; set; } = "task";
+    private string? _sourceKind;
+    public string? SourceKind
+    {
+        get => _sourceKind;
+        set => SetProperty(ref _sourceKind, NormalizeDisplayString(value));
+    }
     private string? _size;
     public string? Size
     {
@@ -133,23 +139,22 @@ public partial class GlassworkTask : ObservableObject
     }
 
     /// <summary>
-    /// The kind of work item, mirroring Azure DevOps. <see cref="Pbi"/> is a
-    /// container (Product Backlog Item / User Story) whose actionable work lives
+    /// The behavioral Task type. <see cref="Parent"/> is a container whose actionable work lives
     /// in child Tasks; <see cref="Task"/> and <see cref="Bug"/> are actionable
-    /// leaves. Used by My Day promotion: a PBI does not self-promote on its own
+    /// leaves. Used by My Day promotion: a Parent Task does not self-promote on its own
     /// due date (see <see cref="Services.MyDayPromotionPolicy"/>).
     /// </summary>
     public static class Types
     {
         public const string Task = "task";
+        public const string Parent = "parent";
         public const string Pbi = "pbi";
         public const string Bug = "bug";
 
         /// <summary>
         /// Coerces a raw frontmatter value to a known type, defaulting to
         /// <see cref="Task"/> for null/empty/unrecognized input (case-insensitive).
-        /// ADO container work-item types (Product Backlog Item / User Story / Epic / Feature)
-        /// normalize to <see cref="Pbi"/> (ADR 0016).
+        /// Legacy <c>pbi</c> and ADO container names normalize to <see cref="Parent"/>.
         /// </summary>
         public static string Normalize(string? raw)
         {
@@ -157,15 +162,19 @@ public partial class GlassworkTask : ObservableObject
             var normalized = raw.Trim().ToLowerInvariant();
             return normalized switch
             {
-                Pbi => Pbi,
+                Parent => Parent,
+                Pbi => Parent,
                 Bug => Bug,
-                "product backlog item" => Pbi,
-                "user story" => Pbi,
-                "epic" => Pbi,
-                "feature" => Pbi,
+                "product backlog item" => Parent,
+                "user story" => Parent,
+                "epic" => Parent,
+                "feature" => Parent,
                 _ => Task,
             };
         }
+
+        public static bool IsParent(string? type) =>
+            string.Equals(Normalize(type), Parent, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -382,7 +391,7 @@ public partial class GlassworkTask : ObservableObject
     /// in-My-Day cross-file children (issue #337 / ADR 0017).
     /// </summary>
     public bool IsMyDayContainer =>
-        string.Equals(Type, Types.Pbi, StringComparison.OrdinalIgnoreCase) && HasTodaysChildren;
+        Types.IsParent(Type) && HasTodaysChildren;
 
     /// <summary>
     /// True when the leaf "complete" affordance (circle checkbox) should render. Suppressed
@@ -428,6 +437,7 @@ public partial class GlassworkTask : ObservableObject
         Status = source.Status;
         Priority = source.Priority;
         Type = source.Type;
+        SourceKind = source.SourceKind;
         Size = source.Size;
         Created = source.Created;
         CompletedAt = source.CompletedAt;
@@ -481,6 +491,12 @@ public partial class GlassworkTask : ObservableObject
             });
         }
         RelatedLinks = relatedLinks;
+    }
+
+    private static string? NormalizeDisplayString(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
     }
 
     /// <summary>
