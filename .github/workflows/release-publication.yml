@@ -1,0 +1,300 @@
+name: Dispatch release publication
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [closed]
+
+concurrency:
+  group: release-publication-dispatch-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: >-
+      github.event.pull_request.merged &&
+      contains(github.event.pull_request.labels.*.name, 'release-automation')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Create release automation token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_PRIVATE_KEY }}
+
+      - name: Checkout merged Release PR
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Validate automation PR and dispatch pinned publication
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          REPOSITORY: ${{ github.repository }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          RELEASE_AUTOMATION_ENABLED: ${{ vars.RELEASE_AUTOMATION_ENABLED }}
+          RELEASE_AUTOMATION_APP_ENABLED: ${{ vars.RELEASE_AUTOMATION_APP_ENABLED }}
+          RELEASE_AUTOMATION_MCP_ENABLED: ${{ vars.RELEASE_AUTOMATION_MCP_ENABLED }}
+          RELEASE_AUTOMATION_PRIVATE_KEY: ${{ secrets.RELEASE_AUTOMATION_PRIVATE_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ($env:RELEASE_AUTOMATION_ENABLED -ne "true") {
+              "Global release automation kill switch is disabled."
+              exit 0
+          }
+
+          $expectedAuthor = "$env:APP_SLUG[bot]"
+          if ($env:PR_AUTHOR -ne $expectedAuthor) {
+              throw "Release PR author '$env:PR_AUTHOR' is not the configured automation App '$expectedAuthor'."
+          }
+
+          $labels = @($env:PR_LABELS_JSON | ConvertFrom-Json)
+          $streamLabels = @($labels | Where-Object { $_ -in @("release:app", "release:mcp") })
+          $semverLabels = @($labels | Where-Object { $_ -in @("semver:major", "semver:minor", "semver:patch") })
+          if ($labels.Count -ne 3 -or
+              $labels -notcontains "release-automation" -or
+              $streamLabels.Count -ne 1 -or
+              $semverLabels.Count -ne 1) {
+              throw "Automation Release PR must have exactly its controlled labels."
+          }
+
+          $marker = [regex]::Match(
+              $env:PR_BODY,
+              '<!-- release-automation:(?<json>\{[^\r\n]+\}) -->')
+          if (-not $marker.Success) {
+              throw "Automation Release PR is missing its release-automation marker."
+          }
+          $metadata = $marker.Groups["json"].Value | ConvertFrom-Json
+          $properties = @($metadata.PSObject.Properties.Name | Sort-Object)
+          if (($properties -join ",") -ne "candidateSha,planHash,signature,stream,treeSha,version") {
+              throw "Automation Release PR marker has an invalid schema."
+          }
+          if ($metadata.version -notmatch '^\d+\.\d+\.\d+$' -or
+              $metadata.candidateSha -notmatch '^[0-9a-f]{40}$' -or
+              $metadata.planHash -notmatch '^[0-9a-f]{64}$' -or
+              $metadata.treeSha -notmatch '^[0-9a-f]{40}$' -or
+              [string]::IsNullOrWhiteSpace([string]$metadata.signature)) {
+              throw "Automation Release PR marker contains invalid release metadata."
+          }
+          $signedPayload = [ordered]@{
+              stream = [string]$metadata.stream
+              version = [string]$metadata.version
+              candidateSha = [string]$metadata.candidateSha
+              planHash = [string]$metadata.planHash
+              treeSha = [string]$metadata.treeSha
+          } | ConvertTo-Json -Compress
+          try {
+              $signatureBytes = [Convert]::FromBase64String([string]$metadata.signature)
+          }
+          catch {
+              throw "Automation Release PR marker signature is invalid."
+          }
+          $rsa = [Security.Cryptography.RSA]::Create()
+          try {
+              $rsa.ImportFromPem($env:RELEASE_AUTOMATION_PRIVATE_KEY)
+              $signatureValid = $rsa.VerifyData(
+                  [Text.Encoding]::UTF8.GetBytes($signedPayload),
+                  $signatureBytes,
+                  [Security.Cryptography.HashAlgorithmName]::SHA256,
+                  [Security.Cryptography.RSASignaturePadding]::Pkcs1)
+          }
+          finally {
+              $rsa.Dispose()
+          }
+          if (-not $signatureValid) {
+              throw "Automation Release PR marker signature is invalid."
+          }
+          $controlledMetadata = [ordered]@{
+              stream = [string]$metadata.stream
+              version = [string]$metadata.version
+              candidateSha = [string]$metadata.candidateSha
+              planHash = [string]$metadata.planHash
+              treeSha = [string]$metadata.treeSha
+              signature = [string]$metadata.signature
+          } | ConvertTo-Json -Compress
+          $expectedBody = @(
+              "Automated $($metadata.stream) Release PR.",
+              "",
+              "- Version: ``$($metadata.version)``",
+              "- Candidate: ``$($metadata.candidateSha)``",
+              "- Publication: exact merge commit after required CI and conversation resolution",
+              "",
+              "<!-- release-automation:$controlledMetadata -->"
+          ) -join "`n"
+          if ($env:PR_BODY.TrimEnd() -ne $expectedBody.TrimEnd()) {
+              throw "Automation Release PR body contains human or conflicting edits."
+          }
+          if ($env:MERGE_SHA -notmatch '^[0-9a-f]{40}$') {
+              throw "Merged Release PR does not expose an exact merge commit."
+          }
+
+          $stream = [string]$metadata.stream
+          if ($env:PR_TITLE -ne "Release $stream v$($metadata.version)") {
+              throw "Automation Release PR title contains human or conflicting edits."
+          }
+          if ($stream -eq "App") {
+              if ($streamLabels[0] -ne "release:app") {
+                  throw "App Release PR marker and stream label disagree."
+              }
+              if ($env:RELEASE_AUTOMATION_APP_ENABLED -ne "true") {
+                  "App release automation kill switch is disabled."
+                  exit 0
+              }
+              $workflow = "release.yml"
+              $displayTitle = "Publish App v$($metadata.version) from $env:MERGE_SHA"
+          }
+          elseif ($stream -eq "Mcp") {
+              if ($streamLabels[0] -ne "release:mcp") {
+                  throw "MCP Release PR marker and stream label disagree."
+              }
+              if ($env:RELEASE_AUTOMATION_MCP_ENABLED -ne "true") {
+                  "MCP release automation kill switch is disabled."
+                  exit 0
+              }
+              $workflow = "publish-mcp.yml"
+              $displayTitle = "Publish MCP v$($metadata.version) from $env:MERGE_SHA"
+          }
+          else {
+              throw "Unknown Release PR stream '$stream'."
+          }
+
+          $changedPaths = @(
+              gh api `
+                  --paginate `
+                  --jq '.[].filename' `
+                  "repos/$env:REPOSITORY/pulls/$env:PR_NUMBER/files"
+          )
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to inspect merged Release PR files."
+          }
+          . .\scripts\ReleaseAutomation.ps1
+          if (-not (Test-ReleasePrChangedFiles `
+                  -Stream $stream `
+                  -Version ([string]$metadata.version) `
+                  -Paths $changedPaths)) {
+              throw "Merged $stream Release PR exceeds the exact changed-file allowlist."
+          }
+          if ($env:PR_HEAD_SHA -notmatch '^[0-9a-f]{40}$') {
+              throw "Merged Release PR does not expose an exact head commit."
+          }
+          $headCommit = gh api "repos/$env:REPOSITORY/git/commits/$env:PR_HEAD_SHA" |
+              ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or [string]$headCommit.sha -ne $env:PR_HEAD_SHA) {
+              throw "Unable to validate merged Release PR head commit."
+          }
+          $commitMarker = [regex]::Match(
+              [string]$headCommit.message,
+              '<!-- release-automation:(?<json>\{[^\r\n]+\}) -->')
+          if (-not $commitMarker.Success -or
+              $commitMarker.Groups["json"].Value -ne $controlledMetadata) {
+              throw "Merged $stream Release PR commit and body markers disagree."
+          }
+          if ([string]$headCommit.tree.sha -ne [string]$metadata.treeSha) {
+              throw "Merged $stream Release PR head tree does not match its signed marker."
+          }
+
+          $projectPath = if ($stream -eq "App") {
+              "src/Glasswork.App/Glasswork.csproj"
+          }
+          else {
+              "src/Glasswork.Mcp/Glasswork.Mcp.csproj"
+          }
+          $baseProject = (& git show "$($metadata.candidateSha):$projectPath") -join "`n"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to read the candidate project file."
+          }
+          $releaseProject = Get-Content $projectPath -Raw
+          if (-not (Test-ReleaseProjectVersionChange `
+                  -Stream $stream `
+                  -Version ([string]$metadata.version) `
+                  -BaseContent $baseProject `
+                  -ReleaseContent $releaseProject)) {
+              throw "Merged $stream Release PR project change is not an exact version update."
+          }
+
+          $runs = @(
+              gh run list `
+                  --repo $env:REPOSITORY `
+                  --workflow $workflow `
+                  --limit 100 `
+                  --json displayTitle,status,conclusion |
+                  ConvertFrom-Json
+          )
+          $matchingRuns = @($runs | Where-Object { $_.displayTitle -eq $displayTitle })
+          if (@($matchingRuns | Where-Object { $_.status -in @("queued", "in_progress", "waiting", "pending") }).Count -gt 0) {
+              "Matching publication is already active."
+              exit 0
+          }
+          if (@($matchingRuns | Where-Object { $_.conclusion -eq "success" }).Count -gt 0) {
+              "Matching publication already succeeded."
+              exit 0
+          }
+
+          if ($stream -eq "App") {
+              gh workflow run release.yml `
+                  --repo $env:REPOSITORY `
+                  --ref main `
+                  -f "version=$($metadata.version)" `
+                  -f "source_ref=$env:MERGE_SHA"
+          }
+          else {
+              gh workflow run publish-mcp.yml `
+                  --repo $env:REPOSITORY `
+                  --ref main `
+                  -f "version=$($metadata.version)" `
+                  -f "source_ref=$env:MERGE_SHA"
+          }
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to dispatch $stream publication."
+          }
+
+      - name: Record App publication dispatch blocker
+        if: failure() && steps.app-token.outcome == 'success' && contains(github.event.pull_request.labels.*.name, 'release:app')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          "App publication dispatch failed. Inspect this workflow run." |
+              Set-Content artifacts\app-publication-dispatch-error.txt
+          pwsh -File scripts\Invoke-ReleaseEvaluation.ps1 `
+              -Mode RecordFailure `
+              -Stream App `
+              -Repository $env:GITHUB_REPOSITORY `
+              -BlockerStage Publication `
+              -FailurePath artifacts\app-publication-dispatch-error.txt `
+              -SummaryPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Record MCP publication dispatch blocker
+        if: failure() && steps.app-token.outcome == 'success' && contains(github.event.pull_request.labels.*.name, 'release:mcp')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          "MCP publication dispatch failed. Inspect this workflow run." |
+              Set-Content artifacts\mcp-publication-dispatch-error.txt
+          pwsh -File scripts\Invoke-ReleaseEvaluation.ps1 `
+              -Mode RecordFailure `
+              -Stream Mcp `
+              -Repository $env:GITHUB_REPOSITORY `
+              -BlockerStage Publication `
+              -FailurePath artifacts\mcp-publication-dispatch-error.txt `
+              -SummaryPath $env:GITHUB_STEP_SUMMARY

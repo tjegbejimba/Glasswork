@@ -5,8 +5,10 @@ description: Prepare and publish an independently versioned glasswork-mcp GitHub
 
 # glasswork-mcp release
 
-MCP publication is separate from Glasswork app Release publication. Read ADR
-0023 before changing this flow.
+MCP publication is separate from Glasswork app Release publication. Read ADRs
+0023 and 0025 before changing this flow. The weekday Release evaluator normally
+prepares, reconciles, and auto-merges this PR, then dispatches publication at
+the exact merge commit. Use the manual steps below for deliberate recovery.
 
 ## Prepare
 
@@ -35,7 +37,8 @@ changelog entry and all available gates pass.
 
 After the MCP Release PR lands on `main`:
 
-1. Dispatch `Publish MCP` on `main` with input `version=X.Y.Z`.
+1. Dispatch `Publish MCP` on `main` with `version=X.Y.Z` and the exact reviewed
+   `source_ref` commit. Omitting `source_ref` selects current `main`.
 2. Monitor the run to completion.
 3. Verify the `mcp-vX.Y.Z` GitHub Release contains the exact `.nupkg` and
    `.nupkg.sha256` assets.

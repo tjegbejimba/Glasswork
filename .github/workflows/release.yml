@@ -1,4 +1,5 @@
 name: Release
+run-name: Publish App v${{ inputs.version }} from ${{ inputs.source_ref || 'main' }}
 
 on:
   workflow_dispatch:
@@ -7,6 +8,14 @@ on:
         description: "Release version in X.Y.Z form"
         required: true
         type: string
+      source_ref:
+        description: "Exact commit in main history to publish (defaults to current main)"
+        required: false
+        type: string
+
+concurrency:
+  group: publish-app
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -15,16 +24,107 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout main
+      - name: Checkout current main
         uses: actions/checkout@v5
         with:
           ref: main
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Create release automation token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_PRIVATE_KEY }}
 
       - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+
+      - name: Resolve publication state
+        id: preflight
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          REQUESTED_SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $credential = [Convert]::ToBase64String(
+              [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:APP_TOKEN"))
+          Write-Output "::add-mask::$credential"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $credential" `
+              fetch origin main --tags --force
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to fetch current origin/main and tags."
+          }
+
+          $sourceRef = $env:REQUESTED_SOURCE_REF
+          if ([string]::IsNullOrWhiteSpace($sourceRef)) {
+              $sourceRef = "origin/main"
+          }
+          $sourceRevision = (& git rev-parse "$sourceRef^{commit}").Trim()
+          if ($LASTEXITCODE -ne 0 -or $sourceRevision -notmatch '^[0-9a-f]{40}$') {
+              throw "Unable to resolve App publication source '$sourceRef'."
+          }
+          & git merge-base --is-ancestor $sourceRevision origin/main
+          if ($LASTEXITCODE -ne 0) {
+              throw "App publication source '$sourceRevision' is not in current main history."
+          }
+
+          $tag = "v$env:RELEASE_VERSION"
+          $matchingRefs = & git ls-remote --tags origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to check App tag '$tag'."
+          }
+          $tagExists = -not [string]::IsNullOrWhiteSpace($matchingRefs)
+
+          $releases = @(
+              gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" |
+                  ConvertFrom-Json |
+                  Where-Object { $_.tag_name -eq $tag }
+          )
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to enumerate GitHub Releases."
+          }
+          if ($releases.Count -gt 1) {
+              throw "Multiple GitHub Releases use App tag '$tag'."
+          }
+
+          $releaseExists = $releases.Count -eq 1
+          $releaseIsDraft = $releaseExists -and [bool]$releases[0].draft
+          $releaseTarget = if ($releaseExists) {
+              [string]$releases[0].target_commitish
+          }
+          else {
+              ""
+          }
+          if ($tagExists) {
+              $releaseTarget = (& git rev-parse "$tag^{}").Trim()
+          }
+
+          . .\scripts\Validate-ReleasePublication.ps1
+          $state = Resolve-AppPublicationState `
+              -ReleaseExists $releaseExists `
+              -ReleaseIsDraft $releaseIsDraft `
+              -TagExists $tagExists `
+              -ReleaseTargetRevision $releaseTarget `
+              -RequestedSourceRevision $sourceRevision
+
+          "state=$state" >> $env:GITHUB_OUTPUT
+          "source_revision=$sourceRevision" >> $env:GITHUB_OUTPUT
+          "tag_exists=$($tagExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Checkout publication source
+        shell: pwsh
+        env:
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
+        run: git checkout --detach $env:SOURCE_REVISION
 
       - name: Validate release inputs
         shell: pwsh
@@ -33,41 +133,6 @@ jobs:
         run: |
           . .\scripts\Validate-ReleasePublication.ps1
           Test-ReleasePublicationInputs -RepoRoot $PWD -Version $env:RELEASE_VERSION
-
-      - name: Ensure release tag does not already exist
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          # Inspect git's exit code manually; do not let a non-zero native exit
-          # auto-throw (PS 7.4 defaults $PSNativeCommandUseErrorActionPreference
-          # to $true, which would promote ls-remote's "no match" into a fault).
-          $PSNativeCommandUseErrorActionPreference = $false
-          $tag = "v$env:RELEASE_VERSION"
-
-          $matchingRefs = & git ls-remote --tags origin "refs/tags/$tag"
-          if ($LASTEXITCODE -ne 0) {
-              throw "Unable to check release tag '$tag' (git exited $LASTEXITCODE)."
-          }
-          if (-not [string]::IsNullOrWhiteSpace($matchingRefs)) {
-              throw "Release tag already exists: $tag"
-          }
-
-          $releaseUrl = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
-          $headers = @{
-              Accept = "application/vnd.github+json"
-              Authorization = "Bearer $env:GH_TOKEN"
-              "X-GitHub-Api-Version" = "2022-11-28"
-          }
-          $response = Invoke-WebRequest -Uri $releaseUrl -Headers $headers -SkipHttpErrorCheck
-          if ($response.StatusCode -eq 200) {
-              throw "GitHub Release already exists: $tag"
-          }
-          if ($response.StatusCode -ne 404) {
-              throw "Unable to check GitHub Release '$tag' (HTTP $($response.StatusCode))."
-          }
 
       - name: Run release script tests
         shell: pwsh
@@ -83,6 +148,7 @@ jobs:
         run: dotnet test tests\Glasswork.Tests\Glasswork.Tests.csproj --configuration Release --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1
 
       - name: Publish Windows update package
+        id: package
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -95,26 +161,235 @@ jobs:
             --nologo `
             --verbosity minimal
           . .\scripts\New-ReleasePackage.ps1
-          New-ReleasePackage `
+          $artifact = New-ReleasePackage `
             -PublishDirectory artifacts\publish `
             -OutputDirectory artifacts\release
+          $sha256 = (Get-FileHash -Algorithm SHA256 -Path $artifact.ArchivePath).Hash.ToLowerInvariant()
+          "package_path=$($artifact.ArchivePath)" >> $env:GITHUB_OUTPUT
+          "checksum_path=$($artifact.ChecksumPath)" >> $env:GITHUB_OUTPUT
+          "sha256=$sha256" >> $env:GITHUB_OUTPUT
 
-      - name: Create GitHub Release
+      - name: Create or resume draft App Release
+        id: draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          PUBLICATION_STATE: ${{ steps.preflight.outputs.state }}
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
+          TAG_EXISTS: ${{ steps.preflight.outputs.tag_exists }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "v$env:RELEASE_VERSION"
+          $notesPath = "docs\releases\$tag.md"
+          if ($env:PUBLICATION_STATE -ne "ResumeDraft") {
+              gh release create $tag `
+                  --repo $env:GITHUB_REPOSITORY `
+                  --draft `
+                  --target $env:SOURCE_REVISION `
+                  --title "Glasswork $tag" `
+                  --notes-file $notesPath
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Unable to create draft App GitHub Release."
+              }
+          }
+          else {
+              gh release edit $tag `
+                  --repo $env:GITHUB_REPOSITORY `
+                  --draft `
+                  --title "Glasswork $tag" `
+                  --notes-file $notesPath
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Unable to refresh draft App GitHub Release."
+              }
+          }
+
+          $release = gh release view $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --json assets |
+              ConvertFrom-Json
+          $assetNames = @($release.assets | ForEach-Object { $_.name })
+          $requiredAssets = @("Glasswork-win-x64.zip", "Glasswork-win-x64.zip.sha256")
+          $presentAssets = @($requiredAssets | Where-Object { $assetNames -contains $_ })
+          if ($presentAssets.Count -ne 0 -and $presentAssets.Count -ne $requiredAssets.Count) {
+              throw "Draft App Release has a partial required asset set."
+          }
+          if ($env:TAG_EXISTS -eq "true" -and
+              $presentAssets.Count -ne $requiredAssets.Count) {
+              throw "Tagged draft App Release is missing its anchored assets."
+          }
+          $reuseAssets = $env:TAG_EXISTS -eq "true" -and
+              $presentAssets.Count -eq $requiredAssets.Count
+          "reuse_assets=$($reuseAssets.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Upload missing draft assets
+        if: steps.draft.outputs.reuse_assets != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          PACKAGE_PATH: ${{ steps.package.outputs.package_path }}
+          CHECKSUM_PATH: ${{ steps.package.outputs.checksum_path }}
+        run: |
+          $tag = "v$env:RELEASE_VERSION"
+          gh release upload $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --clobber `
+              $env:PACKAGE_PATH `
+              $env:CHECKSUM_PATH
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to upload App Release assets."
+          }
+
+      - name: Verify draft assets
+        id: assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
+          TAG_EXISTS: ${{ steps.preflight.outputs.tag_exists }}
+          REUSE_ASSETS: ${{ steps.draft.outputs.reuse_assets }}
+          LOCAL_PACKAGE_SHA256: ${{ steps.package.outputs.sha256 }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "v$env:RELEASE_VERSION"
+          $verificationDirectory = "artifacts\app-release-verification"
+          New-Item -ItemType Directory -Force -Path $verificationDirectory | Out-Null
+          gh release download $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --clobber `
+              --dir $verificationDirectory `
+              --pattern "Glasswork-win-x64.zip" `
+              --pattern "Glasswork-win-x64.zip.sha256"
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to download App Release assets for verification."
+          }
+
+          . .\scripts\Validate-ReleasePublication.ps1
+          $expectedSha256 = $env:LOCAL_PACKAGE_SHA256
+          if ($env:TAG_EXISTS -eq "true") {
+              $tagMetadata = ConvertFrom-AppTagMessage `
+                  -Message ((& git tag -l $tag --format="%(contents)") -join "`n") `
+                  -Version $env:RELEASE_VERSION
+              if ($tagMetadata.SourceRevision -ne $env:SOURCE_REVISION) {
+                  throw "Existing App integrity tag targets a different package source."
+              }
+              $expectedSha256 = $tagMetadata.Sha256
+          }
+          $artifact = Test-AppReleaseAssetIntegrity `
+              -PackagePath (Join-Path $verificationDirectory "Glasswork-win-x64.zip") `
+              -ChecksumPath (Join-Path $verificationDirectory "Glasswork-win-x64.zip.sha256") `
+              -ExpectedSha256 $expectedSha256
+          "sha256=$($artifact.Sha256)" >> $env:GITHUB_OUTPUT
+
+      - name: Create or verify annotated App integrity tag
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          PACKAGE_SHA256: ${{ steps.assets.outputs.sha256 }}
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
+          TAG_EXISTS: ${{ steps.preflight.outputs.tag_exists }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "v$env:RELEASE_VERSION"
+          if ($env:TAG_EXISTS -eq "true") {
+              if ((& git cat-file -t $tag).Trim() -ne "tag") {
+                  throw "Existing App tag '$tag' is not annotated."
+              }
+              $target = (& git rev-parse "$tag^{}").Trim()
+              if ($target -ne $env:SOURCE_REVISION) {
+                  throw "Existing App tag targets '$target', not '$env:SOURCE_REVISION'."
+              }
+              . .\scripts\Validate-ReleasePublication.ps1
+              $metadata = ConvertFrom-AppTagMessage `
+                  -Message ((& git tag -l $tag --format="%(contents)") -join "`n") `
+                  -Version $env:RELEASE_VERSION
+              if ($metadata.Sha256 -ne $env:PACKAGE_SHA256) {
+                  throw "Existing App tag metadata does not match the package."
+              }
+          }
+          else {
+              $message = @(
+                  "Glasswork app publication",
+                  "version: $env:RELEASE_VERSION",
+                  "commit: $env:SOURCE_REVISION",
+                  "sha256: $env:PACKAGE_SHA256"
+              ) -join "`n"
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag -a $tag $env:SOURCE_REVISION -m $message
+              $credential = [Convert]::ToBase64String(
+                  [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:APP_TOKEN"))
+              Write-Output "::add-mask::$credential"
+              git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $credential" `
+                  push origin "refs/tags/$tag"
+              if ($LASTEXITCODE -ne 0) {
+                  throw "Unable to push annotated App integrity tag."
+              }
+          }
+
+      - name: Publish verified App Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          $ErrorActionPreference = "Stop"
-          $version = $env:RELEASE_VERSION
-          $tag = "v$version"
-          $notesPath = "docs\releases\$tag.md"
-          $target = (& git rev-parse HEAD).Trim()
+          $tag = "v$env:RELEASE_VERSION"
+          gh release edit $tag --draft=false --verify-tag --latest=true `
+              --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to publish verified App GitHub Release."
+          }
 
-          gh release create $tag `
-            --repo $env:GITHUB_REPOSITORY `
-            --target $target `
-            --title "Glasswork $tag" `
-            --notes-file $notesPath `
-            artifacts\release\Glasswork-win-x64.zip `
-            artifacts\release\Glasswork-win-x64.zip.sha256
+      - name: Verify published App Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $tag = "v$env:RELEASE_VERSION"
+          $release = gh release view $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --json tagName,isDraft,isPrerelease,assets |
+              ConvertFrom-Json
+          if ($release.tagName -ne $tag -or $release.isDraft -or $release.isPrerelease) {
+              throw "App GitHub Release metadata is invalid."
+          }
+          $assetNames = @($release.assets | ForEach-Object { $_.name })
+          foreach ($requiredAsset in @("Glasswork-win-x64.zip", "Glasswork-win-x64.zip.sha256")) {
+              if ($assetNames -notcontains $requiredAsset) {
+                  throw "App GitHub Release is missing asset '$requiredAsset'."
+              }
+          }
+
+      - name: Close recovered App release blocker
+        if: success()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          pwsh -File scripts\Invoke-ReleaseEvaluation.ps1 `
+              -Mode CloseBlocker `
+              -Stream App `
+              -Repository $env:GITHUB_REPOSITORY `
+              -BlockerStage Publication `
+              -SummaryPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Record App publication blocker
+        if: failure() && steps.app-token.outcome == 'success'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          "App publication failed. Inspect this workflow run." |
+              Set-Content artifacts\app-publication-error.txt
+          pwsh -File scripts\Invoke-ReleaseEvaluation.ps1 `
+              -Mode RecordFailure `
+              -Stream App `
+              -Repository $env:GITHUB_REPOSITORY `
+              -BlockerStage Publication `
+              -FailurePath artifacts\app-publication-error.txt `
+              -SummaryPath $env:GITHUB_STEP_SUMMARY

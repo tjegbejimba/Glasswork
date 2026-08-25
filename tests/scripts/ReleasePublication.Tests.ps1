@@ -72,3 +72,104 @@ Describe "Test-ReleasePublicationInputs" {
             Should -Throw "*Release notes must include*"
     }
 }
+
+Describe "Resolve-AppPublicationState" {
+    BeforeAll {
+        $script:AppSourceRevision = "0123456789abcdef0123456789abcdef01234567"
+    }
+
+    It "starts a new publication when no release or tag exists" {
+        Resolve-AppPublicationState `
+            -ReleaseExists $false `
+            -ReleaseIsDraft $false `
+            -TagExists $false `
+            -RequestedSourceRevision $script:AppSourceRevision |
+            Should -Be "New"
+    }
+
+    It "resumes a matching draft publication" {
+        Resolve-AppPublicationState `
+            -ReleaseExists $true `
+            -ReleaseIsDraft $true `
+            -TagExists $false `
+            -ReleaseTargetRevision $script:AppSourceRevision `
+            -RequestedSourceRevision $script:AppSourceRevision |
+            Should -Be "ResumeDraft"
+    }
+
+    It "rejects a draft that targets a different source revision" {
+        {
+            Resolve-AppPublicationState `
+                -ReleaseExists $true `
+                -ReleaseIsDraft $true `
+                -TagExists $false `
+                -ReleaseTargetRevision ("f" * 40) `
+                -RequestedSourceRevision $script:AppSourceRevision
+        } | Should -Throw "*different source revision*"
+    }
+
+    It "rejects an orphaned app tag" {
+        {
+            Resolve-AppPublicationState `
+                -ReleaseExists $false `
+                -ReleaseIsDraft $false `
+                -TagExists $true `
+                -RequestedSourceRevision $script:AppSourceRevision
+        } | Should -Throw "*tag exists without*"
+    }
+
+    It "rejects an already published app release" {
+        {
+            Resolve-AppPublicationState `
+                -ReleaseExists $true `
+                -ReleaseIsDraft $false `
+                -TagExists $true `
+                -ReleaseTargetRevision $script:AppSourceRevision `
+                -RequestedSourceRevision $script:AppSourceRevision
+        } | Should -Throw "*already published*"
+    }
+}
+
+Describe "App release asset integrity" {
+    It "validates an app package and matching checksum" {
+        $packagePath = Join-Path $TestDrive "Glasswork-win-x64.zip"
+        $checksumPath = "$packagePath.sha256"
+        Set-Content $packagePath "package bytes"
+        $sha256 = (Get-FileHash -Algorithm SHA256 -Path $packagePath).Hash.ToLowerInvariant()
+        "$sha256  Glasswork-win-x64.zip" | Set-Content $checksumPath
+
+        $result = Test-AppReleaseAssetIntegrity `
+            -PackagePath $packagePath `
+            -ChecksumPath $checksumPath
+
+        $result.Sha256 | Should -Be $sha256
+    }
+
+    It "rejects a checksum that does not match the app package" {
+        $packagePath = Join-Path $TestDrive "Glasswork-win-x64.zip"
+        $checksumPath = "$packagePath.sha256"
+        Set-Content $packagePath "package bytes"
+        (("0" * 64) + "  Glasswork-win-x64.zip") | Set-Content $checksumPath
+
+        {
+            Test-AppReleaseAssetIntegrity `
+                -PackagePath $packagePath `
+                -ChecksumPath $checksumPath
+        } | Should -Throw "*checksum does not match*"
+    }
+
+    It "reads version source revision and checksum from the app tag" {
+        $source = "0123456789abcdef0123456789abcdef01234567"
+        $sha256 = "a" * 64
+
+        $metadata = ConvertFrom-AppTagMessage -Message @"
+Glasswork app publication
+version: 1.5.0
+commit: $source
+sha256: $sha256
+"@ -Version "1.5.0"
+
+        $metadata.SourceRevision | Should -Be $source
+        $metadata.Sha256 | Should -Be $sha256
+    }
+}

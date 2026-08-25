@@ -1,4 +1,5 @@
 name: Publish MCP
+run-name: Publish MCP v${{ inputs.version }} from ${{ inputs.source_ref || 'main' }}
 
 on:
   workflow_dispatch:
@@ -7,6 +8,14 @@ on:
         description: "glasswork-mcp version in X.Y.Z form"
         required: true
         type: string
+      source_ref:
+        description: "Exact commit in main history to publish (defaults to current main)"
+        required: false
+        type: string
+
+concurrency:
+  group: publish-mcp
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -20,6 +29,14 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create release automation token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_PRIVATE_KEY }}
 
       - name: Set up .NET 10 SDK
         uses: actions/setup-dotnet@v4
@@ -31,12 +48,18 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
           MCP_VERSION: ${{ inputs.version }}
+          REQUESTED_SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $false
 
-          git fetch origin main --tags --force
+          $credential = [Convert]::ToBase64String(
+              [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:APP_TOKEN"))
+          Write-Output "::add-mask::$credential"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $credential" `
+              fetch origin main --tags --force
           if ($LASTEXITCODE -ne 0) {
               throw "Unable to fetch current origin/main and tags."
           }
@@ -74,7 +97,20 @@ jobs:
               -ReleaseIsDraft $releaseIsDraft `
               -TagExists $tagExists
 
-          $sourceRevision = $head
+          $sourceRef = $env:REQUESTED_SOURCE_REF
+          if ([string]::IsNullOrWhiteSpace($sourceRef)) {
+              $sourceRef = "origin/main"
+          }
+          $requestedSourceRevision = (& git rev-parse "$sourceRef^{commit}").Trim()
+          if ($LASTEXITCODE -ne 0 -or $requestedSourceRevision -notmatch '^[0-9a-f]{40}$') {
+              throw "Unable to resolve MCP publication source '$sourceRef'."
+          }
+          & git merge-base --is-ancestor $requestedSourceRevision origin/main
+          if ($LASTEXITCODE -ne 0) {
+              throw "MCP publication source '$requestedSourceRevision' is not in current main history."
+          }
+
+          $sourceRevision = $requestedSourceRevision
           if ($tagExists) {
               $sourceRevision = (& git rev-parse "$tag^{}").Trim()
           }
@@ -83,6 +119,9 @@ jobs:
           }
           if ($sourceRevision -notmatch '^[0-9a-f]{40}$') {
               throw "MCP publication source revision is invalid: '$sourceRevision'."
+          }
+          if ($sourceRevision -ne $requestedSourceRevision) {
+              throw "Existing MCP publication state targets '$sourceRevision', not requested source '$requestedSourceRevision'."
           }
           & git merge-base --is-ancestor $sourceRevision origin/main
           if ($LASTEXITCODE -ne 0) {
@@ -276,6 +315,7 @@ jobs:
           PACKAGE_SHA256: ${{ steps.assets.outputs.sha256 }}
           SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
           TAG_EXISTS: ${{ steps.preflight.outputs.tag_exists }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           $ErrorActionPreference = "Stop"
           $tag = "mcp-v$env:MCP_VERSION"
@@ -306,7 +346,11 @@ jobs:
               git config user.name "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
               git tag -a $tag $env:SOURCE_REVISION -m $message
-              git push origin "refs/tags/$tag"
+              $credential = [Convert]::ToBase64String(
+                  [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:APP_TOKEN"))
+              Write-Output "::add-mask::$credential"
+              git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $credential" `
+                  push origin "refs/tags/$tag"
               if ($LASTEXITCODE -ne 0) {
                   throw "Unable to push annotated MCP integrity tag."
               }
@@ -352,3 +396,33 @@ jobs:
                   throw "MCP GitHub Release is missing asset '$requiredAsset'."
               }
           }
+
+      - name: Close recovered MCP release blocker
+        if: success()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          pwsh -File scripts\Invoke-ReleaseEvaluation.ps1 `
+              -Mode CloseBlocker `
+              -Stream Mcp `
+              -Repository $env:GITHUB_REPOSITORY `
+              -BlockerStage Publication `
+              -SummaryPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Record MCP publication blocker
+        if: failure() && steps.app-token.outcome == 'success'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          "MCP publication failed. Inspect this workflow run." |
+              Set-Content artifacts\mcp-publication-error.txt
+          pwsh -File scripts\Invoke-ReleaseEvaluation.ps1 `
+              -Mode RecordFailure `
+              -Stream Mcp `
+              -Repository $env:GITHUB_REPOSITORY `
+              -BlockerStage Publication `
+              -FailurePath artifacts\mcp-publication-error.txt `
+              -SummaryPath $env:GITHUB_STEP_SUMMARY

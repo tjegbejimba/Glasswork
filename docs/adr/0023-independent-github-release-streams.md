@@ -3,6 +3,8 @@
 **Status**: Accepted
 **Amended**: ADR 0024 replaces in-place global-tool updates with side-by-side
 installation and an atomic Copilot command pointer.
+ADR 0025 automates independent stream evaluation and pins publication to each
+automation Release PR's exact merge commit.
 
 ## Context
 
@@ -32,8 +34,8 @@ the repository rule that these exact tag namespaces are created only by the
 non-prerelease publication workflows. `/releases/latest` is no longer a release
 selection interface.
 
-The manually dispatched MCP publication workflow still publishes only current
-reviewed `main`, validates the committed `0.x` version and dated changelog,
+The MCP publication workflow publishes only an exact reviewed commit in
+`main` history, validates the committed `0.x` version and dated changelog,
 runs serial MCP tests plus Release build/pack gates, verifies package source
 revision and checksum, and fails if that version is already published. The
 workflow stages a resumable draft, verifies the uploaded package/checksum
