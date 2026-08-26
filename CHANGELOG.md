@@ -43,6 +43,52 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## Mcp v0.11.1 — 2026-08-26
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Add Ralph TDD loop infrastructure ([#334](https://github.com/tjegbejimba/Glasswork/pull/334)) — @tjegbejimba
+- Resolve Research provenance through source summaries ([#492](https://github.com/tjegbejimba/Glasswork/pull/492)) — @tjegbejimba
+- Authenticate MCP metadata requests when available ([#494](https://github.com/tjegbejimba/Glasswork/pull/494)) — @tjegbejimba
+- Release Glasswork 1.4.8 ([#495](https://github.com/tjegbejimba/Glasswork/pull/495)) — @tjegbejimba
+- Persist Planner sizes and define actionable scope ([#496](https://github.com/tjegbejimba/Glasswork/pull/496)) — @tjegbejimba
+- Clarify locked MCP update failures ([#497](https://github.com/tjegbejimba/Glasswork/pull/497)) — @tjegbejimba
+- Release Glasswork 1.4.9 ([#498](https://github.com/tjegbejimba/Glasswork/pull/498)) — @tjegbejimba
+- Add Planner profiles and Not today recovery ([#499](https://github.com/tjegbejimba/Glasswork/pull/499)) — @tjegbejimba
+- Enable side-by-side MCP updates ([#500](https://github.com/tjegbejimba/Glasswork/pull/500)) — @tjegbejimba
+- Release Glasswork 1.4.10 ([#501](https://github.com/tjegbejimba/Glasswork/pull/501)) — @tjegbejimba
+- Fall back from GitHub API rate limits ([#503](https://github.com/tjegbejimba/Glasswork/pull/503)) — @tjegbejimba
+- Release Glasswork 1.4.11 ([#504](https://github.com/tjegbejimba/Glasswork/pull/504)) — @tjegbejimba
+- Fix Ralph enqueue handling for Windows line endings ([#517](https://github.com/tjegbejimba/Glasswork/pull/517)) — @tjegbejimba
+- Make Ralph coordinator preflight safe for worktrees ([#518](https://github.com/tjegbejimba/Glasswork/pull/518)) — @tjegbejimba
+- Improve WinUI task scrolling and navigation performance ([#519](https://github.com/tjegbejimba/Glasswork/pull/519)) — @tjegbejimba
+- Refresh Ralph's default worker model ([#520](https://github.com/tjegbejimba/Glasswork/pull/520)) — @tjegbejimba
+- Improve Ralph linked-worktree startup ([#521](https://github.com/tjegbejimba/Glasswork/pull/521)) — @tjegbejimba
+- Fix My Day crashes from stale row revisions ([#522](https://github.com/tjegbejimba/Glasswork/pull/522)) — @tjegbejimba
+- Refresh Ralph launcher path handling ([#523](https://github.com/tjegbejimba/Glasswork/pull/523)) — @tjegbejimba
+- Improve Ralph stale PRD recovery ([#524](https://github.com/tjegbejimba/Glasswork/pull/524)) — @tjegbejimba
+- Refresh Ralph Windows startup lifecycle scripts ([#525](https://github.com/tjegbejimba/Glasswork/pull/525)) — @tjegbejimba
+- Fix Research context file resolution ([#526](https://github.com/tjegbejimba/Glasswork/pull/526)) — @tjegbejimba
+- Add one-click stable ID copying ([#527](https://github.com/tjegbejimba/Glasswork/pull/527)) — @tjegbejimba
+- Refresh Ralph zero-item recovery scripts ([#528](https://github.com/tjegbejimba/Glasswork/pull/528)) — @tjegbejimba
+- Automate App and MCP releases ([#530](https://github.com/tjegbejimba/Glasswork/pull/530)) — @tjegbejimba
+- Refresh Ralph PRD branch recovery scripts ([#531](https://github.com/tjegbejimba/Glasswork/pull/531)) — @tjegbejimba
+- Queue the next PRD slice ([#532](https://github.com/tjegbejimba/Glasswork/pull/532)) — @tjegbejimba
+- Fix release evaluator native output parsing ([#534](https://github.com/tjegbejimba/Glasswork/pull/534)) — @tjegbejimba
+- Queue the next PRD wave ([#535](https://github.com/tjegbejimba/Glasswork/pull/535)) — @tjegbejimba
+
 ## [App 1.3.0 / Mcp 0.5.0] — 2026-05-26
 
 First versioned release since `v1.2.0` (2026-04-20). This release covers ~35 merged PRs across the
