@@ -403,6 +403,7 @@ public sealed class VisualVerificationTask
     public string? CancellationReason { get; init; }
     public string? Parent { get; init; }
     public int? AdoLink { get; init; }
+    public List<VisualVerificationTaskLink> Links { get; init; } = [];
     public List<string> Related { get; init; } = [];
     public List<VisualVerificationSubtask> Subtasks { get; init; } = [];
     public List<VisualVerificationArtifact> Artifacts { get; init; } = [];
@@ -426,7 +427,6 @@ public sealed class VisualVerificationTask
             CancelledAt = ParseScenarioDateTimeOffset(CancelledAt),
             CancellationReason = CancellationReason,
             Parent = Parent,
-            AdoLink = AdoLink,
             Description = Description ?? string.Empty,
             Notes = Notes ?? string.Empty,
             RelatedLinks = Related.Select(slug => new RelatedLink
@@ -434,6 +434,11 @@ public sealed class VisualVerificationTask
                 Slug = slug,
             }).ToList(),
         };
+
+        if (Links.Count > 0)
+            task.Links = Links.Select(link => link.ToTaskLink()).ToList();
+        else
+            task.AdoLink = AdoLink;
 
         foreach (var subtask in Subtasks)
         {
@@ -469,6 +474,21 @@ public sealed class VisualVerificationTask
                 : throw new FormatException(
                     $"Invalid scenario timestamp '{value}'. Use an RFC 3339 timestamp.");
     }
+}
+
+public sealed class VisualVerificationTaskLink
+{
+    public string Type { get; init; } = TaskLink.Types.Other;
+    public string Value { get; init; } = string.Empty;
+    public string? Label { get; init; }
+
+    public TaskLink ToTaskLink() =>
+        new()
+        {
+            Type = TaskLink.Types.Normalize(Type),
+            Value = Value,
+            Label = Label,
+        };
 }
 
 public sealed class VisualVerificationSubtask

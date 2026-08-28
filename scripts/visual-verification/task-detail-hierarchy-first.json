@@ -1,0 +1,189 @@
+{
+  "name": "Task Detail hierarchy first",
+  "startUri": "glasswork://backlog",
+  "theme": "dark",
+  "windowWidth": 760,
+  "windowHeight": 980,
+  "tasks": [
+    {
+      "id": "vv-hierarchy-root",
+      "title": "Portfolio modernization",
+      "status": "in-progress",
+      "type": "parent"
+    },
+    {
+      "id": "vv-hierarchy-parent",
+      "title": "Replace the legacy deployment coordination path",
+      "status": "in-progress",
+      "type": "parent",
+      "sourceKind": "Feature",
+      "parent": "vv-hierarchy-root",
+      "description": "Coordinates delivery through child Tasks.",
+      "links": [
+        {
+          "type": "ado",
+          "value": "700100",
+          "label": "Deployment coordination feature"
+        },
+        {
+          "type": "doc",
+          "value": "https://example.test/design",
+          "label": "Hierarchy design"
+        },
+        {
+          "type": "ado",
+          "value": "700101",
+          "label": "Secondary parent ADO"
+        }
+      ]
+    },
+    {
+      "id": "vv-hierarchy-leaf",
+      "title": "Implement the canonical deployment adapter",
+      "status": "in-progress",
+      "type": "task",
+      "sourceKind": "Task",
+      "parent": "vv-hierarchy-parent",
+      "description": "Implements the actionable leaf while preserving the existing execution detail.",
+      "links": [
+        {
+          "type": "ado",
+          "value": "700200",
+          "label": "Leaf implementation"
+        },
+        {
+          "type": "pr",
+          "value": "https://github.com/tjegbejimba/Glasswork/pull/508",
+          "label": "Implementation PR"
+        },
+        {
+          "type": "ado",
+          "value": "700201",
+          "label": "Secondary leaf ADO"
+        }
+      ],
+      "subtasks": [
+        {
+          "text": "Keep inline execution detail",
+          "status": "in_progress"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Replace the legacy deployment coordination path",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Replace the legacy deployment coordination path",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "TaskSourceKindBadge",
+      "value": "Source kind: Feature",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskWorkHierarchy",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskChildrenSection",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "TaskSubtasksSection",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-not-present",
+      "automationId": "Deployment coordination feature",
+      "timeoutMilliseconds": 1000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "Secondary parent ADO",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "task-detail-hierarchy-parent"
+    },
+    {
+      "type": "invoke",
+      "automationId": "vv-hierarchy-leaf",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "TaskSourceKindBadge",
+      "value": "Source kind: Task",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskSubtasksSection",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "TaskChildrenSection",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-not-present",
+      "automationId": "Leaf implementation",
+      "timeoutMilliseconds": 1000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "Secondary leaf ADO",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "task-detail-hierarchy-leaf"
+    },
+    {
+      "type": "invoke",
+      "automationId": "vv-hierarchy-parent",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "TaskSourceKindBadge",
+      "value": "Source kind: Feature",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "TaskDetailScrollViewer",
+      "value": "100",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-below",
+      "automationId": "CopyTaskIdButton",
+      "value": "TaskDangerZone",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-detail-hierarchy-navigation-return",
+      "waitMilliseconds": 800
+    }
+  ]
+}
