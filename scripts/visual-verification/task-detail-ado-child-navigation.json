@@ -5,14 +5,14 @@
     {
       "id": "vv-ado-parent",
       "title": "Remove resource hydration code from ARM",
-      "status": "doing",
+      "status": "in-progress",
       "type": "parent",
       "adoLink": 36083004
     },
     {
       "id": "vv-ado-child",
       "title": "Remove all Resource Hydration code",
-      "status": "doing",
+      "status": "in-progress",
       "parent": "36083004"
     }
   ],
@@ -54,7 +54,7 @@
     },
     {
       "type": "wait-for",
-      "name": "Open task",
+      "automationId": "OpenParentTaskButton",
       "timeoutMilliseconds": 10000
     }
   ],

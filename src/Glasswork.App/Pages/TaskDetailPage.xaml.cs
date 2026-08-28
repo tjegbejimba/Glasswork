@@ -36,6 +36,7 @@ public sealed partial class TaskDetailPage : Page
     private readonly TaskEditSaveController _saveController;
     private string _pendingDiskNotes = string.Empty;
     private ParentLinkResolution? _parentResolution;
+    private TaskDetailHierarchyProjection? _hierarchyProjection;
 
     /// <summary>
     /// Per-artifact expand state (keyed by absolute Path, case-insensitive),
@@ -96,6 +97,10 @@ public sealed partial class TaskDetailPage : Page
     {
         _isLoading = true;
         Task = task;
+        var hierarchyProjection = TaskDetailHierarchyProjection.Project(
+            task,
+            App.Index.Tasks.Values);
+        _hierarchyProjection = hierarchyProjection;
         HideClipboardStatus();
         // Refresh compiled x:Bind expressions (Title, Description, Notes use TwoWay bindings
         // that captured the previous Task object at initialization; Update() re-roots them on
@@ -128,10 +133,13 @@ public sealed partial class TaskDetailPage : Page
         DueDatePicker.IsEnabled = !isReadOnly;
         EditAdoButton.IsEnabled = !isReadOnly;
         EditParentButton.IsEnabled = !isReadOnly;
-        ActiveSubtaskList.IsEnabled = !isReadOnly;
-        CompletedSubtaskList.IsEnabled = !isReadOnly;
-        AddSubtaskBox.IsEnabled = !isReadOnly;
-        AddSubtaskButton.IsEnabled = !isReadOnly;
+        SubtasksSection.Visibility = hierarchyProjection.ShowSubtasks
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ActiveSubtaskList.IsEnabled = !isReadOnly && hierarchyProjection.ShowSubtasks;
+        CompletedSubtaskList.IsEnabled = !isReadOnly && hierarchyProjection.ShowSubtasks;
+        AddSubtaskBox.IsEnabled = !isReadOnly && hierarchyProjection.ShowSubtasks;
+        AddSubtaskButton.IsEnabled = !isReadOnly && hierarchyProjection.ShowSubtasks;
         DescriptionBox.IsReadOnly = isReadOnly;
         NotesEditButton.IsEnabled = !isReadOnly;
         AddLinkButton.IsEnabled = !isReadOnly;
@@ -147,8 +155,8 @@ public sealed partial class TaskDetailPage : Page
         BindRelated(task.RelatedLinks);
         ArtifactsSection.Visibility = Visibility.Collapsed;
         ArtifactsList.ItemsSource = null;
-        BindLinks(task.Links);
-        BindChildren(task.Id);
+        BindLinks(hierarchyProjection.VisibleLinks);
+        BindChildren(task.Id, hierarchyProjection.ShowChildren);
         BindBacklinks(task.Id);
 
         CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
@@ -161,22 +169,45 @@ public sealed partial class TaskDetailPage : Page
         IdText.Text = $"ID: {task.Id}";
         AutomationProperties.SetName(CopyTaskIdButton, $"Copy Task ID {task.Id}");
 
-        if (task.AdoLink.HasValue)
+        if (hierarchyProjection.SourceBadgeText is { } sourceBadge)
         {
-            AdoLabel.Visibility = Visibility.Visible;
-            AdoLinkButton.Visibility = Visibility.Visible;
-            AdoTitleRun.Text = $"#{task.AdoLink} \u2014 {task.AdoTitle ?? "linked"}";
-            EditAdoButton.Content = "Edit ADO link";
+            SourceKindBadge.Visibility = Visibility.Visible;
+            SourceKindText.Text = sourceBadge;
+            AutomationProperties.SetName(SourceKindBadge, $"Source kind: {sourceBadge}");
         }
         else
         {
-            AdoLabel.Visibility = Visibility.Collapsed;
+            SourceKindBadge.Visibility = Visibility.Collapsed;
+            SourceKindText.Text = string.Empty;
+            AutomationProperties.SetName(SourceKindBadge, string.Empty);
+        }
+
+        if (hierarchyProjection.PrimaryAdo is not null)
+        {
+            AdoLabel.Visibility = Visibility.Visible;
+            AdoLinkButton.Visibility = LinkUriPolicy.Resolve(
+                hierarchyProjection.PrimaryAdo,
+                App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty) is not null
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            AdoTitleRun.Text = hierarchyProjection.PrimaryAdoId is int adoId
+                ? $"ADO #{adoId} \u2014 {hierarchyProjection.PrimaryAdoDisplayText}"
+                : hierarchyProjection.PrimaryAdoDisplayText;
+            EditAdoButton.Content = "Edit ADO link";
+            AutomationProperties.SetName(
+                AdoLinkButton,
+                $"Open primary {AdoTitleRun.Text}");
+        }
+        else
+        {
+            AdoLabel.Visibility = Visibility.Visible;
             AdoLinkButton.Visibility = Visibility.Collapsed;
-            AdoTitleRun.Text = string.Empty;
+            AdoTitleRun.Text = "No primary ADO work item.";
             EditAdoButton.Content = "Link ADO work item";
         }
 
-        ApplyParent(task);
+        BindAncestors(hierarchyProjection.Ancestors);
+        ApplyParent(hierarchyProjection.Parent);
 
         _notesEdit = new NotesEditController(task.Notes);
         ApplyNotesMode(NotesEditMode.Read);
@@ -308,53 +339,63 @@ public sealed partial class TaskDetailPage : Page
         view.LinkClicked -= OnArtifactLinkClicked;
     }
 
-    private void ApplyParent(GlassworkTask task)
+    private void BindAncestors(IReadOnlyList<TaskDetailAncestor> ancestors)
     {
-        var p = task.Parent?.Trim();
-        if (string.IsNullOrEmpty(p))
+        AncestorSection.Visibility = ancestors.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        AncestorBreadcrumbs.ItemsSource = ancestors.Count > 0 ? ancestors : null;
+    }
+
+    private void Ancestor_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: TaskDetailAncestor ancestor })
+            return;
+        var task = App.Index.ById(ancestor.TaskId);
+        if (task is not null)
+            Frame.Navigate(typeof(TaskDetailPage), task);
+    }
+
+    private void ApplyParent(TaskParentResolution namedParent)
+    {
+        if (namedParent.Kind == TaskParentResolutionKind.None)
         {
-            ParentLabel.Visibility = Visibility.Collapsed;
+            ParentLabel.Visibility = Visibility.Visible;
             ParentLinkButton.Visibility = Visibility.Collapsed;
-            ParentTextRun.Text = string.Empty;
+            ParentAdoLinkButton.Visibility = Visibility.Collapsed;
+            ParentTextRun.Text = "No Parent Task.";
             EditParentButton.Content = "Set parent";
             _parentResolution = null;
             return;
         }
 
         ParentLabel.Visibility = Visibility.Visible;
-        var hierarchy = new TaskHierarchyPolicy(App.Index.Tasks.Values);
-        var namedParent = hierarchy.ResolveParent(task);
-        ParentTextRun.Text = namedParent.DisplayTitle ?? p;
+        ParentTextRun.Text = namedParent.DisplayTitle ?? "Unresolved parent";
         EditParentButton.Content = "Edit parent";
 
-        // Classify parent to determine link type
-        var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim();
         if (namedParent.Kind == TaskParentResolutionKind.Local
             && namedParent.CanonicalTaskId is { } parentTaskId)
         {
             _parentResolution = ParentLinkResolution.InAppTask(parentTaskId);
+            ParentLinkButton.Visibility = Visibility.Visible;
+            ParentLinkButton.Content = "Open Parent Task";
+            AutomationProperties.SetName(
+                ParentLinkButton,
+                $"Open Parent Task {ParentTextRun.Text}");
         }
         else
         {
-            var classifier = new ParentLinkClassifier(App.Index);
-            _parentResolution = classifier.Classify(p, baseUrl);
-        }
-
-        // Update button visibility and content based on resolution
-        if (_parentResolution.Type == ParentLinkResolution.ResolutionType.InAppTask)
-        {
-            ParentLinkButton.Visibility = Visibility.Visible;
-            ParentLinkButton.Content = "Open task";
-        }
-        else if (_parentResolution.Type == ParentLinkResolution.ResolutionType.AdoUrl)
-        {
-            ParentLinkButton.Visibility = Visibility.Visible;
-            ParentLinkButton.Content = "Open in ADO";
-        }
-        else
-        {
+            _parentResolution = null;
             ParentLinkButton.Visibility = Visibility.Collapsed;
         }
+
+        ParentAdoLinkButton.Visibility = namedParent.AdoId.HasValue
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (namedParent.AdoId is int adoId)
+            AutomationProperties.SetName(
+                ParentAdoLinkButton,
+                $"Open Parent ADO #{adoId}");
     }
 
     private void BindSubtasks(IList<SubTask> subtasks)
@@ -440,8 +481,16 @@ public sealed partial class TaskDetailPage : Page
     }
 
 
-    private void BindChildren(string taskId)
+    private void BindChildren(string taskId, bool showChildren)
     {
+        if (!showChildren)
+        {
+            ChildrenSection.Visibility = Visibility.Collapsed;
+            ChildrenList.ItemsSource = null;
+            ChildrenEmptyText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
         IReadOnlyList<GlassworkTask> children;
         try
         {
@@ -455,12 +504,15 @@ public sealed partial class TaskDetailPage : Page
 
         if (children.Count == 0)
         {
-            ChildrenSection.Visibility = Visibility.Collapsed;
+            ChildrenSection.Visibility = Visibility.Visible;
             ChildrenList.ItemsSource = null;
+            ChildrenHeader.Text = "Children (0)";
+            ChildrenEmptyText.Visibility = Visibility.Visible;
             return;
         }
 
         ChildrenSection.Visibility = Visibility.Visible;
+        ChildrenEmptyText.Visibility = Visibility.Collapsed;
         ChildrenHeader.Text = $"Children ({children.Count})";
         ChildrenList.ItemsSource = ChildRow.Project(children);
     }
@@ -506,7 +558,7 @@ public sealed partial class TaskDetailPage : Page
         await App.ObsidianLauncher.Open(vaultRelative);
     }
 
-    private void BindLinks(IList<TaskLink> links)
+    private void BindLinks(IReadOnlyList<TaskLink> links)
     {
         // Section is always visible so the Add link button is always accessible.
         LinksList.ItemsSource = links.Count > 0 ? LinkRow.Project(links) : null;
@@ -831,7 +883,7 @@ public sealed partial class TaskDetailPage : Page
                     return;
                 }
             }
-            BindChildren(id);
+            BindChildren(id, _hierarchyProjection?.ShowChildren == true);
         });
     }
 
@@ -1327,13 +1379,33 @@ public sealed partial class TaskDetailPage : Page
         await VaultPageHelper.RouteLinkClickAsync(Frame, e);
     }
 
-    private void OpenAdo_Click(object sender, RoutedEventArgs e)
+    private async void OpenAdo_Click(object sender, RoutedEventArgs e)
     {
-        if (!Task.AdoLink.HasValue) return;
-        var baseUrl = (App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty).Trim().TrimEnd('/');
-        if (string.IsNullOrEmpty(baseUrl)) return;
-        var url = $"{baseUrl}/_workitems/edit/{Task.AdoLink.Value}";
-        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        if (_hierarchyProjection?.PrimaryAdo is not { } primaryAdo) return;
+        await OpenTaskLinkAsync(primaryAdo);
+    }
+
+    private async void OpenParentAdo_Click(object sender, RoutedEventArgs e)
+    {
+        if (_hierarchyProjection?.Parent.AdoId is not int adoId) return;
+        await OpenTaskLinkAsync(new TaskLink
+        {
+            Type = TaskLink.Types.Ado,
+            Value = adoId.ToString(),
+        });
+    }
+
+    private async System.Threading.Tasks.Task OpenTaskLinkAsync(TaskLink link)
+    {
+        var adoBaseUrl = App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty;
+        var resolved = LinkUriPolicy.Resolve(link, adoBaseUrl);
+        if (resolved is null
+            || ArtifactLinkPolicy.Decide(resolved.ToString()) == ArtifactLinkPolicy.Decision.Block)
+        {
+            return;
+        }
+
+        await Launcher.LaunchUriAsync(resolved);
     }
 
     private async void EditAdoLink_Click(object sender, RoutedEventArgs e)

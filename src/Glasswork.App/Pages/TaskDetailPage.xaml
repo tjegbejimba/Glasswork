@@ -133,21 +133,104 @@
             Padding="32"
             AutomationProperties.AutomationId="TaskDetailScrollViewer">
             <StackPanel Spacing="16">
-                <!-- Title + Open in Obsidian -->
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                    <TextBox x:Name="TitleBox" Grid.Column="0" Header="Title" FontSize="18"
+                <!-- Title + source identity -->
+                <StackPanel Spacing="8">
+                    <TextBox x:Name="TitleBox" Header="Title" FontSize="18"
                              Text="{x:Bind Task.Title, Mode=TwoWay}"
                              AutomationProperties.AutomationId="TaskTitleBox"
                              LostFocus="Field_LostFocus" />
-                    <Button Grid.Column="1" VerticalAlignment="Bottom"
-                            Click="OpenObsidian_Click"
-                            ToolTipService.ToolTip="Open in Obsidian (Ctrl+Shift+O)">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8A7;" FontSize="13" />
-                            <TextBlock Text="Open in Obsidian" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Border x:Name="SourceKindBadge"
+                                AutomationProperties.AutomationId="TaskSourceKindBadge"
+                                Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                CornerRadius="4"
+                                Padding="8,4"
+                                Visibility="Collapsed">
+                            <TextBlock x:Name="SourceKindText"
+                                       Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                       FontSize="12"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="Wrap" />
+                        </Border>
+                        <Button Click="OpenObsidian_Click"
+                                ToolTipService.ToolTip="Open in Obsidian (Ctrl+Shift+O)">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8A7;" FontSize="13" />
+                                <TextBlock Text="Open in Obsidian" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Named hierarchy and primary external identity -->
+                <Border x:Name="WorkHierarchyBlock"
+                        AutomationProperties.AutomationId="TaskWorkHierarchy"
+                        AutomationProperties.Name="Work hierarchy"
+                        Padding="16"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Work hierarchy" Style="{StaticResource SubtitleTextBlockStyle}" />
+
+                        <StackPanel x:Name="AncestorSection" Spacing="6" Visibility="Collapsed">
+                            <TextBlock Text="Ancestors" FontSize="12" Opacity="0.65" />
+                            <ItemsControl x:Name="AncestorBreadcrumbs">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Left"
+                                                Margin="0,2,0,2"
+                                                AutomationProperties.AutomationId="{Binding TaskId}"
+                                                AutomationProperties.Name="{Binding DisplayTitle}"
+                                                Click="Ancestor_Click">
+                                            <TextBlock Text="{Binding DisplayTitle}" TextWrapping="Wrap" />
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </StackPanel>
-                    </Button>
-                </Grid>
+
+                        <StackPanel x:Name="AdoPanel"
+                                    AutomationProperties.AutomationId="TaskPrimaryAdo"
+                                    Spacing="6">
+                            <TextBlock Text="Primary ADO work item" FontSize="12" Opacity="0.65" />
+                            <TextBlock x:Name="AdoLabel" TextWrapping="Wrap">
+                                <Run x:Name="AdoTitleRun" />
+                            </TextBlock>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <HyperlinkButton x:Name="AdoLinkButton"
+                                                 Content="Open in ADO"
+                                                 Click="OpenAdo_Click" />
+                                <Button x:Name="EditAdoButton"
+                                        Content="Edit ADO link"
+                                        Click="EditAdoLink_Click" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel x:Name="ParentPanel"
+                                    AutomationProperties.AutomationId="TaskParentContext"
+                                    Spacing="6">
+                            <TextBlock Text="Parent" FontSize="12" Opacity="0.65" />
+                            <TextBlock x:Name="ParentLabel" TextWrapping="Wrap">
+                                <Run x:Name="ParentTextRun" />
+                            </TextBlock>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <HyperlinkButton x:Name="ParentLinkButton"
+                                                 AutomationProperties.AutomationId="OpenParentTaskButton"
+                                                 Content="Open Parent Task"
+                                                 Click="OpenParent_Click" />
+                                <HyperlinkButton x:Name="ParentAdoLinkButton"
+                                                 Content="Open Parent in ADO"
+                                                 Click="OpenParentAdo_Click" />
+                                <Button x:Name="EditParentButton"
+                                        Content="Edit parent"
+                                        Click="EditParent_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
 
                 <!-- Status + Priority row -->
                 <StackPanel Orientation="Horizontal" Spacing="16">
@@ -174,27 +257,11 @@
                 <!-- Dates -->
                 <CalendarDatePicker x:Name="DueDatePicker" Header="Due date" DateChanged="DueDate_Changed" />
 
-                <!-- ADO link -->
-                <StackPanel x:Name="AdoPanel" Orientation="Horizontal" Spacing="8">
-                    <TextBlock x:Name="AdoLabel" VerticalAlignment="Center">
-                        <Run Text="ADO: " />
-                        <Run x:Name="AdoTitleRun" />
-                    </TextBlock>
-                    <HyperlinkButton x:Name="AdoLinkButton" Content="Open in ADO" Click="OpenAdo_Click" />
-                    <Button x:Name="EditAdoButton" Content="Edit ADO link" Click="EditAdoLink_Click" />
-                </StackPanel>
-
-                <!-- Parent -->
-                <StackPanel x:Name="ParentPanel" Orientation="Horizontal" Spacing="8">
-                    <TextBlock x:Name="ParentLabel" VerticalAlignment="Center">
-                        <Run Text="Parent: " />
-                        <Run x:Name="ParentTextRun" />
-                    </TextBlock>
-                    <HyperlinkButton x:Name="ParentLinkButton" Content="Open in ADO" Click="OpenParent_Click" />
-                    <Button x:Name="EditParentButton" Content="Edit parent" Click="EditParent_Click" />
-                </StackPanel>
-
                 <!-- Subtasks -->
+                <StackPanel x:Name="SubtasksSection"
+                            AutomationProperties.AutomationId="TaskSubtasksSection"
+                            AutomationProperties.Name="Subtasks"
+                            Spacing="8">
                 <TextBlock Text="Subtasks" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,8,0,0" />
 
                 <!-- Active subtasks: hybrid rendering -->
@@ -447,12 +514,49 @@
                         </ListView.ItemTemplate>
                     </ListView>
                 </Expander>
+                </StackPanel>
 
                 <!-- Description -->
                 <TextBox x:Name="DescriptionBox" Header="Description" AcceptsReturn="True"
                          MinHeight="120" TextWrapping="Wrap"
                          Text="{x:Bind Task.Description, Mode=TwoWay}"
                          LostFocus="Field_LostFocus" />
+
+                <!-- Children belong only to Parent Tasks. -->
+                <StackPanel x:Name="ChildrenSection"
+                            AutomationProperties.AutomationId="TaskChildrenSection"
+                            AutomationProperties.Name="Child Tasks"
+                            Spacing="8"
+                            Margin="0,16,0,0"
+                            Visibility="Collapsed">
+                    <TextBlock x:Name="ChildrenHeader" Text="Children" Style="{StaticResource SubtitleTextBlockStyle}" />
+                    <TextBlock x:Name="ChildrenEmptyText"
+                               Text="No child Tasks yet."
+                               Opacity="0.6"
+                               FontStyle="Italic"
+                               Visibility="Collapsed" />
+                    <ItemsControl x:Name="ChildrenList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        Margin="0,2,0,2"
+                                        Padding="12,8"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        AutomationProperties.AutomationId="{Binding Id}"
+                                        AutomationProperties.Name="{Binding Title}"
+                                        Click="Child_Click">
+                                    <TextBlock Text="{Binding Title}"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap"
+                                               VerticalAlignment="Center" />
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
 
                 <!-- Notes (read mode renders via VaultMarkdownView; Edit toggles to TextBox) -->
                 <StackPanel x:Name="NotesSection" Spacing="4">
@@ -568,6 +672,8 @@
                                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                             BorderThickness="1"
+                                            AutomationProperties.AutomationId="{Binding DisplayText}"
+                                            AutomationProperties.Name="{Binding DisplayText}"
                                             Click="LinkRow_Click">
                                         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
                                             <Border Grid.Column="0"
@@ -604,18 +710,6 @@
                     <TextBlock x:Name="CreatedText" FontSize="12" />
                     <TextBlock x:Name="CompletedText" FontSize="12" />
                     <TextBlock x:Name="CancelledText" FontSize="12" />
-                    <Button x:Name="CopyTaskIdButton"
-                            AutomationProperties.AutomationId="CopyTaskIdButton"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            Click="CopyTaskId_Click"
-                            HorizontalAlignment="Left"
-                            Padding="0"
-                            PointerEntered="CopyIdButton_PointerEntered"
-                            PointerExited="CopyIdButton_PointerExited"
-                            ToolTipService.ToolTip="Copy ID">
-                        <TextBlock x:Name="IdText" FontSize="12" />
-                    </Button>
                 </StackPanel>
 
                 <!-- Agent invocation buttons (copy one-liner to clipboard, paste into Copilot CLI) -->
@@ -670,33 +764,6 @@
                     </ItemsControl>
                 </StackPanel>
 
-                <!-- Children (issue #173 — tasks whose parent field matches this task's id) -->
-                <StackPanel x:Name="ChildrenSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
-                    <TextBlock x:Name="ChildrenHeader" Text="Children" Style="{StaticResource SubtitleTextBlockStyle}" />
-                    <ItemsControl x:Name="ChildrenList">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Button HorizontalAlignment="Stretch"
-                                        HorizontalContentAlignment="Stretch"
-                                        Margin="0,2,0,2"
-                                        Padding="12,8"
-                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                        BorderThickness="1"
-                                        AutomationProperties.AutomationId="{Binding Id}"
-                                        Click="Child_Click">
-                                    <Grid>
-                                        <TextBlock Text="{Binding Title}"
-                                                   FontWeight="SemiBold"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center" />
-                                    </Grid>
-                                </Button>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-
                 <!-- Backlinks (slice 6 — incoming wikilinks from outside wiki/todo/) -->
                 <StackPanel x:Name="BacklinksSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
                     <TextBlock x:Name="BacklinksHeader" Text="Backlinks" Style="{StaticResource SubtitleTextBlockStyle}" />
@@ -744,6 +811,7 @@
                 <Border
                     x:Name="DangerZone"
                     AutomationProperties.AutomationId="TaskDangerZone"
+                    AutomationProperties.Name="Danger zone"
                     Margin="0,16,0,0"
                     Padding="16"
                     BorderBrush="#C50F1F"
@@ -768,6 +836,19 @@
                             HorizontalAlignment="Left" />
                     </StackPanel>
                 </Border>
+
+                <Button x:Name="CopyTaskIdButton"
+                        AutomationProperties.AutomationId="CopyTaskIdButton"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Click="CopyTaskId_Click"
+                        HorizontalAlignment="Left"
+                        Padding="0"
+                        PointerEntered="CopyIdButton_PointerEntered"
+                        PointerExited="CopyIdButton_PointerExited"
+                        ToolTipService.ToolTip="Copy ID">
+                    <TextBlock x:Name="IdText" FontSize="12" />
+                </Button>
             </StackPanel>
         </ScrollViewer>
     </Grid>

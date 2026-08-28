@@ -356,6 +356,36 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void ToGlassworkTask_PreservesOrderedLinksForTaskDetailVerification()
+    {
+        const string json = """
+        {
+          "name": "task detail hierarchy",
+          "tasks": [
+            {
+              "id": "leaf",
+              "title": "Leaf",
+              "links": [
+                { "type": "pr", "value": "https://example.test/pr/1", "label": "Implementation PR" },
+                { "type": "ado", "value": "123", "label": "Primary ADO" },
+                { "type": "ado", "value": "456", "label": "Secondary ADO" }
+              ]
+            }
+          ],
+          "captures": [{ "name": "task-detail" }]
+        }
+        """;
+
+        var task = VisualVerificationScenario.FromJson(json)
+            .Tasks.Single()
+            .ToGlassworkTask(new DateTime(2026, 8, 28));
+
+        CollectionAssert.AreEqual(
+            new[] { "Implementation PR", "Primary ADO", "Secondary ADO" },
+            task.Links.Select(link => link.Label).ToArray());
+    }
+
+    [TestMethod]
     public void ToGlassworkTask_ResolvesRelativeCompletionDate()
     {
         var today = new DateTime(2026, 6, 29);
