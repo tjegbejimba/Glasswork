@@ -1387,25 +1387,28 @@ public sealed partial class TaskDetailPage : Page
 
     private async void OpenParentAdo_Click(object sender, RoutedEventArgs e)
     {
-        if (_hierarchyProjection?.Parent.AdoId is not int adoId) return;
-        await OpenTaskLinkAsync(new TaskLink
-        {
-            Type = TaskLink.Types.Ado,
-            Value = adoId.ToString(),
-        });
+        if (_hierarchyProjection?.ParentAdoReference is not { } parentReference)
+            return;
+        var adoBaseUrl = App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty;
+        var resolved = AdoLinkResolver.TryResolve(parentReference, adoBaseUrl);
+        if (resolved is null || !Uri.TryCreate(resolved, UriKind.Absolute, out var uri))
+            return;
+        await OpenUriAsync(uri);
     }
 
     private async System.Threading.Tasks.Task OpenTaskLinkAsync(TaskLink link)
     {
         var adoBaseUrl = App.UiState.Get<string>(App.AdoBaseUrlKey) ?? string.Empty;
         var resolved = LinkUriPolicy.Resolve(link, adoBaseUrl);
-        if (resolved is null
-            || ArtifactLinkPolicy.Decide(resolved.ToString()) == ArtifactLinkPolicy.Decision.Block)
-        {
-            return;
-        }
+        if (resolved is null) return;
+        await OpenUriAsync(resolved);
+    }
 
-        await Launcher.LaunchUriAsync(resolved);
+    private static async System.Threading.Tasks.Task OpenUriAsync(Uri uri)
+    {
+        if (ArtifactLinkPolicy.Decide(uri.ToString()) == ArtifactLinkPolicy.Decision.Block)
+            return;
+        await Launcher.LaunchUriAsync(uri);
     }
 
     private async void EditAdoLink_Click(object sender, RoutedEventArgs e)
@@ -1496,7 +1499,12 @@ public sealed partial class TaskDetailPage : Page
 
         try
         {
-            App.Vault.SetAdoLink(Task.Id, newId, newTitle);
+            App.Vault.SetLinks(
+                Task.Id,
+                TaskDetailHierarchyProjection.ReplacePrimaryAdo(
+                    Task.Links,
+                    newId,
+                    newTitle));
         }
         catch (Exception ex) when (ResourceMutationService.IsExpectedPersistenceFailure(ex))
         {

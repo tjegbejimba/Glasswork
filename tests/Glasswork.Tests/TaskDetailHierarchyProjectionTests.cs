@@ -79,6 +79,36 @@ public class TaskDetailHierarchyProjectionTests
         Assert.AreEqual(TaskParentResolutionKind.UnresolvedExternal, projection.Parent.Kind);
         Assert.AreEqual("Unresolved parent · ADO #90210", projection.Parent.DisplayTitle);
         Assert.AreEqual(90210, projection.Parent.AdoId);
+        Assert.AreEqual(
+            "https://dev.azure.com/example/project/_workitems/edit/90210",
+            projection.ParentAdoReference);
+    }
+
+    [TestMethod]
+    public void ReplacePrimaryAdo_UpdatesOrClearsOnlyTheFirstAdoLink()
+    {
+        var pr = Link(TaskLink.Types.Pr, "https://example.test/pr/1", "PR");
+        var primary = Link(TaskLink.Types.Ado, "123", "Primary");
+        var secondary = Link(TaskLink.Types.Ado, "456", "Secondary");
+        TaskLink[] links = [pr, primary, secondary];
+
+        var updated = TaskDetailHierarchyProjection.ReplacePrimaryAdo(
+            links,
+            789,
+            "Updated");
+        var cleared = TaskDetailHierarchyProjection.ReplacePrimaryAdo(
+            links,
+            null,
+            null);
+
+        CollectionAssert.AreEqual(
+            new[] { pr, secondary },
+            cleared.ToArray());
+        Assert.AreSame(pr, updated[0]);
+        Assert.AreEqual(TaskLink.Types.Ado, updated[1].Type);
+        Assert.AreEqual("789", updated[1].Value);
+        Assert.AreEqual("Updated", updated[1].Label);
+        Assert.AreSame(secondary, updated[2]);
     }
 
     [TestMethod]

@@ -11,6 +11,7 @@ public sealed record TaskDetailHierarchyProjection(
     string? SourceBadgeText,
     IReadOnlyList<TaskDetailAncestor> Ancestors,
     TaskParentResolution Parent,
+    string? ParentAdoReference,
     TaskLink? PrimaryAdo,
     int? PrimaryAdoId,
     string? PrimaryAdoDisplayText,
@@ -45,18 +46,49 @@ public sealed record TaskDetailHierarchyProjection(
             .ToArray();
         var isParent = GlassworkTask.Types.IsParent(task.Type);
 
+        var parent = hierarchy.ResolveParent(task);
         return new(
             SourceBadgeText: !string.IsNullOrWhiteSpace(task.SourceKind)
                 ? task.SourceKind.Trim()
                 : isParent ? "Parent Task" : null,
             Ancestors: ancestors,
-            Parent: hierarchy.ResolveParent(task),
+            Parent: parent,
+            ParentAdoReference: ParentAdoReferenceFor(parent),
             PrimaryAdo: primaryAdo,
             PrimaryAdoId: primaryAdoId,
             PrimaryAdoDisplayText: PrimaryAdoText(primaryAdo, primaryAdoId),
             VisibleLinks: visibleLinks,
             ShowChildren: isParent,
             ShowSubtasks: !isParent);
+    }
+
+    public static IReadOnlyList<TaskLink> ReplacePrimaryAdo(
+        IReadOnlyList<TaskLink> links,
+        int? adoId,
+        string? adoTitle)
+    {
+        ArgumentNullException.ThrowIfNull(links);
+
+        var updated = links.ToList();
+        var primaryIndex = updated.FindIndex(link => link.Type == TaskLink.Types.Ado);
+        if (adoId is null)
+        {
+            if (primaryIndex >= 0)
+                updated.RemoveAt(primaryIndex);
+            return updated;
+        }
+
+        var replacement = new TaskLink
+        {
+            Type = TaskLink.Types.Ado,
+            Value = adoId.Value.ToString(),
+            Label = string.IsNullOrWhiteSpace(adoTitle) ? null : adoTitle.Trim(),
+        };
+        if (primaryIndex >= 0)
+            updated[primaryIndex] = replacement;
+        else
+            updated.Insert(0, replacement);
+        return updated;
     }
 
     private static string DisplayTitle(GlassworkTask task)
@@ -79,5 +111,20 @@ public sealed record TaskDetailHierarchyProjection(
         return adoId is int id
             ? $"ADO #{id}"
             : string.IsNullOrWhiteSpace(link.Value) ? "Unresolved ADO Link" : link.Value.Trim();
+    }
+
+    private static string? ParentAdoReferenceFor(TaskParentResolution parent)
+    {
+        if (parent.AdoId is not int adoId)
+            return null;
+
+        var rawReference = parent.RawReference?.Trim();
+        if (Uri.TryCreate(rawReference, UriKind.Absolute, out var uri)
+            && uri.Scheme is "http" or "https")
+        {
+            return rawReference;
+        }
+
+        return adoId.ToString();
     }
 }
