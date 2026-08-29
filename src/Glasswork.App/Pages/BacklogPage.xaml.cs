@@ -339,7 +339,9 @@ public sealed partial class BacklogPage : Page
             }
 
             var reference = parent.RawReference ?? task.Parent?.Trim() ?? string.Empty;
-            var key = $"unresolved:{reference.ToLowerInvariant()}";
+            var key = parent.AdoId is int adoId
+                ? $"unresolved:ado:{adoId}"
+                : $"unresolved:{reference.ToLowerInvariant()}";
             if (App.UiState.Get<bool>($"{App.BacklogHierarchyCollapsedKeyPrefix}{key}"))
                 keys.Add(key);
         }

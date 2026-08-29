@@ -74,7 +74,9 @@ public static class BacklogHierarchyBuilder
                 or TaskParentResolutionKind.Invalid)
             {
                 var reference = parent.RawReference ?? task.Parent?.Trim() ?? string.Empty;
-                var key = $"unresolved:{reference.ToLowerInvariant()}";
+                var key = parent.AdoId is int adoId
+                    ? $"unresolved:ado:{adoId}"
+                    : $"unresolved:{reference.ToLowerInvariant()}";
                 if (!syntheticChildren.TryGetValue(key, out var groupedChildren))
                 {
                     groupedChildren = [];

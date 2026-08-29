@@ -102,6 +102,28 @@ public class BacklogHierarchyBuilderTests
     }
 
     [TestMethod]
+    public void Build_EquivalentAdoParentReferencesShareOneDegradedScope()
+    {
+        var bare = Leaf("bare", "Bare reference", "7821");
+        var url = Leaf(
+            "url",
+            "URL reference",
+            "https://dev.azure.com/org/project/_workitems/edit/7821");
+
+        var rows = BacklogHierarchyBuilder.Build(
+            new[] { bare, url },
+            new[] { bare, url },
+            []);
+
+        var parent = rows.Single(row => row.Task is null);
+        Assert.AreEqual("unresolved:ado:7821", parent.Key);
+        Assert.AreEqual(2, parent.ChildCount);
+        CollectionAssert.AreEqual(
+            new[] { "bare", "url" },
+            rows.Where(row => row.Task is not null).Select(row => row.Task!.Id).ToArray());
+    }
+
+    [TestMethod]
     public void Build_LeafUsedAsParentStaysVisibleAndFlagsTheMalformedRelationship()
     {
         var invalidParent = Leaf("not-parent", "Ordinary task");
