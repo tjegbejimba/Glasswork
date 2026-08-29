@@ -17,6 +17,7 @@
         <conv:DueUrgencyBrushConverter x:Key="DueBg" />
         <conv:DueUrgencyForegroundBrushConverter x:Key="DueFg" />
         <conv:MyDayBrushConverter x:Key="MyDayBrush" />
+        <conv:HierarchyDepthMarginConverter x:Key="HierarchyDepthMargin" />
 
         <DataTemplate x:Key="BacklogTaskTemplate" x:DataType="models:GlassworkTask">
             <Grid Padding="10,8" RowDefinitions="Auto,Auto"
@@ -147,6 +148,130 @@
             </Grid>
         </DataTemplate>
 
+        <DataTemplate x:Key="BacklogHierarchyTemplate" x:DataType="models:BacklogHierarchyRow">
+            <Grid Margin="{x:Bind Depth, Converter={StaticResource HierarchyDepthMargin}, Mode=OneWay}"
+                  Padding="6,5,10,5">
+                <Border x:Name="HierarchyParentRow"
+                        x:Load="{x:Bind IsParent, Mode=OneWay}"
+                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="8,6">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
+                        <Button Grid.Column="0"
+                                AutomationProperties.AutomationId="{Binding Key}"
+                                AutomationProperties.Name="{Binding Title}"
+                                Click="HierarchyExpand_Click"
+                                IsEnabled="{x:Bind HasVisibleChildren, Mode=OneWay}"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="4">
+                            <FontIcon FontFamily="Segoe Fluent Icons"
+                                      Glyph="{x:Bind IsCollapsed, Converter={StaticResource ChevronGlyph}}"
+                                      FontSize="11" />
+                        </Button>
+                        <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                            <HyperlinkButton x:Name="HierarchyParentTaskLink"
+                                             x:Load="{x:Bind HasTask, Mode=OneWay}"
+                                             Content="{Binding Title}"
+                                             Click="OpenTask_Click"
+                                             Padding="0"
+                                             HorizontalAlignment="Left"
+                                             FontWeight="SemiBold" />
+                            <TextBlock x:Name="HierarchyUnresolvedParentTitle"
+                                       x:Load="{x:Bind IsDegraded, Mode=OneWay}"
+                                       Text="{Binding Title}"
+                                       FontWeight="SemiBold"
+                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                            <TextBlock Text="{Binding DegradedReason}"
+                                       Visibility="{x:Bind IsDegraded, Converter={StaticResource BoolVis}, Mode=OneWay}"
+                                       FontSize="11"
+                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                        <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}">
+                            <TextBlock Text="{Binding SourceKindBadge}"
+                                       Style="{StaticResource ChipTextStyle}" />
+                        </Border>
+                        <Border Grid.Column="3" Style="{StaticResource ChipBorderStyle}">
+                            <TextBlock Text="{Binding Status}"
+                                       Style="{StaticResource ChipTextStyle}" />
+                        </Border>
+                        <TextBlock Grid.Column="4"
+                                   Text="{Binding ChildCountText}"
+                                   AutomationProperties.Name="Direct child count"
+                                   FontSize="12"
+                                   Opacity="0.65"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Grid x:Name="HierarchyLeafRow"
+                      x:Load="{x:Bind IsLeaf, Mode=OneWay}"
+                      ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto"
+                      ColumnSpacing="8"
+                      Padding="8,4">
+                    <Grid Grid.Column="0" Width="22" Height="22" VerticalAlignment="Center">
+                        <CheckBox IsChecked="{x:Bind Task.IsDone, Mode=OneWay}"
+                                  Style="{StaticResource CircleCheckBoxStyle}"
+                                  IsHitTestVisible="False"
+                                  IsTabStop="False" />
+                        <Button Background="Transparent"
+                                BorderThickness="0"
+                                Padding="0"
+                                Click="TaskCheckbox_Click" />
+                    </Grid>
+                    <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                        <HyperlinkButton Content="{Binding Title}"
+                                         AutomationProperties.AutomationId="{Binding Key}"
+                                         Click="OpenTask_Click"
+                                         Padding="0"
+                                         HorizontalAlignment="Left" />
+                        <TextBlock Text="{Binding DegradedReason}"
+                                   Visibility="{x:Bind IsDegraded, Converter={StaticResource BoolVis}, Mode=OneWay}"
+                                   FontSize="11"
+                                   Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}">
+                        <TextBlock Text="{Binding SourceKindBadge}"
+                                   Style="{StaticResource ChipTextStyle}" />
+                    </Border>
+                    <Border Grid.Column="3" Style="{StaticResource ChipBorderStyle}">
+                        <TextBlock Text="{Binding Status}"
+                                   Style="{StaticResource ChipTextStyle}" />
+                    </Border>
+                    <Button Grid.Column="4"
+                            Click="ToggleMyDay_Click"
+                            ToolTipService.ToolTip="Toggle My Day"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="6,2">
+                        <FontIcon FontFamily="Segoe Fluent Icons"
+                                  Glyph="&#xE706;"
+                                  FontSize="13"
+                                  Foreground="{x:Bind Task.IsMyDay, Converter={StaticResource MyDayBrush}, Mode=OneWay}" />
+                    </Button>
+                    <Button Grid.Column="5"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="6,2">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="13" />
+                        <Button.Flyout>
+                            <MenuFlyout>
+                                <MenuFlyoutItem Text="Mark To Do" Click="SetTodo_Click" />
+                                <MenuFlyoutItem Text="Mark In Progress" Click="SetInProgress_Click" />
+                                <MenuFlyoutItem Text="Mark Done" Click="SetDone_Click" />
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem Text="Open in Obsidian" Click="OpenTaskInObsidian_Click" />
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                </Grid>
+            </Grid>
+        </DataTemplate>
+
         <DataTemplate x:Key="BoardCardTemplate">
             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderThickness="1"
@@ -235,7 +360,8 @@
 
         <controls:BacklogRowTemplateSelector x:Key="BacklogRowSelector"
             TaskTemplate="{StaticResource BacklogTaskTemplate}"
-            GroupHeaderTemplate="{StaticResource BacklogGroupHeaderTemplate}" />
+            GroupHeaderTemplate="{StaticResource BacklogGroupHeaderTemplate}"
+            HierarchyTemplate="{StaticResource BacklogHierarchyTemplate}" />
 
         <conv:CollapseChevronGlyphConverter x:Key="ChevronGlyph" />
     </Page.Resources>
@@ -272,8 +398,8 @@
                 <StackPanel Orientation="Horizontal" Spacing="1">
                     <ToggleButton x:Name="ListViewToggle"
                                   AutomationProperties.AutomationId="BacklogListViewToggle"
-                                  IsChecked="True"
                                   Checked="ListViewToggle_Checked"
+                                  Unchecked="ListViewToggle_Unchecked"
                                   Width="40" Height="32"
                                   ToolTipService.ToolTip="List view"
                                   CornerRadius="3,0,0,3"
@@ -282,13 +408,23 @@
                     </ToggleButton>
                     <ToggleButton x:Name="BoardViewToggle"
                                   AutomationProperties.AutomationId="BacklogBoardViewToggle"
-                                  IsChecked="False"
                                   Checked="BoardViewToggle_Checked"
+                                  Unchecked="BoardViewToggle_Unchecked"
                                   Width="40" Height="32"
                                   ToolTipService.ToolTip="Board view"
-                                  CornerRadius="0,3,3,0"
+                                  CornerRadius="0"
                                   BorderThickness="0">
                         <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xF0E2;" FontSize="13" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="HierarchyViewToggle"
+                                  AutomationProperties.AutomationId="BacklogHierarchyViewToggle"
+                                  Checked="HierarchyViewToggle_Checked"
+                                  Unchecked="HierarchyViewToggle_Unchecked"
+                                  Width="40" Height="32"
+                                  ToolTipService.ToolTip="Hierarchy view"
+                                  CornerRadius="0,3,3,0"
+                                  BorderThickness="0">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8B7;" FontSize="13" />
                     </ToggleButton>
                 </StackPanel>
             </Border>

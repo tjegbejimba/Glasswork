@@ -54,12 +54,16 @@ public sealed partial class BacklogPage : Page
             App.TaskQuery,
             App.Performance);
         ViewModel.RefreshSavedViews();
-        // Load persisted ViewMode (default "list") BEFORE InitializeComponent
-        ViewModel.ViewMode = App.UiState.Get<string>(App.BacklogViewModeKey) ?? "list";
+        // Load persisted ViewMode (default "list") BEFORE InitializeComponent.
+        var persistedViewMode = App.UiState.Get<string>(App.BacklogViewModeKey);
+        ViewModel.ViewMode = persistedViewMode is "list" or "hierarchy" or "board"
+            ? persistedViewMode
+            : "list";
         // Load persisted toggle (default true) BEFORE InitializeComponent so the
         // x:Bind TwoWay binding to ToggleButton.IsChecked picks up the right value.
         ViewModel.IsGrouped = App.UiState.Get<bool?>(App.BacklogGroupByParentKey) ?? true;
         ViewModel.GroupCollapseStateProvider = LoadGroupCollapseState;
+        ViewModel.HierarchyCollapsedStateProvider = LoadHierarchyCollapsedState;
         ViewModel.AdoBaseUrlProvider = () => App.UiState.Get<string>(App.AdoBaseUrlKey);
         ViewModel.AdoTitleFetcher = (id, ct) =>
         {
@@ -158,18 +162,20 @@ public sealed partial class BacklogPage : Page
     private void UpdateViewModeUI()
     {
         var isList = ViewModel.ViewMode == "list";
+        var isHierarchy = ViewModel.ViewMode == "hierarchy";
         var isBoard = ViewModel.ViewMode == "board";
 
         // Sync toggle buttons
         ListViewToggle.IsChecked = isList;
+        HierarchyViewToggle.IsChecked = isHierarchy;
         BoardViewToggle.IsChecked = isBoard;
 
         // Show/hide main views
-        TaskList.Visibility = isList ? Visibility.Visible : Visibility.Collapsed;
+        TaskList.Visibility = isList || isHierarchy ? Visibility.Visible : Visibility.Collapsed;
         BoardView.Visibility = isBoard ? Visibility.Visible : Visibility.Collapsed;
 
         // Show/hide filter controls
-        StatusFilter.Visibility = isList ? Visibility.Visible : Visibility.Collapsed;
+        StatusFilter.Visibility = isList || isHierarchy ? Visibility.Visible : Visibility.Collapsed;
         GroupToggle.Visibility = isList ? Visibility.Visible : Visibility.Collapsed;
         WorkLogLink.Visibility = isBoard ? Visibility.Visible : Visibility.Collapsed;
 
@@ -185,6 +191,13 @@ public sealed partial class BacklogPage : Page
         // exist yet when XAML sets IsChecked="True" on this one. UpdateViewModeUI
         // syncs both toggles correctly after InitializeComponent completes.
         if (BoardViewToggle is not null) BoardViewToggle.IsChecked = false;
+        if (HierarchyViewToggle is not null) HierarchyViewToggle.IsChecked = false;
+    }
+
+    private void ListViewToggle_Unchecked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ViewMode == "list" && ListViewToggle is not null)
+            ListViewToggle.IsChecked = true;
     }
 
     private void BoardViewToggle_Checked(object sender, RoutedEventArgs e)
@@ -192,6 +205,27 @@ public sealed partial class BacklogPage : Page
         if (ViewModel.ViewMode == "board") return;
         ViewModel.ViewMode = "board";
         if (ListViewToggle is not null) ListViewToggle.IsChecked = false;
+        if (HierarchyViewToggle is not null) HierarchyViewToggle.IsChecked = false;
+    }
+
+    private void BoardViewToggle_Unchecked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ViewMode == "board" && BoardViewToggle is not null)
+            BoardViewToggle.IsChecked = true;
+    }
+
+    private void HierarchyViewToggle_Checked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ViewMode == "hierarchy") return;
+        ViewModel.ViewMode = "hierarchy";
+        if (ListViewToggle is not null) ListViewToggle.IsChecked = false;
+        if (BoardViewToggle is not null) BoardViewToggle.IsChecked = false;
+    }
+
+    private void HierarchyViewToggle_Unchecked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ViewMode == "hierarchy" && HierarchyViewToggle is not null)
+            HierarchyViewToggle.IsChecked = true;
     }
 
     private void WorkLogLink_Click(object sender, RoutedEventArgs e)
@@ -283,6 +317,35 @@ public sealed partial class BacklogPage : Page
         return dict;
     }
 
+    private IReadOnlySet<string> LoadHierarchyCollapsedState()
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var tasks = App.Index.Tasks.Values;
+        var hierarchy = new TaskHierarchyPolicy(tasks);
+        foreach (var task in tasks)
+        {
+            if (GlassworkTask.Types.IsParent(task.Type)
+                && App.UiState.Get<bool>($"{App.BacklogHierarchyCollapsedKeyPrefix}{task.Id}"))
+            {
+                keys.Add(task.Id);
+            }
+
+            var parent = hierarchy.ResolveParent(task);
+            if (parent.Kind is not (TaskParentResolutionKind.UnresolvedExternal
+                or TaskParentResolutionKind.AmbiguousExternal
+                or TaskParentResolutionKind.Invalid))
+            {
+                continue;
+            }
+
+            var reference = parent.RawReference ?? task.Parent?.Trim() ?? string.Empty;
+            var key = $"unresolved:{reference.ToLowerInvariant()}";
+            if (App.UiState.Get<bool>($"{App.BacklogHierarchyCollapsedKeyPrefix}{key}"))
+                keys.Add(key);
+        }
+        return keys;
+    }
+
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
@@ -326,7 +389,7 @@ public sealed partial class BacklogPage : Page
 
     private void UpdateEmptyState()
     {
-        var isList = ViewModel.ViewMode == "list";
+        var isList = ViewModel.ViewMode is "list" or "hierarchy";
         var isBoard = ViewModel.ViewMode == "board";
 
         // In board mode, derive content presence from BoardColumns rather than the flat
@@ -394,7 +457,7 @@ public sealed partial class BacklogPage : Page
 
     private void ToggleMyDay_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        if (ResolveTask(sender) is { } task)
         {
             ViewModel.SelectedTask = task;
             ViewModel.ToggleMyDayCommand.Execute(null);
@@ -407,7 +470,7 @@ public sealed partial class BacklogPage : Page
 
     private void SetStatusFromMenu(object sender, string status)
     {
-        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        if (ResolveTask(sender) is { } task)
         {
             // Capture undo state ONLY for board view mark-done
             var isBoard = ViewModel.ViewMode == "board";
@@ -431,7 +494,7 @@ public sealed partial class BacklogPage : Page
 
     private void OpenTask_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        if (ResolveTask(sender) is { } task)
         {
             Frame.Navigate(typeof(TaskDetailPage), task);
         }
@@ -455,7 +518,7 @@ public sealed partial class BacklogPage : Page
 
     private void TaskCheckbox_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        if (ResolveTask(sender) is { } task)
         {
             // Capture undo state ONLY for board view mark-done
             var isBoard = ViewModel.ViewMode == "board";
@@ -517,12 +580,31 @@ public sealed partial class BacklogPage : Page
 
     private async void OpenTaskInObsidian_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: GlassworkTask task }) return;
+        if (ResolveTask(sender) is not { } task) return;
         var absolutePath = Path.Combine(App.Vault.VaultPath, $"{task.Id}.md");
         var vaultRelative = VaultPageHelper.ToVaultRelativePath(absolutePath);
         if (vaultRelative is null) return;
         await App.ObsidianLauncher.Open(vaultRelative);
     }
+
+    private void HierarchyExpand_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: BacklogHierarchyRow row }) return;
+        App.UiState.Set(
+            $"{App.BacklogHierarchyCollapsedKeyPrefix}{row.Key}",
+            row.IsExpanded);
+        ViewModel.Refresh();
+    }
+
+    private static GlassworkTask? ResolveTask(object sender) =>
+        sender is FrameworkElement element
+            ? element.DataContext switch
+            {
+                GlassworkTask task => task,
+                BacklogHierarchyRow row => row.Task,
+                _ => null,
+            }
+            : null;
 
     private async void GroupHeader_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs e)
     {
@@ -819,7 +901,7 @@ public sealed partial class BacklogPage : Page
         double listOffset = 0;
         double boardHorizontal = 0;
 
-        if (ViewModel.ViewMode == "list")
+        if (ViewModel.ViewMode is "list" or "hierarchy")
         {
             var sv = FindDescendantScrollViewer(TaskList);
             if (sv is not null) listOffset = sv.VerticalOffset;
@@ -888,7 +970,7 @@ public sealed partial class BacklogPage : Page
 
     private bool ApplySnapshot(ScrollSnapshot s)
     {
-        if (s.ViewMode == "list")
+        if (s.ViewMode is "list" or "hierarchy")
         {
             var sv = FindDescendantScrollViewer(TaskList);
             if (sv is null) return false;

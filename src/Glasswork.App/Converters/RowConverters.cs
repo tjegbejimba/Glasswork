@@ -108,6 +108,15 @@ public sealed class BoolVisibilityConverter : IValueConverter
         => value is Visibility v && v == Visibility.Visible;
 }
 
+public sealed class HierarchyDepthMarginConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language)
+        => new Thickness((value is int depth ? depth : 0) * 24d, 0, 0, 0);
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
+        => throw new NotImplementedException();
+}
+
 
 /// <summary>
 /// Maps a bool 'IsCollapsed' to a Segoe Fluent Icons chevron glyph: right when collapsed, down when expanded.

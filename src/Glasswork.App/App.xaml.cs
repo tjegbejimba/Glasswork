@@ -103,7 +103,7 @@ public partial class App : Application
     public const string BacklogGroupByParentKey = "backlog.groupByParent";
 
     /// <summary>
-    /// UI state key for the Backlog page's view mode ("list" | "board", default "list").
+    /// UI state key for the Backlog page's view mode ("list" | "hierarchy" | "board", default "list").
     /// </summary>
     public const string BacklogViewModeKey = "backlog.viewMode";
 
@@ -117,6 +117,12 @@ public partial class App : Application
     /// Suffix is the lowercased+trimmed parent string.
     /// </summary>
     public const string BacklogGroupCollapsedKeyPrefix = "backlog.parentCollapsed.";
+
+    /// <summary>
+    /// Key prefix for expanded/collapsed Parent rows in Backlog hierarchy mode.
+    /// Suffix is a canonical Parent Task ID or stable unresolved relationship key.
+    /// </summary>
+    public const string BacklogHierarchyCollapsedKeyPrefix = "backlog.hierarchyCollapsed.";
 
     /// <summary>
     /// UI state key for the Azure DevOps base URL (e.g. https://dev.azure.com/myorg/myproject).
