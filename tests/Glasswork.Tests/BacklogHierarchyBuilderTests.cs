@@ -72,6 +72,23 @@ public class BacklogHierarchyBuilderTests
     }
 
     [TestMethod]
+    public void Build_VisibleLeafDoesNotRestoreTerminalParentToBacklog()
+    {
+        var cancelledParent = Parent("cancelled-parent", "Cancelled initiative", "Feature");
+        cancelledParent.Status = GlassworkTask.Statuses.Cancelled;
+        var leaf = Leaf("leaf", "Actionable work", cancelledParent.Id);
+
+        var rows = BacklogHierarchyBuilder.Build(
+            new[] { cancelledParent, leaf },
+            new[] { leaf },
+            []);
+
+        Assert.AreEqual(1, rows.Count);
+        Assert.AreEqual("leaf", rows[0].Task?.Id);
+        Assert.AreEqual(0, rows[0].Depth);
+    }
+
+    [TestMethod]
     public void Build_UnresolvedExternalParentIsAVisibleDegradedRow()
     {
         var leaf = Leaf("leaf", "Actionable work", "7821");

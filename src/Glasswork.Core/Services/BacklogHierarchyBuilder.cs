@@ -27,7 +27,7 @@ public static class BacklogHierarchyBuilder
         {
             foreach (var ancestor in hierarchy.GetAncestors(taskId))
             {
-                if (!GlassworkTask.Types.IsParent(ancestor.Type))
+                if (ancestor.IsTerminal || !GlassworkTask.Types.IsParent(ancestor.Type))
                     break;
                 required.Add(ancestor.Id);
             }
