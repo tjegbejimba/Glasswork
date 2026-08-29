@@ -44,6 +44,12 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     public ObservableCollection<BoardColumn> BoardColumns { get; } = [];
 
     /// <summary>
+    /// Optional source of collapsed Parent Task IDs and unresolved relationship keys
+    /// for hierarchy mode. Expansion is presentation state owned by UI state.
+    /// </summary>
+    public Func<IReadOnlySet<string>>? HierarchyCollapsedStateProvider { get; set; }
+
+    /// <summary>
     /// Optional source of per-parent-group collapse state, keyed by lowercased parent.
     /// Page wires this to UI state; ViewModel just reads it during Refresh.
     /// </summary>
@@ -71,7 +77,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string FilterStatus { get; set; } = "all";
     [ObservableProperty] public partial GlassworkTask? SelectedTask { get; set; }
     [ObservableProperty] public partial bool IsGrouped { get; set; } = true;
-    [ObservableProperty] public partial string ViewMode { get; set; } = "list"; // "list" | "board"
+    [ObservableProperty] public partial string ViewMode { get; set; } = "list"; // "list" | "hierarchy" | "board"
     [ObservableProperty] public partial string SearchText { get; set; } = string.Empty;
     [ObservableProperty] public partial string? SelectedSavedViewId { get; set; }
 
@@ -170,7 +176,19 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
                 Tasks.Add(task);
             }
 
-            if (IsGrouped)
+            if (ViewMode == "hierarchy")
+            {
+                var collapsed = HierarchyCollapsedStateProvider?.Invoke()
+                                ?? new HashSet<string>(StringComparer.Ordinal);
+                foreach (var row in BacklogHierarchyBuilder.Build(
+                             filtered.SourceTasks.Values,
+                             ordered,
+                             collapsed))
+                {
+                    Rows.Add(row);
+                }
+            }
+            else if (IsGrouped)
             {
                 // Hydrate cache from persisted store before grouping so headers render
                 // resolved titles on the first frame instead of flashing the bare ID.

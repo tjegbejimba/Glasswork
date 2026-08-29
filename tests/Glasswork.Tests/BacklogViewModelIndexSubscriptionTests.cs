@@ -96,6 +96,60 @@ public class BacklogViewModelIndexSubscriptionTests
     }
 
     [TestMethod]
+    public void HierarchyMode_UsesFilteredTasksAndRetainsAncestorContext()
+    {
+        var root = _taskService.CreateTask("Portfolio");
+        root.Type = GlassworkTask.Types.Parent;
+        root.SourceKind = "Epic";
+        _vault.Save(root);
+        var parent = _taskService.CreateTask("Matching feature");
+        parent.Type = GlassworkTask.Types.Parent;
+        parent.SourceKind = "Feature";
+        parent.Parent = root.Id;
+        _vault.Save(parent);
+        var match = _taskService.CreateTask("Matching leaf");
+        match.Parent = parent.Id;
+        _vault.Save(match);
+        var other = _taskService.CreateTask("Other standalone leaf");
+
+        var vm = new BacklogViewModel(_vault, _taskService, _index)
+        {
+            ViewMode = "hierarchy",
+            SearchText = "Matching leaf",
+        };
+
+        CollectionAssert.AreEqual(
+            new[] { root.Id, parent.Id, match.Id },
+            vm.Rows.Cast<BacklogHierarchyRow>().Select(row => row.Task?.Id).ToArray());
+        Assert.IsFalse(vm.Rows.Cast<BacklogHierarchyRow>().Any(row => row.Task?.Id == other.Id));
+    }
+
+    [TestMethod]
+    public void HierarchyMode_ReadsCollapsedParentStateOnEveryRefresh()
+    {
+        var root = _taskService.CreateTask("Portfolio");
+        root.Type = GlassworkTask.Types.Parent;
+        _vault.Save(root);
+        var child = _taskService.CreateTask("Actionable leaf");
+        child.Parent = root.Id;
+        _vault.Save(child);
+        var collapsed = new HashSet<string>(StringComparer.Ordinal);
+
+        var vm = new BacklogViewModel(_vault, _taskService, _index)
+        {
+            HierarchyCollapsedStateProvider = () => collapsed,
+            ViewMode = "hierarchy",
+        };
+        Assert.AreEqual(2, vm.Rows.Count);
+
+        collapsed.Add(root.Id);
+        vm.Refresh();
+
+        Assert.AreEqual(1, vm.Rows.Count);
+        Assert.IsFalse(((BacklogHierarchyRow)vm.Rows[0]).IsExpanded);
+    }
+
+    [TestMethod]
     public void Refresh_OrdersReadyBacklogTasksByUrgencyScore()
     {
         var high = _taskService.CreateTask("High priority no due", priority: GlassworkTask.Priorities.High);

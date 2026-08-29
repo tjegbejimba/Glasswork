@@ -48,8 +48,13 @@ internal static class VaultPageHelper
         var focused = FocusManager.GetFocusedElement(xamlRoot) as DependencyObject;
         while (focused is not null)
         {
-            if (focused is FrameworkElement fe && fe.DataContext is GlassworkTask task)
-                return task;
+            if (focused is FrameworkElement fe)
+            {
+                if (fe.DataContext is GlassworkTask task)
+                    return task;
+                if (fe.DataContext is BacklogHierarchyRow hierarchyRow)
+                    return hierarchyRow.Task;
+            }
             focused = VisualTreeHelper.GetParent(focused);
         }
         return null;

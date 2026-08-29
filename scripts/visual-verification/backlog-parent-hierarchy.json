@@ -1,0 +1,171 @@
+{
+  "name": "Backlog Parent hierarchy",
+  "startUri": "glasswork://backlog",
+  "theme": "dark",
+  "windowWidth": 1100,
+  "windowHeight": 760,
+  "tasks": [
+    {
+      "id": "vv-backlog-portfolio",
+      "title": "Portfolio modernization",
+      "status": "in-progress",
+      "type": "parent",
+      "sourceKind": "Epic"
+    },
+    {
+      "id": "vv-backlog-feature",
+      "title": "Deployment coordination",
+      "status": "in-progress",
+      "type": "parent",
+      "sourceKind": "Feature",
+      "parent": "vv-backlog-portfolio"
+    },
+    {
+      "id": "vv-backlog-pbi",
+      "title": "Canonical rollout path",
+      "status": "todo",
+      "type": "parent",
+      "sourceKind": "Product Backlog Item",
+      "parent": "vv-backlog-feature"
+    },
+    {
+      "id": "vv-backlog-leaf",
+      "title": "Implement rollout adapter",
+      "status": "todo",
+      "type": "task",
+      "sourceKind": "Task",
+      "parent": "vv-backlog-pbi"
+    },
+    {
+      "id": "vv-backlog-blocked-leaf",
+      "title": "Validate rollout telemetry",
+      "status": "blocked",
+      "type": "bug",
+      "sourceKind": "Bug",
+      "parent": "vv-backlog-feature"
+    },
+    {
+      "id": "vv-backlog-standalone",
+      "title": "Standalone actionable leaf",
+      "status": "todo",
+      "type": "task"
+    },
+    {
+      "id": "vv-backlog-unresolved",
+      "title": "Leaf with external Parent",
+      "status": "todo",
+      "type": "task",
+      "parent": "98125"
+    },
+    {
+      "id": "vv-backlog-malformed",
+      "title": "Leaf with malformed Parent",
+      "status": "todo",
+      "type": "task",
+      "parent": "legacy parent text"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "focus",
+      "automationId": "BacklogHierarchyViewToggle",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "press-key",
+      "value": "Space",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 800
+    },
+    {
+      "type": "assert-ui-state-json",
+      "name": "backlog.viewMode",
+      "value": "\"hierarchy\""
+    },
+    {
+      "type": "wait-for",
+      "name": "Portfolio modernization",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "vv-backlog-leaf",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "vv-backlog-standalone",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Unresolved parent · ADO #98125",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Invalid parent · legacy parent text",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "backlog-parent-hierarchy-expanded"
+    },
+    {
+      "type": "invoke",
+      "automationId": "vv-backlog-portfolio",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 800
+    },
+    {
+      "type": "assert-ui-state-json",
+      "name": "backlog.hierarchyCollapsed.vv-backlog-portfolio",
+      "value": "true"
+    },
+    {
+      "type": "assert-not-present",
+      "automationId": "vv-backlog-leaf",
+      "timeoutMilliseconds": 1000
+    },
+    {
+      "type": "capture",
+      "name": "backlog-parent-hierarchy-collapsed"
+    },
+    {
+      "type": "invoke",
+      "automationId": "vv-backlog-portfolio",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 800
+    },
+    {
+      "type": "assert-ui-state-json",
+      "name": "backlog.hierarchyCollapsed.vv-backlog-portfolio",
+      "value": "false"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "vv-backlog-leaf",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "backlog-parent-hierarchy-restored",
+      "waitMilliseconds": 500
+    }
+  ]
+}
