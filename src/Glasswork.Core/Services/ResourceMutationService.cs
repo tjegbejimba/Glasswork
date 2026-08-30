@@ -678,20 +678,6 @@ public sealed partial class ResourceMutationService
                     "Task was not found.");
             }
             var currentRevision = currentTask.ResourceRevision ?? string.Empty;
-            if (!string.Equals(
-                    currentRevision,
-                    ifRevision,
-                    StringComparison.Ordinal))
-            {
-                return new ResourceMutationOutcome(
-                    mutationId,
-                    "conflict",
-                    false,
-                    ifRevision,
-                    currentRevision,
-                    Snapshot(currentTask, currentRevision),
-                    "if_revision does not match the current Resource Revision.");
-            }
             if (!RepresentsAdoWorkItem(currentTask, adoWorkItemId.Value))
             {
                 return new ResourceMutationOutcome(
@@ -749,7 +735,8 @@ public sealed partial class ResourceMutationService
             });
             var metadata = TransactTasks(
                 $"{mutationId}:ado-metadata",
-                operations);
+                operations,
+                allowCancelledAdoMetadata: true);
             if (metadata.Error is not null
                 || metadata.Outcome is not ("applied" or "no_op"))
             {
@@ -1100,7 +1087,8 @@ public sealed partial class ResourceMutationService
         string? transactionRevision = null,
         JsonElement? assertions = null,
         bool preserveExistingUnknownSizes = false,
-        bool allowParentInlineSubtasks = false)
+        bool allowParentInlineSubtasks = false,
+        bool allowCancelledAdoMetadata = false)
     {
         var notifications = new HashSet<string>(StringComparer.Ordinal);
         try
@@ -1115,7 +1103,8 @@ public sealed partial class ResourceMutationService
                     assertions,
                     notifications,
                     preserveExistingUnknownSizes,
-                    allowParentInlineSubtasks);
+                    allowParentInlineSubtasks,
+                    allowCancelledAdoMetadata);
                 return result;
             }
         }
@@ -1147,7 +1136,8 @@ public sealed partial class ResourceMutationService
         JsonElement? assertions,
         ISet<string> notifications,
         bool preserveExistingUnknownSizes,
-        bool allowParentInlineSubtasks)
+        bool allowParentInlineSubtasks,
+        bool allowCancelledAdoMetadata)
     {
         var state = ReadState();
         Prune(state);
@@ -1233,7 +1223,8 @@ public sealed partial class ResourceMutationService
                         transactionRevision,
                         index,
                         diagnostics,
-                        preserveExistingUnknownSizes);
+                        preserveExistingUnknownSizes,
+                        allowCancelledAdoMetadata);
                     break;
                 case "create_task":
                     touchedOperationIndexes.TryAdd(taskId!, index);
@@ -1480,7 +1471,8 @@ public sealed partial class ResourceMutationService
         string? transactionRevision,
         int operationIndex,
         ICollection<ResourceMutationDiagnostic> diagnostics,
-        bool preserveExistingUnknownSizes)
+        bool preserveExistingUnknownSizes,
+        bool allowCancelledAdoMetadata)
     {
         if (!staged.TryGetValue(taskId, out var current))
         {
@@ -1514,7 +1506,11 @@ public sealed partial class ResourceMutationService
 
         try
         {
-            var error = ApplyFields(current.Task, fields, preserveExistingUnknownSizes);
+            var error = ApplyFields(
+                current.Task,
+                fields,
+                preserveExistingUnknownSizes,
+                allowCancelledAdoMetadata);
             if (error is not null)
                 diagnostics.Add(new("invalid_fields", operationIndex, [taskId], error));
         }
@@ -1935,13 +1931,23 @@ public sealed partial class ResourceMutationService
     private string? ApplyFields(
         GlassworkTask task,
         JsonElement fields,
-        bool preserveExistingUnknownSizes = false)
+        bool preserveExistingUnknownSizes = false,
+        bool allowCancelledAdoMetadata = false)
     {
         var repairingMalformedBlocker = task.IsBlocked
             && task.NeedsBlockerDetails
             && fields.TryGetProperty("blocked_reason", out _)
             && fields.TryGetProperty("blocked_from_status", out _);
-        if (!repairingMalformedBlocker)
+        if (task.IsCancelled && allowCancelledAdoMetadata)
+        {
+            if (fields.EnumerateObject().Any(property =>
+                    property.Name is not ("type" or "source_kind" or "parent_task_id")))
+            {
+                return "Cancelled ADO metadata reconciliation may update only type, "
+                    + "source_kind, and parent_task_id.";
+            }
+        }
+        else if (!repairingMalformedBlocker)
             TaskService.EnsureCanMutate(task);
         string? requestedStatus = null;
         var hasBlockedReason = false;

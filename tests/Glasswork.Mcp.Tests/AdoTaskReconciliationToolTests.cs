@@ -115,8 +115,13 @@ public sealed class AdoTaskReconciliationToolTests
             adoId,
             authoritativeState,
             $"ado-active-{authoritativeState}",
-            task.ResourceRevision));
+            task.ResourceRevision,
+            ado_work_item_type: "Task"));
 
+        Assert.IsTrue(
+            !result.RootElement.TryGetProperty("error", out var error)
+            || error.ValueKind == JsonValueKind.Null,
+            result.RootElement.ToString());
         Assert.AreEqual("restored", result.RootElement.GetProperty("action").GetString());
         Assert.AreEqual(
             "doing",
@@ -128,6 +133,7 @@ public sealed class AdoTaskReconciliationToolTests
         Assert.AreEqual(GlassworkTask.Statuses.InProgress, persisted.Status);
         Assert.IsNull(persisted.CancelledAt);
         Assert.IsNull(persisted.CancellationReason);
+        Assert.AreEqual("Task", persisted.SourceKind);
     }
 
     [TestMethod]
@@ -280,13 +286,15 @@ public sealed class AdoTaskReconciliationToolTests
             adoId,
             "Removed",
             "ado-replay-1",
-            task.ResourceRevision);
+            task.ResourceRevision,
+            ado_work_item_type: "Task");
         var replay = _tools.ReconcileAdoTask(
             task.Id,
             adoId,
             "Removed",
             "ado-replay-1",
-            task.ResourceRevision);
+            task.ResourceRevision,
+            ado_work_item_type: "Task");
 
         Assert.AreEqual(first, replay);
         using var result = JsonDocument.Parse(replay);
