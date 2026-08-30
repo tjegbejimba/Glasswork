@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Globalization;
 using System.Linq;
 using Glasswork.Core.Research;
 using Glasswork.Core.Services;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Glasswork.Pages;
@@ -14,7 +14,7 @@ public sealed partial class LinkRelatedTaskDialog : ContentDialog
 {
     private readonly IResearchCatalog _catalog;
     private readonly string _topicId;
-    private readonly IReadOnlyList<ResearchTaskCandidateRow> _allTasks;
+    private readonly IReadOnlyList<TaskPickerRow> _allTasks;
 
     public LinkRelatedTaskDialog(
         IndexService index,
@@ -23,21 +23,18 @@ public sealed partial class LinkRelatedTaskDialog : ContentDialog
     {
         _catalog = catalog;
         _topicId = topicId;
-        _allTasks = index.All
+        var allTasks = index.All.ToArray();
+        var candidates = allTasks
             .Where(task => !task.IsCancelled)
             .OrderBy(task => task.Title, StringComparer.OrdinalIgnoreCase)
             .ThenBy(task => task.Id, StringComparer.Ordinal)
-            .Select(task => new ResearchTaskCandidateRow(
-                task.Id,
-                task.Title,
-                CultureInfo.InvariantCulture.TextInfo.ToTitleCase(
-                    task.Status.Replace('-', ' '))))
             .ToArray();
+        _allTasks = TaskPickerPresentationPolicy.Project(allTasks, candidates);
         InitializeComponent();
         ApplyFilter();
     }
 
-    public ObservableCollection<ResearchTaskCandidateRow> Tasks { get; } = [];
+    public ObservableCollection<TaskPickerRow> Tasks { get; } = [];
     public string? LinkedTaskId { get; private set; }
 
     private void TaskSearchBox_TextChanged(
@@ -54,12 +51,7 @@ public sealed partial class LinkRelatedTaskDialog : ContentDialog
     private void ApplyFilter()
     {
         var query = TaskSearchBox?.Text?.Trim();
-        var matches = string.IsNullOrWhiteSpace(query)
-            ? _allTasks
-            : _allTasks.Where(task =>
-                task.TaskId.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || task.Title.Contains(query, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
+        var matches = TaskPickerPresentationPolicy.Filter(_allTasks, query);
 
         Tasks.Clear();
         foreach (var task in matches)
@@ -71,11 +63,25 @@ public sealed partial class LinkRelatedTaskDialog : ContentDialog
         TaskList.SelectedItem = Tasks.FirstOrDefault();
     }
 
+    private void TaskList_ContainerContentChanging(
+        ListViewBase sender,
+        ContainerContentChangingEventArgs args)
+    {
+        if (args.ItemContainer is not ListViewItem container
+            || args.Item is not TaskPickerRow row)
+        {
+            return;
+        }
+
+        AutomationProperties.SetName(container, row.AccessibleName);
+        AutomationProperties.SetHelpText(container, row.FullAncestry ?? string.Empty);
+    }
+
     private void OnLink(
         ContentDialog sender,
         ContentDialogButtonClickEventArgs args)
     {
-        if (TaskList.SelectedItem is not ResearchTaskCandidateRow selected)
+        if (TaskList.SelectedItem is not TaskPickerRow selected)
         {
             args.Cancel = true;
             LinkError.Message = "Select a Task to link.";
@@ -94,22 +100,4 @@ public sealed partial class LinkRelatedTaskDialog : ContentDialog
 
         LinkedTaskId = selected.TaskId;
     }
-}
-
-public sealed class ResearchTaskCandidateRow
-{
-    public ResearchTaskCandidateRow(
-        string taskId,
-        string title,
-        string statusLabel)
-    {
-        TaskId = taskId;
-        Title = title;
-        StatusLabel = statusLabel;
-    }
-
-    public string TaskId { get; set; }
-    public string Title { get; set; }
-    public string StatusLabel { get; set; }
-    public string AccessibleName => $"{Title}, {StatusLabel}, Task {TaskId}";
 }
