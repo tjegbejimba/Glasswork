@@ -31,7 +31,7 @@ public sealed record TaskDetailHierarchyProjection(
             .Reverse()
             .Select(ancestor => new TaskDetailAncestor(
                 ancestor.Id,
-                DisplayTitle(ancestor),
+                TaskPresentationLabels.DisplayTitle(ancestor),
                 ancestor.AdoLink))
             .ToArray();
 
@@ -89,17 +89,6 @@ public sealed record TaskDetailHierarchyProjection(
         else
             updated.Insert(0, replacement);
         return updated;
-    }
-
-    private static string DisplayTitle(GlassworkTask task)
-    {
-        if (!string.IsNullOrWhiteSpace(task.Title))
-            return task.Title.Trim();
-        if (!string.IsNullOrWhiteSpace(task.AdoTitle))
-            return task.AdoTitle.Trim();
-        return task.AdoLink is int adoId
-            ? $"Unresolved parent · ADO #{adoId}"
-            : "Unresolved parent";
     }
 
     private static string? PrimaryAdoText(TaskLink? link, int? adoId)

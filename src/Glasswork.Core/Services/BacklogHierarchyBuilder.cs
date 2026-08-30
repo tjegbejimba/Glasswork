@@ -155,7 +155,7 @@ public static class BacklogHierarchyBuilder
                 isExpanded: isParent && !collapsed,
                 childCount: hierarchy.GetChildren(task.Id).Count,
                 visibleChildCount: directChildren.Count,
-                sourceKindBadge: SourceBadge(task),
+                sourceKindBadge: TaskPresentationLabels.SourceKindBadge(task),
                 status: task.Status,
                 degradedReason: degradedReasons.GetValueOrDefault(taskId)));
 
@@ -186,14 +186,4 @@ public static class BacklogHierarchyBuilder
             .OrderBy(id => tasks[id].Title, StringComparer.Ordinal)
             .ThenBy(id => id, StringComparer.Ordinal);
 
-    private static string SourceBadge(GlassworkTask task)
-    {
-        if (!string.IsNullOrWhiteSpace(task.SourceKind))
-            return task.SourceKind.Trim();
-        if (GlassworkTask.Types.IsParent(task.Type))
-            return "Parent Task";
-        return string.Equals(task.Type, GlassworkTask.Types.Bug, StringComparison.Ordinal)
-            ? "Bug"
-            : "Task";
-    }
 }
