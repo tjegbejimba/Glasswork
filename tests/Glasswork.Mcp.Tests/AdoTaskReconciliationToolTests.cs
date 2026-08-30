@@ -115,8 +115,13 @@ public sealed class AdoTaskReconciliationToolTests
             adoId,
             authoritativeState,
             $"ado-active-{authoritativeState}",
-            task.ResourceRevision));
+            task.ResourceRevision,
+            ado_work_item_type: "Task"));
 
+        Assert.IsTrue(
+            !result.RootElement.TryGetProperty("error", out var error)
+            || error.ValueKind == JsonValueKind.Null,
+            result.RootElement.ToString());
         Assert.AreEqual("restored", result.RootElement.GetProperty("action").GetString());
         Assert.AreEqual(
             "doing",
@@ -128,6 +133,7 @@ public sealed class AdoTaskReconciliationToolTests
         Assert.AreEqual(GlassworkTask.Statuses.InProgress, persisted.Status);
         Assert.IsNull(persisted.CancelledAt);
         Assert.IsNull(persisted.CancellationReason);
+        Assert.AreEqual("Task", persisted.SourceKind);
     }
 
     [TestMethod]
@@ -280,13 +286,15 @@ public sealed class AdoTaskReconciliationToolTests
             adoId,
             "Removed",
             "ado-replay-1",
-            task.ResourceRevision);
+            task.ResourceRevision,
+            ado_work_item_type: "Task");
         var replay = _tools.ReconcileAdoTask(
             task.Id,
             adoId,
             "Removed",
             "ado-replay-1",
-            task.ResourceRevision);
+            task.ResourceRevision,
+            ado_work_item_type: "Task");
 
         Assert.AreEqual(first, replay);
         using var result = JsonDocument.Parse(replay);
@@ -361,5 +369,206 @@ public sealed class AdoTaskReconciliationToolTests
             staleRevision));
         Assert.AreEqual("conflict", stale.RootElement.GetProperty("error").GetString());
         Assert.AreEqual(GlassworkTask.Statuses.Todo, _vault.Load(task.Id)!.Status);
+    }
+
+    [TestMethod]
+    public void ReconcileAdoTask_AuthoritativeStandardKindAndParentRefreshImportMetadata()
+    {
+        const int adoId = 90123456;
+        var task = new GlassworkTask
+        {
+            Id = "imported-feature",
+            Title = "Imported feature",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Task,
+            AdoLink = adoId,
+        };
+        _vault.Save(task);
+        task = _vault.Load(task.Id)!;
+
+        using var result = JsonDocument.Parse(_tools.ReconcileAdoTask(
+            task.Id,
+            adoId,
+            "New",
+            "ado-refresh-feature-1",
+            task.ResourceRevision,
+            ado_work_item_type: "Feature",
+            ado_parent_work_item_id: 76543210,
+            update_ado_parent: true));
+
+        Assert.AreEqual("unchanged", result.RootElement.GetProperty("action").GetString());
+        var persisted = _vault.Load(task.Id)!;
+        Assert.AreEqual(GlassworkTask.Types.Parent, persisted.Type);
+        Assert.AreEqual("Feature", persisted.SourceKind);
+        Assert.AreEqual("76543210", persisted.Parent);
+    }
+
+    [TestMethod]
+    [DataRow("Epic", GlassworkTask.Types.Parent)]
+    [DataRow("Feature", GlassworkTask.Types.Parent)]
+    [DataRow("Product Backlog Item", GlassworkTask.Types.Parent)]
+    [DataRow("User Story", GlassworkTask.Types.Parent)]
+    [DataRow("Task", GlassworkTask.Types.Task)]
+    [DataRow("Bug", GlassworkTask.Types.Bug)]
+    public void ReconcileAdoTask_AuthoritativeStandardKindMapsBehavior(
+        string sourceKind,
+        string expectedType)
+    {
+        const int adoId = 93456789;
+        var task = new GlassworkTask
+        {
+            Id = "standard-kind",
+            Title = "Standard kind",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = expectedType == GlassworkTask.Types.Task
+                ? GlassworkTask.Types.Parent
+                : GlassworkTask.Types.Task,
+            AdoLink = adoId,
+        };
+        _vault.Save(task);
+        task = _vault.Load(task.Id)!;
+
+        _tools.ReconcileAdoTask(
+            task.Id,
+            adoId,
+            "New",
+            $"ado-standard-{expectedType}-{sourceKind}",
+            task.ResourceRevision,
+            ado_work_item_type: sourceKind);
+
+        var persisted = _vault.Load(task.Id)!;
+        Assert.AreEqual(expectedType, persisted.Type);
+        Assert.AreEqual(sourceKind, persisted.SourceKind);
+        Assert.IsNull(persisted.Parent);
+    }
+
+    [TestMethod]
+    public void ReconcileAdoTask_CustomKindPreservesExplicitBehaviorAndCanonicalizesParentLater()
+    {
+        const int childAdoId = 91234567;
+        const int parentAdoId = 92345678;
+        var child = new GlassworkTask
+        {
+            Id = "custom-import",
+            Title = "Custom import",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Bug,
+            AdoLink = childAdoId,
+            Parent = parentAdoId.ToString(),
+        };
+        _vault.Save(child);
+        child = _vault.Load(child.Id)!;
+
+        _tools.ReconcileAdoTask(
+            child.Id,
+            childAdoId,
+            "Active",
+            "ado-refresh-custom-1",
+            child.ResourceRevision,
+            ado_work_item_type: "Customer Escalation",
+            ado_parent_work_item_id: parentAdoId,
+            update_ado_parent: true);
+
+        var unresolved = _vault.Load(child.Id)!;
+        Assert.AreEqual(GlassworkTask.Types.Bug, unresolved.Type);
+        Assert.AreEqual("Customer Escalation", unresolved.SourceKind);
+        Assert.AreEqual(parentAdoId.ToString(), unresolved.Parent);
+
+        var parent = new GlassworkTask
+        {
+            Id = "local-portfolio-parent",
+            Title = "Portfolio parent",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Parent,
+            SourceKind = "Portfolio Item",
+            AdoLink = parentAdoId,
+        };
+        _vault.Save(parent);
+        unresolved = _vault.Load(child.Id)!;
+
+        _tools.ReconcileAdoTask(
+            child.Id,
+            childAdoId,
+            "Active",
+            "ado-refresh-custom-2",
+            unresolved.ResourceRevision,
+            ado_work_item_type: "Customer Escalation",
+            ado_parent_work_item_id: parentAdoId,
+            update_ado_parent: true);
+
+        var resolved = _vault.Load(child.Id)!;
+        Assert.AreEqual("local-portfolio-parent", resolved.Parent);
+        Assert.AreEqual(GlassworkTask.Types.Bug, resolved.Type);
+    }
+
+    [TestMethod]
+    public void ReconcileAdoTask_TypeOnlyRefreshPreservesParentAndDoesNotReportRestore()
+    {
+        const int adoId = 94567890;
+        var task = new GlassworkTask
+        {
+            Id = "metadata-only-refresh",
+            Title = "Metadata only refresh",
+            Status = GlassworkTask.Statuses.InProgress,
+            Type = GlassworkTask.Types.Task,
+            Parent = "existing-parent",
+            AdoLink = adoId,
+        };
+        _vault.Save(task);
+        task = _vault.Load(task.Id)!;
+
+        using var result = JsonDocument.Parse(_tools.ReconcileAdoTask(
+            task.Id,
+            adoId,
+            "Active",
+            "ado-metadata-only-1",
+            task.ResourceRevision,
+            ado_work_item_type: "Customer Escalation"));
+
+        Assert.AreEqual("unchanged", result.RootElement.GetProperty("action").GetString());
+        var persisted = _vault.Load(task.Id)!;
+        Assert.AreEqual("existing-parent", persisted.Parent);
+        Assert.AreEqual("Customer Escalation", persisted.SourceKind);
+        Assert.AreEqual(GlassworkTask.Types.Task, persisted.Type);
+    }
+
+    [TestMethod]
+    public void ReconcileAdoTask_ParentReclassificationCanonicalizesExistingExternalChild()
+    {
+        const int parentAdoId = 95678901;
+        var child = new GlassworkTask
+        {
+            Id = "a-external-child",
+            Title = "External child",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Task,
+            Parent = parentAdoId.ToString(),
+        };
+        var parent = new GlassworkTask
+        {
+            Id = "z-reconciled-parent",
+            Title = "Reconciled parent",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Task,
+            AdoLink = parentAdoId,
+        };
+        _vault.Save(child);
+        _vault.Save(parent);
+        parent = _vault.Load(parent.Id)!;
+
+        using var result = JsonDocument.Parse(_tools.ReconcileAdoTask(
+            parent.Id,
+            parentAdoId,
+            "New",
+            "ado-parent-reclassification",
+            parent.ResourceRevision,
+            ado_work_item_type: "Feature"));
+
+        Assert.AreEqual("unchanged", result.RootElement.GetProperty("action").GetString());
+        var refreshedVault = new VaultService(_vault.VaultPath);
+        Assert.AreEqual(
+            parent.Id,
+            refreshedVault.Load(child.Id)!.Parent,
+            result.RootElement.ToString());
     }
 }

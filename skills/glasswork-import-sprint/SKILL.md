@@ -26,12 +26,14 @@ If you ever switch project, org, or iteration scheme, edit this block. The skill
 
 ### 0. Discover the authoritative reconciliation contract
 
-Before reading or mutating Task lifecycle state, call `get_capabilities` and inspect
-the available Glasswork MCP tools. Authoritative ADO cancellation/restoration is
-available only when both of these are present:
+Before reading or mutating Tasks, call `get_capabilities` and inspect the
+available Glasswork MCP tools. The import requires `transact_tasks`; stop and
+report that the installed Glasswork MCP is too old when it is absent.
+Authoritative ADO cancellation/restoration is available only when both of these
+are present:
 
 - implemented capability `authoritative_ado_reconciliation`
-- tool `reconcile_ado_task(task_id, ado_work_item_id, authoritative_state, mutation_id, if_revision)`
+- tool `reconcile_ado_task(task_id, ado_work_item_id, authoritative_state, mutation_id, if_revision, ado_work_item_type?, ado_parent_work_item_id?, update_ado_parent?)`
 
 If either is absent, continue the ordinary import, promotion, type, due-date, and
 stale-reporting work below, but do **not** cancel or restore any Task. Report every
@@ -68,10 +70,10 @@ Run a WIQL-style query (via the MCP tools available) to fetch every leaf-level w
 System.AssignedTo = @Me
 AND System.IterationPath = '<SPRINT_PATH>'
 AND System.State <> 'Removed'
-AND System.WorkItemType IN ('Task', 'Bug', 'Product Backlog Item', 'User Story')
 ```
 
 Terminal items remain in the result so reconciliation can complete their Glasswork tasks. Only `Removed` is filtered. Exact `Removed` handling happens only after an authoritative per-item fetch in step 5; absence from this query is never evidence of removal.
+Do not filter by work-item type: custom process types must be imported too.
 
 For each work item, retrieve at minimum:
 - `System.Id`
@@ -137,14 +139,24 @@ If you encounter an ADO state not in this table, **skip the item** and surface i
 
 **Resolve the Glasswork Task type** (the "ADO → Glasswork type map"), from `System.WorkItemType`:
 
-| ADO work-item type     | Glasswork `type` | Stamped? |
-|------------------------|------------------|----------|
-| `Task`                 | `task`           | omitted (default) |
-| `Bug`                  | `bug`            | `type: bug` |
-| `Product Backlog Item` | `parent`         | `type: parent` |
-| `User Story`           | `parent`         | `type: parent` |
+| ADO work-item type     | Glasswork `type` |
+|------------------------|------------------|
+| `Task`                 | `task` |
+| `Bug`                  | `bug` |
+| `Product Backlog Item` | `parent` |
+| `User Story`           | `parent` |
+| `Epic`                 | `parent` |
+| `Feature`              | `parent` |
+| any custom type        | `parent` when another imported item names it as `System.Parent`; otherwise `task` for a new import; preserve an existing valid `task` / `parent` / `bug` |
 
 A `parent` is a **Parent Task** and will not self-promote to My Day on its sprint-end `due`. `task` and `bug` are actionable leaves. Preserve the exact ADO type in `source_kind`.
+Only the six named standard kinds are authoritative behavioral mappings. For a
+new custom kind, the current batch's Parent edges provide the only structural
+decision: a referenced item is a `parent`; an unreferenced item defaults to
+`task`. A custom `source_kind` never changes an existing Task's valid behavioral
+`type`. If a custom item later needs to own children but was previously imported
+as a leaf, report the ownership validation instead of silently changing its
+behavior.
 
 **Decide the action:**
 
@@ -166,38 +178,33 @@ Compute the slug from `System.Title`:
 
 **Slug-collision check:** if the target file path already exists AND it is **not** in the `imported` dictionary (meaning a different file with the same slug, unrelated to this ADO id), abort this single item with the message `"Slug '<slug>' collides with existing <file-path> (different ADO ID). Skipping item ADO <id>. Rename or delete the existing file and re-run."` Continue with other items — do not abort the whole skill run.
 
-Write the file with this exact template:
+Stage one `create_task` operation for this item. Do not write the vault file
+directly:
 
-```markdown
----
-id: <slug>
-title: <System.Title verbatim>
-status: <mapped status>
-<if System.WorkItemType != 'Task'>type: <mapped type>
-</if>source_kind: <System.WorkItemType verbatim>
-priority: medium
-created: <today YYYY-MM-DD>
-due: <SPRINT_END>
-<if status == 'done'>completed_at: <today YYYY-MM-DD>
-</if><if System.Parent>parent: <System.Parent>
-</if>---
-
-ADO <id> — https://msazure.visualstudio.com/One/_workitems/edit/<id>
-Sprint: <SPRINT_LEAF>.<if System.Parent> Parent ADO: <System.Parent>.</if>
-
-## Subtasks
-
-## Notes
-
-### <today YYYY-MM-DD>
-Imported from ADO sprint pull (sprint <SPRINT_LEAF>).
-
-## Related
+```json
+{
+  "op": "create_task",
+  "task_id": "<slug>",
+  "if_absent": true,
+  "fields": {
+    "title": "<System.Title verbatim>",
+    "status": "<mapped status>",
+    "type": "<mapped behavioral type>",
+    "source_kind": "<System.WorkItemType verbatim>",
+    "priority": "medium",
+    "due_date": "<SPRINT_END>",
+    "parent_task_id": "<System.Parent as decimal text, or null>",
+    "ado_link": 12345678,
+    "description": "ADO <id> — https://msazure.visualstudio.com/One/_workitems/edit/<id>\nSprint: <SPRINT_LEAF>.",
+    "notes": "### <today YYYY-MM-DD>\nImported from ADO sprint pull (sprint <SPRINT_LEAF>)."
+  }
+}
 ```
 
 Notes:
 - `priority: medium` always — do **not** map from ADO Priority (it's too noisy at Microsoft to trust).
-- `type:` maps behavior: **Product Backlog Item** / **User Story** → `type: parent`, **Bug** → `type: bug`, **Task** → omit the line. `source_kind:` always preserves `System.WorkItemType` exactly for display and never controls behavior.
+- `type` maps behavior using the authoritative table above. `source_kind`
+  preserves `System.WorkItemType` exactly for display and never controls behavior.
 - `due:` is the sprint end date — always set, even for `done` imports. Parent Tasks still get it for reference; `type: parent` keeps them from polluting My Day.
 - `my_day:` is NOT set. The user owns that field.
 - No copy of the ADO description. Click the link if you need context.
@@ -220,7 +227,8 @@ The task already exists. Read its current frontmatter `status`. Apply the forwar
 | `cancelled`                     | anything else     | leave                                 |
 | anything non-canonical (e.g. `in_review`) | anything | leave (unknown ordering — don't guess) |
 
-**Promotions to in-progress** are an in-place frontmatter edit only (single field change — `status: in-progress`). Do not rewrite the file. Do not touch other fields.
+**Promotions to in-progress** add `status: in-progress` to that Task's staged
+`set_task_fields` operation. Keep unrelated fields out of the update.
 
 **Due-date reconciliation (every already-imported actionable item).** If a
 `todo`, `in-progress`, or `blocked` Task's `due:` does not equal `SPRINT_END`,
@@ -229,13 +237,36 @@ restore. This keeps actionable Tasks aligned with their current sprint and
 prevents stale sprint dates from making My Day appear overdue. Never add, remove,
 or change `my_day:`. Do not edit a Task while it remains cancelled or done.
 
-**Type backfill (every already-imported non-cancelled item, regardless of status change).** If the existing file has no `type:` frontmatter field and the item's `System.WorkItemType` maps to `parent` or `bug`, add that single field in place. Add `source_kind:` when absent so the exact ADO display kind is preserved. Existing `type: pbi` remains readable and is canonicalized to `parent` by managed writes. Items that map to `task` need no `type:` edit. A cancelled Task must be restored before this ordinary mutation.
+**Import metadata reconciliation (every already-imported non-cancelled item,
+regardless of status change).** Stage one `set_task_fields` operation with a
+fresh `if_revision`. Always set `source_kind` to the exact
+`System.WorkItemType`, `ado_link` to `System.Id`, and `parent_task_id` to
+`System.Parent` as decimal text (or null when ADO has no Parent). Set `type` only
+when the authoritative table maps the kind. For a custom kind, omit `type` so an
+existing valid behavioral type is preserved. Include any forward-only status or
+due-date changes already selected above in the same field set. A cancelled Task
+must be restored before this ordinary mutation.
+
+After every current-sprint item has been classified, submit all staged
+`create_task` and `set_task_fields` operations in **one** `transact_tasks` call.
+This is the import's coherence boundary: the mutation service resolves every
+numeric ADO Parent against the complete staged graph, so a child stores its
+Parent's canonical Glasswork Task ID even when the child operation appears
+first. Parent Tasks may nest to any valid acyclic depth. If a Parent is absent,
+the numeric external reference remains explicit and the UI renders
+`Unresolved parent · ADO #<id>`. A later batch that includes or has already
+imported that Parent canonicalizes the child reference.
+
+Use one new batch `mutation_id` and reuse it only for an exact retry. On a
+Resource Revision conflict, re-read every existing Task represented in the
+batch, rebuild the operations, and submit with a new mutation ID. An exact
+retry replays; a later unchanged run stages updates and returns `no_op`.
 
 > This per-sprint backfill only reaches items the current pull re-encounters. To stamp the **entire existing corpus** in one pass — including PBIs that aren't in any current sprint — use the `glasswork-backfill-types` skill (an ADO-authoritative, dry-run-then-apply maintenance pass over the whole vault). Both honor the same strict ADR 0016 mapping.
 
 **Promotions to done** require a file move (`wiki/todo/{slug}.md` → `wiki/todo/done/{slug}.md`) plus frontmatter edits (`status: done`, add `completed_at: <today>`). In an interactive run, these moves are CONFIRM-tier per the D8 guardrails below: collect all candidates and ask the user to confirm in one batch. Non-move promotions execute without confirmation.
 
-**Unattended / workflow mode.** An unattended run may perform promote-to-done moves only when its workflow prompt contains the exact durable authorization `AUTHORIZED_AUTONOMOUS_RECONCILIATION`. That token records the user's standing consent for status-to-done transitions, corresponding `todo/` → `done/` moves, and the bounded reconciliation described in step 4c. Without the token, list candidates under "Pending user action — promote to done" and do not move them. Non-move promotions, due-date reconciliation, and type backfill still execute normally.
+**Unattended / workflow mode.** An unattended run may perform promote-to-done moves only when its workflow prompt contains the exact durable authorization `AUTHORIZED_AUTONOMOUS_RECONCILIATION`. That token records the user's standing consent for status-to-done transitions, corresponding `todo/` → `done/` moves, and the bounded reconciliation described in step 4c. Without the token, list candidates under "Pending user action — promote to done" and do not move them. Non-move promotions, due-date reconciliation, and import metadata reconciliation still execute normally.
 
 #### 4c. Authoritative ADO cancellation and restoration
 
@@ -272,7 +303,10 @@ reconcile_ado_task(
   ado_work_item_id=<System.Id>,
   authoritative_state=<exact System.State>,
   mutation_id=<new client id; reuse only for an exact retry>,
-  if_revision=<fresh Resource Revision>)
+  if_revision=<fresh Resource Revision>,
+  ado_work_item_type=<exact System.WorkItemType>,
+  ado_parent_work_item_id=<System.Parent integer or null>,
+  update_ado_parent=true)
 ```
 
 Generate one `mutation_id` per candidate and reuse it only when retrying that
@@ -291,7 +325,9 @@ A **stale task** is a previously-imported task whose ADO work item is no longer 
 
 Build the set `imported_ids_in_glasswork` (the keys of the `imported` dictionary from step 3, filtered to ids that are *not* in `done/` — completed tasks are not stale, they're done). Build the set `current_sprint_ids` (the ids returned from step 2). The **stale set** is `imported_ids_in_glasswork - current_sprint_ids`.
 
-For each stale id, fetch `System.Title`, `System.IterationPath`, `System.State`, and `System.WorkItemType` from ADO by exact ID. Treat this response as authoritative only for that ID.
+For each stale id, fetch `System.Title`, `System.IterationPath`, `System.State`,
+`System.WorkItemType`, and `System.Parent` from ADO by exact ID. Treat this
+response as authoritative only for that ID.
 
 - If the exact state is `Removed`, apply the step 4c cancellation rules. Do not
   infer `Removed` from a missing query result, reassignment, or iteration change.
@@ -431,5 +467,8 @@ If a request would require breaking a HARD NO rule, refuse and name which guardr
 - **Does not** import work items in `Removed` state. Exact `Removed` is relevant only when reconciling an existing matching import.
 - **Does not** Hard-delete stale Tasks. Exact Removed may cancel one through the guarded lifecycle; other stale Tasks may complete or refresh due dates, and all are reported.
 - **Does not** treat all cancelled Tasks as restorable. Only exact authoritative `Active`, `In Progress`, or `In Review` restores directly to `in-progress`.
-- **Does not** create the parent ADO work item as its own Glasswork task. The `parent:` frontmatter is just an integer — no link is followed.
+- **Does not** fetch and create an absent Parent solely because a child names it.
+  Parents already selected for import participate in the same coherent batch;
+  otherwise the explicit ADO Parent identity remains unresolved until a later
+  import brings that Parent into the vault.
 - **Does not** set `my_day:` on imported tasks. The user owns that field.

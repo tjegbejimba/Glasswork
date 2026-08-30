@@ -193,6 +193,12 @@ Reusing a mutation ID for a changed request is rejected.
 and complete relationship replacement. Recovery runs before managed access and
 commits changes all-or-none.
 
+ADO imports stage every create and metadata refresh in one transaction. Numeric
+external Parent IDs resolve against the complete staged graph, independent of
+operation order, and persist as canonical Glasswork Task IDs when the Parent is
+local. Absent Parents remain explicit numeric references for a later import to
+resolve.
+
 ### `reconcile_ado_task`
 
 This is the only MCP interface for Authoritative ADO reconciliation. It requires
@@ -204,7 +210,10 @@ the named `authoritative_ado_reconciliation` capability and accepts:
   "ado_work_item_id": 12345678,
   "authoritative_state": "Removed",
   "mutation_id": "ado-reconcile-12345678-1",
-  "if_revision": "rr1-..."
+  "if_revision": "rr1-...",
+  "ado_work_item_type": "Feature",
+  "ado_parent_work_item_id": 87654321,
+  "update_ado_parent": true
 }
 ```
 
@@ -216,6 +225,16 @@ to `doing` while clearing Cancellation metadata. Every other state is a no-op;
 `done` is never reopened or reclassified. The response reports
 `source: "azure-devops"`, the authoritative state, `action` (`cancelled`,
 `restored`, or `unchanged`), final status, and the new Resource Revision.
+
+The optional authoritative type and Parent fields refresh import metadata in
+the same guarded mutation. The exact work-item type is preserved as
+`source_kind`. Epic, Feature, Product Backlog Item, and User Story map to
+`parent`; Task maps to `task`; Bug maps to `bug`. Custom source kinds preserve
+the Task's existing valid behavioral type. A numeric Parent resolves to a
+canonical local Task ID when available and otherwise remains explicit for later
+reconciliation. Parent updates are explicit: `update_ado_parent: false` (the
+default) preserves the current Parent, while `true` applies the supplied ID or
+clears the Parent when the ID is null.
 
 The operation uses the existing journaled conditional mutation and idempotency
 contract. It does not call `delete_task`, and clients must not replace it with

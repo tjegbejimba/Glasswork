@@ -289,6 +289,206 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_AdoHierarchyBatchResolvesOutOfOrderAndRoundTripsExactKinds()
+    {
+        using var operations = JsonDocument.Parse("""
+        [
+          {
+            "op": "create_task",
+            "task_id": "implementation-task",
+            "if_absent": true,
+            "fields": {
+              "title": "Implementation task",
+              "type": "task",
+              "source_kind": "Task",
+              "ado_link": 400,
+              "parent_task_id": "300"
+            }
+          },
+          {
+            "op": "create_task",
+            "task_id": "portfolio-epic",
+            "if_absent": true,
+            "fields": {
+              "title": "Portfolio epic",
+              "type": "parent",
+              "source_kind": "Epic",
+              "ado_link": 100
+            }
+          },
+          {
+            "op": "create_task",
+            "task_id": "delivery-story",
+            "if_absent": true,
+            "fields": {
+              "title": "Delivery story",
+              "type": "parent",
+              "source_kind": "User Story",
+              "ado_link": 300,
+              "parent_task_id": "200"
+            }
+          },
+          {
+            "op": "create_task",
+            "task_id": "delivery-feature",
+            "if_absent": true,
+            "fields": {
+              "title": "Delivery feature",
+              "type": "parent",
+              "source_kind": "Feature",
+              "ado_link": 200,
+              "parent_task_id": "100"
+            }
+          }
+        ]
+        """);
+
+        using var result = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-hierarchy-import-1",
+            operations.RootElement));
+
+        Assert.AreEqual("applied", result.RootElement.GetProperty("outcome").GetString());
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var epic = vault.Load("portfolio-epic")!;
+        var feature = vault.Load("delivery-feature")!;
+        var story = vault.Load("delivery-story")!;
+        var task = vault.Load("implementation-task")!;
+        Assert.AreEqual("Epic", epic.SourceKind);
+        Assert.AreEqual("Feature", feature.SourceKind);
+        Assert.AreEqual("User Story", story.SourceKind);
+        Assert.AreEqual("Task", task.SourceKind);
+        Assert.AreEqual(epic.Id, feature.Parent);
+        Assert.AreEqual(feature.Id, story.Parent);
+        Assert.AreEqual(story.Id, task.Parent);
+
+        var parser = new FrontmatterParser();
+        var roundTripped = parser.Parse(parser.Serialize(feature));
+        Assert.AreEqual(GlassworkTask.Types.Parent, roundTripped.Type);
+        Assert.AreEqual("Feature", roundTripped.SourceKind);
+        Assert.AreEqual(epic.Id, roundTripped.Parent);
+
+        using var replay = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-hierarchy-import-1",
+            operations.RootElement));
+        Assert.IsTrue(replay.RootElement.GetProperty("replayed").GetBoolean());
+        Assert.AreEqual(story.Id, vault.Load("implementation-task")!.Parent);
+    }
+
+    [TestMethod]
+    public void TransactTasks_LaterParentImportCanonicalizesExistingExternalChild()
+    {
+        using var childOperation = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "a-waiting-child",
+          "if_absent": true,
+          "fields": {
+            "title": "Waiting child",
+            "type": "task",
+            "source_kind": "Task",
+            "ado_link": 600,
+            "parent_task_id": "500"
+          }
+        }]
+        """);
+        using var childResult = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-child-before-parent",
+            childOperation.RootElement));
+        Assert.AreEqual("applied", childResult.RootElement.GetProperty("outcome").GetString());
+
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        Assert.AreEqual("500", vault.Load("a-waiting-child")!.Parent);
+
+        using var parentOperation = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "z-late-parent",
+          "if_absent": true,
+          "fields": {
+            "title": "Late parent",
+            "type": "parent",
+            "source_kind": "Product Backlog Item",
+            "ado_link": 500
+          }
+        }]
+        """);
+        using var parentResult = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-parent-arrives-later",
+            parentOperation.RootElement));
+
+        Assert.AreEqual("applied", parentResult.RootElement.GetProperty("outcome").GetString());
+        Assert.AreEqual(
+            "z-late-parent",
+            parentResult.RootElement.GetProperty("task").GetProperty("id").GetString());
+        var refreshedVault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        Assert.AreEqual(
+            "z-late-parent",
+            refreshedVault.Load("a-waiting-child")!.Parent,
+            parentResult.RootElement.ToString());
+    }
+
+    [TestMethod]
+    public void TransactTasks_LaterParentMetadataRefreshCanonicalizesExistingExternalChild()
+    {
+        using var seedOperations = JsonDocument.Parse("""
+        [
+          {
+            "op": "create_task",
+            "task_id": "a-existing-child",
+            "if_absent": true,
+            "fields": {
+              "title": "Existing child",
+              "type": "task",
+              "source_kind": "Task",
+              "ado_link": 800,
+              "parent_task_id": "700"
+            }
+          },
+          {
+            "op": "create_task",
+            "task_id": "z-existing-parent",
+            "if_absent": true,
+            "fields": {
+              "title": "Existing parent candidate",
+              "type": "task",
+              "source_kind": "Custom Portfolio Item",
+              "ado_link": 700
+            }
+          }
+        ]
+        """);
+        using var seedResult = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-parent-refresh-seed",
+            seedOperations.RootElement));
+        Assert.AreEqual("applied", seedResult.RootElement.GetProperty("outcome").GetString());
+
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var parent = vault.Load("z-existing-parent")!;
+        Assert.AreEqual("700", vault.Load("a-existing-child")!.Parent);
+
+        using var refreshOperation = JsonDocument.Parse($$"""
+        [{
+          "op": "set_task_fields",
+          "task_id": "z-existing-parent",
+          "if_revision": "{{parent.ResourceRevision}}",
+          "fields": {
+            "type": "parent"
+          }
+        }]
+        """);
+        using var refreshResult = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-parent-metadata-refresh",
+            refreshOperation.RootElement));
+
+        Assert.AreEqual("applied", refreshResult.RootElement.GetProperty("outcome").GetString());
+        Assert.AreEqual(
+            "z-existing-parent",
+            refreshResult.RootElement.GetProperty("task").GetProperty("id").GetString());
+        var refreshedVault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        Assert.AreEqual("z-existing-parent", refreshedVault.Load("a-existing-child")!.Parent);
+    }
+
+    [TestMethod]
     public void TransactTasks_CreateCarriesRawTaskAndSubtaskSize()
     {
         using var operations = JsonDocument.Parse("""
@@ -946,6 +1146,73 @@ public sealed class TransactTasksTests
         Assert.AreEqual("Recovered title", read.GetProperty("title").GetString());
         Assert.IsTrue(replay.GetProperty("replayed").GetBoolean());
         Assert.AreEqual("applied", replay.GetProperty("outcome").GetString());
+    }
+
+    [TestMethod]
+    public void TransactTasks_CommittedGraphRecoveryPreservesRequestedPrimaryTask()
+    {
+        var todoDir = Path.Combine(_vaultDir, "wiki", "todo");
+        var parser = new FrontmatterParser();
+        var child = new GlassworkTask
+        {
+            Id = "a-recovered-child",
+            Title = "Recovered child",
+            Parent = "900",
+        };
+        var originalChild = Encoding.UTF8.GetBytes(parser.Serialize(child));
+        File.WriteAllBytes(Path.Combine(todoDir, $"{child.Id}.md"), originalChild);
+        child.Parent = "z-recovered-parent";
+        var updatedChild = Encoding.UTF8.GetBytes(parser.Serialize(child));
+        var parent = new GlassworkTask
+        {
+            Id = "z-recovered-parent",
+            Title = "Recovered parent",
+            Type = GlassworkTask.Types.Parent,
+            SourceKind = "Feature",
+            AdoLink = 900,
+        };
+        var updatedParent = Encoding.UTF8.GetBytes(parser.Serialize(parent));
+        const string mutationId = "graph-primary-recovery";
+        var journalPath = Path.Combine(todoDir, ".glasswork", "mutation-journal.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(journalPath)!);
+        File.WriteAllText(journalPath, JsonSerializer.Serialize(new
+        {
+            MutationId = mutationId,
+            RequestHash = "recovery-hash",
+            ExpectedRevision = (string?)null,
+            Committed = true,
+            Entries = new object[]
+            {
+                new
+                {
+                    TaskId = child.Id,
+                    Original = Convert.ToBase64String(originalChild),
+                    Updated = Convert.ToBase64String(updatedChild),
+                    Created = false,
+                },
+                new
+                {
+                    TaskId = parent.Id,
+                    Original = (string?)null,
+                    Updated = Convert.ToBase64String(updatedParent),
+                    Created = true,
+                },
+            },
+            PrimaryTaskId = parent.Id,
+        }));
+
+        _ = new GlassworkTools(new VaultContext(_vaultDir));
+
+        using var state = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(todoDir, ".glasswork", "resource-mutations.json")));
+        var recoveredTaskId = state.RootElement
+            .GetProperty("Outcomes")
+            .GetProperty(mutationId)
+            .GetProperty("Outcome")
+            .GetProperty("Task")
+            .GetProperty("Id")
+            .GetString();
+        Assert.AreEqual(parent.Id, recoveredTaskId);
     }
 
     [TestMethod]

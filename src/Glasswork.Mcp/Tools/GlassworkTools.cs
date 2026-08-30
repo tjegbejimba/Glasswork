@@ -143,7 +143,8 @@ public sealed class GlassworkTools
                 && operations[0].TryGetProperty("fields", out var legacyFields))
             {
                 var taskId = legacyTaskId.GetString();
-                if (legacyOp.GetString() == "create_task")
+                if (legacyOp.GetString() == "create_task"
+                    && !CreatesParentAdoIdentity(legacyFields))
                 {
                     var ifAbsent = operations[0].TryGetProperty("if_absent", out var ifAbsentElement)
                         ? ifAbsentElement.GetBoolean()
@@ -152,7 +153,8 @@ public sealed class GlassworkTools
                         _mutations.CreateTask(mutation_id, taskId, ifAbsent, legacyFields));
                 }
 
-                if (legacyOp.GetString() == "set_task_fields")
+                if (legacyOp.GetString() == "set_task_fields"
+                    && !TouchesParentAdoIdentity(legacyFields))
                 {
                     string? operationRevision = null;
                     if (operations[0].TryGetProperty("if_revision", out var revisionElement))
@@ -189,6 +191,22 @@ public sealed class GlassworkTools
             return SerializeMutationValidation(mutation_id, ex.Message, if_revision, "operation_failed");
         }
     }
+
+    private static bool CreatesParentAdoIdentity(JsonElement fields) =>
+        fields.ValueKind == JsonValueKind.Object
+        && fields.TryGetProperty("type", out var type)
+        && type.ValueKind == JsonValueKind.String
+        && GlassworkTask.Types.IsParent(type.GetString())
+        && fields.TryGetProperty("ado_link", out var adoLink)
+        && adoLink.ValueKind == JsonValueKind.Number
+        && adoLink.TryGetInt32(out var adoId)
+        && adoId > 0;
+
+    private static bool TouchesParentAdoIdentity(JsonElement fields) =>
+        fields.ValueKind == JsonValueKind.Object
+        && (fields.TryGetProperty("type", out _)
+            || fields.TryGetProperty("ado_link", out _)
+            || fields.TryGetProperty("links", out _));
 
     public string AddTask(
         string title,
@@ -1452,7 +1470,10 @@ public sealed class GlassworkTools
         [Description("Authoritative Azure DevOps work-item ID represented by the Task.")] int? ado_work_item_id,
         [Description("Exact authoritative Azure DevOps state.")] string? authoritative_state,
         [Description("Client-generated idempotency key.")] string? mutation_id,
-        [Description("Resource Revision observed before the update.")] string? if_revision)
+        [Description("Resource Revision observed before the update.")] string? if_revision,
+        [Description("Optional exact Azure DevOps work-item type. Known kinds authoritatively map behavior; custom kinds preserve the current behavioral type.")] string? ado_work_item_type = null,
+        [Description("Optional authoritative Azure DevOps Parent work-item ID.")] int? ado_parent_work_item_id = null,
+        [Description("Whether to apply ado_parent_work_item_id. Set true with null to clear an authoritatively absent Parent.")] bool update_ado_parent = false)
     {
         using var scope = _logger?.BeginCall("reconcile_ado_task");
         if (string.IsNullOrWhiteSpace(mutation_id) || string.IsNullOrWhiteSpace(if_revision))
@@ -1470,18 +1491,14 @@ public sealed class GlassworkTools
             safeId,
             if_revision,
             ado_work_item_id,
-            authoritative_state);
+            authoritative_state,
+            ado_work_item_type,
+            ado_parent_work_item_id,
+            update_ado_parent);
         if (mutation.Error is not null || mutation.Outcome is not ("applied" or "no_op"))
             return SerializeMutationOutcome(mutation);
 
-        var action = mutation.Outcome == "applied"
-            ? mutation.Task?.Status switch
-            {
-                GlassworkTask.Statuses.Cancelled => "cancelled",
-                "doing" => "restored",
-                _ => "unchanged",
-            }
-            : "unchanged";
+        var action = mutation.OperationAction ?? "unchanged";
         scope?.SetResult("success");
         return JsonSerializer.Serialize(new AdoTaskReconciliationResult(
             safeId,
