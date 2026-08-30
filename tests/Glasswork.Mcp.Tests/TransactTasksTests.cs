@@ -380,7 +380,7 @@ public sealed class TransactTasksTests
         using var childOperation = JsonDocument.Parse("""
         [{
           "op": "create_task",
-          "task_id": "waiting-child",
+          "task_id": "a-waiting-child",
           "if_absent": true,
           "fields": {
             "title": "Waiting child",
@@ -397,12 +397,12 @@ public sealed class TransactTasksTests
         Assert.AreEqual("applied", childResult.RootElement.GetProperty("outcome").GetString());
 
         var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
-        Assert.AreEqual("500", vault.Load("waiting-child")!.Parent);
+        Assert.AreEqual("500", vault.Load("a-waiting-child")!.Parent);
 
         using var parentOperation = JsonDocument.Parse("""
         [{
           "op": "create_task",
-          "task_id": "late-parent",
+          "task_id": "z-late-parent",
           "if_absent": true,
           "fields": {
             "title": "Late parent",
@@ -417,10 +417,13 @@ public sealed class TransactTasksTests
             parentOperation.RootElement));
 
         Assert.AreEqual("applied", parentResult.RootElement.GetProperty("outcome").GetString());
+        Assert.AreEqual(
+            "z-late-parent",
+            parentResult.RootElement.GetProperty("task").GetProperty("id").GetString());
         var refreshedVault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
         Assert.AreEqual(
-            "late-parent",
-            refreshedVault.Load("waiting-child")!.Parent,
+            "z-late-parent",
+            refreshedVault.Load("a-waiting-child")!.Parent,
             parentResult.RootElement.ToString());
     }
 

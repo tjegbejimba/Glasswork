@@ -1204,7 +1204,8 @@ public sealed partial class ResourceMutationService
                 .Select(value => Snapshot(value.Task, Revision(value.OriginalBytes)))
                 .ToArray();
             return Record(state, mutationId, requestHash, new ResourceMutationOutcome(
-                mutationId, "no_op", false, transactionRevision, null, snapshots.FirstOrDefault(),
+                mutationId, "no_op", false, transactionRevision, null,
+                SelectPrimarySnapshot(snapshots, operations),
                 Tasks: snapshots));
         }
 
@@ -1270,7 +1271,8 @@ public sealed partial class ResourceMutationService
                 })
                 .ToArray();
             var applied = new ResourceMutationOutcome(
-                mutationId, "applied", false, transactionRevision, null, snapshots.FirstOrDefault(),
+                mutationId, "applied", false, transactionRevision, null,
+                SelectPrimarySnapshot(snapshots, operations),
                 Tasks: snapshots);
             var recordedOutcome = Record(state, mutationId, requestHash, applied);
             _faults?.ThrowIfInjected(ResourceMutationFailurePoint.AfterCommit);
@@ -1290,6 +1292,23 @@ public sealed partial class ResourceMutationService
             && value.ValueKind == JsonValueKind.String
             ? value.GetString()?.Trim()
             : null;
+    }
+
+    private static ResourceMutationTaskSnapshot? SelectPrimarySnapshot(
+        IReadOnlyList<ResourceMutationTaskSnapshot> snapshots,
+        JsonElement operations)
+    {
+        if (operations.ValueKind == JsonValueKind.Array
+            && operations.GetArrayLength() == 1)
+        {
+            var requestedTaskId = ReadOptionalTaskId(operations[0]);
+            var requested = snapshots.FirstOrDefault(snapshot =>
+                string.Equals(snapshot.Id, requestedTaskId, StringComparison.Ordinal));
+            if (requested is not null)
+                return requested;
+        }
+
+        return snapshots.FirstOrDefault();
     }
 
     private void ApplyRevisionAssertion(
