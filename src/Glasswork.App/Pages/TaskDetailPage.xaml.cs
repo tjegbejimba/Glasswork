@@ -1624,13 +1624,13 @@ public sealed partial class TaskDetailPage : Page
     }
 
     private void StartWork_Click(object sender, RoutedEventArgs e)
-        => CopyInvocation(TaskInvocationFormatter.FormatStartWork(Task.Id));
+        => CopyInvocation(TaskInvocationFormatter.FormatStartWork(Task.Id, Task.Type));
 
     private void Resume_Click(object sender, RoutedEventArgs e)
-        => CopyInvocation(TaskInvocationFormatter.FormatResume(Task.Id));
+        => CopyInvocation(TaskInvocationFormatter.FormatResume(Task.Id, Task.Type));
 
     private void WrapUp_Click(object sender, RoutedEventArgs e)
-        => CopyInvocation(TaskInvocationFormatter.FormatWrapUp(Task.Id));
+        => CopyInvocation(TaskInvocationFormatter.FormatWrapUp(Task.Id, Task.Type));
 
     private void RefreshChildSummary_Click(object sender, RoutedEventArgs e)
     {
