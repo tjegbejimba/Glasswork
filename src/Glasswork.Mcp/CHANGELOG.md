@@ -29,7 +29,10 @@ includes all of its changes.
   detected and replaced.
 - **Authoritative ADO reconciliation**: `reconcile_ado_task` validates the
   matching imported ADO identity and applies only exact `Removed` Cancellation
-  or exact resumed-active restoration directly to `doing`. The named
+  or exact resumed-active restoration directly to `doing`. Optional
+  authoritative work-item type and Parent fields preserve exact `source_kind`,
+  map known ADO kinds to behavioral Task types, retain custom-kind behavior,
+  and canonicalize local Parent IDs. The named
   `authoritative_ado_reconciliation` capability lets clients fail closed when
   this unreleased contract is not installed. Resource Revisions, idempotency,
   journal recovery, Self-write registration, and done-wins remain enforced by

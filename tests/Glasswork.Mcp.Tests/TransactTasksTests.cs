@@ -289,6 +289,142 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_AdoHierarchyBatchResolvesOutOfOrderAndRoundTripsExactKinds()
+    {
+        using var operations = JsonDocument.Parse("""
+        [
+          {
+            "op": "create_task",
+            "task_id": "implementation-task",
+            "if_absent": true,
+            "fields": {
+              "title": "Implementation task",
+              "type": "task",
+              "source_kind": "Task",
+              "ado_link": 400,
+              "parent_task_id": "300"
+            }
+          },
+          {
+            "op": "create_task",
+            "task_id": "portfolio-epic",
+            "if_absent": true,
+            "fields": {
+              "title": "Portfolio epic",
+              "type": "parent",
+              "source_kind": "Epic",
+              "ado_link": 100
+            }
+          },
+          {
+            "op": "create_task",
+            "task_id": "delivery-story",
+            "if_absent": true,
+            "fields": {
+              "title": "Delivery story",
+              "type": "parent",
+              "source_kind": "User Story",
+              "ado_link": 300,
+              "parent_task_id": "200"
+            }
+          },
+          {
+            "op": "create_task",
+            "task_id": "delivery-feature",
+            "if_absent": true,
+            "fields": {
+              "title": "Delivery feature",
+              "type": "parent",
+              "source_kind": "Feature",
+              "ado_link": 200,
+              "parent_task_id": "100"
+            }
+          }
+        ]
+        """);
+
+        using var result = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-hierarchy-import-1",
+            operations.RootElement));
+
+        Assert.AreEqual("applied", result.RootElement.GetProperty("outcome").GetString());
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var epic = vault.Load("portfolio-epic")!;
+        var feature = vault.Load("delivery-feature")!;
+        var story = vault.Load("delivery-story")!;
+        var task = vault.Load("implementation-task")!;
+        Assert.AreEqual("Epic", epic.SourceKind);
+        Assert.AreEqual("Feature", feature.SourceKind);
+        Assert.AreEqual("User Story", story.SourceKind);
+        Assert.AreEqual("Task", task.SourceKind);
+        Assert.AreEqual(epic.Id, feature.Parent);
+        Assert.AreEqual(feature.Id, story.Parent);
+        Assert.AreEqual(story.Id, task.Parent);
+
+        var parser = new FrontmatterParser();
+        var roundTripped = parser.Parse(parser.Serialize(feature));
+        Assert.AreEqual(GlassworkTask.Types.Parent, roundTripped.Type);
+        Assert.AreEqual("Feature", roundTripped.SourceKind);
+        Assert.AreEqual(epic.Id, roundTripped.Parent);
+
+        using var replay = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-hierarchy-import-1",
+            operations.RootElement));
+        Assert.IsTrue(replay.RootElement.GetProperty("replayed").GetBoolean());
+        Assert.AreEqual(story.Id, vault.Load("implementation-task")!.Parent);
+    }
+
+    [TestMethod]
+    public void TransactTasks_LaterParentImportCanonicalizesExistingExternalChild()
+    {
+        using var childOperation = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "waiting-child",
+          "if_absent": true,
+          "fields": {
+            "title": "Waiting child",
+            "type": "task",
+            "source_kind": "Task",
+            "ado_link": 600,
+            "parent_task_id": "500"
+          }
+        }]
+        """);
+        using var childResult = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-child-before-parent",
+            childOperation.RootElement));
+        Assert.AreEqual("applied", childResult.RootElement.GetProperty("outcome").GetString());
+
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        Assert.AreEqual("500", vault.Load("waiting-child")!.Parent);
+
+        using var parentOperation = JsonDocument.Parse("""
+        [{
+          "op": "create_task",
+          "task_id": "late-parent",
+          "if_absent": true,
+          "fields": {
+            "title": "Late parent",
+            "type": "parent",
+            "source_kind": "Product Backlog Item",
+            "ado_link": 500
+          }
+        }]
+        """);
+        using var parentResult = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-parent-arrives-later",
+            parentOperation.RootElement));
+
+        Assert.AreEqual("applied", parentResult.RootElement.GetProperty("outcome").GetString());
+        var refreshedVault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        Assert.AreEqual(
+            "late-parent",
+            refreshedVault.Load("waiting-child")!.Parent,
+            parentResult.RootElement.ToString());
+    }
+
+    [TestMethod]
     public void TransactTasks_CreateCarriesRawTaskAndSubtaskSize()
     {
         using var operations = JsonDocument.Parse("""

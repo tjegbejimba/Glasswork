@@ -66,7 +66,8 @@ public sealed record ResourceMutationOutcome(
     IReadOnlyList<ResourceMutationTaskSnapshot>? Tasks = null,
     IReadOnlyList<ResourceMutationDiagnostic>? Diagnostics = null,
     TaskDeletionPreflight? DeletionPreflight = null,
-    TaskDeletionReport? DeletionReport = null);
+    TaskDeletionReport? DeletionReport = null,
+    string? OperationAction = null);
 
 public sealed record ResourceMutationDiagnostic(
     string Code,
@@ -600,12 +601,18 @@ public sealed partial class ResourceMutationService
         string? taskId,
         string? ifRevision,
         int? adoWorkItemId,
-        string? authoritativeState)
+        string? authoritativeState,
+        string? adoWorkItemType = null,
+        int? adoParentWorkItemId = null,
+        bool updateAdoParent = false)
     {
         var payload = JsonSerializer.SerializeToElement(new
         {
             ado_work_item_id = adoWorkItemId,
             authoritative_state = authoritativeState,
+            ado_work_item_type = adoWorkItemType,
+            ado_parent_work_item_id = adoParentWorkItemId,
+            update_ado_parent = updateAdoParent,
         });
         return TransactTaskLifecycle(
             mutationId,
@@ -622,6 +629,22 @@ public sealed partial class ResourceMutationService
 
                 if (!RepresentsAdoWorkItem(task, adoWorkItemId.Value))
                     return $"Task does not resolve to ADO work item {adoWorkItemId}.";
+
+                if (adoWorkItemType is not null)
+                {
+                    if (string.IsNullOrWhiteSpace(adoWorkItemType))
+                        return "ado_work_item_type must be non-empty when provided.";
+
+                    task.SourceKind = adoWorkItemType;
+                    task.Type = MapAuthoritativeAdoType(adoWorkItemType, task.Type);
+                }
+
+                if (updateAdoParent)
+                {
+                    if (adoParentWorkItemId is <= 0)
+                        return "ado_parent_work_item_id must be a positive integer or null.";
+                    task.Parent = adoParentWorkItemId?.ToString();
+                }
 
                 if (string.Equals(authoritativeState, "Removed", StringComparison.Ordinal)
                     && task.Status is (
@@ -640,7 +663,41 @@ public sealed partial class ResourceMutationService
                 }
 
                 return null;
+            },
+            task =>
+            {
+                if (string.Equals(authoritativeState, "Removed", StringComparison.Ordinal)
+                    && task.Status is (
+                        GlassworkTask.Statuses.Todo
+                        or GlassworkTask.Statuses.InProgress
+                        or GlassworkTask.Statuses.Blocked))
+                {
+                    return "cancelled";
+                }
+
+                return authoritativeState is "Active" or "In Progress" or "In Review"
+                       && task.IsCancelled
+                    ? "restored"
+                    : null;
             });
+    }
+
+    private static string MapAuthoritativeAdoType(string adoWorkItemType, string currentType)
+    {
+        var kind = adoWorkItemType.Trim();
+        if (kind.Equals("Task", StringComparison.OrdinalIgnoreCase))
+            return GlassworkTask.Types.Task;
+        if (kind.Equals("Bug", StringComparison.OrdinalIgnoreCase))
+            return GlassworkTask.Types.Bug;
+        if (kind.Equals("Epic", StringComparison.OrdinalIgnoreCase)
+            || kind.Equals("Feature", StringComparison.OrdinalIgnoreCase)
+            || kind.Equals("Product Backlog Item", StringComparison.OrdinalIgnoreCase)
+            || kind.Equals("User Story", StringComparison.OrdinalIgnoreCase))
+        {
+            return GlassworkTask.Types.Parent;
+        }
+
+        return GlassworkTask.Types.Normalize(currentType);
     }
 
     private bool RepresentsAdoWorkItem(GlassworkTask task, int adoWorkItemId)
@@ -668,7 +725,8 @@ public sealed partial class ResourceMutationService
         string? ifRevision,
         string operation,
         JsonElement payload,
-        Func<GlassworkTask, string?> apply)
+        Func<GlassworkTask, string?> apply,
+        Func<GlassworkTask, string?>? classifyAction = null)
     {
         var notifications = new HashSet<string>(StringComparer.Ordinal);
         ResourceMutationOutcome? result = null;
@@ -685,7 +743,8 @@ public sealed partial class ResourceMutationService
                     operation,
                     payload,
                     apply,
-                    notifications);
+                    notifications,
+                    classifyAction);
             }
         }
         catch
@@ -717,7 +776,8 @@ public sealed partial class ResourceMutationService
         string operation,
         JsonElement payload,
         Func<GlassworkTask, string?> apply,
-        ISet<string> notifications)
+        ISet<string> notifications,
+        Func<GlassworkTask, string?>? classifyAction = null)
     {
         var state = ReadState();
         Prune(state);
@@ -771,6 +831,7 @@ public sealed partial class ResourceMutationService
                     Snapshot(currentTask, currentRevision),
                     "if_revision does not match the current Resource Revision."));
 
+        var operationAction = classifyAction?.Invoke(currentTask);
         var staged = _parser.Parse(Encoding.UTF8.GetString(bytes));
         string? error;
         try
@@ -853,7 +914,8 @@ public sealed partial class ResourceMutationService
             mutationId,
             requestHash,
             ifRevision,
-            Committed: false);
+            Committed: false,
+            OperationAction: operationAction);
         _faults?.ThrowIfInjected(ResourceMutationFailurePoint.BeforeJournal);
         WriteJournal(journal);
 
@@ -887,7 +949,8 @@ public sealed partial class ResourceMutationService
         var newRevision = Revision(updatedBytes);
         var applied = new ResourceMutationOutcome(
             mutationId, "applied", false, ifRevision, newRevision,
-            Snapshot(staged, newRevision));
+            Snapshot(staged, newRevision),
+            OperationAction: operationAction);
         var recordedOutcome = Record(state, mutationId, requestHash, applied);
         _faults?.ThrowIfInjected(ResourceMutationFailurePoint.AfterCommit);
         DeleteJournal();
@@ -1058,14 +1121,43 @@ public sealed partial class ResourceMutationService
 
         var hierarchy = new TaskHierarchyPolicy(staged.Values.Select(value => value.Task));
         var hierarchyValidationTaskIds = touchedOperationIndexes.Keys.ToHashSet(StringComparer.Ordinal);
+        var affectedParentAdoIds = new HashSet<int>();
+        var parentIdentityChanged = false;
         foreach (var taskId in touchedOperationIndexes.Keys)
         {
             if (staged.TryGetValue(taskId, out var touched))
             {
                 hierarchy.CanonicalizeParent(touched.Task);
-                AddAdoIdentityAffectedTasks(touched, staged, hierarchyValidationTaskIds);
+                GlassworkTask? original = touched.OriginalBytes.Length == 0
+                    ? null
+                    : _parser.Parse(Encoding.UTF8.GetString(touched.OriginalBytes));
+                var oldAdoId = GlassworkTask.Types.IsParent(original?.Type)
+                    ? original?.AdoLink
+                    : null;
+                var newAdoId = GlassworkTask.Types.IsParent(touched.Task.Type)
+                    ? touched.Task.AdoLink
+                    : null;
+                if (oldAdoId == newAdoId)
+                    continue;
+
+                parentIdentityChanged = true;
+                if (oldAdoId is int oldId)
+                    affectedParentAdoIds.Add(oldId);
+                if (newAdoId is int newId)
+                    affectedParentAdoIds.Add(newId);
             }
         }
+        foreach (var candidate in staged.Values)
+        {
+            var parentAdoId = AdoParentIdExtractor.TryExtractId(candidate.Task.Parent);
+            if (parentAdoId is not int id || !affectedParentAdoIds.Contains(id))
+                continue;
+
+            hierarchyValidationTaskIds.Add(candidate.Task.Id);
+            hierarchy.CanonicalizeParent(candidate.Task);
+        }
+        if (parentIdentityChanged)
+            hierarchyValidationTaskIds.UnionWith(staged.Keys);
         diagnostics.AddRange(ValidateStagedGraph(staged, touchedOperationIndexes));
         diagnostics.AddRange(hierarchy.Validate(
             hierarchyValidationTaskIds,
@@ -1409,32 +1501,6 @@ public sealed partial class ResourceMutationService
         foreach (var id in byId.Keys)
             DetectCycle(id, byId, visiting, visited, diagnostics, [], touchedOperationIndexes);
         return diagnostics;
-    }
-
-    private void AddAdoIdentityAffectedTasks(
-        StagedTask touched,
-        IReadOnlyDictionary<string, StagedTask> staged,
-        ISet<string> validationTaskIds)
-    {
-        GlassworkTask? original = touched.OriginalBytes.Length == 0
-            ? null
-            : _parser.Parse(Encoding.UTF8.GetString(touched.OriginalBytes));
-        var oldAdoId = GlassworkTask.Types.IsParent(original?.Type) ? original?.AdoLink : null;
-        var newAdoId = GlassworkTask.Types.IsParent(touched.Task.Type) ? touched.Task.AdoLink : null;
-        if (oldAdoId == newAdoId)
-            return;
-
-        foreach (var candidate in staged.Values)
-        {
-            var parentAdoId = AdoParentIdExtractor.TryExtractId(candidate.Task.Parent);
-            if (parentAdoId == oldAdoId || parentAdoId == newAdoId)
-                validationTaskIds.Add(candidate.Task.Id);
-        }
-
-        // A Parent ADO identity is a graph-wide resolution key. Validate the full
-        // snapshot so a newly ambiguous relationship cannot be hidden by a legacy
-        // free-text reference that the narrow extractor does not recognize.
-        validationTaskIds.UnionWith(staged.Keys);
     }
 
     private static void DetectCycle(
@@ -2048,7 +2114,8 @@ public sealed partial class ResourceMutationService
         bool Committed,
         bool Existed = true,
         bool Deleted = false,
-        string? OwnedPath = null);
+        string? OwnedPath = null,
+        string? OperationAction = null);
 
     private State ReadState()
     {
@@ -2194,7 +2261,8 @@ public sealed partial class ResourceMutationService
                             false,
                             entry.ExpectedRevision,
                             revision,
-                            Snapshot(task, revision)));
+                            Snapshot(task, revision),
+                            OperationAction: entry.OperationAction));
                     WriteState(state);
                 }
             }
