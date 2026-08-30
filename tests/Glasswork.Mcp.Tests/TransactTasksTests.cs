@@ -428,6 +428,67 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_LaterParentMetadataRefreshCanonicalizesExistingExternalChild()
+    {
+        using var seedOperations = JsonDocument.Parse("""
+        [
+          {
+            "op": "create_task",
+            "task_id": "a-existing-child",
+            "if_absent": true,
+            "fields": {
+              "title": "Existing child",
+              "type": "task",
+              "source_kind": "Task",
+              "ado_link": 800,
+              "parent_task_id": "700"
+            }
+          },
+          {
+            "op": "create_task",
+            "task_id": "z-existing-parent",
+            "if_absent": true,
+            "fields": {
+              "title": "Existing parent candidate",
+              "type": "task",
+              "source_kind": "Custom Portfolio Item",
+              "ado_link": 700
+            }
+          }
+        ]
+        """);
+        using var seedResult = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-parent-refresh-seed",
+            seedOperations.RootElement));
+        Assert.AreEqual("applied", seedResult.RootElement.GetProperty("outcome").GetString());
+
+        var vault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        var parent = vault.Load("z-existing-parent")!;
+        Assert.AreEqual("700", vault.Load("a-existing-child")!.Parent);
+
+        using var refreshOperation = JsonDocument.Parse($$"""
+        [{
+          "op": "set_task_fields",
+          "task_id": "z-existing-parent",
+          "if_revision": "{{parent.ResourceRevision}}",
+          "fields": {
+            "type": "parent"
+          }
+        }]
+        """);
+        using var refreshResult = JsonDocument.Parse(_tools.TransactTasks(
+            "ado-parent-metadata-refresh",
+            refreshOperation.RootElement));
+
+        Assert.AreEqual("applied", refreshResult.RootElement.GetProperty("outcome").GetString());
+        Assert.AreEqual(
+            "z-existing-parent",
+            refreshResult.RootElement.GetProperty("task").GetProperty("id").GetString());
+        var refreshedVault = new VaultService(Path.Combine(_vaultDir, "wiki", "todo"));
+        Assert.AreEqual("z-existing-parent", refreshedVault.Load("a-existing-child")!.Parent);
+    }
+
+    [TestMethod]
     public void TransactTasks_CreateCarriesRawTaskAndSubtaskSize()
     {
         using var operations = JsonDocument.Parse("""

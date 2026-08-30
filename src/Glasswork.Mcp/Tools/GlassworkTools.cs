@@ -153,7 +153,8 @@ public sealed class GlassworkTools
                         _mutations.CreateTask(mutation_id, taskId, ifAbsent, legacyFields));
                 }
 
-                if (legacyOp.GetString() == "set_task_fields")
+                if (legacyOp.GetString() == "set_task_fields"
+                    && !TouchesParentAdoIdentity(legacyFields))
                 {
                     string? operationRevision = null;
                     if (operations[0].TryGetProperty("if_revision", out var revisionElement))
@@ -200,6 +201,12 @@ public sealed class GlassworkTools
         && adoLink.ValueKind == JsonValueKind.Number
         && adoLink.TryGetInt32(out var adoId)
         && adoId > 0;
+
+    private static bool TouchesParentAdoIdentity(JsonElement fields) =>
+        fields.ValueKind == JsonValueKind.Object
+        && (fields.TryGetProperty("type", out _)
+            || fields.TryGetProperty("ado_link", out _)
+            || fields.TryGetProperty("links", out _));
 
     public string AddTask(
         string title,
