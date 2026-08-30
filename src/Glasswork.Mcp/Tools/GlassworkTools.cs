@@ -32,6 +32,7 @@ public sealed class GlassworkTools
     private readonly TimeProvider _timeProvider;
     private readonly ITaskQuery _taskQuery;
     private readonly IResearchChangeLogStore _researchChangeLogs;
+    private readonly ChildActivitySummaryService _childActivitySummaries;
 
     public GlassworkTools(
         VaultContext vaultContext,
@@ -50,6 +51,10 @@ public sealed class GlassworkTools
         _search = new TaskSearchService(_vault);
         clock ??= TimeProvider.System.GetUtcNow;
         _mutations = new ResourceMutationService(_vaultPath, _vault, clock, faults);
+        _childActivitySummaries = new ChildActivitySummaryService(
+            _vaultPath,
+            _vault,
+            _mutations);
         _timeProvider = new DelegateTimeProvider(clock);
         _taskQuery = new FreshVaultTaskQuery(_vault, _vaultRoot);
         _researchChangeLogs = new FileSystemResearchChangeLogStore(
@@ -1113,6 +1118,17 @@ public sealed class GlassworkTools
                 return JsonSerializer.Serialize(new ErrorResult("invalid_content", "content is required."));
             }
 
+            if (string.Equals(
+                    filename,
+                    ChildActivitySummaryService.Filename,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                scope?.SetResult("error");
+                return JsonSerializer.Serialize(new ErrorResult(
+                    "reserved_artifact",
+                    $"'{ChildActivitySummaryService.Filename}' is managed by refresh_child_activity_summary."));
+            }
+
             // Reject anything that is not a simple filename. VaultPathGuard only
             // checks that the resolved path stays inside the artifact folder — a
             // value like "nested/plan.md" passes that check but then crashes
@@ -1191,7 +1207,7 @@ public sealed class GlassworkTools
                     reason = "binary";
                 }
             }
-            
+
             var resultPath = TodoRelativeArtifactPath(safeId, Path.GetFileName(resolvedPath));
             return JsonSerializer.Serialize(new AddArtifactResult(
                 Path: resultPath,
@@ -1205,6 +1221,118 @@ public sealed class GlassworkTools
         {
             scope?.SetResult("error");
             throw;
+        }
+    }
+
+    [McpServerTool(Name = "get_child_activity_summary_context")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Capture the bounded durable descendant-tree input for a Parent Task Child activity summary. Returns status, Notes, Artifacts, Links/PRs, descendant summaries, identity metadata, and the exact Resource Revision read basis. Chat transcripts and other conversational context are excluded.")]
+    public string GetChildActivitySummaryContext(
+        [Description("Parent Task ID whose full valid descendant tree should be captured.")] string task_id)
+    {
+        try
+        {
+            var capture = _childActivitySummaries.Capture(task_id);
+            return JsonSerializer.Serialize(new
+            {
+                parent_id = capture.ParentId,
+                parent_revision = capture.ParentRevision,
+                descendant_count = capture.DescendantCount,
+                read_basis = capture.ReadBasis,
+                expected_summary_revision = capture.ExpectedSummaryRevision,
+                generated_at = _timeProvider.GetUtcNow().ToString("O"),
+                groups = capture.Groups.Select(group => new
+                {
+                    direct_child_id = group.DirectChild.Id,
+                    direct_child_title = group.DirectChild.Title,
+                    tasks = group.Tasks.Select(task => new
+                    {
+                        id = task.Id,
+                        title = task.Title,
+                        status = task.Status,
+                        type = task.Type,
+                        source_kind = task.SourceKind,
+                        resource_revision = task.ResourceRevision,
+                        notes = task.Notes,
+                        links = task.Links.Select(link => new
+                        {
+                            type = link.Type,
+                            value = link.Value,
+                            label = link.Label,
+                        }),
+                        artifacts = task.Artifacts.Select(artifact => new
+                        {
+                            filename = artifact.Filename,
+                            kind = artifact.Kind.ToString(),
+                            size_bytes = artifact.SizeBytes,
+                            resource_revision = artifact.ResourceRevision,
+                            content = artifact.Content,
+                            is_descendant_summary = artifact.IsDescendantSummary,
+                        }),
+                    }),
+                }),
+                instruction = "Generate the summary only from this payload. Do not use chat transcripts, email, Teams, WorkIQ, or other conversational context.",
+            });
+        }
+        catch (ChildActivitySummaryException exception)
+        {
+            return JsonSerializer.Serialize(new ErrorResult(
+                exception.Code,
+                exception.Message));
+        }
+    }
+
+    [McpServerTool(Name = "refresh_child_activity_summary")]
+    [ToolPrecondition(VaultPathReadablePrecondition.PreconditionName)]
+    [Description("Atomically create or replace a Parent Task's stable Child activity summary Artifact from a previously captured exact read basis. The generated content must use only get_child_activity_summary_context output.")]
+    public string RefreshChildActivitySummary(
+        [Description("Parent Task ID.")] string task_id,
+        [Description("Agent-generated Markdown grouped by direct child, derived only from the captured durable context.")] string content,
+        [Description("Parent Resource Revision returned by get_child_activity_summary_context.")] string parent_revision,
+        [Description("Descendant count returned by get_child_activity_summary_context.")] int descendant_count,
+        [Description("Exact Resource Revision read basis returned by get_child_activity_summary_context.")] Dictionary<string, string> read_basis,
+        [Description("Client-generated idempotency key.")] string mutation_id,
+        [Description("Stable generated_at timestamp returned by get_child_activity_summary_context. Echo it unchanged so retries with the same mutation_id are idempotent.")] string generated_at,
+        [Description("Existing summary Resource Revision, or null when the capture reported no summary.")] string? expected_summary_revision = null)
+    {
+        try
+        {
+            if (!DateTimeOffset.TryParse(
+                    generated_at,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind,
+                    out var generatedAt))
+            {
+                return JsonSerializer.Serialize(new ErrorResult(
+                    "invalid_generated_at",
+                    "generated_at must be the ISO-8601 timestamp returned by get_child_activity_summary_context."));
+            }
+            var capture = new ChildActivitySummaryCapture(
+                task_id,
+                parent_revision,
+                descendant_count,
+                [],
+                read_basis,
+                expected_summary_revision);
+            var outcome = _childActivitySummaries.Commit(
+                capture,
+                content,
+                generatedAt,
+                mutation_id);
+            return SerializeMutationOutcome(outcome);
+        }
+        catch (ChildActivitySummaryException exception)
+        {
+            return JsonSerializer.Serialize(new ErrorResult(
+                exception.Code,
+                exception.Message));
+        }
+        catch (Exception exception) when (
+            ResourceMutationService.IsExpectedPersistenceFailure(exception))
+        {
+            return JsonSerializer.Serialize(new ErrorResult(
+                "refresh_failed",
+                exception.Message));
         }
     }
 

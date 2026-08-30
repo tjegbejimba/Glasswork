@@ -17,6 +17,9 @@ public static class TaskInvocationFormatter
     public static string FormatWrapUp(string taskId) =>
         $"Wrap up Glasswork task: {Require(taskId)}";
 
+    public static string FormatRefreshChildActivitySummary(string taskId) =>
+        $"Refresh Child activity summary for Glasswork task: {Require(taskId)}";
+
     public static string FormatTriageReport(string description) =>
         $"Run the triage-issue skill on this report: {RequireDescription(description)}";
 

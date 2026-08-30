@@ -1,0 +1,190 @@
+{
+  "name": "Task Detail Child activity summary states",
+  "startUri": "glasswork://backlog",
+  "theme": "dark",
+  "windowWidth": 760,
+  "windowHeight": 1040,
+  "tasks": [
+    {
+      "id": "vv-summary-current",
+      "title": "Current summary parent",
+      "status": "in-progress",
+      "type": "parent",
+      "description": "The summary follows this Description.",
+      "artifacts": [
+        {
+          "name": "child-activity-summary.md",
+          "content": "---\ntitle: Child activity summary\nglasswork_kind: child_activity_summary\nschema_version: 1\ngenerated_at: 2026-08-30T12:00:00.0000000+00:00\ndescendant_count: 0\nread_basis_json: e30=\n---\n\n## Current branch activity\n\nAll durable descendant work is summarized."
+        }
+      ]
+    },
+    {
+      "id": "vv-summary-outdated",
+      "title": "Out of date summary parent",
+      "status": "in-progress",
+      "type": "parent",
+      "description": "A descendant exists outside the stored empty basis.",
+      "artifacts": [
+        {
+          "name": "child-activity-summary.md",
+          "content": "---\ntitle: Child activity summary\nglasswork_kind: child_activity_summary\nschema_version: 1\ngenerated_at: 2026-08-29T12:00:00.0000000+00:00\ndescendant_count: 0\nread_basis_json: e30=\n---\n\n## Previous activity\n\nThis content is intentionally stale."
+        }
+      ]
+    },
+    {
+      "id": "vv-summary-child",
+      "title": "Changed descendant",
+      "status": "in-progress",
+      "type": "task",
+      "parent": "vv-summary-outdated",
+      "notes": "This durable note makes the stored basis stale."
+    },
+    {
+      "id": "vv-summary-failed",
+      "title": "Failed summary parent",
+      "status": "in-progress",
+      "type": "parent",
+      "artifacts": [
+        {
+          "name": "child-activity-summary.md",
+          "content": "# Missing managed metadata\n\nThis malformed summary must surface a precise failure."
+        }
+      ]
+    },
+    {
+      "id": "vv-summary-missing",
+      "title": "Missing summary parent",
+      "status": "in-progress",
+      "type": "parent"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Current summary parent",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ChildSummaryFreshness",
+      "value": "Current",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "TaskDetailScrollViewer",
+      "value": "100",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "child-summary-current"
+    },
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Out of date summary parent",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ChildSummaryFreshness",
+      "value": "Out of date",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "TaskDetailScrollViewer",
+      "value": "100",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "child-summary-out-of-date"
+    },
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Failed summary parent",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ChildSummaryFreshness",
+      "value": "Failed",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "TaskDetailScrollViewer",
+      "value": "100",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "child-summary-failed"
+    },
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Missing summary parent",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ChildSummaryFreshness",
+      "value": "Missing",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "TaskDetailScrollViewer",
+      "value": "100",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "child-summary-missing"
+    },
+    {
+      "type": "invoke",
+      "automationId": "RefreshChildSummaryButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "TaskDetailScrollViewer",
+      "value": "100",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-name",
+      "automationId": "ChildSummaryFreshness",
+      "value": "Refreshing",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "child-summary-refreshing",
+      "waitMilliseconds": 500
+    }
+  ]
+}

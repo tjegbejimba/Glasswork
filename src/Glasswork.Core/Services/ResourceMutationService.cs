@@ -354,14 +354,56 @@ public sealed partial class ResourceMutationService
             string? mutationId,
             string? expectedRevision,
             bool? ifAbsent)
+        => CommitTaskOwnedFileConditional(
+            path,
+            content,
+            overwrite,
+            mutationId,
+            expectedRevision,
+            ifAbsent,
+            preconditionHash: null,
+            validatePrecondition: null);
+
+    internal ResourceMutationOutcome CommitTaskOwnedFileConditionalWithPrecondition(
+            string path,
+            byte[] content,
+            bool overwrite,
+            string? mutationId,
+            string? expectedRevision,
+            bool? ifAbsent,
+            string preconditionHash,
+            Func<string?> validatePrecondition)
+        => CommitTaskOwnedFileConditional(
+            path,
+            content,
+            overwrite,
+            mutationId,
+            expectedRevision,
+            ifAbsent,
+            preconditionHash,
+            validatePrecondition);
+
+    private ResourceMutationOutcome CommitTaskOwnedFileConditional(
+            string path,
+            byte[] content,
+            bool overwrite,
+            string? mutationId,
+            string? expectedRevision,
+            bool? ifAbsent,
+            string? preconditionHash,
+            Func<string?>? validatePrecondition)
         {
             ArgumentNullException.ThrowIfNull(content);
             using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
             {
                 RecoverUnsafe();
                 var current = _vault.TryReadOwnedBytesUnsafe(path);
+                var encodedContent = Convert.ToBase64String(content);
+                var request = preconditionHash is null
+                    ? $"{path}\n{overwrite}\n{expectedRevision}\n{ifAbsent}\n{encodedContent}"
+                    : $"{path}\n{overwrite}\n{expectedRevision}\n{ifAbsent}\n{preconditionHash}\n{encodedContent}";
                 var hash = Convert.ToHexString(SHA256.HashData(
-                    Encoding.UTF8.GetBytes($"{path}\n{overwrite}\n{expectedRevision}\n{ifAbsent}\n{Convert.ToBase64String(content)}")))
+                    Encoding.UTF8.GetBytes(request)))
                     .ToLowerInvariant();
                 var state = ReadState();
                 Prune(state);
@@ -384,6 +426,11 @@ public sealed partial class ResourceMutationService
                 }
 
                 var currentRevision = current is null ? null : Revision(current);
+                var preconditionError = validatePrecondition?.Invoke();
+                if (preconditionError is not null)
+                    return Record(state, mutationId, hash, new ResourceMutationOutcome(
+                        mutationId, "conflict", false, expectedRevision, currentRevision, null,
+                        preconditionError));
                 if (!overwrite && current is not null)
                     return Record(state, mutationId, hash, new ResourceMutationOutcome(
                         mutationId, "conflict", false, null, currentRevision, null,

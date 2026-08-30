@@ -78,6 +78,14 @@ The in-memory shape of a task and its subtasks. Pure C# in
     per **Artifact kind** (see Markdown rendering below and ADR 0015). The
     defining boundary is authorship + access (agent-produced, read-only),
     not file format. User-uploaded files (Attachments) are out of scope.
+  - A Parent Task's **Child activity summary** is the reserved
+    `child-activity-summary.md` Artifact. `ChildActivitySummaryService` captures
+    the full valid descendant tree, grouped by direct child, from durable Task
+    status, Notes, Artifacts, Links, descendant summaries, and identity metadata.
+    Its versioned metadata records generated time, descendant count, and the
+    exact Task/Artifact Resource Revision read basis. Guarded commit revalidates
+    that basis under the same Vault mutation lease as atomic replacement; chat
+    transcripts are outside this domain boundary.
 - **Structured links** (see ADR 0009): `links:` is a typed frontmatter list of
   outbound task pointers (`ado`, `pr`, `incident`, `doc`, `build`, `other`) with
   `value` and optional `label`. Links are not a fourth prose tier; they are

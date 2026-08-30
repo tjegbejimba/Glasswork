@@ -27,6 +27,17 @@ public class TaskInvocationFormatterTests
     }
 
     [TestMethod]
+    public void FormatRefreshChildActivitySummary_IncludesParentTaskId()
+    {
+        var line = TaskInvocationFormatter.FormatRefreshChildActivitySummary(
+            "2026-04-18-parent");
+
+        Assert.AreEqual(
+            "Refresh Child activity summary for Glasswork task: 2026-04-18-parent",
+            line);
+    }
+
+    [TestMethod]
     [DataRow(null)]
     [DataRow("")]
     [DataRow("   ")]
