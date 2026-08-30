@@ -955,13 +955,22 @@ public sealed partial class TaskDetailPage : Page
 
     private void OnArtifactChangedExternally(object? sender, ArtifactChangedEventArgs e)
     {
-        // Refresh artifacts ONLY for the currently-displayed task. Never reload
-        // the task model — that would clobber unsaved Notes/Description edits.
-        if (!string.Equals(e.TaskId, Task.Id, StringComparison.OrdinalIgnoreCase)) return;
+        // A Parent summary basis includes every descendant Artifact, so any Artifact
+        // event can change its freshness. The ordinary Artifact list still rebinds
+        // only for the currently displayed Task.
+        var currentTaskId = Task.Id;
+        var affectsCurrentTask = string.Equals(
+            e.TaskId,
+            currentTaskId,
+            StringComparison.OrdinalIgnoreCase);
+        var showsSummary = GlassworkTask.Types.IsParent(Task.Type);
+        if (!affectsCurrentTask && !showsSummary) return;
         DispatcherQueue.TryEnqueue(() =>
         {
-            BindChildActivitySummary(e.TaskId, GlassworkTask.Types.IsParent(Task.Type));
-            BindArtifacts(e.TaskId);
+            if (showsSummary)
+                BindChildActivitySummary(currentTaskId, showSummary: true);
+            if (affectsCurrentTask)
+                BindArtifacts(currentTaskId);
         });
     }
 

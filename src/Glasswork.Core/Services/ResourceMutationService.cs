@@ -398,8 +398,12 @@ public sealed partial class ResourceMutationService
             {
                 RecoverUnsafe();
                 var current = _vault.TryReadOwnedBytesUnsafe(path);
+                var encodedContent = Convert.ToBase64String(content);
+                var request = preconditionHash is null
+                    ? $"{path}\n{overwrite}\n{expectedRevision}\n{ifAbsent}\n{encodedContent}"
+                    : $"{path}\n{overwrite}\n{expectedRevision}\n{ifAbsent}\n{preconditionHash}\n{encodedContent}";
                 var hash = Convert.ToHexString(SHA256.HashData(
-                    Encoding.UTF8.GetBytes($"{path}\n{overwrite}\n{expectedRevision}\n{ifAbsent}\n{preconditionHash}\n{Convert.ToBase64String(content)}")))
+                    Encoding.UTF8.GetBytes(request)))
                     .ToLowerInvariant();
                 var state = ReadState();
                 Prune(state);
