@@ -1149,6 +1149,73 @@ public sealed class TransactTasksTests
     }
 
     [TestMethod]
+    public void TransactTasks_CommittedGraphRecoveryPreservesRequestedPrimaryTask()
+    {
+        var todoDir = Path.Combine(_vaultDir, "wiki", "todo");
+        var parser = new FrontmatterParser();
+        var child = new GlassworkTask
+        {
+            Id = "a-recovered-child",
+            Title = "Recovered child",
+            Parent = "900",
+        };
+        var originalChild = Encoding.UTF8.GetBytes(parser.Serialize(child));
+        File.WriteAllBytes(Path.Combine(todoDir, $"{child.Id}.md"), originalChild);
+        child.Parent = "z-recovered-parent";
+        var updatedChild = Encoding.UTF8.GetBytes(parser.Serialize(child));
+        var parent = new GlassworkTask
+        {
+            Id = "z-recovered-parent",
+            Title = "Recovered parent",
+            Type = GlassworkTask.Types.Parent,
+            SourceKind = "Feature",
+            AdoLink = 900,
+        };
+        var updatedParent = Encoding.UTF8.GetBytes(parser.Serialize(parent));
+        const string mutationId = "graph-primary-recovery";
+        var journalPath = Path.Combine(todoDir, ".glasswork", "mutation-journal.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(journalPath)!);
+        File.WriteAllText(journalPath, JsonSerializer.Serialize(new
+        {
+            MutationId = mutationId,
+            RequestHash = "recovery-hash",
+            ExpectedRevision = (string?)null,
+            Committed = true,
+            Entries = new object[]
+            {
+                new
+                {
+                    TaskId = child.Id,
+                    Original = Convert.ToBase64String(originalChild),
+                    Updated = Convert.ToBase64String(updatedChild),
+                    Created = false,
+                },
+                new
+                {
+                    TaskId = parent.Id,
+                    Original = (string?)null,
+                    Updated = Convert.ToBase64String(updatedParent),
+                    Created = true,
+                },
+            },
+            PrimaryTaskId = parent.Id,
+        }));
+
+        _ = new GlassworkTools(new VaultContext(_vaultDir));
+
+        using var state = JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(todoDir, ".glasswork", "resource-mutations.json")));
+        var recoveredTaskId = state.RootElement
+            .GetProperty("Outcomes")
+            .GetProperty(mutationId)
+            .GetProperty("Outcome")
+            .GetProperty("Task")
+            .GetProperty("Id")
+            .GetString();
+        Assert.AreEqual(parent.Id, recoveredTaskId);
+    }
+
+    [TestMethod]
     public void TransactTasks_TornJournalDoesNotBrickManagedReads()
     {
         var taskId = JsonDocument.Parse(_tools.AddTask("Conditioned task"))

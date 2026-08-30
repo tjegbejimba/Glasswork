@@ -606,6 +606,159 @@ public sealed partial class ResourceMutationService
         int? adoParentWorkItemId = null,
         bool updateAdoParent = false)
     {
+        var effectiveRevision = ifRevision;
+        if (adoWorkItemType is not null || updateAdoParent)
+        {
+            if (string.IsNullOrWhiteSpace(mutationId))
+            {
+                return new ResourceMutationOutcome(
+                    string.Empty,
+                    "precondition_required",
+                    false,
+                    ifRevision,
+                    null,
+                    null,
+                    "mutation_id is required.");
+            }
+            if (string.IsNullOrWhiteSpace(ifRevision))
+            {
+                return new ResourceMutationOutcome(
+                    mutationId,
+                    "precondition_required",
+                    false,
+                    ifRevision,
+                    null,
+                    null,
+                    "if_revision is required.");
+            }
+            if (adoWorkItemId is null or <= 0)
+            {
+                return new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    ifRevision,
+                    null,
+                    null,
+                    "ado_work_item_id must be a positive integer.");
+            }
+            if (string.IsNullOrWhiteSpace(authoritativeState))
+            {
+                return new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    ifRevision,
+                    null,
+                    null,
+                    "authoritative_state is required.");
+            }
+            if (string.IsNullOrWhiteSpace(taskId))
+            {
+                return new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    ifRevision,
+                    null,
+                    null,
+                    "task_id is required.");
+            }
+
+            var currentTask = _vault.Load(taskId);
+            if (currentTask is null)
+            {
+                return new ResourceMutationOutcome(
+                    mutationId,
+                    "not_found",
+                    false,
+                    ifRevision,
+                    null,
+                    null,
+                    "Task was not found.");
+            }
+            var currentRevision = currentTask.ResourceRevision ?? string.Empty;
+            if (!string.Equals(
+                    currentRevision,
+                    ifRevision,
+                    StringComparison.Ordinal))
+            {
+                return new ResourceMutationOutcome(
+                    mutationId,
+                    "conflict",
+                    false,
+                    ifRevision,
+                    currentRevision,
+                    Snapshot(currentTask, currentRevision),
+                    "if_revision does not match the current Resource Revision.");
+            }
+            if (!RepresentsAdoWorkItem(currentTask, adoWorkItemId.Value))
+            {
+                return new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    ifRevision,
+                    currentRevision,
+                    Snapshot(currentTask, currentRevision),
+                    $"Task does not resolve to ADO work item {adoWorkItemId}.");
+            }
+            if (adoWorkItemType is not null && string.IsNullOrWhiteSpace(adoWorkItemType))
+            {
+                return new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    ifRevision,
+                    currentRevision,
+                    Snapshot(currentTask, currentRevision),
+                    "ado_work_item_type must be non-empty when provided.");
+            }
+            if (updateAdoParent && adoParentWorkItemId is <= 0)
+            {
+                return new ResourceMutationOutcome(
+                    mutationId,
+                    "validation_error",
+                    false,
+                    ifRevision,
+                    currentRevision,
+                    Snapshot(currentTask, currentRevision),
+                    "ado_parent_work_item_id must be a positive integer or null.");
+            }
+
+            var fields = new Dictionary<string, object?>();
+            if (adoWorkItemType is not null)
+            {
+                fields["source_kind"] = adoWorkItemType;
+                fields["type"] = MapAuthoritativeAdoType(
+                    adoWorkItemType,
+                    currentTask.Type);
+            }
+            if (updateAdoParent)
+                fields["parent_task_id"] = adoParentWorkItemId?.ToString();
+
+            var operations = JsonSerializer.SerializeToElement(new[]
+            {
+                new
+                {
+                    op = "set_task_fields",
+                    task_id = taskId,
+                    if_revision = ifRevision,
+                    fields,
+                },
+            });
+            var metadata = TransactTasks(
+                $"{mutationId}:ado-metadata",
+                operations);
+            if (metadata.Error is not null
+                || metadata.Outcome is not ("applied" or "no_op"))
+            {
+                return metadata with { MutationId = mutationId };
+            }
+
+            effectiveRevision = metadata.Task?.ResourceRevision ?? ifRevision;
+        }
+
         var payload = JsonSerializer.SerializeToElement(new
         {
             ado_work_item_id = adoWorkItemId,
@@ -617,7 +770,7 @@ public sealed partial class ResourceMutationService
         return TransactTaskLifecycle(
             mutationId,
             taskId,
-            ifRevision,
+            effectiveRevision,
             "reconcile_ado_task",
             payload,
             task =>
@@ -629,22 +782,6 @@ public sealed partial class ResourceMutationService
 
                 if (!RepresentsAdoWorkItem(task, adoWorkItemId.Value))
                     return $"Task does not resolve to ADO work item {adoWorkItemId}.";
-
-                if (adoWorkItemType is not null)
-                {
-                    if (string.IsNullOrWhiteSpace(adoWorkItemType))
-                        return "ado_work_item_type must be non-empty when provided.";
-
-                    task.SourceKind = adoWorkItemType;
-                    task.Type = MapAuthoritativeAdoType(adoWorkItemType, task.Type);
-                }
-
-                if (updateAdoParent)
-                {
-                    if (adoParentWorkItemId is <= 0)
-                        return "ado_parent_work_item_id must be a positive integer or null.";
-                    task.Parent = adoParentWorkItemId?.ToString();
-                }
 
                 if (string.Equals(authoritativeState, "Removed", StringComparison.Ordinal)
                     && task.Status is (
@@ -1247,7 +1384,11 @@ public sealed partial class ResourceMutationService
             requestHash,
             transactionRevision,
             false,
-            journalEntries);
+            journalEntries,
+            PrimaryTaskId: operations.ValueKind == JsonValueKind.Array
+                && operations.GetArrayLength() == 1
+                ? ReadOptionalTaskId(operations[0])
+                : null);
         _faults?.ThrowIfInjected(ResourceMutationFailurePoint.BeforeJournal);
         WriteGraphJournal(journal);
 
@@ -2366,7 +2507,11 @@ public sealed partial class ResourceMutationService
                         false,
                         entry.ExpectedRevision,
                         null,
-                        snapshots.FirstOrDefault(),
+                        snapshots.FirstOrDefault(snapshot => string.Equals(
+                            snapshot.Id,
+                            entry.PrimaryTaskId,
+                            StringComparison.Ordinal))
+                            ?? snapshots.FirstOrDefault(),
                         Tasks: snapshots));
                 WriteState(state);
             }
@@ -2406,7 +2551,8 @@ public sealed partial class ResourceMutationService
         string RequestHash,
         string? ExpectedRevision,
         bool Committed,
-        IReadOnlyList<GraphJournalTaskEntry> Entries);
+        IReadOnlyList<GraphJournalTaskEntry> Entries,
+        string? PrimaryTaskId = null);
 
     private sealed record GraphJournalTaskEntry(
         string TaskId,

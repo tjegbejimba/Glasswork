@@ -523,4 +523,44 @@ public sealed class AdoTaskReconciliationToolTests
         Assert.AreEqual("Customer Escalation", persisted.SourceKind);
         Assert.AreEqual(GlassworkTask.Types.Task, persisted.Type);
     }
+
+    [TestMethod]
+    public void ReconcileAdoTask_ParentReclassificationCanonicalizesExistingExternalChild()
+    {
+        const int parentAdoId = 95678901;
+        var child = new GlassworkTask
+        {
+            Id = "a-external-child",
+            Title = "External child",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Task,
+            Parent = parentAdoId.ToString(),
+        };
+        var parent = new GlassworkTask
+        {
+            Id = "z-reconciled-parent",
+            Title = "Reconciled parent",
+            Status = GlassworkTask.Statuses.Todo,
+            Type = GlassworkTask.Types.Task,
+            AdoLink = parentAdoId,
+        };
+        _vault.Save(child);
+        _vault.Save(parent);
+        parent = _vault.Load(parent.Id)!;
+
+        using var result = JsonDocument.Parse(_tools.ReconcileAdoTask(
+            parent.Id,
+            parentAdoId,
+            "New",
+            "ado-parent-reclassification",
+            parent.ResourceRevision,
+            ado_work_item_type: "Feature"));
+
+        Assert.AreEqual("unchanged", result.RootElement.GetProperty("action").GetString());
+        var refreshedVault = new VaultService(_vault.VaultPath);
+        Assert.AreEqual(
+            parent.Id,
+            refreshedVault.Load(child.Id)!.Parent,
+            result.RootElement.ToString());
+    }
 }
