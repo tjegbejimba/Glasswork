@@ -155,6 +155,7 @@ public sealed partial class TaskDetailPage : Page
         BindRelated(task.RelatedLinks);
         ArtifactsSection.Visibility = Visibility.Collapsed;
         ArtifactsList.ItemsSource = null;
+        BindChildActivitySummary(task.Id, hierarchyProjection.ShowChildren);
         BindLinks(hierarchyProjection.VisibleLinks);
         BindChildren(task.Id, hierarchyProjection.ShowChildren);
         BindBacklinks(task.Id);
@@ -429,7 +430,12 @@ public sealed partial class TaskDetailPage : Page
         IReadOnlyList<Artifact> artifacts;
         try
         {
-            artifacts = App.Artifacts.Load(taskId);
+            artifacts = App.Artifacts.Load(taskId)
+                .Where(artifact => !string.Equals(
+                    Path.GetFileName(artifact.Path),
+                    ChildActivitySummaryService.Filename,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
         }
         catch
         {
@@ -948,8 +954,12 @@ public sealed partial class TaskDetailPage : Page
     {
         // Refresh artifacts ONLY for the currently-displayed task. Never reload
         // the task model — that would clobber unsaved Notes/Description edits.
-        if (!string.Equals(e.TaskId, Task?.Id, StringComparison.OrdinalIgnoreCase)) return;
-        DispatcherQueue.TryEnqueue(() => BindArtifacts(e.TaskId));
+        if (!string.Equals(e.TaskId, Task.Id, StringComparison.OrdinalIgnoreCase)) return;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            BindChildActivitySummary(e.TaskId, GlassworkTask.Types.IsParent(Task.Type));
+            BindArtifacts(e.TaskId);
+        });
     }
 
     private void OnBacklinksChangedExternally(object? sender, BacklinksChangedEventArgs e)
@@ -1609,6 +1619,51 @@ public sealed partial class TaskDetailPage : Page
 
     private void WrapUp_Click(object sender, RoutedEventArgs e)
         => CopyInvocation(TaskInvocationFormatter.FormatWrapUp(Task.Id));
+
+    private void RefreshChildSummary_Click(object sender, RoutedEventArgs e)
+    {
+        ChildSummaryFreshnessText.Text = "Refreshing";
+        ChildSummaryStatusText.Text =
+            "Refresh command copied. This state clears when the summary Artifact changes.";
+        CopyInvocation(TaskInvocationFormatter.FormatRefreshChildActivitySummary(Task.Id));
+    }
+
+    private void BindChildActivitySummary(string taskId, bool showSummary)
+    {
+        if (!showSummary)
+        {
+            ChildActivitySummarySection.Visibility = Visibility.Collapsed;
+            ChildSummaryMarkdown.Markdown = string.Empty;
+            return;
+        }
+
+        ChildActivitySummarySection.Visibility = Visibility.Visible;
+        var state = App.ChildActivitySummaries.ReadState(taskId);
+        ChildSummaryFreshnessText.Text = state.Kind switch
+        {
+            ChildActivitySummaryStateKind.Current => "Current",
+            ChildActivitySummaryStateKind.OutOfDate => "Out of date",
+            ChildActivitySummaryStateKind.Failed => "Failed",
+            _ => "Missing",
+        };
+        ChildSummaryMetadataText.Text = state.GeneratedAt is { } generatedAt
+            ? $"Generated {generatedAt.ToLocalTime():yyyy-MM-dd HH:mm} · {state.DescendantCount} descendants"
+            : string.Empty;
+        ChildSummaryStatusText.Text = state.Kind switch
+        {
+            ChildActivitySummaryStateKind.Missing =>
+                "No Child activity summary has been generated yet.",
+            ChildActivitySummaryStateKind.OutOfDate =>
+                "A descendant changed since this summary's recorded read basis.",
+            ChildActivitySummaryStateKind.Failed =>
+                state.Error ?? "The Child activity summary could not be read.",
+            _ => string.Empty,
+        };
+        ChildSummaryMarkdown.Markdown = state.Body ?? string.Empty;
+        ChildSummaryMarkdown.Visibility = string.IsNullOrWhiteSpace(state.Body)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
 
     private void CopyInvocation(string line)
     {

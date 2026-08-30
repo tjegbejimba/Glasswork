@@ -53,6 +53,7 @@ public partial class App : Application
     public static IResearchCatalog Research { get; private set; } = null!;
     public static IndexMarkdownWriter? IndexMarkdownWriter { get; private set; }
     public static IArtifactStore Artifacts { get; private set; } = null!;
+    public static ChildActivitySummaryService ChildActivitySummaries { get; private set; } = null!;
     public static FileWatcherService? Watcher { get; private set; }
     public static ArtifactWatcherService? ArtifactsWatcher { get; private set; }
     public static IBacklinkIndex BacklinkIndex { get; private set; } = null!;
@@ -477,6 +478,10 @@ public partial class App : Application
             vaultPath,
             Vault,
             backlinkIndex: BacklinkIndex);
+        ChildActivitySummaries = new ChildActivitySummaryService(
+            vaultPath,
+            Vault,
+            Mutations);
         Mutations.BacklinksChanged += (s, e) =>
             BacklinksChangedExternally?.Invoke(s, e);
 
