@@ -889,6 +889,9 @@ public sealed partial class TaskDetailPage : Page
                     return;
                 }
             }
+            BindChildActivitySummary(
+                id,
+                _hierarchyProjection?.ShowChildren == true);
             BindChildren(id, _hierarchyProjection?.ShowChildren == true);
         });
     }

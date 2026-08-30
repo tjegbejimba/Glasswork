@@ -50,6 +50,7 @@ public sealed class ChildActivitySummaryToolTests
         var basis = root.GetProperty("read_basis")
             .EnumerateObject()
             .ToDictionary(property => property.Name, property => property.Value.GetString()!);
+        var generatedAt = root.GetProperty("generated_at").GetString()!;
 
         using var result = JsonDocument.Parse(_tools.RefreshChildActivitySummary(
             parentId,
@@ -58,9 +59,20 @@ public sealed class ChildActivitySummaryToolTests
             root.GetProperty("descendant_count").GetInt32(),
             basis,
             "summary-tool-create",
+            generatedAt,
+            root.GetProperty("expected_summary_revision").GetString()));
+        using var replay = JsonDocument.Parse(_tools.RefreshChildActivitySummary(
+            parentId,
+            "## Child\n\nCurrent activity.",
+            root.GetProperty("parent_revision").GetString()!,
+            root.GetProperty("descendant_count").GetInt32(),
+            basis,
+            "summary-tool-create",
+            generatedAt,
             root.GetProperty("expected_summary_revision").GetString()));
 
         Assert.AreEqual("applied", result.RootElement.GetProperty("outcome").GetString());
+        Assert.IsTrue(replay.RootElement.GetProperty("replayed").GetBoolean());
         var path = Path.Combine(
             _vaultRoot,
             "wiki",

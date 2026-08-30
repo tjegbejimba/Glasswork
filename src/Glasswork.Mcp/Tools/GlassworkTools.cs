@@ -1240,6 +1240,7 @@ public sealed class GlassworkTools
                 descendant_count = capture.DescendantCount,
                 read_basis = capture.ReadBasis,
                 expected_summary_revision = capture.ExpectedSummaryRevision,
+                generated_at = _timeProvider.GetUtcNow().ToString("O"),
                 groups = capture.Groups.Select(group => new
                 {
                     direct_child_id = group.DirectChild.Id,
@@ -1291,10 +1292,21 @@ public sealed class GlassworkTools
         [Description("Descendant count returned by get_child_activity_summary_context.")] int descendant_count,
         [Description("Exact Resource Revision read basis returned by get_child_activity_summary_context.")] Dictionary<string, string> read_basis,
         [Description("Client-generated idempotency key.")] string mutation_id,
+        [Description("Stable generated_at timestamp returned by get_child_activity_summary_context. Echo it unchanged so retries with the same mutation_id are idempotent.")] string generated_at,
         [Description("Existing summary Resource Revision, or null when the capture reported no summary.")] string? expected_summary_revision = null)
     {
         try
         {
+            if (!DateTimeOffset.TryParse(
+                    generated_at,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind,
+                    out var generatedAt))
+            {
+                return JsonSerializer.Serialize(new ErrorResult(
+                    "invalid_generated_at",
+                    "generated_at must be the ISO-8601 timestamp returned by get_child_activity_summary_context."));
+            }
             var capture = new ChildActivitySummaryCapture(
                 task_id,
                 parent_revision,
@@ -1305,7 +1317,7 @@ public sealed class GlassworkTools
             var outcome = _childActivitySummaries.Commit(
                 capture,
                 content,
-                _timeProvider.GetUtcNow(),
+                generatedAt,
                 mutation_id);
             return SerializeMutationOutcome(outcome);
         }
