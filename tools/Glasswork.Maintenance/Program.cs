@@ -3,8 +3,8 @@ using System.Text.Json.Serialization;
 using Glasswork.Core.Services;
 
 // Glasswork maintenance CLI. Thin shell over the TDD-tested TaskTypeBackfillService
-// (Glasswork.Core). Exists so the one-time Parent Task `type:` backfill can run
-// can run without rebuilding/redeploying the MCP server, and can reach wiki/todo/done/.
+// (Glasswork.Core). Exists so one-time Parent Task maintenance can run without
+// rebuilding/redeploying the MCP server, and can reach wiki/todo/done/.
 //
 // Usage:
 //   glasswork-maintenance inventory --vault <vaultRoot>
@@ -13,6 +13,9 @@ using Glasswork.Core.Services;
 //   glasswork-maintenance apply --vault <vaultRoot> --classifications <file.json> [--apply]
 //       -> stamps `type:` per the classifications. DRY RUN by default; pass --apply to write.
 //          classifications JSON: [{ "relative_path": "foo.md", "ado_id": 123, "type": "parent" }]
+//
+//   glasswork-maintenance parent-migration <dry-run|execute|validate|rollback> ...
+//       -> plans and applies the one-time legacy PBI migration. See the operator runbook.
 //
 // <vaultRoot> is the Obsidian vault root (e.g. ~/Wiki); task files live under
 // <vaultRoot>/wiki/todo. SelfWriteCoordinator is wired with that todo path so the running
@@ -34,6 +37,7 @@ try
     {
         "inventory" => RunInventory(),
         "apply" => RunApply(),
+        "parent-migration" => ParentMigrationCommand.Run(args.Skip(1).ToArray(), json),
         _ => Usage($"Unknown or missing command: '{verb ?? "(none)"}'."),
     };
 }
@@ -116,5 +120,6 @@ int Usage(string message)
     Console.Error.WriteLine("Usage:");
     Console.Error.WriteLine("  glasswork-maintenance inventory --vault <vaultRoot>");
     Console.Error.WriteLine("  glasswork-maintenance apply --vault <vaultRoot> --classifications <file.json> [--apply]");
+    Console.Error.WriteLine("  glasswork-maintenance parent-migration <dry-run|execute|validate|rollback> [options]");
     return 2;
 }
