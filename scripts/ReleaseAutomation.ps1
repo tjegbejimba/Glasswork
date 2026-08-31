@@ -697,6 +697,21 @@ function Test-ReleasePrChangedFiles {
     return $true
 }
 
+function Merge-ReleasePrChangedPaths {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$TrackedPaths,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$UntrackedPaths
+    )
+
+    return @($TrackedPaths) + @($UntrackedPaths) |
+        Sort-Object -Unique
+}
+
 function Test-ReleaseProjectVersionChange {
     param(
         [Parameter(Mandatory = $true)]
@@ -748,6 +763,7 @@ function Test-ReleaseProjectVersionChange {
 function Resolve-ReleaseBlockerAction {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowNull()]
         [AllowEmptyCollection()]
         [object[]]$ExistingIssues,
 
