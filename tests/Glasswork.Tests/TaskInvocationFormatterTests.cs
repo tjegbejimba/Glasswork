@@ -27,6 +27,45 @@ public class TaskInvocationFormatterTests
     }
 
     [TestMethod]
+    [DataRow("parent")]
+    [DataRow("pbi")]
+    [DataRow("feature")]
+    public void ParentLifecycleCommands_UseParentTaskVocabulary(string taskType)
+    {
+        const string taskId = "2026-04-18-parent";
+
+        Assert.AreEqual(
+            $"Start work on Glasswork Parent Task: {taskId}",
+            TaskInvocationFormatter.FormatStartWork(taskId, taskType));
+        Assert.AreEqual(
+            $"Resume Glasswork Parent Task: {taskId}",
+            TaskInvocationFormatter.FormatResume(taskId, taskType));
+        Assert.AreEqual(
+            $"Wrap up Glasswork Parent Task: {taskId}",
+            TaskInvocationFormatter.FormatWrapUp(taskId, taskType));
+    }
+
+    [TestMethod]
+    [DataRow("task")]
+    [DataRow("bug")]
+    [DataRow(null)]
+    [DataRow("unknown")]
+    public void LeafLifecycleCommands_PreserveExistingVocabulary(string? taskType)
+    {
+        const string taskId = "2026-04-18-fix-login";
+
+        Assert.AreEqual(
+            $"Start work on Glasswork task: {taskId}",
+            TaskInvocationFormatter.FormatStartWork(taskId, taskType));
+        Assert.AreEqual(
+            $"Resume Glasswork task: {taskId}",
+            TaskInvocationFormatter.FormatResume(taskId, taskType));
+        Assert.AreEqual(
+            $"Wrap up Glasswork task: {taskId}",
+            TaskInvocationFormatter.FormatWrapUp(taskId, taskType));
+    }
+
+    [TestMethod]
     public void FormatRefreshChildActivitySummary_IncludesParentTaskId()
     {
         var line = TaskInvocationFormatter.FormatRefreshChildActivitySummary(

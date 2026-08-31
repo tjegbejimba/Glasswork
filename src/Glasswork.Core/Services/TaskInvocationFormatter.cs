@@ -1,4 +1,5 @@
 using System;
+using Glasswork.Core.Models;
 
 namespace Glasswork.Core.Services;
 
@@ -9,19 +10,36 @@ namespace Glasswork.Core.Services;
 public static class TaskInvocationFormatter
 {
     public static string FormatStartWork(string taskId) =>
-        $"Start work on Glasswork task: {Require(taskId)}";
+        FormatStartWork(taskId, GlassworkTask.Types.Task);
 
     public static string FormatResume(string taskId) =>
-        $"Resume Glasswork task: {Require(taskId)}";
+        FormatResume(taskId, GlassworkTask.Types.Task);
 
     public static string FormatWrapUp(string taskId) =>
-        $"Wrap up Glasswork task: {Require(taskId)}";
+        FormatWrapUp(taskId, GlassworkTask.Types.Task);
+
+    public static string FormatStartWork(string taskId, string? taskType) =>
+        FormatLifecycle("Start work on", taskId, taskType);
+
+    public static string FormatResume(string taskId, string? taskType) =>
+        FormatLifecycle("Resume", taskId, taskType);
+
+    public static string FormatWrapUp(string taskId, string? taskType) =>
+        FormatLifecycle("Wrap up", taskId, taskType);
 
     public static string FormatRefreshChildActivitySummary(string taskId) =>
         $"Refresh Child activity summary for Glasswork task: {Require(taskId)}";
 
     public static string FormatTriageReport(string description) =>
         $"Run the triage-issue skill on this report: {RequireDescription(description)}";
+
+    private static string FormatLifecycle(string verb, string taskId, string? taskType)
+    {
+        var taskLabel = GlassworkTask.Types.IsParent(taskType)
+            ? "Glasswork Parent Task"
+            : "Glasswork task";
+        return $"{verb} {taskLabel}: {Require(taskId)}";
+    }
 
     private static string Require(string taskId)
     {

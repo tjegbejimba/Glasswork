@@ -355,7 +355,7 @@ public sealed partial class MyDayPage : Page
     {
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
-            CopyToClipboard(Glasswork.Core.Services.TaskInvocationFormatter.FormatStartWork(task.Id), "Start work");
+            CopyToClipboard(Glasswork.Core.Services.TaskInvocationFormatter.FormatStartWork(task.Id, task.Type), "Start work");
         }
     }
 
@@ -363,7 +363,7 @@ public sealed partial class MyDayPage : Page
     {
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
-            CopyToClipboard(Glasswork.Core.Services.TaskInvocationFormatter.FormatResume(task.Id), "Resume");
+            CopyToClipboard(Glasswork.Core.Services.TaskInvocationFormatter.FormatResume(task.Id, task.Type), "Resume");
         }
     }
 
@@ -371,7 +371,7 @@ public sealed partial class MyDayPage : Page
     {
         if (sender is FrameworkElement { DataContext: GlassworkTask task })
         {
-            CopyToClipboard(Glasswork.Core.Services.TaskInvocationFormatter.FormatWrapUp(task.Id), "Wrap up");
+            CopyToClipboard(Glasswork.Core.Services.TaskInvocationFormatter.FormatWrapUp(task.Id, task.Type), "Wrap up");
         }
     }
 

@@ -1,17 +1,41 @@
 ---
 name: glasswork-start-work
-description: 'Start fresh work on a Glasswork task. Use when the user pastes "Start work on Glasswork task: <task-id>", asks to begin a Glasswork task, or kicks off a new task from the Glasswork app''s "Start work" button.'
+description: 'Start fresh work on a Glasswork Task or coordinate a Parent Task. Use when the user pastes "Start work on Glasswork task: <task-id>" or "Start work on Glasswork Parent Task: <task-id>", asks to begin a Glasswork Task, or kicks off work from the app''s "Start work" button.'
 ---
 
 # Glasswork — Start Work
 
-You are picking up a Glasswork task for the first time in this session. The user pasted a one-liner like `Start work on Glasswork task: <task-id>` from the Glasswork app's **Start work** button.
+You are starting a Glasswork Task or coordinating a Parent Task. The user pasted `Start work on Glasswork task: <task-id>` or `Start work on Glasswork Parent Task: <task-id>` from the Glasswork app's **Start work** button.
 
 The task lives as a markdown file in the user's wiki vault under `wiki/todo/<task-id>.md`. The vault root is typically `C:\Users\toegbeji\Wiki\` (confirm via the user's environment if unsure).
 
 > Full design context lives in the PRD: `~/Wiki/wiki/decisions/glasswork-v2-prd.md` (see decisions **D4** routing, **D8** guardrails, **D9** notes format). Read it if anything below is ambiguous.
 
-## Process
+## Route by persisted Task type
+
+Read the Task before taking any lifecycle action. The persisted normalized `type` is authoritative; the copied wording is only a trigger. If the command and Task type disagree, report the mismatch and follow the persisted type. Use the existing leaf process below for `task` and `bug`. Use Parent orchestration for `parent` (including a normalized legacy `pbi`).
+
+## Parent Task orchestration
+
+Parent Task work is coordination, not leaf execution. Parent orchestration uses copied command handoffs only. Do not launch Copilot, start processes, invoke subagents, or create sessions directly. See [the session launch guidance](../../docs/research/copilot-session-launch.md).
+
+1. Load the Parent Task and full descendant hierarchy with the typed Glasswork Task context tools. Fail precisely if the Task is missing, the hierarchy is invalid, or the persisted type is not `parent`.
+2. Reconcile the hierarchy against the Parent Description, Notes, Links, and current children. List missing child Tasks as proposals. Do not mutate Parent status.
+3. Present proposed child creation or relationship changes under **Decomposition approval**. Apply only the individually approved decomposition writes through guarded Glasswork mutations. If approval is cancelled or a guarded write conflicts, stop and report the outcome; leave the Task hierarchy unchanged beyond separately approved writes.
+4. After decomposition is settled, present this bounded execution plan:
+
+   | Field | Required content |
+   |---|---|
+   | **Ready work** | Actionable descendant Tasks/Bugs whose blockers are satisfied |
+   | **Blockers** | Blocked or dependency-gated descendants and the concrete reason |
+   | **Proposed session count** | Number of child handoffs proposed now |
+   | **Concurrency limit** | Maximum simultaneous child sessions |
+   | **Intentionally unstarted** | Descendants deliberately deferred and why |
+
+5. Ask separately for **Fan-out approval** of that exact session count and concurrency limit. Approval of decomposition is not fan-out approval.
+6. After explicit approval, output one copyable `Start work on Glasswork task: <child-id>` handoff per approved ready leaf. Do not start those sessions. If approval is declined or cancelled, output no handoffs and leave the hierarchy unchanged beyond separately confirmed decomposition writes.
+
+## Task/Bug leaf process
 
 1. **Read the task file** at `wiki/todo/<task-id>.md`. Parse the YAML frontmatter and the body.
 2. **Set task status to in progress**: if frontmatter `status` is not `in-progress`, update it to `in-progress` with a targeted edit before continuing.

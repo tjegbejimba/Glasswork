@@ -1,17 +1,31 @@
 ---
 name: glasswork-resume
-description: 'Resume an in-flight Glasswork task. Use when the user pastes "Resume Glasswork task: <task-id>", asks to pick a Glasswork task back up, or hits the Glasswork app''s "Resume" button.'
+description: 'Resume an in-flight Glasswork Task or Parent Task coordination flow. Use when the user pastes "Resume Glasswork task: <task-id>" or "Resume Glasswork Parent Task: <task-id>", asks to pick a Glasswork Task back up, or hits the app''s "Resume" button.'
 ---
 
 # Glasswork — Resume
 
-You are picking a Glasswork task back up after a break. The user pasted a one-liner like `Resume Glasswork task: <task-id>` from the Glasswork app's **Resume** button. There is prior context in the task file you need to reload before doing anything.
+You are resuming a Glasswork Task or Parent Task coordination flow. The user pasted `Resume Glasswork task: <task-id>` or `Resume Glasswork Parent Task: <task-id>` from the Glasswork app's **Resume** button.
 
 The task lives at `wiki/todo/<task-id>.md` in the user's wiki vault (typically `C:\Users\toegbeji\Wiki\`).
 
 > Full design context lives in the PRD: `~/Wiki/wiki/decisions/glasswork-v2-prd.md` (see decisions **D4** routing, **D8** guardrails, **D9** notes format). Read it if anything below is ambiguous.
 
-## Process
+## Route by persisted Task type
+
+Read the Task before taking any lifecycle action. The persisted normalized `type` is authoritative; the copied wording is only a trigger. Report a command/type mismatch and follow the persisted type. Use the existing leaf process for `task` and `bug`; use Parent orchestration for `parent`.
+
+## Parent Task orchestration
+
+Parent Task resume uses copied command handoffs only. Do not launch Copilot, start processes, invoke subagents, or create sessions directly. See [the session launch guidance](../../docs/research/copilot-session-launch.md).
+
+1. Load the Parent Task and full descendant tree. Fail precisely if the Task is missing, the hierarchy is invalid, or the persisted type is not `parent`.
+2. Inspect current descendant status, blockers, Notes, Artifacts, Links, and Child activity summary freshness before proposing work.
+3. Inspect **durable linked sessions** recorded in descendant Links, Notes, or Artifacts. Do not infer session state from processes or chat history. If none are recorded, report `No durable linked sessions found` and treat live session state as unknown.
+4. Present a bounded execution plan with **Ready work**, **Blockers**, **Proposed session count**, **Concurrency limit**, and **Intentionally unstarted**. Exclude descendants already represented by a durable active-session record unless the user explicitly chooses a replacement handoff.
+5. Ask for **Fan-out approval** of the exact plan. After approval, output copyable `Resume Glasswork task: <child-id>` or `Start work on Glasswork task: <child-id>` commands for approved leaves only. Never start the sessions directly. If approval is declined, make no hierarchy or lifecycle change.
+
+## Task/Bug leaf process
 
 1. **Read the task file** at `wiki/todo/<task-id>.md` end-to-end. Parse the YAML frontmatter and the body.
 2. **Find where work left off** — this is the most important step:

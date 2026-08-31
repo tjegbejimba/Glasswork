@@ -1,17 +1,34 @@
 ---
 name: glasswork-wrap-up
-description: 'Wrap up a Glasswork task that''s done or being parked. Use when the user pastes "Wrap up Glasswork task: <task-id>", asks to finish/close a Glasswork task, or hits the Glasswork app''s "Wrap up" button.'
+description: 'Wrap up a Glasswork Task or coordinate Parent Task completion. Use when the user pastes "Wrap up Glasswork task: <task-id>" or "Wrap up Glasswork Parent Task: <task-id>", asks to finish/close a Glasswork Task, or hits the app''s "Wrap up" button.'
 ---
 
 # Glasswork — Wrap Up
 
-The user is finishing (or parking) a Glasswork task. They pasted a one-liner like `Wrap up Glasswork task: <task-id>` from the Glasswork app's **Wrap up** button. Your job is to close the loop cleanly: leave behind a task file that future-you can understand at a glance.
+The user is finishing a Glasswork Task or reviewing Parent Task coordination. They pasted `Wrap up Glasswork task: <task-id>` or `Wrap up Glasswork Parent Task: <task-id>` from the Glasswork app's **Wrap up** button.
 
 The task lives at `wiki/todo/<task-id>.md` in the user's wiki vault (typically `C:\Users\toegbeji\Wiki\`).
 
 > Full design context lives in the PRD: `~/Wiki/wiki/decisions/glasswork-v2-prd.md` (see decisions **D4** routing, **D6** completion flow, **D8** guardrails, **D9** notes format). Read it if anything below is ambiguous.
 
-## Process (D6 — seven steps)
+## Route by persisted Task type
+
+Read the Task before taking any lifecycle action. The persisted normalized `type` is authoritative; the copied wording is only a trigger. Report a command/type mismatch and follow the persisted type. Use the existing leaf process for `task` and `bug`; use Parent orchestration for `parent`.
+
+## Parent Task orchestration
+
+Parent Task wrap-up uses copied command handoffs only. Do not launch Copilot, start processes, invoke subagents, or create sessions directly. See [the session launch guidance](../../docs/research/copilot-session-launch.md).
+
+1. Load the Parent Task and full descendant tree. Fail precisely if the Task is missing, the hierarchy is invalid, or the persisted type is not `parent`.
+2. Refresh the Child activity summary through the guarded `get_child_activity_summary_context` and `refresh_child_activity_summary` workflow. On a stale read basis or Resource Revision conflict, re-capture before one retry; otherwise report the exact failure and do not continue toward completion.
+3. Inspect the full descendant tree. Report counts by status, blockers, cancelled descendants, intentionally unstarted work, and any actionable descendants that remain.
+4. Review Parent-level Description, Notes, acceptance evidence, coordination follow-ups, and summary freshness. Never complete a Parent Task solely because every descendant is terminal.
+5. Present an **explicit completion decision**:
+   - If actionable descendants remain, list them and require the user to choose whether to keep coordinating, explicitly defer/cancel them through separately confirmed writes, or leave the Parent unchanged.
+   - If all descendants are terminal, still ask whether Parent-level acceptance and coordination are complete.
+6. Only after explicit confirmation, use the guarded Task lifecycle mutation to mark the Parent Task done. If confirmation is declined, do not change Parent status. Do not infer completion from descendant state.
+
+## Task/Bug leaf process (D6 — seven steps)
 
 1. **Read the task file** at `wiki/todo/<task-id>.md` end-to-end. Parse the YAML frontmatter and the body. Skim any pages referenced in `## Related` so the summary reflects the wider context.
 2. **Read recent `## Notes` entries** (especially the last few `### YYYY-MM-DD` blocks) to understand what actually happened during the work.

@@ -1,0 +1,113 @@
+{
+  "name": "Task Detail Parent lifecycle commands",
+  "theme": "dark",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "vv-parent-lifecycle",
+      "title": "Coordinate parent delivery",
+      "description": "Parent lifecycle actions copy orchestration-specific command handoffs.",
+      "status": "in-progress",
+      "type": "parent"
+    },
+    {
+      "id": "vv-leaf-lifecycle",
+      "title": "Implement leaf delivery",
+      "description": "Leaf lifecycle actions retain their existing command handoffs.",
+      "status": "in-progress",
+      "type": "bug"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Coordinate parent delivery",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "TaskDetailScrollViewer",
+      "value": "100",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Start work"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Start work on Glasswork Parent Task: vv-parent-lifecycle"
+    },
+    {
+      "type": "invoke",
+      "name": "Resume"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Resume Glasswork Parent Task: vv-parent-lifecycle"
+    },
+    {
+      "type": "invoke",
+      "name": "Wrap up"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Wrap up Glasswork Parent Task: vv-parent-lifecycle"
+    },
+    {
+      "type": "capture",
+      "name": "parent-lifecycle-actions"
+    },
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Implement leaf delivery",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "scroll-percent",
+      "automationId": "TaskDetailScrollViewer",
+      "value": "100",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Start work"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Start work on Glasswork task: vv-leaf-lifecycle"
+    },
+    {
+      "type": "invoke",
+      "name": "Resume"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Resume Glasswork task: vv-leaf-lifecycle"
+    },
+    {
+      "type": "invoke",
+      "name": "Wrap up"
+    },
+    {
+      "type": "assert-clipboard-text",
+      "value": "Wrap up Glasswork task: vv-leaf-lifecycle"
+    }
+  ],
+  "captures": [
+    {
+      "name": "leaf-lifecycle-actions",
+      "waitMilliseconds": 400
+    }
+  ]
+}
