@@ -942,10 +942,21 @@ function Invoke-ApplyMode {
     }
     Add-RootChangelogEntry -Fragment $notes.RootChangelogFragment
 
-    $changedPaths = Invoke-Native `
-        -Command "git" `
-        -Arguments @("diff", "--name-only", $CandidateSha) `
-        -FailureMessage "Unable to inspect generated Release PR changes"
+    $trackedPaths = @(
+        Invoke-Native `
+            -Command "git" `
+            -Arguments @("diff", "--name-only", $CandidateSha) `
+            -FailureMessage "Unable to inspect generated tracked Release PR changes"
+    )
+    $untrackedPaths = @(
+        Invoke-Native `
+            -Command "git" `
+            -Arguments @("ls-files", "--others", "--exclude-standard") `
+            -FailureMessage "Unable to inspect generated untracked Release PR changes"
+    )
+    $changedPaths = Merge-ReleasePrChangedPaths `
+        -TrackedPaths $trackedPaths `
+        -UntrackedPaths $untrackedPaths
     if (-not (Test-ReleasePrChangedFiles -Stream $Stream -Version $version -Paths $changedPaths)) {
         throw "Generated $Stream Release PR exceeds the exact changed-file allowlist."
     }

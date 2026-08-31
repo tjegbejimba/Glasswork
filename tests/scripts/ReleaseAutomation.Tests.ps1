@@ -439,6 +439,26 @@ Describe "Test-ReleasePrChangedFiles" {
     }
 }
 
+Describe "Merge-ReleasePrChangedPaths" {
+    It "includes new untracked release notes with tracked release edits" {
+        $paths = Merge-ReleasePrChangedPaths `
+            -TrackedPaths @(
+                "CHANGELOG.md",
+                "src/Glasswork.App/Glasswork.csproj"
+            ) `
+            -UntrackedPaths @(
+                "docs/releases/v1.4.12.md",
+                "CHANGELOG.md"
+            )
+
+        $paths | Should -Be @(
+            "CHANGELOG.md",
+            "docs/releases/v1.4.12.md",
+            "src/Glasswork.App/Glasswork.csproj"
+        )
+    }
+}
+
 Describe "Test-ReleaseProjectVersionChange" {
     It "accepts only the expected App version element replacements" {
         $base = @"
@@ -730,6 +750,14 @@ Describe "Resolve-ReleaseBlockerAction" {
             -Stream App `
             -HasFailure $true |
             Should -Be "Update"
+    }
+
+    It "creates the first App blocker when issue lookup returns no output" {
+        Resolve-ReleaseBlockerAction `
+            -ExistingIssues $null `
+            -Stream App `
+            -HasFailure $true |
+            Should -Be "Create"
     }
 
     It "closes one blocker after recovery and otherwise does nothing" {
