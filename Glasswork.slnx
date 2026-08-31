@@ -12,6 +12,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Glasswork.Tests/Glasswork.Tests.csproj" />
+    <Project Path="tests/Glasswork.Maintenance.Tests/Glasswork.Maintenance.Tests.csproj" />
     <Project Path="tests/Glasswork.Mcp.Tests/Glasswork.Mcp.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
