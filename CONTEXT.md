@@ -194,7 +194,10 @@ manually collapsed, sidebar pane width, last-selected page.
   page, not one machine's view of it, so the opt-in lives in the vault. When
   in doubt, vault wins.
 - **Lifecycle**: GC stale entries on app launch (drop entries whose taskId
-  no longer exists in vault).
+  no longer exists in vault), except Session Task Set membership. A missing
+  member remains visible as unavailable until the user explicitly removes it.
+  UI State may retain only its Task ID and last-known title as a
+  non-authoritative display cache; no Task prose is copied out of the Vault.
 - **Planner boundary**: only the confirmed `planner.profile` envelope is
   durable here. Suggested setup values, Unknown calendar, inline Undo, and the
   Not today tray are transient and must not be written to UI State.
