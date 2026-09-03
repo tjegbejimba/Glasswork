@@ -19,7 +19,8 @@ internal static class CanvasPageRenderer
 <style>
 :root{color-scheme:light dark}*{box-sizing:border-box}
 body{margin:0;padding:0;background:var(--background-color-default,#fff);color:var(--text-color-default,#1f2328);font:14px/1.5 var(--font-sans,Segoe UI,sans-serif)}
-#app{display:flex;flex-direction:row;align-items:stretch;min-height:100vh}
+#app{display:flex;flex-direction:column;min-height:100vh}
+.body-row{display:flex;flex-direction:row;align-items:stretch;flex:1}
 .rail{flex:0 0 280px;max-width:280px;border-right:1px solid var(--border-color-default,#d0d7de);overflow-y:auto;padding:12px}
 .rail-header{align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .rail-header h2{margin:0;font-size:15px}
@@ -37,6 +38,8 @@ details:not([open]) .rail-header,details:not([open]) .rail-list{display:none}
 .chip.unavailable{color:var(--true-color-red,#cf222e);border-color:var(--true-color-red,#cf222e)}
 .remove-btn{border:0;background:none;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:4px}
 .remove-btn:hover{color:var(--true-color-red,#cf222e)}
+.restore-banner{margin:12px;padding:10px 12px;border:1px solid var(--true-color-red,#cf222e);border-radius:8px;background:var(--background-color-subtle,rgba(207,34,46,.08))}
+.restore-banner p{margin:4px 0 0}
 .detail{flex:1;min-width:0;padding:24px;max-width:900px}
 .card,details{border:1px solid var(--border-color-default,#d0d7de);border-radius:12px;padding:16px;margin-top:16px;background:var(--background-color-subtle,transparent)}
 h1{margin:0 0 8px;font-size:26px}h2{margin:0 0 8px;font-size:18px}.muted{color:var(--text-color-muted,#656d76)}.error{border-color:var(--true-color-red,#cf222e)}
@@ -56,7 +59,7 @@ blockquote,.callout{margin:8px 0;padding:8px 12px;border-left:4px solid var(--bo
    `!important` regardless of the `open` attribute so resizing from a
    collapsed narrow drawer up to desktop always shows the fixed rail. */
 @media(max-width:719px){
-  #app{flex-direction:column}
+  .body-row{flex-direction:column}
   .rail{flex:0 0 auto;max-width:none;border-right:0;border-bottom:1px solid var(--border-color-default,#d0d7de);overflow-y:visible;overflow-x:hidden}
   .rail-summary{display:flex;align-items:center;justify-content:space-between;list-style:none}
   .rail-summary::-webkit-details-marker{display:none}
@@ -128,7 +131,7 @@ function renderRail(){
   header.append(element("h2",null,"Loaded Tasks"));
   const clear=element("button",null,"Clear all");
   clear.type="button";
-  clear.disabled=data.members.length===0;
+  clear.disabled=data.members.length===0&&!data.restoreError;
   clear.addEventListener("click",clearAll);
   header.append(clear);
   details.append(header);
@@ -151,6 +154,15 @@ function renderEmptyState(){
   const card=element("article","card");
   card.append(element("h1",null,"Glasswork Tasks"),element("p","muted","Ask an agent to load a Glasswork Task to get started."));
   return card;
+}
+
+function renderRestoreBanner(){
+  if(!data.restoreError)return null;
+  const banner=element("div","restore-banner");
+  banner.setAttribute("role","alert");
+  banner.append(element("strong",null,"Couldn't restore the Loaded Tasks from a previous session."));
+  banner.append(element("p",null,data.restoreError.message||data.restoreError.code||"The saved state could not be read."));
+  return banner;
 }
 
 function renderErrorState(detail){
@@ -277,7 +289,10 @@ function renderDetail(){
   return detail;
 }
 function render(){
-  app.replaceChildren(renderRail(),renderDetail());
+  const row=element("div","body-row");
+  row.append(renderRail(),renderDetail());
+  const banner=renderRestoreBanner();
+  app.replaceChildren(...(banner?[banner,row]:[row]));
 }
 async function refreshState(){
   data=await getJson("/canvas-state");

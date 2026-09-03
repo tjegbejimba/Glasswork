@@ -27,24 +27,90 @@ internal sealed record SessionTaskMember(
 internal sealed record SessionTaskSetSnapshot(
     IReadOnlyList<SessionTaskMember> Members,
     string? SelectedTaskId,
-    int Limit);
+    int Limit,
+    string? RestoreErrorCode,
+    string? RestoreErrorMessage);
 
 internal sealed record SessionTaskSetResult(bool Ok, string? Code, string? Message, SessionTaskSetSnapshot Snapshot);
 
 /// <summary>
-/// The explicit, recency-ordered, in-memory Session Task Set for one Copilot
-/// session's canvas host process. Membership never persists (that is
-/// restoration, deferred to a later slice) and is never inferred from Task
-/// status or agent activity — only explicit load, unload, clear, and select
-/// change membership or the current selection.
+/// The explicit, recency-ordered Session Task Set for one Copilot session's
+/// canvas host process. Membership is never inferred from Task status or
+/// agent activity — only explicit load, unload, clear, and select change
+/// membership or the current selection.
+///
+/// Membership, order, and last-known titles persist through
+/// <see cref="SessionTaskSetStateStore"/>, keyed by <paramref
+/// name="sessionId"/> (see ADR 0026, issue #557). On construction, a prior
+/// Session Task Set for this session is restored: membership and recency
+/// order come back, the most-recent member is selected, and reading
+/// position (scroll/expander state) is reset because it never persisted in
+/// the first place. Every mutation that changes membership or order (load,
+/// unload, clear) or refreshes a title (refresh selected/all) re-persists
+/// immediately, so a killed host process never loses the last explicit
+/// change. Malformed or future-version persisted state is never silently
+/// treated as an empty set — it is surfaced through
+/// <see cref="SessionTaskSetSnapshot.RestoreErrorCode"/> until the user
+/// explicitly clears the canvas.
 /// </summary>
-internal sealed class SessionTaskSetService(TaskDetailProjectionService projections)
+internal sealed class SessionTaskSetService
 {
     public const int MemberLimit = 20;
 
+    private readonly TaskDetailProjectionService _projections;
+    private readonly SessionTaskSetStateStore _stateStore;
+    private readonly string _sessionId;
     private readonly object _gate = new();
     private readonly List<SessionTaskMember> _members = [];
     private string? _selectedTaskId;
+    private string? _restoreErrorCode;
+    private string? _restoreErrorMessage;
+
+    public SessionTaskSetService(TaskDetailProjectionService projections, SessionTaskSetStateStore stateStore, string sessionId)
+    {
+        _projections = projections;
+        _stateStore = stateStore;
+        _sessionId = sessionId;
+        Restore();
+    }
+
+    /// <summary>
+    /// Rebuilds membership from persisted state at host startup. A missing
+    /// persisted key is a legitimate empty Session Task Set. A malformed or
+    /// future-version persisted value leaves membership empty but records the
+    /// exact restore failure for visible display, rather than looking like an
+    /// ordinary empty canvas.
+    /// </summary>
+    private void Restore()
+    {
+        var result = _stateStore.Load(_sessionId);
+        if (!result.Ok)
+        {
+            _restoreErrorCode = result.ErrorCode;
+            _restoreErrorMessage = result.ErrorMessage;
+            return;
+        }
+
+        foreach (var persisted in result.Members)
+        {
+            _members.Add(BuildMember(persisted.TaskId, persisted.Title));
+        }
+        // Recency order is preserved as persisted (index 0 = most recent);
+        // restoring always selects the most-recent member.
+        _selectedTaskId = _members.Count > 0 ? _members[0].TaskId : null;
+    }
+
+    /// <summary>
+    /// Persists the current membership/order and clears any prior restore
+    /// failure, since a successful mutation always writes a fresh, valid
+    /// entry that supersedes it.
+    /// </summary>
+    private void Persist()
+    {
+        _stateStore.Save(_sessionId, _members.Select(m => new SessionTaskSetMemberState(m.TaskId, m.Title)).ToList());
+        _restoreErrorCode = null;
+        _restoreErrorMessage = null;
+    }
 
     public SessionTaskSetSnapshot Snapshot()
     {
@@ -88,6 +154,7 @@ internal sealed class SessionTaskSetService(TaskDetailProjectionService projecti
             }
 
             _selectedTaskId = lastSuccessful ?? requested[^1];
+            Persist();
             return new(true, null, null, Copy());
         }
     }
@@ -113,6 +180,7 @@ internal sealed class SessionTaskSetService(TaskDetailProjectionService projecti
                     ? null
                     : _members[Math.Min(index, _members.Count - 1)].TaskId;
             }
+            Persist();
             return new(true, null, null, Copy());
         }
     }
@@ -124,6 +192,7 @@ internal sealed class SessionTaskSetService(TaskDetailProjectionService projecti
         {
             _members.Clear();
             _selectedTaskId = null;
+            Persist();
             return new(true, null, null, Copy());
         }
     }
@@ -131,7 +200,8 @@ internal sealed class SessionTaskSetService(TaskDetailProjectionService projecti
     /// <summary>
     /// Selects an existing member without changing recency order. Selecting a
     /// row is a view action, distinct from the explicit load that establishes
-    /// recency.
+    /// recency, and is never persisted — restoration always re-derives
+    /// selection from recency order.
     /// </summary>
     public SessionTaskSetResult Select(string taskId)
     {
@@ -151,6 +221,7 @@ internal sealed class SessionTaskSetService(TaskDetailProjectionService projecti
         {
             if (_selectedTaskId is null) return new(true, null, null, Copy());
             RefreshMemberLocked(_selectedTaskId);
+            Persist();
             return new(true, null, null, Copy());
         }
     }
@@ -162,6 +233,7 @@ internal sealed class SessionTaskSetService(TaskDetailProjectionService projecti
         {
             foreach (var taskId in _members.Select(m => m.TaskId).ToList())
                 RefreshMemberLocked(taskId);
+            Persist();
             return new(true, null, null, Copy());
         }
     }
@@ -177,7 +249,7 @@ internal sealed class SessionTaskSetService(TaskDetailProjectionService projecti
     {
         try
         {
-            var projection = projections.Build(taskId, includeArtifacts: false);
+            var projection = _projections.Build(taskId, includeArtifacts: false);
             if (projection is null)
             {
                 return SessionTaskMember.Unavailable(taskId, fallbackTitle ?? taskId, $"Task '{taskId}' was not found.");
@@ -199,5 +271,5 @@ internal sealed class SessionTaskSetService(TaskDetailProjectionService projecti
         }
     }
 
-    private SessionTaskSetSnapshot Copy() => new(_members.ToList(), _selectedTaskId, MemberLimit);
+    private SessionTaskSetSnapshot Copy() => new(_members.ToList(), _selectedTaskId, MemberLimit, _restoreErrorCode, _restoreErrorMessage);
 }
