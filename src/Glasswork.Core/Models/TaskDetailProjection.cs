@@ -40,6 +40,7 @@ public sealed record TaskDetailProjection
     public IReadOnlyList<SubTask> OpenBlockers { get; init; } = Array.Empty<SubTask>();
     public IReadOnlyList<Artifact> Artifacts { get; init; } = Array.Empty<Artifact>();
     public IReadOnlyList<Artifact> ArtifactDescriptors => Artifacts;
+    public IReadOnlyList<ArtifactRow> ArtifactRows { get; init; } = Array.Empty<ArtifactRow>();
     public IReadOnlyList<TaskLink> Links { get; init; } = Array.Empty<TaskLink>();
     public IReadOnlyList<TaskLink> TaskLinks => Links;
     public IReadOnlyList<RelatedLink> RelatedLinks { get; init; } = Array.Empty<RelatedLink>();
@@ -75,6 +76,7 @@ public sealed record TaskDetailProjection
         var ado = links.FirstOrDefault(l => l is not null && l.Type == TaskLink.Types.Ado);
         var adoLink = ado is not null && int.TryParse(ado.Value, out var parsedAdo) ? parsedAdo : (int?)null;
         var artifactDescriptors = (artifacts ?? Array.Empty<Artifact>()).ToList();
+        var artifactRows = ArtifactRow.Project(artifactDescriptors, nowUtc ?? DateTime.UtcNow);
         var related = (relatedEntries ?? Array.Empty<TaskDetailRelatedEntry>()).ToList();
         var directChildren = (children ?? Array.Empty<GlassworkTask>())
             .Where(c => c is not null)
@@ -115,6 +117,7 @@ public sealed record TaskDetailProjection
             CompletedSubtasks = completed,
             OpenBlockers = blockers,
             Artifacts = artifactDescriptors,
+            ArtifactRows = artifactRows,
             Links = links.ToList(),
             RelatedLinks = (task.RelatedLinks ?? []).ToList(),
             RelatedEntries = related,
@@ -125,12 +128,13 @@ public sealed record TaskDetailProjection
         };
     }
 
-    public TaskDetailProjection WithArtifacts(IEnumerable<Artifact> artifacts)
+    public TaskDetailProjection WithArtifacts(IEnumerable<Artifact> artifacts, DateTime? nowUtc = null)
     {
         var descriptors = (artifacts ?? Array.Empty<Artifact>()).ToList();
         return this with
         {
             Artifacts = descriptors,
+            ArtifactRows = ArtifactRow.Project(descriptors, nowUtc ?? DateTime.UtcNow),
             Visibility = Visibility with { ShowArtifacts = descriptors.Count > 0 },
         };
     }

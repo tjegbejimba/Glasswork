@@ -31,6 +31,7 @@ public static class ArtifactKindResolver
         ".txt", ".text", ".log", ".json", ".yaml", ".yml", ".xml", ".csv", ".tsv",
         ".ini", ".toml", ".cfg", ".conf", ".css", ".js", ".ts", ".py", ".cs",
         ".sh", ".ps1", ".sql", ".rs", ".go", ".java", ".kt", ".rb", ".php",
+        ".pl", ".lua", ".r", ".swift", ".dart",
         ".c", ".cpp", ".h", ".hpp", ".diff", ".patch"
     };
 
@@ -43,7 +44,8 @@ public static class ArtifactKindResolver
     {
         ".exe", ".com", ".cmd", ".bat", ".ps1", ".psm1", ".vbs", ".vbe",
         ".js", ".jse", ".wsf", ".wsh", ".hta", ".msi", ".scr", ".lnk",
-        ".url", ".reg", ".dll", ".cpl", ".jar"
+        ".url", ".reg", ".dll", ".cpl", ".jar", ".py", ".sh", ".rb", ".php",
+        ".pl", ".lua", ".r", ".swift", ".dart"
     };
 
     private const int ExtensionlessSniffSizeLimit = 8192;

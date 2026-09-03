@@ -23,6 +23,21 @@ const actionSchema = {
     additionalProperties: false,
 };
 
+const artifactActionSchema = {
+    type: "object",
+    required: ["task_id", "artifact_name", "operation"],
+    properties: {
+        task_id: { type: "string", minLength: 1 },
+        artifact_name: { type: "string", minLength: 1, description: "Exact Artifact filename from the shared projection." },
+        operation: {
+            type: "string",
+            enum: ["open_externally", "show_in_folder", "open_in_obsidian"],
+            description: "Trusted user action. Unsafe file extensions reject open_externally and require show_in_folder.",
+        },
+    },
+    additionalProperties: false,
+};
+
 function hostCommand() {
     const configured = process.env.GLASSWORK_CANVAS_HOST;
     if (configured) return { command: configured, args: [] };
@@ -134,6 +149,28 @@ async function refresh(ctx) {
     }
 }
 
+async function artifactAction(ctx) {
+    const host = hosts.get(ctx.sessionId);
+    if (!host) throw new CanvasError("host_not_running", "The session canvas host is not running.");
+    await host.ready;
+    const taskId = typeof ctx.input?.task_id === "string" ? ctx.input.task_id.trim() : "";
+    const name = typeof ctx.input?.artifact_name === "string" ? ctx.input.artifact_name.trim() : "";
+    const operation = typeof ctx.input?.operation === "string" ? ctx.input.operation : "";
+    try {
+        const response = await fetch(`${host.url}/api/artifact/action?token=${encodeURIComponent(host.token)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ taskId, name, operation }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new CanvasError(payload.code ?? "artifact_action_failed", payload.message ?? "Artifact action failed.");
+        return payload;
+    } catch (error) {
+        if (error instanceof CanvasError) throw error;
+        throw new CanvasError("host_unavailable", "The session canvas host is unavailable.");
+    }
+}
+
 const session = await joinSession({
     canvases: [
         createCanvas({
@@ -141,7 +178,15 @@ const session = await joinSession({
             displayName: "Glasswork task",
             description: "Read-only Task detail backed by the shared Glasswork projection.",
             inputSchema,
-            actions: [{ name: "refresh", description: "Reload the selected Task from the shared projection.", inputSchema: actionSchema, handler: refresh }],
+            actions: [
+                { name: "refresh", description: "Reload the selected Task from the shared projection.", inputSchema: actionSchema, handler: refresh },
+                {
+                    name: "artifact_action",
+                    description: "Open or reveal one projected Artifact under the native external-open safety policy.",
+                    inputSchema: artifactActionSchema,
+                    handler: artifactAction,
+                },
+            ],
             open,
             onClose: async () => {},
         }),

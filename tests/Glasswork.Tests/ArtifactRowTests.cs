@@ -51,9 +51,10 @@ public class ArtifactRowTests
         var rows = ArtifactRow.Project(artifacts, now);
 
         Assert.HasCount(3, rows);
-        Assert.IsFalse(rows[0].IsExpanded);
+        Assert.AreEqual("newest", rows[0].Title);
+        Assert.IsTrue(rows[0].IsExpanded, "newest should auto-expand");
         Assert.IsFalse(rows[1].IsExpanded);
-        Assert.IsTrue(rows[2].IsExpanded, "newest should auto-expand");
+        Assert.IsFalse(rows[2].IsExpanded);
     }
 
     [TestMethod]
@@ -84,10 +85,10 @@ public class ArtifactRowTests
 
         var rows = ArtifactRow.Project(artifacts, now);
 
-        Assert.AreEqual("just now", rows[0].TimeBadge);
-        Assert.AreEqual("10m ago", rows[1].TimeBadge);
-        Assert.AreEqual("3h ago", rows[2].TimeBadge);
-        Assert.AreEqual("2d ago", rows[3].TimeBadge);
+        Assert.AreEqual("just now", rows.Single(r => r.Title == "seconds").TimeBadge);
+        Assert.AreEqual("10m ago", rows.Single(r => r.Title == "minutes").TimeBadge);
+        Assert.AreEqual("3h ago", rows.Single(r => r.Title == "hours").TimeBadge);
+        Assert.AreEqual("2d ago", rows.Single(r => r.Title == "days").TimeBadge);
     }
 
     [TestMethod]
@@ -177,12 +178,13 @@ public class ArtifactRowTests
     }
 
     [TestMethod]
-    public void IsReference_TrueForOther_LoadError_OverCapImage_AndBodylessTextOrMarkdown()
+    public void IsReference_TrueForOther_LoadError_AndOverCapContent()
     {
         Assert.IsTrue(MakeRow("C:\\v\\a.bin", ArtifactKind.Other, body: null).IsReference, "Other");
         Assert.IsTrue(MakeRow("C:\\v\\a.txt", ArtifactKind.Text, body: null, loadError: "e").IsReference, "load error");
         Assert.IsTrue(MakeRow("C:\\v\\big.md", ArtifactKind.Markdown, body: null).IsReference, "over-cap markdown (null body)");
         Assert.IsTrue(MakeRow("C:\\v\\big.txt", ArtifactKind.Text, body: null).IsReference, "over-cap text (null body)");
+        Assert.IsTrue(MakeRow("C:\\v\\big.html", ArtifactKind.Html, body: null, sizeBytes: ArtifactCaps.InlineTextBytes + 1).IsReference, "over-cap html");
         Assert.IsTrue(MakeRow("C:\\v\\huge.png", ArtifactKind.Image, body: null, sizeBytes: ArtifactCaps.InlineImageBytes + 1).IsReference, "over-cap image");
     }
 

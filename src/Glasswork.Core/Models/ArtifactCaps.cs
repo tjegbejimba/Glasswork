@@ -25,4 +25,8 @@ public static class ArtifactCaps
     /// Over-cap → by reference, no inline render.
     /// </summary>
     public const long InlineImageBytes = 10 * 1024 * 1024;
+
+    public const int MaxImageDimension = 4096;
+
+    public const long MaxImagePixels = 4096L * 4096L;
 }
