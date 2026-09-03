@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCanvas, CanvasError, joinSession } from "@github/copilot-sdk/extension";
@@ -27,7 +27,13 @@ function hostCommand() {
     const configured = process.env.GLASSWORK_CANVAS_HOST;
     if (configured) return { command: configured, args: [] };
 
-    const bundled = join(extensionRoot, "host", "Glasswork.CanvasHost.dll");
+    const hostRoot = join(extensionRoot, "host");
+    const activeFile = join(hostRoot, "active.txt");
+    const activeVersion = existsSync(activeFile) ? readFileSync(activeFile, "utf8").trim() : "";
+    const bundledExecutable = join(hostRoot, activeVersion, "Glasswork.CanvasHost.exe");
+    if (existsSync(bundledExecutable)) return { command: bundledExecutable, args: [] };
+
+    const bundled = join(hostRoot, activeVersion, "Glasswork.CanvasHost.dll");
     if (existsSync(bundled)) return { command: "dotnet", args: [bundled] };
 
     throw new CanvasError(

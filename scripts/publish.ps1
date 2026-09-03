@@ -28,6 +28,23 @@ Write-Host "Publishing Release build..."
 dotnet publish $AppProject -c Release -p:Platform=x64 --self-contained -r win-x64 -o $InstallDir
 if ($LASTEXITCODE -ne 0) { throw "Publish failed" }
 
+# Publish the user-scoped canvas extension beside the app release. The host is
+# self-contained so opening a Task does not depend on the native app process or
+# a separately installed .NET runtime.
+$extensionSource = Join-Path $RepoRoot ".github\extensions\glasswork-task-viewer"
+$extensionDestination = Join-Path $env:USERPROFILE ".copilot\extensions\glasswork-task-viewer"
+New-Item -ItemType Directory -Force -Path $extensionDestination | Out-Null
+Copy-Item (Join-Path $extensionSource "extension.mjs") $extensionDestination -Force
+$hostDestination = Join-Path $extensionDestination "host"
+$version = (Select-String -Path (Join-Path $AppProject "Glasswork.csproj") -Pattern '<Version>([^<]+)</Version>').Matches.Groups[1].Value
+if ([string]::IsNullOrWhiteSpace($version)) { throw "Unable to determine the Glasswork version for the canvas host bundle." }
+$versionedHostDestination = Join-Path $hostDestination $version
+New-Item -ItemType Directory -Force -Path $hostDestination | Out-Null
+dotnet publish (Join-Path $RepoRoot "tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj") `
+    -c Release -r win-x64 --self-contained -o $versionedHostDestination --nologo --verbosity minimal
+if ($LASTEXITCODE -ne 0) { throw "Canvas host publish failed" }
+Set-Content -Path (Join-Path $hostDestination "active.txt") -Value $version -Encoding ascii
+
 # 3. Verify critical files
 $exe = Join-Path $InstallDir "Glasswork.exe"
 $ico = Join-Path $InstallDir "Assets\AppIcon.ico"
