@@ -1,0 +1,149 @@
+{
+  "name": "Task Detail projection parity",
+  "theme": "light",
+  "startUri": "glasswork://backlog",
+  "tasks": [
+    {
+      "id": "vv-projection-parent",
+      "title": "Projection parity parent",
+      "description": "Stable Description prose for the shared Task Detail projection.",
+      "notes": "Agent-readable Notes prose.",
+      "status": "in-progress",
+      "priority": "high",
+      "adoLink": 554,
+      "related": [
+        "concepts/projection-contract"
+      ],
+      "subtasks": [
+        {
+          "text": "Active projected subtask",
+          "status": "in_progress"
+        },
+        {
+          "text": "Completed projected subtask",
+          "status": "done",
+          "isCompleted": true
+        }
+      ],
+      "artifacts": [
+        {
+          "name": "plan.md",
+          "content": "# Projection plan\n\nShared semantic contract."
+        },
+        {
+          "name": "data.json",
+          "content": "{\"kind\":\"text\"}"
+        }
+      ]
+    },
+    {
+      "id": "vv-projection-minimal",
+      "title": "Projection minimal task",
+      "description": "Minimal Task fixture.",
+      "status": "todo",
+      "priority": "medium"
+    },
+    {
+      "id": "vv-projection-blocked",
+      "title": "Projection blocked task",
+      "description": "Blocked Task fixture.",
+      "status": "blocked",
+      "priority": "high"
+    },
+    {
+      "id": "vv-projection-cancelled",
+      "title": "Projection cancelled task",
+      "description": "Cancelled Task fixture.",
+      "status": "cancelled",
+      "priority": "low",
+      "cancelledAt": "2026-09-02T12:00:00Z",
+      "cancellationReason": "Fixture coverage"
+    },
+    {
+      "id": "vv-projection-all-artifacts",
+      "title": "Projection artifact kinds",
+      "description": "Multi-format Artifact fixture.",
+      "status": "todo",
+      "priority": "medium",
+      "artifacts": [
+        {
+          "name": "preview.html",
+          "content": "<html><body>Preview</body></html>"
+        },
+        {
+          "name": "image.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        },
+        {
+          "name": "unknown.bin",
+          "base64": "AAECAwQ="
+        }
+      ]
+    },
+    {
+      "id": "vv-projection-child",
+      "title": "Projected direct child",
+      "description": "Direct child Task.",
+      "status": "todo",
+      "priority": "medium",
+      "parent": "vv-projection-parent"
+    }
+  ],
+  "wikiPages": [
+    {
+      "relativePath": "concepts/projection-contract.md",
+      "id": "projection-contract",
+      "title": "Projection contract",
+      "type": "concept",
+      "markdown": "The projection contract references [[vv-projection-parent]]."
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Projection parity parent",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Projection parity parent",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskTitleBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Artifacts",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Related",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Children (1)",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "ID: vv-projection-parent",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-detail-projection-parity",
+      "waitMilliseconds": 1200
+    }
+  ]
+}

@@ -26,6 +26,8 @@ namespace Glasswork.Pages;
 public sealed partial class TaskDetailPage : Page
 {
     public GlassworkTask Task { get; private set; } = new();
+    public TaskDetailProjection DetailProjection { get; private set; } =
+        TaskDetailProjection.Create(new GlassworkTask());
 
     private bool _isLoading;
     private bool _isNavigated;
@@ -95,6 +97,7 @@ public sealed partial class TaskDetailPage : Page
     {
         _isLoading = true;
         Task = task;
+        DetailProjection = App.TaskDetailProjection.Build(task, includeArtifacts: false);
         HideClipboardStatus();
         // Refresh compiled x:Bind expressions (Title, Description, Notes use TwoWay bindings
         // that captured the previous Task object at initialization; Update() re-roots them on
@@ -103,25 +106,22 @@ public sealed partial class TaskDetailPage : Page
         App.ActiveTask.ActiveTaskId = task.Id;
 
         // Set combo boxes to match task state
-        SetComboByTag(StatusBox, task.Status);
-        SetComboByTag(PriorityBox, task.Priority);
-        StatusBox.IsEnabled = !task.IsBlocked && !task.IsCancelled;
-        BlockedStatusText.Visibility = task.IsBlocked ? Visibility.Visible : Visibility.Collapsed;
-        BlockedStatusText.Text = task.IsBlocked
-            ? (task.NeedsBlockerDetails ? "Needs blocker details" : $"Blocked: {task.BlockedReason}")
+        SetComboByTag(StatusBox, DetailProjection.Status.Value);
+        SetComboByTag(PriorityBox, DetailProjection.Priority);
+        StatusBox.IsEnabled = !DetailProjection.Status.IsBlocked && !DetailProjection.Status.IsCancelled;
+        BlockedStatusText.Visibility = DetailProjection.Visibility.ShowBlockedStatus ? Visibility.Visible : Visibility.Collapsed;
+        BlockedStatusText.Text = DetailProjection.Visibility.ShowBlockedStatus
+            ? (DetailProjection.BlockedMetadataState == BlockedMetadataState.NeedsDetails
+                ? "Needs blocker details"
+                : $"Blocked: {DetailProjection.BlockedReason}")
             : string.Empty;
-        BlockTaskButton.Visibility = !task.IsBlocked ? Visibility.Visible : Visibility.Collapsed;
-        EditBlockerButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
-        RepairBlockedButton.Visibility = task.IsBlocked && task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
-        ResumeBlockedButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
-        MarkBlockedDoneButton.Visibility = task.IsBlocked && !task.NeedsBlockerDetails ? Visibility.Visible : Visibility.Collapsed;
-        CancelTaskButton.Visibility = task.Status is (
-            GlassworkTask.Statuses.Todo
-            or GlassworkTask.Statuses.InProgress
-            or GlassworkTask.Statuses.Blocked)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        var isReadOnly = task.IsCancelled;
+        BlockTaskButton.Visibility = DetailProjection.Visibility.ShowBlockAction ? Visibility.Visible : Visibility.Collapsed;
+        EditBlockerButton.Visibility = DetailProjection.Visibility.ShowEditBlockerAction ? Visibility.Visible : Visibility.Collapsed;
+        RepairBlockedButton.Visibility = DetailProjection.Visibility.ShowRepairBlockedAction ? Visibility.Visible : Visibility.Collapsed;
+        ResumeBlockedButton.Visibility = DetailProjection.Visibility.ShowResumeBlockedAction ? Visibility.Visible : Visibility.Collapsed;
+        MarkBlockedDoneButton.Visibility = DetailProjection.Visibility.ShowMarkBlockedDoneAction ? Visibility.Visible : Visibility.Collapsed;
+        CancelTaskButton.Visibility = DetailProjection.Visibility.ShowCancelAction ? Visibility.Visible : Visibility.Collapsed;
+        var isReadOnly = DetailProjection.Visibility.IsReadOnly;
         TitleBox.IsReadOnly = isReadOnly;
         PriorityBox.IsEnabled = !isReadOnly;
         DueDatePicker.IsEnabled = !isReadOnly;
@@ -138,33 +138,33 @@ public sealed partial class TaskDetailPage : Page
             ? Visibility.Collapsed
             : Visibility.Visible;
 
-        DueDatePicker.Date = task.Due.HasValue
-            ? new DateTimeOffset(task.Due.Value)
+        DueDatePicker.Date = DetailProjection.Due.HasValue
+            ? new DateTimeOffset(DetailProjection.Due.Value)
             : (DateTimeOffset?)null;
 
-        BindSubtasks(task.Subtasks);
-        BindRelated(task.RelatedLinks);
+        BindSubtasks(DetailProjection.ActiveSubtasks, DetailProjection.CompletedSubtasks);
         ArtifactsSection.Visibility = Visibility.Collapsed;
         ArtifactsList.ItemsSource = null;
-        BindLinks(task.Links);
-        BindChildren(task.Id);
-        BindBacklinks(task.Id);
+        BindRelated(DetailProjection.RelatedEntries);
+        BindLinks(DetailProjection.Links);
+        BindChildren(DetailProjection.DirectChildren);
+        BindBacklinks(DetailProjection.Backlinks);
 
-        CreatedText.Text = $"Created: {task.Created:yyyy-MM-dd}";
-        CompletedText.Text = task.Status == GlassworkTask.Statuses.Done && task.CompletedAt.HasValue
-            ? $"Completed: {task.CompletedAt.Value:yyyy-MM-dd HH:mm}"
+        CreatedText.Text = $"Created: {DetailProjection.Created:yyyy-MM-dd}";
+        CompletedText.Text = DetailProjection.Visibility.ShowCompletedTimestamp
+            ? $"Completed: {DetailProjection.CompletedAt!.Value:yyyy-MM-dd HH:mm}"
             : "";
-        CancelledText.Text = task.IsCancelled
-            ? $"Cancelled: {task.CancelledAt?.ToLocalTime():yyyy-MM-dd HH:mm} - {task.CancellationReason}"
+        CancelledText.Text = DetailProjection.Visibility.ShowCancelledTimestamp
+            ? $"Cancelled: {DetailProjection.CancelledAt?.ToLocalTime():yyyy-MM-dd HH:mm} - {DetailProjection.CancellationReason}"
             : "";
-        IdText.Text = $"ID: {task.Id}";
-        AutomationProperties.SetName(CopyTaskIdButton, $"Copy Task ID {task.Id}");
+        IdText.Text = $"ID: {DetailProjection.TaskId}";
+        AutomationProperties.SetName(CopyTaskIdButton, $"Copy Task ID {DetailProjection.TaskId}");
 
-        if (task.AdoLink.HasValue)
+        if (DetailProjection.Visibility.ShowAdoLink)
         {
             AdoLabel.Visibility = Visibility.Visible;
             AdoLinkButton.Visibility = Visibility.Visible;
-            AdoTitleRun.Text = $"#{task.AdoLink} \u2014 {task.AdoTitle ?? "linked"}";
+            AdoTitleRun.Text = $"#{DetailProjection.AdoLink} \u2014 {DetailProjection.AdoTitle ?? "linked"}";
             EditAdoButton.Content = "Edit ADO link";
         }
         else
@@ -175,9 +175,9 @@ public sealed partial class TaskDetailPage : Page
             EditAdoButton.Content = "Link ADO work item";
         }
 
-        ApplyParent(task);
+        ApplyParent(DetailProjection.Parent);
 
-        _notesEdit = new NotesEditController(task.Notes);
+        _notesEdit = new NotesEditController(DetailProjection.Notes);
         ApplyNotesMode(NotesEditMode.Read);
         // Fresh task → discard any stale conflict banner state from a previous task.
         NotesConflictBanner.IsOpen = false;
@@ -307,9 +307,9 @@ public sealed partial class TaskDetailPage : Page
         view.LinkClicked -= OnArtifactLinkClicked;
     }
 
-    private void ApplyParent(GlassworkTask task)
+    private void ApplyParent(string? parent)
     {
-        var p = task.Parent?.Trim();
+        var p = parent?.Trim();
         if (string.IsNullOrEmpty(p))
         {
             ParentLabel.Visibility = Visibility.Collapsed;
@@ -346,11 +346,8 @@ public sealed partial class TaskDetailPage : Page
         }
     }
 
-    private void BindSubtasks(IList<SubTask> subtasks)
+    private void BindSubtasks(IReadOnlyList<SubTask> active, IReadOnlyList<SubTask> completed)
     {
-        var active = subtasks.Where(s => !s.IsEffectivelyDone).ToList();
-        var completed = subtasks.Where(s => s.IsEffectivelyDone).ToList();
-
         ActiveSubtaskList.ItemsSource = new System.Collections.ObjectModel.ObservableCollection<SubTask>(active);
         CompletedSubtaskList.ItemsSource = completed;
 
@@ -387,6 +384,11 @@ public sealed partial class TaskDetailPage : Page
 
         if (artifacts.Count == 0)
         {
+            DetailProjection = DetailProjection with
+            {
+                Artifacts = Array.Empty<Artifact>(),
+                Visibility = DetailProjection.Visibility with { ShowArtifacts = false },
+            };
             ArtifactsSection.Visibility = Visibility.Collapsed;
             ArtifactsList.ItemsSource = null;
             return;
@@ -409,7 +411,42 @@ public sealed partial class TaskDetailPage : Page
             .ToList();
 
         ArtifactsSection.Visibility = Visibility.Visible;
+        DetailProjection = DetailProjection with
+        {
+            Artifacts = artifacts.ToList(),
+            Visibility = DetailProjection.Visibility with { ShowArtifacts = projected.Count > 0 },
+        };
         ArtifactsList.ItemsSource = projected;
+    }
+
+    private void RefreshRelationshipProjection()
+    {
+        var existingArtifacts = DetailProjection.Artifacts;
+        var refreshed = App.TaskDetailProjection.Build(Task, includeArtifacts: false);
+        DetailProjection = refreshed with
+        {
+            Artifacts = existingArtifacts,
+            Visibility = refreshed.Visibility with
+            {
+                ShowArtifacts = existingArtifacts.Count > 0,
+            },
+        };
+    }
+
+    private void ApplyReadOnlyTaskSnapshot(GlassworkTask task)
+    {
+        var existingArtifacts = DetailProjection.Artifacts;
+        Task = task;
+        var refreshed = App.TaskDetailProjection.Build(task, includeArtifacts: false);
+        DetailProjection = refreshed with
+        {
+            Artifacts = existingArtifacts,
+            Visibility = refreshed.Visibility with
+            {
+                ShowArtifacts = existingArtifacts.Count > 0,
+            },
+        };
+        BindSubtasks(DetailProjection.ActiveSubtasks, DetailProjection.CompletedSubtasks);
     }
 
     private void OnArtifactExpanding(Expander sender, ExpanderExpandingEventArgs args)
@@ -429,19 +466,8 @@ public sealed partial class TaskDetailPage : Page
     }
 
 
-    private void BindChildren(string taskId)
+    private void BindChildren(IReadOnlyList<TaskDetailChild> children)
     {
-        IReadOnlyList<GlassworkTask> children;
-        try
-        {
-            children = App.Index?.GetChildren(taskId) ?? Array.Empty<GlassworkTask>();
-        }
-        catch
-        {
-            // Children lookup is best-effort — never block the task view.
-            children = Array.Empty<GlassworkTask>();
-        }
-
         if (children.Count == 0)
         {
             ChildrenSection.Visibility = Visibility.Collapsed;
@@ -451,7 +477,9 @@ public sealed partial class TaskDetailPage : Page
 
         ChildrenSection.Visibility = Visibility.Visible;
         ChildrenHeader.Text = $"Children ({children.Count})";
-        ChildrenList.ItemsSource = ChildRow.Project(children);
+        ChildrenList.ItemsSource = children
+            .Select(child => new ChildRow(child.Id, child.Title))
+            .ToList();
     }
 
     private void Child_Click(object sender, RoutedEventArgs e)
@@ -462,19 +490,8 @@ public sealed partial class TaskDetailPage : Page
         Frame.Navigate(typeof(TaskDetailPage), child);
     }
 
-    private void BindBacklinks(string taskId)
+    private void BindBacklinks(IReadOnlyList<Backlink> backlinks)
     {
-        IReadOnlyList<Backlink> backlinks;
-        try
-        {
-            backlinks = App.BacklinkIndex?.GetBacklinks(taskId) ?? Array.Empty<Backlink>();
-        }
-        catch
-        {
-            // Backlink lookup is best-effort — never block the task view.
-            backlinks = Array.Empty<Backlink>();
-        }
-
         if (backlinks.Count == 0)
         {
             BacklinksSection.Visibility = Visibility.Collapsed;
@@ -495,7 +512,7 @@ public sealed partial class TaskDetailPage : Page
         await App.ObsidianLauncher.Open(vaultRelative);
     }
 
-    private void BindLinks(IList<TaskLink> links)
+    private void BindLinks(IReadOnlyList<TaskLink> links)
     {
         // Section is always visible so the Add link button is always accessible.
         LinksList.ItemsSource = links.Count > 0 ? LinkRow.Project(links) : null;
@@ -691,7 +708,7 @@ public sealed partial class TaskDetailPage : Page
     }
 
 
-    private void BindRelated(IList<RelatedLink> links)
+    private void BindRelated(IReadOnlyList<TaskDetailRelatedEntry> links)
     {
         if (links.Count == 0)
         {
@@ -700,11 +717,17 @@ public sealed partial class TaskDetailPage : Page
             return;
         }
 
-        // wiki root = parent of the todo/ vault directory (e.g. ~/Wiki/wiki/).
-        // Slugs in [[..]] are paths relative to this root.
-        var wikiRoot = Path.GetDirectoryName(App.Vault.VaultPath) ?? App.Vault.VaultPath;
-        var hydrated = new WikiLinkHydrator().Hydrate(links, wikiRoot);
-        RelatedList.ItemsSource = hydrated;
+        RelatedList.ItemsSource = links
+            .Select(link => new HydratedRelatedLink
+            {
+                Slug = link.Slug,
+                DisplayName = link.DisplayName,
+                Title = link.Title,
+                Type = link.Type,
+                Created = link.Created,
+                IsMissing = link.IsMissing,
+            })
+            .ToList();
         RelatedSection.Visibility = Visibility.Visible;
     }
 
@@ -804,7 +827,8 @@ public sealed partial class TaskDetailPage : Page
                     return;
                 }
             }
-            BindChildren(id);
+            RefreshRelationshipProjection();
+            BindChildren(DetailProjection.DirectChildren);
         });
     }
 
@@ -881,7 +905,12 @@ public sealed partial class TaskDetailPage : Page
         var id = Task?.Id;
         if (string.IsNullOrEmpty(id)) return;
         if (!e.AffectedTaskIds.Contains(id, StringComparer.Ordinal)) return;
-        DispatcherQueue.TryEnqueue(() => BindBacklinks(id));
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            RefreshRelationshipProjection();
+            BindChildren(DetailProjection.DirectChildren);
+            BindBacklinks(DetailProjection.Backlinks);
+        });
     }
 
     private void Reload_Click(object sender, RoutedEventArgs e)
@@ -1044,8 +1073,7 @@ public sealed partial class TaskDetailPage : Page
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null)
         {
-            Task = reloaded;
-            BindSubtasks(reloaded.Subtasks);
+            ApplyReadOnlyTaskSnapshot(reloaded);
         }
 
     }
@@ -1061,8 +1089,7 @@ public sealed partial class TaskDetailPage : Page
             var reloaded = App.Vault.Load(Task.Id);
             if (reloaded is not null)
             {
-                Task = reloaded;
-                BindSubtasks(reloaded.Subtasks);
+                ApplyReadOnlyTaskSnapshot(reloaded);
             }
 
         }
@@ -1111,8 +1138,7 @@ public sealed partial class TaskDetailPage : Page
         var reloaded = App.Vault.Load(Task.Id);
         if (reloaded is not null)
         {
-            Task = reloaded;
-            BindSubtasks(reloaded.Subtasks);
+            ApplyReadOnlyTaskSnapshot(reloaded);
         }
 
     }

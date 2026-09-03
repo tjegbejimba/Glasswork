@@ -53,6 +53,7 @@ public partial class App : Application
     public static IResearchCatalog Research { get; private set; } = null!;
     public static IndexMarkdownWriter? IndexMarkdownWriter { get; private set; }
     public static IArtifactStore Artifacts { get; private set; } = null!;
+    public static TaskDetailProjectionService TaskDetailProjection { get; private set; } = null!;
     public static FileWatcherService? Watcher { get; private set; }
     public static ArtifactWatcherService? ArtifactsWatcher { get; private set; }
     public static IBacklinkIndex BacklinkIndex { get; private set; } = null!;
@@ -508,6 +509,11 @@ public partial class App : Application
         }
         TaskQuery = new WarmIndexTaskQuery(Index, BacklinkIndex);
         Tasks = new TaskService(Vault, Index);
+        TaskDetailProjection = new TaskDetailProjectionService(
+            Vault,
+            Artifacts,
+            BacklinkIndex,
+            Index);
         Research = new FileSystemResearchCatalog(
             VaultRoot,
             selfWrites: SelfWrites,
