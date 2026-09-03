@@ -89,7 +89,7 @@ created: 2026-09-02{links}
     public static string NewUiStatePath() =>
         Path.Combine(Path.GetTempPath(), $"glasswork-canvas-ui-state-{Guid.NewGuid():N}.json");
 
-    public static async Task<RunningHost> StartHost(string? vault, string sessionId, string token, string? uiStatePath = null)
+    public static async Task<RunningHost> StartHost(string? vault, string sessionId, string token, string? uiStatePath = null, string? currentStatePath = null)
     {
         // Every spawned test host gets its own isolated UI State file unless
         // a caller explicitly shares one (e.g. persistence/cold-restore
@@ -100,6 +100,7 @@ created: 2026-09-02{links}
         var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
         var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
         var arguments = $"\"{hostDll}\" --session-id {sessionId} --token {token} --ui-state-path \"{uiStatePath}\"";
+        if (currentStatePath is not null) arguments += $" --current-state-path \"{currentStatePath}\"";
         var startInfo = new ProcessStartInfo(dotnet)
         {
             Arguments = arguments,

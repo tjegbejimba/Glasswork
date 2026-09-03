@@ -11,6 +11,9 @@
     <AssemblyMetadata Include="RepositoryCommit" Value="$(RepositoryCommit)" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Glasswork.CanvasHost.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\..\src\Glasswork.Core\Glasswork.Core.csproj" />
   </ItemGroup>

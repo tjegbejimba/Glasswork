@@ -116,7 +116,8 @@ Describe "Get-ReleasePathStreams" {
         $result = Get-ReleasePathStreams -Paths @(
             "tools/Glasswork.CanvasHost/Program.cs",
             ".github/extensions/glasswork-task-viewer/extension.mjs",
-            "scripts/Install-CanvasExtension.ps1"
+            "scripts/Install-CanvasExtension.ps1",
+            "scripts/retry-canvas-extension.ps1"
         )
 
         $result.App | Should -BeTrue
@@ -124,6 +125,7 @@ Describe "Get-ReleasePathStreams" {
         ($result.IncludedPaths.App -join "|") | Should -Be (
             ".github/extensions/glasswork-task-viewer/extension.mjs|" +
             "scripts/Install-CanvasExtension.ps1|" +
+            "scripts/retry-canvas-extension.ps1|" +
             "tools/Glasswork.CanvasHost/Program.cs"
         )
         $result.ExcludedPaths.Count | Should -Be 0

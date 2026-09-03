@@ -89,6 +89,10 @@ internal static partial class VisualVerificationRunner
         File.WriteAllText(
             wayfinderFixturePath,
             JsonSerializer.Serialize(scenario.WayfinderIssues));
+        var canvasExtensionsRoot = MaterializeCanvasExtensionState(scenario, workDir);
+        var canvasRetrySourcePath = scenario.CanvasExtensionState?.RetryBundleAvailable == true
+            ? await MaterializeCanvasExtensionRetryBundleAsync(options, workDir)
+            : null;
         var initialUiState = new Dictionary<string, object?>
         {
             ["app.theme"] = scenario.Theme,
@@ -107,7 +111,9 @@ internal static partial class VisualVerificationRunner
             instanceKey,
             captureRequestPath,
             captureOutputPath,
-            wayfinderFixturePath);
+            wayfinderFixturePath,
+            canvasExtensionsRoot,
+            canvasRetrySourcePath);
 
         try
         {
@@ -325,6 +331,76 @@ internal static partial class VisualVerificationRunner
 
     private static string YamlScalar(string value) => JsonSerializer.Serialize(value);
 
+    /// <summary>
+    /// Seeds a deterministic canvas-extension <c>current.json</c> under a
+    /// temporary extensions root when the scenario requests one (issue #562),
+    /// so a Settings scenario can reproduce healthy/failed/never-installed
+    /// states without touching the real Copilot extensions directory.
+    /// Returns null when the scenario doesn't opt in, leaving the app to read
+    /// the real (default) location as usual.
+    /// </summary>
+    private static string? MaterializeCanvasExtensionState(VisualVerificationScenario scenario, string workDir)
+    {
+        var state = scenario.CanvasExtensionState;
+        if (state is null) return null;
+
+        var extensionsRoot = Path.Combine(workDir, "canvas-extensions");
+        var extensionDirectory = Path.Combine(extensionsRoot, Glasswork.Core.AppUpdate.CanvasExtensionHealthReader.ExtensionName);
+        Directory.CreateDirectory(extensionDirectory);
+        File.WriteAllText(
+            Path.Combine(extensionDirectory, "current.json"),
+            JsonSerializer.Serialize(new
+            {
+                version = state.Version,
+                identity = state.Identity,
+                sourceRevision = state.SourceRevision,
+                sha256 = state.Sha256,
+                hostExecutablePath = state.HostExecutablePath,
+                lastAttempt = new
+                {
+                    utc = DateTime.UtcNow.ToString("o"),
+                    version = state.LastAttemptVersion,
+                    status = state.LastAttemptStatus,
+                    message = state.LastAttemptMessage,
+                },
+            }));
+        return extensionsRoot;
+    }
+
+    /// <summary>
+    /// Builds a real self-contained canvas host bundle (mirroring the Pester
+    /// integration test's approach) so a "retry-success" scenario can click
+    /// Settings' Retry button and observe a genuine transition to a healthy
+    /// state, not just a seeded static fixture.
+    /// </summary>
+    private static async Task<string> MaterializeCanvasExtensionRetryBundleAsync(RunnerOptions options, string workDir)
+    {
+        const string version = "9.9.9";
+        const string sourceRevision = "ffffffffffffffffffffffffffffffffffffffff";
+        var bundle = Path.Combine(workDir, "canvas-retry-bundle");
+        var versionDirectory = Path.Combine(bundle, "host", version);
+        Directory.CreateDirectory(bundle);
+        await File.WriteAllTextAsync(
+            Path.Combine(bundle, "extension.mjs"),
+            "// visual-verification fixture adapter (not exercised)");
+
+        var canvasHostProject = Path.Combine(options.RepoRoot, "tools", "Glasswork.CanvasHost", "Glasswork.CanvasHost.csproj");
+        await RunProcessAsync(
+            "dotnet",
+            $"publish \"{canvasHostProject}\" --configuration Release --self-contained --runtime win-x64 " +
+            $"--output \"{versionDirectory}\" -p:Version={version} -p:RepositoryCommit={sourceRevision} --nologo --verbosity quiet",
+            options.RepoRoot);
+
+        await File.WriteAllTextAsync(Path.Combine(bundle, "host", "active.txt"), version);
+        var hostExe = Path.Combine(versionDirectory, "Glasswork.CanvasHost.exe");
+        var sha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(hostExe)));
+        await File.WriteAllTextAsync(
+            Path.Combine(bundle, "manifest.json"),
+            JsonSerializer.Serialize(new { version, sourceRevision, sha256 }));
+
+        return bundle;
+    }
+
     private static Process LaunchApp(
         string appExe,
         string? startUri,
@@ -334,7 +410,9 @@ internal static partial class VisualVerificationRunner
         string instanceKey,
         string captureRequestPath,
         string captureOutputPath,
-        string wayfinderFixturePath)
+        string wayfinderFixturePath,
+        string? canvasExtensionsRoot,
+        string? canvasRetrySourcePath)
     {
         var psi = new ProcessStartInfo(appExe)
         {
@@ -355,6 +433,14 @@ internal static partial class VisualVerificationRunner
         if (startPage is not null)
             psi.Environment[VerificationLaunchOptions.StartPageVariable] = startPage;
         psi.Environment["GLASSWORK_VISUAL_WAYFINDER_FIXTURE"] = wayfinderFixturePath;
+        if (canvasExtensionsRoot is not null)
+        {
+            psi.Environment[Glasswork.Core.AppUpdate.CanvasExtensionHealthReader.ExtensionsRootOverrideVariable] = canvasExtensionsRoot;
+        }
+        if (canvasRetrySourcePath is not null)
+        {
+            psi.Environment[Glasswork.Core.AppUpdate.CanvasExtensionHealthReader.RetrySourcePathOverrideVariable] = canvasRetrySourcePath;
+        }
 
         return Process.Start(psi) ?? throw new InvalidOperationException("Failed to launch Glasswork.");
     }

@@ -39,6 +39,7 @@ public sealed partial class SettingsPage : Page
 
         RefreshVaultInfo();
         RefreshUpdateInfo();
+        RefreshCanvasExtensionInfo();
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -426,6 +427,138 @@ public sealed partial class SettingsPage : Page
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Failed to open MCP release page: {ex.Message}");
+        }
+    }
+
+    // ── Glasswork canvas extension ──────────────────────────────────────────
+
+    private void RefreshCanvasExtensionInfo()
+    {
+        var status = CanvasExtensionHealthReader.Read(CanvasExtensionHealthReader.ResolveExtensionsRoot());
+        CanvasExtensionStatusText.Text = CanvasExtensionHealthPresenter.Describe(status);
+
+        var isError = CanvasExtensionHealthPresenter.IsError(status);
+        if (isError)
+        {
+            CanvasExtensionWarningBar.Title = "Canvas extension activation failed";
+            CanvasExtensionWarningBar.Message = status?.LastAttemptMessage ?? string.Empty;
+            CanvasExtensionWarningBar.IsOpen = true;
+        }
+        else
+        {
+            CanvasExtensionWarningBar.IsOpen = false;
+        }
+    }
+
+    private async void RetryCanvasExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        string? updaterDirectory = null;
+        RetryCanvasExtensionButton.IsEnabled = false;
+        CanvasExtensionWarningBar.IsOpen = false;
+        CanvasExtensionStatusText.Text = "Retrying canvas extension activation…";
+
+        try
+        {
+            var bundledUpdaterDirectory = Path.Combine(AppContext.BaseDirectory, "Updater");
+            updaterDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "Glasswork",
+                $"canvas-retry-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(updaterDirectory);
+
+            foreach (var fileName in new[] { "Install-CanvasExtension.ps1", "retry-canvas-extension.ps1" })
+            {
+                File.Copy(
+                    Path.Combine(bundledUpdaterDirectory, fileName),
+                    Path.Combine(updaterDirectory, fileName));
+            }
+
+            var retryScriptPath = Path.Combine(updaterDirectory, "retry-canvas-extension.ps1");
+            // Overridable only for visual-verification "retry-success" scenarios,
+            // which build a real bundle without a full app release package layout.
+            var sourcePath = Environment.GetEnvironmentVariable(CanvasExtensionHealthReader.RetrySourcePathOverrideVariable)
+                is { Length: > 0 } overriddenSourcePath
+                ? overriddenSourcePath
+                : Path.Combine(AppContext.BaseDirectory, "CopilotExtensions", "glasswork-task-viewer");
+            var plan = new CanvasExtensionRetryLauncher().CreatePlan(
+                retryScriptPath: retryScriptPath,
+                sourcePath: sourcePath,
+                executableResolver: new PwshExecutableResolver(),
+                fileExists: File.Exists,
+                workingDirectory: updaterDirectory,
+                extensionsRoot: CanvasExtensionHealthReader.ResolveExtensionsRoot());
+
+            if (!plan.CanRun || plan.ProcessSpec is null)
+            {
+                CanvasExtensionStatusText.Text = plan.Reason == SelfUpdateFallbackReason.PwshNotFound
+                    ? "Retry requires PowerShell 7 (pwsh) to be installed."
+                    : "Retry is unavailable: the canvas extension installer is missing from this build.";
+                return;
+            }
+
+            var spec = plan.ProcessSpec;
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = spec.FileName,
+                    CreateNoWindow = spec.CreateNoWindow,
+                    UseShellExecute = spec.UseShellExecute,
+                    WorkingDirectory = spec.WorkingDirectory,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                },
+            };
+            foreach (var arg in spec.ArgumentList)
+                process.StartInfo.ArgumentList.Add(arg);
+
+            if (!process.Start())
+                throw new InvalidOperationException("The canvas extension retry process did not start.");
+
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            var output = (await outputTask).Trim();
+            var error = (await errorTask).Trim();
+
+            RefreshCanvasExtensionInfo();
+            if (process.ExitCode != 0)
+            {
+                var message = ParseRetryFailureMessage(output) ??
+                    (string.IsNullOrWhiteSpace(error) ? "Canvas extension retry failed." : error);
+                CanvasExtensionStatusText.Text = $"Retry failed: {message}";
+                CanvasExtensionWarningBar.Title = "Retry failed";
+                CanvasExtensionWarningBar.Message = message;
+                CanvasExtensionWarningBar.Severity = InfoBarSeverity.Error;
+                CanvasExtensionWarningBar.IsOpen = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Canvas extension retry failed: {ex.Message}");
+            CanvasExtensionStatusText.Text = $"Retry failed: {ex.Message}";
+        }
+        finally
+        {
+            if (updaterDirectory is not null)
+                DeleteUpdaterDirectory(updaterDirectory);
+            RetryCanvasExtensionButton.IsEnabled = true;
+        }
+    }
+
+    private static string? ParseRetryFailureMessage(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output)) return null;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(output);
+            return document.RootElement.TryGetProperty("message", out var message) && message.ValueKind == System.Text.Json.JsonValueKind.String
+                ? message.GetString()
+                : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
         }
     }
 }

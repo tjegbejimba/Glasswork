@@ -40,6 +40,8 @@ details:not([open]) .rail-header,details:not([open]) .rail-list{display:none}
 .remove-btn:hover{color:var(--true-color-red,#cf222e)}
 .restore-banner{margin:12px;padding:10px 12px;border:1px solid var(--true-color-red,#cf222e);border-radius:8px;background:var(--background-color-subtle,rgba(207,34,46,.08))}
 .restore-banner p{margin:4px 0 0}
+.drift-banner{margin:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:8px;background:var(--background-color-attention,#fff8c5);border:1px solid var(--border-color-attention,#d4a72c);color:var(--text-color-default,#1f2328)}
+.drift-banner button{flex-shrink:0;border:0;background:none;color:inherit;cursor:pointer;text-decoration:underline;font:inherit}
 .detail{flex:1;min-width:0;padding:24px;max-width:900px}
 .card,details{border:1px solid var(--border-color-default,#d0d7de);border-radius:12px;padding:16px;margin-top:16px;background:var(--background-color-subtle,transparent)}
 h1{margin:0 0 8px;font-size:26px}h2{margin:0 0 8px;font-size:18px}.muted{color:var(--text-color-muted,#656d76)}.error{border-color:var(--true-color-red,#cf222e)}
@@ -162,6 +164,18 @@ function renderRestoreBanner(){
   banner.setAttribute("role","alert");
   banner.append(element("strong",null,"Couldn't restore the Loaded Tasks from a previous session."));
   banner.append(element("p",null,data.restoreError.message||data.restoreError.code||"The saved state could not be read."));
+  return banner;
+}
+
+function renderDriftBanner(){
+  if(!data.driftDetected)return null;
+  const banner=element("div","drift-banner");
+  banner.setAttribute("role","status");
+  banner.append(element("span",null,data.driftMessage||"A newer version of this canvas is available. Reopen this session to update."));
+  const dismiss=element("button",null,"Dismiss");
+  dismiss.type="button";
+  dismiss.addEventListener("click",()=>banner.remove());
+  banner.append(dismiss);
   return banner;
 }
 
@@ -291,8 +305,8 @@ function renderDetail(){
 function render(){
   const row=element("div","body-row");
   row.append(renderRail(),renderDetail());
-  const banner=renderRestoreBanner();
-  app.replaceChildren(...(banner?[banner,row]:[row]));
+  const banners=[renderDriftBanner(),renderRestoreBanner()].filter(Boolean);
+  app.replaceChildren(...banners,row);
 }
 async function refreshState(){
   data=await getJson("/canvas-state");

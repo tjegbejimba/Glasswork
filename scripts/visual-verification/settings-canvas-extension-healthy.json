@@ -1,0 +1,29 @@
+{
+  "name": "Settings canvas extension healthy",
+  "canvasExtensionState": {
+    "version": "1.4.11",
+    "identity": "1.4.11+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sourceRevision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "hostExecutablePath": "C:\\fixture\\Glasswork.CanvasHost.exe",
+    "lastAttemptStatus": "ok",
+    "lastAttemptVersion": "1.4.11"
+  },
+  "actions": [
+    {
+      "type": "select",
+      "name": "Settings",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "CanvasExtensionStatusText",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "settings-canvas-extension-healthy"
+    }
+  ]
+}

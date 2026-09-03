@@ -190,6 +190,43 @@ function Get-CanvasExtensionCurrentState {
     Get-Content $statePath -Raw | ConvertFrom-Json
 }
 
+function Remove-CanvasExtensionStaleVersions {
+    <#
+    .SYNOPSIS
+        Best-effort garbage collection of side-by-side canvas host versions
+        that are no longer the active one (issue #562).
+    .DESCRIPTION
+        Called after every successful or no-op activation. A version whose
+        files are still locked by a running host process — an older Copilot
+        session whose already-spawned host is still using that build — simply
+        fails to delete and is left in place; this function never throws, so
+        that "uncertain" state is retried on the next activation rather than
+        blocking or failing the current one.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HostVersionsRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ActiveVersion
+    )
+
+    if (-not (Test-Path $HostVersionsRoot -PathType Container)) {
+        return
+    }
+
+    Get-ChildItem -Path $HostVersionsRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne $ActiveVersion -and $_.Name -notlike ".pending-*" } |
+        ForEach-Object {
+            try {
+                Remove-Item -Recurse -Force -Path $_.FullName -ErrorAction Stop
+            }
+            catch {
+                # Locked or otherwise undeletable — leave it for a later retry.
+            }
+        }
+}
+
 function Install-GlassworkCanvasExtension {
     <#
     .SYNOPSIS
@@ -246,6 +283,9 @@ function Install-GlassworkCanvasExtension {
     if ($existingIdentity -eq $expectedIdentity -and
         $null -ne $previousState -and
         [string]$previousState.identity -eq $expectedIdentity) {
+        # No-op reinstall: still sweep for stale versions left over from a
+        # prior activation whose cleanup was blocked by a locked directory.
+        Remove-CanvasExtensionStaleVersions -HostVersionsRoot $hostVersionsRoot -ActiveVersion $manifest.Version
         return [pscustomobject]@{
             Status   = "Current"
             Version  = $manifest.Version
@@ -271,6 +311,12 @@ function Install-GlassworkCanvasExtension {
 
         Copy-Item -Path $manifest.ExtensionFilePath -Destination (Join-Path $extensionDirectory "extension.mjs.new") -Force
         Move-Item -Path (Join-Path $extensionDirectory "extension.mjs.new") -Destination (Join-Path $extensionDirectory "extension.mjs") -Force
+        # active.txt is the real atomic cutover pointer (ADR 0024) that new
+        # Copilot sessions read; it is written before current.json (the
+        # health/diagnostic record) so a failure recording health never rolls
+        # back an already-successful activation. This mirrors
+        # Install-McpTool.ps1's Set-CopilotGlassworkMcpCommand-then-current.json
+        # ordering for the same reason.
         Write-CanvasExtensionAtomicFile -Path (Join-Path $hostVersionsRoot "active.txt") -Content $manifest.Version
 
         Write-CanvasExtensionAtomicFile `
@@ -288,6 +334,12 @@ function Install-GlassworkCanvasExtension {
                     message = $null
                 }
             } | ConvertTo-Json -Depth 10)
+
+        # Old versions are removed only after no host process is using them
+        # (issue #562): a locked directory (an older Copilot session still
+        # running that build) is simply skipped and retried on a later
+        # activation, never treated as an installation failure.
+        Remove-CanvasExtensionStaleVersions -HostVersionsRoot $hostVersionsRoot -ActiveVersion $manifest.Version
 
         [pscustomobject]@{
             Status   = if ($wasInstalled) { "Updated" } else { "Installed" }

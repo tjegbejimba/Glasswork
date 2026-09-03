@@ -159,21 +159,8 @@ public sealed class CanvasHostBoundaryTests
     [TestMethod]
     public async Task Host_ReportsBuildIdentityWithoutRequiringSessionOrVault()
     {
-        var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
-        var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
-        var startInfo = new ProcessStartInfo(dotnet)
-        {
-            Arguments = $"\"{hostDll}\" --version",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
-        var output = (await process.StandardOutput.ReadToEndAsync()).Trim();
-        await process.WaitForExitAsync();
+        var output = await RunHostVersionCommand();
 
-        Assert.AreEqual(0, process.ExitCode);
         Assert.IsTrue(System.Text.RegularExpressions.Regex.IsMatch(output, @"^\d+\.\d+\.\d+\+\S+$"), $"Expected '{{version}}+{{sourceRevision}}', got '{output}'.");
     }
 
@@ -204,5 +191,98 @@ public sealed class CanvasHostBoundaryTests
         {
             File.Delete(uiStatePath);
         }
+    }
+
+    [TestMethod]
+    public async Task Host_DetectsVersionDriftAndRendersNonBlockingBanner()
+    {
+        // Issue #562: a running (older) canvas host must keep serving its
+        // already-loaded Task content while noticing that a newer bundle has
+        // since been activated elsewhere, and show a non-blocking message
+        // rather than failing or being killed. Drift is surfaced on the
+        // top-level canvas "state" envelope (polled every 5s by the rendered
+        // page), not per-Task-detail — it's a host-wide condition.
+        var vault = CreateVault();
+        var ownIdentity = await RunHostVersionCommand();
+        var currentStatePath = Path.Combine(Path.GetTempPath(), $"canvas-current-{Guid.NewGuid():N}.json");
+        File.WriteAllText(currentStatePath, JsonSerializer.Serialize(new
+        {
+            version = "9.9.9",
+            identity = "9.9.9+drifted0000000000000000000000000000000000",
+            lastAttempt = new { status = "ok" },
+        }));
+        try
+        {
+            await using var host = await StartHost(vault, "session-drift", "credential-drift", currentStatePath: currentStatePath);
+            using var client = AuthorizedClient("credential-drift");
+
+            var stateResponse = await client.GetAsync($"{host.Url}/canvas-state");
+            using var stateBody = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync());
+            var canvasResponse = await client.GetAsync($"{host.Url}/canvas?task_id=demo");
+            var html = await canvasResponse.Content.ReadAsStringAsync();
+
+            Assert.AreEqual(HttpStatusCode.OK, stateResponse.StatusCode);
+            Assert.IsTrue(stateBody.RootElement.GetProperty("driftDetected").GetBoolean());
+            StringAssert.Contains(stateBody.RootElement.GetProperty("driftMessage").GetString(), "Reopen");
+            Assert.AreEqual(HttpStatusCode.OK, canvasResponse.StatusCode);
+            // The rendered shell embeds the payload as a JSON literal that the
+            // client-side script reads to decide whether to show the banner;
+            // an HTTP-only test can't execute that script, so it asserts on
+            // the exact embedded field values instead.
+            StringAssert.Contains(html, "\"driftDetected\":true");
+            StringAssert.Contains(html, "Reopen this session to update");
+            Assert.AreNotEqual("9.9.9+drifted0000000000000000000000000000000000", ownIdentity);
+        }
+        finally
+        {
+            File.Delete(currentStatePath);
+        }
+    }
+
+    [TestMethod]
+    public async Task Host_NoDriftWhenActivatedIdentityMatchesOwnBuild()
+    {
+        var vault = CreateVault();
+        var ownIdentity = await RunHostVersionCommand();
+        var currentStatePath = Path.Combine(Path.GetTempPath(), $"canvas-current-{Guid.NewGuid():N}.json");
+        File.WriteAllText(currentStatePath, JsonSerializer.Serialize(new
+        {
+            version = ownIdentity.Split('+')[0],
+            identity = ownIdentity,
+            lastAttempt = new { status = "ok" },
+        }));
+        try
+        {
+            await using var host = await StartHost(vault, "session-no-drift", "credential-no-drift", currentStatePath: currentStatePath);
+            using var client = AuthorizedClient("credential-no-drift");
+
+            var stateResponse = await client.GetAsync($"{host.Url}/canvas-state");
+            using var stateBody = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync());
+
+            Assert.IsFalse(stateBody.RootElement.GetProperty("driftDetected").GetBoolean());
+        }
+        finally
+        {
+            File.Delete(currentStatePath);
+        }
+    }
+
+    private static async Task<string> RunHostVersionCommand()
+    {
+        var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
+        var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
+        var startInfo = new ProcessStartInfo(dotnet)
+        {
+            Arguments = $"\"{hostDll}\" --version",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
+        var output = (await process.StandardOutput.ReadToEndAsync()).Trim();
+        await process.WaitForExitAsync();
+        Assert.AreEqual(0, process.ExitCode);
+        return output;
     }
 }
