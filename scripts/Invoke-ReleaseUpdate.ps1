@@ -1,3 +1,5 @@
+. (Join-Path $PSScriptRoot "Install-CanvasExtension.ps1")
+
 function Invoke-ReleaseUpdate {
     param(
         [Parameter(Mandatory = $true)]
@@ -156,9 +158,18 @@ function Invoke-ReleaseUpdate {
         Move-Item -Path $stagingDirectory -Destination $installDirectory
         $extensionBundle = Join-Path $installDirectory "CopilotExtensions\glasswork-task-viewer"
         if (Test-Path $extensionBundle) {
-            $extensionDestination = Join-Path $env:USERPROFILE ".copilot\extensions\glasswork-task-viewer"
-            New-Item -ItemType Directory -Force -Path $extensionDestination | Out-Null
-            Copy-Item -Path (Join-Path $extensionBundle "*") -Destination $extensionDestination -Recurse -Force
+            # Canvas extension activation must never fail the app update: a
+            # broken/incomplete bundle here must not roll back an otherwise
+            # successful app install, so failures are only warned about.
+            try {
+                $canvasResult = Install-GlassworkCanvasExtension -SourcePath $extensionBundle
+                if ($canvasResult.Status -eq "Failed") {
+                    Write-Warning "Glasswork canvas extension activation failed: $($canvasResult.Message)"
+                }
+            }
+            catch {
+                Write-Warning "Glasswork canvas extension activation failed: $_"
+            }
         }
 
         & $Relauncher $InstallExePath

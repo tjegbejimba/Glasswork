@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -153,5 +154,55 @@ public sealed class CanvasHostBoundaryTests
         Assert.AreEqual("launch_denied", JsonDocument.Parse(await unsafeLaunch.Content.ReadAsStringAsync()).RootElement.GetProperty("code").GetString());
         Assert.AreEqual(HttpStatusCode.NotFound, invalidReference.StatusCode);
         Assert.AreEqual(HttpStatusCode.BadRequest, wrongObsidianKind.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task Host_ReportsBuildIdentityWithoutRequiringSessionOrVault()
+    {
+        var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
+        var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
+        var startInfo = new ProcessStartInfo(dotnet)
+        {
+            Arguments = $"\"{hostDll}\" --version",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
+        var output = (await process.StandardOutput.ReadToEndAsync()).Trim();
+        await process.WaitForExitAsync();
+
+        Assert.AreEqual(0, process.ExitCode);
+        Assert.IsTrue(System.Text.RegularExpressions.Regex.IsMatch(output, @"^\d+\.\d+\.\d+\+\S+$"), $"Expected '{{version}}+{{sourceRevision}}', got '{output}'.");
+    }
+
+    [TestMethod]
+    public async Task Host_ResolvesVaultFromPersistedUiState_WithoutEnvVarOrCwdDependency()
+    {
+        var vault = CreateVault();
+        var uiStatePath = Path.Combine(Path.GetTempPath(), $"canvas-host-ui-state-{Guid.NewGuid()}.json");
+        File.WriteAllText(uiStatePath, JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["vault.path"] = vault,
+        }));
+        try
+        {
+            await using var host = await StartHost(
+                vault: null,
+                sessionId: "session-uistate",
+                token: "credential-uistate",
+                uiStatePath: uiStatePath);
+            using var client = AuthorizedClient("credential-uistate");
+
+            var response = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
+
+            Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+            Assert.AreEqual("task", JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("kind").GetString());
+        }
+        finally
+        {
+            File.Delete(uiStatePath);
+        }
     }
 }
