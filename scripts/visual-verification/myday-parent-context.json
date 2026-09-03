@@ -1,0 +1,132 @@
+{
+  "name": "My Day nearest Parent context",
+  "theme": "dark",
+  "windowWidth": 900,
+  "windowHeight": 900,
+  "tasks": [
+    {
+      "id": "vv-portfolio",
+      "title": "Portfolio",
+      "type": "parent",
+      "sourceKind": "Epic"
+    },
+    {
+      "id": "vv-feature",
+      "title": "Parent hierarchy",
+      "type": "parent",
+      "sourceKind": "Feature",
+      "parent": "vv-portfolio"
+    },
+    {
+      "id": "vv-nearest",
+      "title": "My Day grouping",
+      "type": "parent",
+      "sourceKind": "User Story",
+      "parent": "vv-feature",
+      "priority": "urgent",
+      "due": "yesterday"
+    },
+    {
+      "id": "vv-leaf-a",
+      "title": "Render sibling leaves",
+      "status": "in-progress",
+      "parent": "vv-nearest",
+      "priority": "high",
+      "due": "today"
+    },
+    {
+      "id": "vv-leaf-b",
+      "title": "Keep leaf ordering",
+      "parent": "vv-nearest",
+      "due": "today"
+    },
+    {
+      "id": "vv-standalone",
+      "title": "Standalone leaf",
+      "myDay": "today"
+    },
+    {
+      "id": "vv-coordination",
+      "title": "Coordinate release",
+      "type": "parent",
+      "sourceKind": "Feature",
+      "myDay": "today"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Portfolio › Parent hierarchy",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "My Day grouping",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Render sibling leaves",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Keep leaf ordering",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Standalone leaf",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Coordinate release",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "myday-parent-context-dark-narrow"
+    },
+    {
+      "type": "invoke",
+      "name": "Remove My Day grouping from My Day",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 3000
+    },
+    {
+      "type": "capture",
+      "name": "myday-parent-group-removal-state"
+    },
+    {
+      "type": "assert-not-present",
+      "name": "Render sibling leaves"
+    },
+    {
+      "type": "assert-not-present",
+      "name": "Keep leaf ordering"
+    },
+    {
+      "type": "assert-not-present",
+      "name": "My Day grouping"
+    },
+    {
+      "type": "wait-for",
+      "name": "Coordinate release",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "myday-parent-group-removed-dark-narrow"
+    }
+  ]
+}

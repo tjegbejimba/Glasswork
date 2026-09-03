@@ -76,17 +76,51 @@ public class MyDayViewModelPbiContainerTests
     }
 
     [TestMethod]
-    public void Refresh_PinnedPbiWithoutTodaysChildren_IsHidden()
+    public void Refresh_PinnedParentWithoutTodaysChildren_RendersCoordinationRow()
     {
-        var pbi = _taskService.CreateTask("Empty sprint epic");
-        pbi.Type = GlassworkTask.Types.Pbi;
-        pbi.MyDay = DateTime.Today;
-        _vault.Save(pbi);
+        var parent = _taskService.CreateTask("Coordinate release");
+        parent.Type = GlassworkTask.Types.Parent;
+        parent.SourceKind = "Feature";
+        parent.MyDay = DateTime.Today;
+        _vault.Save(parent);
 
         var vm = new MyDayViewModel(_vault, _taskService, _index);
         vm.Refresh();
 
-        Assert.IsFalse(vm.TodayTasks.Any(t => t.Id == pbi.Id),
-            "A PBI should appear in My Day only when it hosts an actionable child.");
+        var row = vm.TodayTasks.SingleOrDefault(t => t.Id == parent.Id);
+        Assert.IsNotNull(row,
+            "An explicitly pinned Parent must remain visible for coordination even without My Day leaves.");
+        Assert.IsTrue(row.IsParentCoordinationRow);
+        Assert.AreEqual("Feature", row.MyDaySourceKindBadge);
+        Assert.AreEqual("Summary not created", row.ChildActivitySummaryStatusLabel);
+        Assert.IsFalse(row.ShowLeafCompleteAffordance,
+            "A Parent coordination row must not expose leaf completion.");
+    }
+
+    [TestMethod]
+    public void Suggestions_ParentPriorityDoesNotSuggestButCoordinationCarryoverCanBeCarried()
+    {
+        var urgentParent = _taskService.CreateTask("Urgent portfolio context");
+        urgentParent.Type = GlassworkTask.Types.Parent;
+        urgentParent.Priority = GlassworkTask.Priorities.Urgent;
+        _vault.Save(urgentParent);
+
+        var carryoverParent = _taskService.CreateTask("Yesterday's coordination");
+        carryoverParent.Type = GlassworkTask.Types.Parent;
+        carryoverParent.MyDay = DateTime.Today.AddDays(-1);
+        _vault.Save(carryoverParent);
+
+        var vm = new MyDayViewModel(_vault, _taskService, _index);
+        vm.Refresh();
+
+        Assert.IsFalse(vm.Suggestions.Any(task => task.Id == urgentParent.Id),
+            "Parent priority is context and must not create an actionable suggestion.");
+        Assert.IsTrue(vm.Suggestions.Any(task => task.Id == carryoverParent.Id),
+            "An explicit coordination pin may carry over through Suggestions.");
+
+        vm.CarryAllCommand.Execute(null);
+
+        var row = vm.TodayTasks.Single(task => task.Id == carryoverParent.Id);
+        Assert.IsTrue(row.IsParentCoordinationRow);
     }
 }

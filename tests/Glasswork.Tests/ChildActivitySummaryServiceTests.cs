@@ -205,6 +205,18 @@ public sealed class ChildActivitySummaryServiceTests
     }
 
     [TestMethod]
+    public void ReadStates_ReturnsFreshnessForMultipleParentsFromOneRequest()
+    {
+        Save(Parent("alpha", "Alpha"));
+        Save(Parent("beta", "Beta"));
+
+        var states = _service.ReadStates(["alpha", "beta"]);
+
+        Assert.AreEqual(ChildActivitySummaryStateKind.Missing, states["alpha"].Kind);
+        Assert.AreEqual(ChildActivitySummaryStateKind.Missing, states["beta"].Kind);
+    }
+
+    [TestMethod]
     public void Commit_ReplacesTheSingleStableArtifactAndRegistersSelfWrite()
     {
         Save(Parent("root", "Root"));
