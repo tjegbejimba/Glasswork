@@ -5,7 +5,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <RepositoryCommit Condition="'$(RepositoryCommit)' == ''">local</RepositoryCommit>
   </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="RepositoryCommit" Value="$(RepositoryCommit)" />
+  </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\..\src\Glasswork.Core\Glasswork.Core.csproj" />

@@ -13,7 +13,7 @@ if (args is ["--version"])
 
 // Vault discovery is allowed to fail: the precondition pipeline filters
 // vault-dependent tools out of ListTools so the server can still boot.
-var vaultPath = Glasswork.Mcp.VaultDiscovery.TryDiscover(out var vaultDiscoveryDiagnostic);
+var vaultPath = Glasswork.Core.Services.VaultDiscovery.TryDiscover(out var vaultDiscoveryDiagnostic);
 Console.Error.WriteLine(vaultDiscoveryDiagnostic);
 
 // Build the precondition registry up-front so the SDK filter delegates can

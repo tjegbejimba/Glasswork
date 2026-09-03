@@ -11,6 +11,7 @@ BeforeAll {
         New-Item -ItemType Directory -Path $updaterDirectory, $mcpUpdaterDirectory | Out-Null
         Set-Content -Path (Join-Path $updaterDirectory "release-update.ps1") -Value "wrapper"
         Set-Content -Path (Join-Path $updaterDirectory "Invoke-ReleaseUpdate.ps1") -Value "updater"
+        Set-Content -Path (Join-Path $updaterDirectory "Install-CanvasExtension.ps1") -Value "canvas installer"
         Set-Content -Path (Join-Path $mcpUpdaterDirectory "install-mcp.ps1") -Value "wrapper"
         Set-Content -Path (Join-Path $mcpUpdaterDirectory "Install-McpTool.ps1") -Value "installer"
         Set-Content -Path (Join-Path $mcpUpdaterDirectory "Validate-McpReleasePublication.ps1") -Value "validation"
@@ -189,6 +190,7 @@ Describe "Invoke-ReleaseUpdate" {
         New-Item -ItemType Directory -Path $updaterDirectory | Out-Null
         Copy-Item (Join-Path $scriptRoot "scripts\release-update.ps1") $updaterDirectory
         Copy-Item (Join-Path $scriptRoot "scripts\Invoke-ReleaseUpdate.ps1") $updaterDirectory
+        Copy-Item (Join-Path $scriptRoot "scripts\Install-CanvasExtension.ps1") $updaterDirectory
         $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 
         & $powershell `

@@ -150,6 +150,9 @@ jobs:
       - name: Publish Windows update package
         id: package
         shell: pwsh
+        env:
+          SOURCE_REVISION: ${{ steps.preflight.outputs.source_revision }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
           dotnet publish src\Glasswork.App\Glasswork.csproj `
@@ -161,7 +164,7 @@ jobs:
             --nologo `
             --verbosity minimal
           $canvasBundle = "artifacts\publish\CopilotExtensions\glasswork-task-viewer"
-          $canvasHostVersion = "${{ inputs.version }}"
+          $canvasHostVersion = $env:RELEASE_VERSION
           New-Item -ItemType Directory -Force -Path "$canvasBundle\host\$canvasHostVersion" | Out-Null
           Copy-Item .github\extensions\glasswork-task-viewer\extension.mjs "$canvasBundle\extension.mjs" -Force
           dotnet publish tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj `
@@ -169,9 +172,18 @@ jobs:
             --self-contained `
             --runtime win-x64 `
             --output "$canvasBundle\host\$canvasHostVersion" `
+            -p:Version=$canvasHostVersion `
+            -p:RepositoryCommit=$env:SOURCE_REVISION `
             --nologo `
             --verbosity minimal
           Set-Content -Path "$canvasBundle\host\active.txt" -Value $canvasHostVersion -Encoding ascii
+          $canvasHostExe = "$canvasBundle\host\$canvasHostVersion\Glasswork.CanvasHost.exe"
+          $canvasHostSha256 = (Get-FileHash -Algorithm SHA256 -Path $canvasHostExe).Hash.ToLowerInvariant()
+          [ordered]@{
+              version        = $canvasHostVersion
+              sourceRevision = $env:SOURCE_REVISION
+              sha256         = $canvasHostSha256
+          } | ConvertTo-Json | Set-Content -Path "$canvasBundle\manifest.json"
           . .\scripts\New-ReleasePackage.ps1
           $artifact = New-ReleasePackage `
             -PublishDirectory artifacts\publish `

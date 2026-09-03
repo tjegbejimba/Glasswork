@@ -11,6 +11,12 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
 
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+if (args is ["--version"])
+{
+    Console.Out.WriteLine(CanvasHostBuildIdentity.Current);
+    return;
+}
+
 var options = HostOptions.Parse(args);
 if (string.IsNullOrWhiteSpace(options.Token) || string.IsNullOrWhiteSpace(options.SessionId))
 {
@@ -18,10 +24,10 @@ if (string.IsNullOrWhiteSpace(options.Token) || string.IsNullOrWhiteSpace(option
     return;
 }
 
-var vaultRoot = Environment.GetEnvironmentVariable("GLASSWORK_VAULT");
+var vaultRoot = Glasswork.Core.Services.VaultDiscovery.TryDiscover(options.UiStatePath, out var vaultDiagnostic);
 if (string.IsNullOrWhiteSpace(vaultRoot))
 {
-    HostOptions.Fail("vault_not_configured", "GLASSWORK_VAULT is not configured.");
+    HostOptions.Fail("vault_not_configured", vaultDiagnostic);
     return;
 }
 
@@ -184,12 +190,13 @@ static JsonObject EnrichProjection(
     return node;
 }
 
-sealed record HostOptions(string SessionId, string Token)
+sealed record HostOptions(string SessionId, string Token, string? UiStatePath)
 {
     public static HostOptions Parse(string[] args)
     {
         string Value(string name) { var i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : ""; }
-        return new(Value("--session-id"), Value("--token"));
+        string? uiStatePath = Value("--ui-state-path");
+        return new(Value("--session-id"), Value("--token"), string.IsNullOrEmpty(uiStatePath) ? null : uiStatePath);
     }
     public static int Fail(string code, string message)
     {

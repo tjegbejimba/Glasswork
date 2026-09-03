@@ -155,6 +155,56 @@ public sealed class CanvasHostBoundaryTests
         Assert.AreEqual(HttpStatusCode.BadRequest, wrongObsidianKind.StatusCode);
     }
 
+    [TestMethod]
+    public async Task Host_ReportsBuildIdentityWithoutRequiringSessionOrVault()
+    {
+        var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
+        var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
+        var startInfo = new ProcessStartInfo(dotnet)
+        {
+            Arguments = $"\"{hostDll}\" --version",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
+        var output = (await process.StandardOutput.ReadToEndAsync()).Trim();
+        await process.WaitForExitAsync();
+
+        Assert.AreEqual(0, process.ExitCode);
+        Assert.IsTrue(System.Text.RegularExpressions.Regex.IsMatch(output, @"^\d+\.\d+\.\d+\+\S+$"), $"Expected '{{version}}+{{sourceRevision}}', got '{output}'.");
+    }
+
+    [TestMethod]
+    public async Task Host_ResolvesVaultFromPersistedUiState_WithoutEnvVarOrCwdDependency()
+    {
+        var vault = CreateVault();
+        var uiStatePath = Path.Combine(Path.GetTempPath(), $"canvas-host-ui-state-{Guid.NewGuid()}.json");
+        File.WriteAllText(uiStatePath, JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["vault.path"] = vault,
+        }));
+        try
+        {
+            await using var host = await StartHost(
+                vault: null,
+                sessionId: "session-uistate",
+                token: "credential-uistate",
+                uiStatePath: uiStatePath);
+            using var client = AuthorizedClient("credential-uistate");
+
+            var response = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
+
+            Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+            Assert.AreEqual("task", JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("kind").GetString());
+        }
+        finally
+        {
+            File.Delete(uiStatePath);
+        }
+    }
+
     private static string CreateVault()
     {
         var root = Path.Combine(Path.GetTempPath(), "glasswork-canvas-" + Guid.NewGuid().ToString("N"));
@@ -208,19 +258,25 @@ Demo description.
         return client;
     }
 
-    private static async Task<RunningHost> StartHost(string vault, string sessionId, string token)
+    private static async Task<RunningHost> StartHost(string? vault, string sessionId, string token, string? uiStatePath = null)
     {
         var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
         var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
+        var arguments = $"\"{hostDll}\" --session-id {sessionId} --token {token}";
+        if (uiStatePath is not null) arguments += $" --ui-state-path \"{uiStatePath}\"";
         var startInfo = new ProcessStartInfo(dotnet)
         {
-            Arguments = $"\"{hostDll}\" --session-id {sessionId} --token {token}",
+            Arguments = arguments,
+            // Prove vault resolution does not depend on the spawning process's cwd:
+            // run from an unrelated directory rather than the repo/test output folder.
+            WorkingDirectory = Path.GetTempPath(),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        startInfo.Environment["GLASSWORK_VAULT"] = vault;
+        if (vault is not null) startInfo.Environment["GLASSWORK_VAULT"] = vault;
+        else startInfo.Environment.Remove("GLASSWORK_VAULT");
         var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
         while (await process.StandardOutput.ReadLineAsync() is { } line)
         {

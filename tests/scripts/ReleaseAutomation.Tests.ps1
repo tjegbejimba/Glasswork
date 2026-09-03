@@ -112,6 +112,23 @@ Describe "Get-ReleasePathStreams" {
         $both.Mcp | Should -BeTrue
     }
 
+    It "classifies the canvas extension and host as App-only, never MCP" {
+        $result = Get-ReleasePathStreams -Paths @(
+            "tools/Glasswork.CanvasHost/Program.cs",
+            ".github/extensions/glasswork-task-viewer/extension.mjs",
+            "scripts/Install-CanvasExtension.ps1"
+        )
+
+        $result.App | Should -BeTrue
+        $result.Mcp | Should -BeFalse
+        ($result.IncludedPaths.App -join "|") | Should -Be (
+            ".github/extensions/glasswork-task-viewer/extension.mjs|" +
+            "scripts/Install-CanvasExtension.ps1|" +
+            "tools/Glasswork.CanvasHost/Program.cs"
+        )
+        $result.ExcludedPaths.Count | Should -Be 0
+    }
+
     It "excludes tests docs workflows generated metadata and validation-only tooling" {
         $paths = @(
             "tests/scripts/ReleaseAutomation.Tests.ps1",
