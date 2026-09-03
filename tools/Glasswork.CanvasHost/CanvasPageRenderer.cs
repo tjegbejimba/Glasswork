@@ -28,6 +28,8 @@ pre{white-space:pre-wrap;overflow:auto;max-height:480px;background:var(--backgro
 img{display:block;max-width:100%;max-height:540px;object-fit:contain}iframe{display:block;width:100%;height:480px;border:1px solid var(--border-color-default,#d0d7de);border-radius:8px;background:white}
 blockquote,.callout{margin:8px 0;padding:8px 12px;border-left:4px solid var(--border-color-accent,#0969da);background:var(--background-color-muted,#f6f8fa)}
 .table-scroll{overflow-x:auto}table{border-collapse:collapse}th,td{border:1px solid var(--border-color-default,#d0d7de);padding:6px 8px}.reason{padding:10px;border-radius:6px;background:var(--background-color-muted,#f6f8fa)}
+.drift-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;padding:10px 14px;border-radius:8px;background:var(--background-color-attention,#fff8c5);border:1px solid var(--border-color-attention,#d4a72c);color:var(--text-color-default,#1f2328)}
+.drift-banner button{flex-shrink:0}
 @media(max-width:560px){body{padding:12px}.card,details{padding:12px}h1{font-size:22px}iframe{height:360px}}
 @media(prefers-color-scheme:dark){body{background:#0d1117;color:#e6edf3}pre,.reason,blockquote,.callout{background:#161b22}button{background:#21262d;border-color:#30363d}.card,details,iframe{border-color:#30363d}}
 </style></head><body><main id="app"></main>
@@ -150,6 +152,15 @@ app.addEventListener("click",event=>{
   if(target.dataset.externalUrl)post("/api/link/action",{url:target.dataset.externalUrl}).catch(()=>{});
   if(target.dataset.vaultPath)post("/api/vault/action",{url:target.dataset.vaultPath}).catch(()=>{});
 });
+function renderDriftBanner(){
+  if(!data.driftDetected)return;
+  const banner=element("div","drift-banner");
+  banner.append(element("span",null,data.driftMessage||"A newer version of this canvas is available. Reopen this session to update."));
+  const dismiss=element("button",null,"Dismiss");dismiss.addEventListener("click",()=>banner.remove());
+  banner.append(dismiss);
+  app.append(banner);
+}
+renderDriftBanner();
 if(data.kind==="empty"){const card=element("article","card");card.append(element("h1",null,"Glasswork task"),element("p","muted",data.message));app.append(card)}
 else if(data.kind==="error"){const card=element("article","card error");card.append(element("h1",null,"Task unavailable"),element("p",null,data.message));app.append(card)}
 else renderTask(data.projection);

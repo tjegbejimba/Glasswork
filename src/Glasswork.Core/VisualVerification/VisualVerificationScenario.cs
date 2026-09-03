@@ -31,6 +31,7 @@ public sealed partial class VisualVerificationScenario
     public List<VisualVerificationTask> Tasks { get; init; } = [];
     public List<VisualVerificationWikiPage> WikiPages { get; init; } = [];
     public List<VisualVerificationWayfinderIssue> WayfinderIssues { get; init; } = [];
+    public VisualVerificationCanvasExtensionState? CanvasExtensionState { get; init; }
     public List<VisualVerificationResearchChangeLog> ResearchChangeLogs { get; init; } = [];
     public List<VisualVerificationAction> Actions { get; init; } = [];
     public List<VisualVerificationCapture> Captures { get; init; } = [];
@@ -551,6 +552,35 @@ public sealed class VisualVerificationWayfinderIssue
     public string Title { get; init; } = string.Empty;
     public string State { get; init; } = "unknown";
     public bool HasReciprocalReference { get; init; }
+}
+
+/// <summary>
+/// Seeds a deterministic canvas-extension <c>current.json</c> health record
+/// (see <c>Glasswork.Core.AppUpdate.CanvasExtensionHealthReader</c>, issue
+/// #562) so a Settings visual-verification scenario can reproduce healthy,
+/// failed, and never-installed activation states without touching the real
+/// Copilot extensions directory. When present, the runner writes this to a
+/// temporary extensions root and points the launched app at it via
+/// <c>GLASSWORK_CANVAS_EXTENSIONS_ROOT</c>.
+/// </summary>
+public sealed class VisualVerificationCanvasExtensionState
+{
+    public string? Version { get; init; }
+    public string? Identity { get; init; }
+    public string? SourceRevision { get; init; }
+    public string? Sha256 { get; init; }
+    public string? HostExecutablePath { get; init; }
+    public string LastAttemptStatus { get; init; } = "ok";
+    public string? LastAttemptVersion { get; init; }
+    public string? LastAttemptMessage { get; init; }
+
+    /// <summary>
+    /// When true, the runner builds a real self-contained canvas host bundle
+    /// and points Settings' Retry action at it (via an override environment
+    /// variable), so a "retry-success" scenario can click Retry and capture
+    /// the resulting healthy state instead of only seeding one statically.
+    /// </summary>
+    public bool RetryBundleAvailable { get; init; }
 }
 
 public sealed class VisualVerificationResearchChangeLog

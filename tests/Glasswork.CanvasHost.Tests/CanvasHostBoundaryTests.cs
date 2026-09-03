@@ -205,6 +205,102 @@ public sealed class CanvasHostBoundaryTests
         }
     }
 
+    [TestMethod]
+    public async Task Host_DetectsVersionDriftAndRendersNonBlockingBanner()
+    {
+        // Issue #562: a running (older) canvas host must keep serving its
+        // already-loaded Task content while noticing that a newer bundle has
+        // since been activated elsewhere, and show a non-blocking message
+        // rather than failing or being killed.
+        var vault = CreateVault();
+        var ownIdentity = await GetOwnBuildIdentity();
+        var currentStatePath = Path.Combine(Path.GetTempPath(), $"canvas-current-{Guid.NewGuid():N}.json");
+        File.WriteAllText(currentStatePath, JsonSerializer.Serialize(new
+        {
+            version = "9.9.9",
+            identity = "9.9.9+drifted0000000000000000000000000000000000",
+            lastAttempt = new { status = "ok" },
+        }));
+        try
+        {
+            await using var host = await StartHost(vault, "session-drift", "credential-drift", currentStatePath: currentStatePath);
+            using var client = AuthorizedClient("credential-drift");
+
+            var apiResponse = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
+            using var apiBody = JsonDocument.Parse(await apiResponse.Content.ReadAsStringAsync());
+            var canvasResponse = await client.GetAsync($"{host.Url}/canvas?task_id=demo");
+            var html = await canvasResponse.Content.ReadAsStringAsync();
+
+            Assert.AreEqual(HttpStatusCode.OK, apiResponse.StatusCode);
+            Assert.IsTrue(apiBody.RootElement.GetProperty("driftDetected").GetBoolean());
+            StringAssert.Contains(apiBody.RootElement.GetProperty("driftMessage").GetString(), "Reopen");
+            Assert.AreEqual(HttpStatusCode.OK, canvasResponse.StatusCode);
+            // The rendered shell embeds the payload as a JSON literal that the
+            // client-side script reads to decide whether to show the banner;
+            // an HTTP-only test can't execute that script, so it asserts on
+            // the exact embedded field values instead.
+            StringAssert.Contains(html, "\"driftDetected\":true");
+            StringAssert.Contains(html, "Reopen this session to update");
+            // Non-blocking: the Task content itself must still render alongside the banner.
+            StringAssert.Contains(html, "Demo description.");
+            Assert.AreNotEqual("9.9.9+drifted0000000000000000000000000000000000", ownIdentity);
+        }
+        finally
+        {
+            File.Delete(currentStatePath);
+        }
+    }
+
+    [TestMethod]
+    public async Task Host_NoDriftWhenActivatedIdentityMatchesOwnBuild()
+    {
+        var vault = CreateVault();
+        var ownIdentity = await GetOwnBuildIdentity();
+        var currentStatePath = Path.Combine(Path.GetTempPath(), $"canvas-current-{Guid.NewGuid():N}.json");
+        File.WriteAllText(currentStatePath, JsonSerializer.Serialize(new
+        {
+            version = ownIdentity.Split('+')[0],
+            identity = ownIdentity,
+            lastAttempt = new { status = "ok" },
+        }));
+        try
+        {
+            await using var host = await StartHost(vault, "session-no-drift", "credential-no-drift", currentStatePath: currentStatePath);
+            using var client = AuthorizedClient("credential-no-drift");
+
+            var apiResponse = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
+            using var apiBody = JsonDocument.Parse(await apiResponse.Content.ReadAsStringAsync());
+            var canvasResponse = await client.GetAsync($"{host.Url}/canvas?task_id=demo");
+            var html = await canvasResponse.Content.ReadAsStringAsync();
+
+            Assert.IsFalse(apiBody.RootElement.GetProperty("driftDetected").GetBoolean());
+            StringAssert.Contains(html, "\"driftDetected\":false");
+            Assert.IsFalse(html.Contains("\"driftDetected\":true", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(currentStatePath);
+        }
+    }
+
+    private static async Task<string> GetOwnBuildIdentity()
+    {
+        var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
+        var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
+        var startInfo = new ProcessStartInfo(dotnet)
+        {
+            Arguments = $"\"{hostDll}\" --version",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
+        var output = (await process.StandardOutput.ReadToEndAsync()).Trim();
+        await process.WaitForExitAsync();
+        return output;
+    }
+
     private static string CreateVault()
     {
         var root = Path.Combine(Path.GetTempPath(), "glasswork-canvas-" + Guid.NewGuid().ToString("N"));
@@ -258,12 +354,13 @@ Demo description.
         return client;
     }
 
-    private static async Task<RunningHost> StartHost(string? vault, string sessionId, string token, string? uiStatePath = null)
+    private static async Task<RunningHost> StartHost(string? vault, string sessionId, string token, string? uiStatePath = null, string? currentStatePath = null)
     {
         var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
         var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
         var arguments = $"\"{hostDll}\" --session-id {sessionId} --token {token}";
         if (uiStatePath is not null) arguments += $" --ui-state-path \"{uiStatePath}\"";
+        if (currentStatePath is not null) arguments += $" --current-state-path \"{currentStatePath}\"";
         var startInfo = new ProcessStartInfo(dotnet)
         {
             Arguments = arguments,

@@ -152,6 +152,32 @@
                     IsEnabled="False"
                     Click="UpdateMcpButton_Click"
                     ToolTipService.ToolTip="Install the latest verified glasswork-mcp release" />
+
+                <TextBlock
+                    Margin="0,8,0,0"
+                    Text="Glasswork canvas extension"
+                    FontWeight="SemiBold" />
+                <TextBlock
+                    Text="Ships side by side with the app and loads a read-only Task view into Copilot sessions. A failed activation never blocks Glasswork itself."
+                    TextWrapping="Wrap"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <TextBlock
+                    x:Name="CanvasExtensionStatusText"
+                    AutomationProperties.AutomationId="CanvasExtensionStatusText"
+                    TextWrapping="Wrap" />
+                <InfoBar
+                    x:Name="CanvasExtensionWarningBar"
+                    AutomationProperties.AutomationId="CanvasExtensionWarningBar"
+                    IsOpen="False"
+                    IsClosable="True"
+                    Severity="Error" />
+                <Button
+                    x:Name="RetryCanvasExtensionButton"
+                    AutomationProperties.AutomationId="RetryCanvasExtensionButton"
+                    Content="Retry"
+                    Click="RetryCanvasExtensionButton_Click"
+                    ToolTipService.ToolTip="Re-verify and activate the bundled canvas extension" />
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

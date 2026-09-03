@@ -154,13 +154,75 @@ Describe "Install-GlassworkCanvasExtension" {
             sourceRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; sha256 = ("a" * 64)
             hostExecutablePath = (Join-Path $extensionDirectory "host\1.4.11\Glasswork.CanvasHost.dll")
         } | ConvertTo-Json | Set-Content (Join-Path $extensionDirectory "current.json")
+        # Simulate an old session's still-running host process holding this
+        # file open — the exact case eventual cleanup must not disturb.
+        $lockedFile = [System.IO.File]::Open(
+            (Join-Path $extensionDirectory "host\1.4.11\Glasswork.CanvasHost.dll"),
+            [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+
+        try {
+            $result = Install-GlassworkCanvasExtension -SourcePath $bundle -ExtensionsRoot $extensionsRoot
+
+            $result.Status | Should -Be "Updated"
+            (Get-Content (Join-Path $extensionDirectory "host\active.txt") -Raw).Trim() | Should -Be "1.5.0"
+            # Old version stays side by side — a running session's already-spawned
+            # host process still holds its file open, so cleanup must skip it
+            # rather than fail the activation (issue #562).
+            Test-Path (Join-Path $extensionDirectory "host\1.4.11\Glasswork.CanvasHost.dll") -PathType Leaf | Should -BeTrue
+        }
+        finally {
+            $lockedFile.Dispose()
+        }
+    }
+
+    It "garbage-collects an unlocked prior version once no process is using it" {
+        $bundle = Join-Path $TestDrive "gc-bundle"
+        New-TestCanvasBundle -Path $bundle -Version "1.5.0" -SourceRevision "dddddddddddddddddddddddddddddddddddddddd" | Out-Null
+        $script:StagedIdentity = "1.5.0+dddddddddddddddddddddddddddddddddddddddd"
+        $extensionsRoot = Join-Path $TestDrive "gc-extensions"
+        $extensionDirectory = Join-Path $extensionsRoot "glasswork-task-viewer"
+        New-Item -ItemType Directory -Force -Path (Join-Path $extensionDirectory "host\1.4.11") | Out-Null
+        "old host binary" | Set-Content (Join-Path $extensionDirectory "host\1.4.11\Glasswork.CanvasHost.dll")
+        Set-Content -Path (Join-Path $extensionDirectory "host\active.txt") -Value "1.4.11" -Encoding ascii
+        [ordered]@{
+            version = "1.4.11"; identity = "1.4.11+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            sourceRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; sha256 = ("a" * 64)
+            hostExecutablePath = (Join-Path $extensionDirectory "host\1.4.11\Glasswork.CanvasHost.dll")
+        } | ConvertTo-Json | Set-Content (Join-Path $extensionDirectory "current.json")
 
         $result = Install-GlassworkCanvasExtension -SourcePath $bundle -ExtensionsRoot $extensionsRoot
 
         $result.Status | Should -Be "Updated"
-        (Get-Content (Join-Path $extensionDirectory "host\active.txt") -Raw).Trim() | Should -Be "1.5.0"
-        # Old version stays side by side — a running session's already-spawned
-        # host process may still be pointed at it (issue #562 handles cutover).
+        # Nothing holds the old version's files open, so it is safe to remove
+        # once a newer version has been verified and activated.
+        Test-Path (Join-Path $extensionDirectory "host\1.4.11") | Should -BeFalse
+        Test-Path (Join-Path $extensionDirectory "host\1.5.0\Glasswork.CanvasHost.dll") -PathType Leaf | Should -BeTrue
+    }
+
+    It "sweeps a version left over from an earlier activation during a no-op reinstall" {
+        $bundle = Join-Path $TestDrive "retry-gc-bundle"
+        New-TestCanvasBundle -Path $bundle -Version "1.4.11" -SourceRevision "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" | Out-Null
+        $extensionsRoot = Join-Path $TestDrive "retry-gc-extensions"
+        $extensionDirectory = Join-Path $extensionsRoot "glasswork-task-viewer"
+        New-Item -ItemType Directory -Force -Path (Join-Path $extensionDirectory "host\1.4.11") | Out-Null
+        "active host binary" | Set-Content (Join-Path $extensionDirectory "host\1.4.11\Glasswork.CanvasHost.dll")
+        New-Item -ItemType Directory -Force -Path (Join-Path $extensionDirectory "host\1.3.0") | Out-Null
+        "stale host binary" | Set-Content (Join-Path $extensionDirectory "host\1.3.0\Glasswork.CanvasHost.dll")
+        Set-Content -Path (Join-Path $extensionDirectory "host\active.txt") -Value "1.4.11" -Encoding ascii
+        [ordered]@{
+            version = "1.4.11"; identity = $script:StagedIdentity
+            sourceRevision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; sha256 = ("b" * 64)
+            hostExecutablePath = (Join-Path $extensionDirectory "host\1.4.11\Glasswork.CanvasHost.dll")
+        } | ConvertTo-Json | Set-Content (Join-Path $extensionDirectory "current.json")
+        Mock Get-CanvasHostIdentity { $script:StagedIdentity }
+
+        # No-op reinstall (Status "Current") must still sweep for stale
+        # versions left over from an earlier activation whose cleanup was
+        # blocked at the time.
+        $result = Install-GlassworkCanvasExtension -SourcePath $bundle -ExtensionsRoot $extensionsRoot
+
+        $result.Status | Should -Be "Current"
+        Test-Path (Join-Path $extensionDirectory "host\1.3.0") | Should -BeFalse
         Test-Path (Join-Path $extensionDirectory "host\1.4.11\Glasswork.CanvasHost.dll") -PathType Leaf | Should -BeTrue
     }
 
@@ -231,6 +293,84 @@ Describe "Install-GlassworkCanvasExtension" {
 
         $result.Status | Should -Be "Failed"
         $result.Message | Should -Match "blocker-file"
+    }
+}
+
+Describe "retry-canvas-extension.ps1" {
+    BeforeAll {
+        # A real published host is required here: the CLI wrapper runs as its
+        # own external process, so Pester's `Mock Get-CanvasHostIdentity` (used
+        # elsewhere in this file) cannot reach across process boundaries. Built
+        # once and reused by every test in this block to bound total runtime.
+        $script:RealBundleVersion = "1.9.10"
+        $script:RealBundleSourceRevision = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        $script:RealBundle = Join-Path $TestDrive "retry-cli-real-bundle"
+        $realVersionDirectory = Join-Path $script:RealBundle "host\$script:RealBundleVersion"
+        New-Item -ItemType Directory -Force -Path $script:RealBundle | Out-Null
+        "// real extension adapter (not exercised by this test)" |
+            Set-Content (Join-Path $script:RealBundle "extension.mjs")
+
+        & dotnet publish (Join-Path $script:RepoRoot "tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj") `
+            --configuration Release `
+            --self-contained `
+            --runtime win-x64 `
+            --output $realVersionDirectory `
+            -p:Version=$script:RealBundleVersion `
+            -p:RepositoryCommit=$script:RealBundleSourceRevision `
+            --nologo `
+            --verbosity quiet
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet publish failed while preparing the real canvas host bundle for retry-canvas-extension.ps1 tests."
+        }
+
+        Set-Content -Path (Join-Path $script:RealBundle "host\active.txt") -Value $script:RealBundleVersion -Encoding ascii
+        $realHostExe = Join-Path $realVersionDirectory "Glasswork.CanvasHost.exe"
+        $realSha256 = (Get-FileHash -Algorithm SHA256 -Path $realHostExe).Hash.ToLowerInvariant()
+        [ordered]@{
+            version        = $script:RealBundleVersion
+            sourceRevision = $script:RealBundleSourceRevision
+            sha256         = $realSha256
+        } | ConvertTo-Json | Set-Content (Join-Path $script:RealBundle "manifest.json")
+    }
+
+    It "retries activation and prints a JSON result on success" {
+        $extensionsRoot = Join-Path $TestDrive "retry-cli-extensions"
+
+        $output = & (Join-Path $script:RepoRoot "scripts\retry-canvas-extension.ps1") `
+            -SourcePath $script:RealBundle -ExtensionsRoot $extensionsRoot
+        $exitCode = $LASTEXITCODE
+
+        $exitCode | Should -Be 0
+        $parsed = $output | ConvertFrom-Json
+        $parsed.status | Should -Be "Installed"
+        Test-Path (Join-Path $extensionsRoot "glasswork-task-viewer\current.json") -PathType Leaf | Should -BeTrue
+    }
+
+    It "exits non-zero and reports the failure message for an incomplete bundle" {
+        $bundle = Join-Path $TestDrive "retry-cli-bad-bundle"
+        New-Item -ItemType Directory -Force -Path $bundle | Out-Null
+        $extensionsRoot = Join-Path $TestDrive "retry-cli-bad-extensions"
+
+        $output = & (Join-Path $script:RepoRoot "scripts\retry-canvas-extension.ps1") `
+            -SourcePath $bundle -ExtensionsRoot $extensionsRoot
+        $exitCode = $LASTEXITCODE
+
+        $exitCode | Should -Be 1
+        $parsed = $output | ConvertFrom-Json
+        $parsed.status | Should -Be "Failed"
+        $parsed.message | Should -Match "extension.mjs"
+    }
+
+    It "is idempotent when retried against an already-active bundle" {
+        $extensionsRoot = Join-Path $TestDrive "retry-cli-idempotent-extensions"
+
+        & (Join-Path $script:RepoRoot "scripts\retry-canvas-extension.ps1") -SourcePath $script:RealBundle -ExtensionsRoot $extensionsRoot | Out-Null
+        $LASTEXITCODE | Should -Be 0
+        $secondOutput = & (Join-Path $script:RepoRoot "scripts\retry-canvas-extension.ps1") -SourcePath $script:RealBundle -ExtensionsRoot $extensionsRoot
+        $secondExitCode = $LASTEXITCODE
+
+        $secondExitCode | Should -Be 0
+        ($secondOutput | ConvertFrom-Json).status | Should -Be "Current"
     }
 }
 

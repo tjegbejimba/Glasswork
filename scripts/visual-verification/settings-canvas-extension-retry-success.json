@@ -1,0 +1,41 @@
+{
+  "name": "Settings canvas extension retry success",
+  "canvasExtensionState": {
+    "version": "1.4.11",
+    "identity": "1.4.11+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "hostExecutablePath": "C:\\fixture\\Glasswork.CanvasHost.exe",
+    "lastAttemptStatus": "failed",
+    "lastAttemptVersion": "1.5.0",
+    "lastAttemptMessage": "Staged canvas host identity '1.5.0+cccc' does not match expected '1.5.0+dddd'.",
+    "retryBundleAvailable": true
+  },
+  "launchTimeoutSeconds": 20,
+  "actions": [
+    {
+      "type": "select",
+      "name": "Settings",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "CanvasExtensionWarningBar",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "RetryCanvasExtensionButton"
+    },
+    {
+      "type": "wait-for",
+      "name": "Canvas extension 9.9.9 is active.",
+      "timeoutMilliseconds": 60000
+    }
+  ],
+  "captures": [
+    {
+      "name": "settings-canvas-extension-retry-success"
+    }
+  ]
+}

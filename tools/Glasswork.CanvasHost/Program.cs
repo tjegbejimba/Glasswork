@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Glasswork.Core.AppUpdate;
 using Glasswork.Core.Models;
 using Glasswork.Core.Services;
 using Glasswork.CanvasHost;
@@ -42,6 +43,15 @@ var vault = new VaultService(todoPath);
 var projection = new TaskDetailProjectionService(vault, new FileSystemArtifactStore(vaultRoot));
 var markdown = new CanvasMarkdownRenderer(vaultRoot);
 var artifactAccess = new CanvasArtifactAccess(vaultRoot, projection);
+
+// Version-drift detection (issue #562): this host keeps running its
+// already-loaded assets even after a newer bundle activates elsewhere
+// (ADR 0026); re-check the exact current.json path on every response instead
+// of once at startup, so drift is noticed without restarting this process.
+var ownIdentity = CanvasHostBuildIdentity.Current;
+var currentStatePath = string.IsNullOrWhiteSpace(options.CurrentStatePath)
+    ? CanvasVersionDriftDetector.ResolveDefaultCurrentStatePath(AppContext.BaseDirectory)
+    : options.CurrentStatePath;
 var builder = WebApplication.CreateBuilder();
 builder.WebHost.UseKestrel(server => server.Listen(IPAddress.Loopback, 0));
 var app = builder.Build();
@@ -65,15 +75,16 @@ app.Use(async (context, next) =>
 app.MapGet("/health", () => Results.Ok(new { ok = true, session_id = options.SessionId }));
 app.MapGet("/api/task", (HttpContext context) =>
 {
+    var (driftDetected, driftMessage) = DetectCurrentDrift(currentStatePath, ownIdentity);
     var taskId = context.Request.Query["task_id"].ToString().Trim();
-    if (taskId.Length == 0) return Results.Ok(new { kind = "empty", message = "Open this canvas with task_id to view a Task." });
+    if (taskId.Length == 0) return Results.Ok(new { kind = "empty", message = "Open this canvas with task_id to view a Task.", driftDetected, driftMessage });
     if (!IsSafeTaskId(taskId)) return Results.BadRequest(new { code = "invalid_task_id", message = "task_id must contain only lowercase letters, numbers, and hyphens." });
     try
     {
         var result = projection.Build(taskId);
         return result is null
             ? Results.NotFound(new { code = "task_not_found", message = $"Task '{taskId}' was not found." })
-            : Results.Ok(new { kind = "task", projection = EnrichProjection(result, markdown, jsonOptions) });
+            : Results.Ok(new { kind = "task", projection = EnrichProjection(result, markdown, jsonOptions), driftDetected, driftMessage });
     }
     catch (Exception ex)
     {
@@ -127,7 +138,8 @@ app.MapPost("/api/vault/action", (LinkActionRequest request) =>
 app.MapGet("/canvas", async (HttpContext context) =>
 {
     var taskId = context.Request.Query["task_id"].ToString().Trim();
-    var payload = await BuildCanvasPayload(taskId, projection, markdown);
+    var (driftDetected, driftMessage) = DetectCurrentDrift(currentStatePath, ownIdentity);
+    var payload = await BuildCanvasPayload(taskId, projection, markdown, driftDetected, driftMessage);
     var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
     context.Response.Headers["Content-Security-Policy"] =
         $"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
@@ -154,26 +166,35 @@ static bool IsAuthorized(HttpContext context, string token)
 
 static bool IsSafeTaskId(string value) => value.Length <= 160 && value.All(c => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') && value[0] != '-';
 
+static (bool Detected, string? Message) DetectCurrentDrift(string? currentStatePath, string ownIdentity)
+{
+    if (string.IsNullOrWhiteSpace(currentStatePath)) return (false, null);
+    var state = CanvasExtensionHealthReader.ReadFromFile(currentStatePath);
+    return CanvasVersionDriftDetector.Detect(state, ownIdentity);
+}
+
 static Task<object> BuildCanvasPayload(
     string taskId,
     TaskDetailProjectionService projection,
-    CanvasMarkdownRenderer markdown)
+    CanvasMarkdownRenderer markdown,
+    bool driftDetected,
+    string? driftMessage)
 {
     if (string.IsNullOrWhiteSpace(taskId))
-        return Task.FromResult<object>(new { kind = "empty", message = "Open this canvas with task_id to view a Task." });
+        return Task.FromResult<object>(new { kind = "empty", message = "Open this canvas with task_id to view a Task.", driftDetected, driftMessage });
     if (!IsSafeTaskId(taskId))
-        return Task.FromResult<object>(new { kind = "error", code = "invalid_task_id", message = "task_id must contain only lowercase letters, numbers, and hyphens." });
+        return Task.FromResult<object>(new { kind = "error", code = "invalid_task_id", message = "task_id must contain only lowercase letters, numbers, and hyphens.", driftDetected, driftMessage });
     try
     {
         var result = projection.Build(taskId);
         if (result is null)
-            return Task.FromResult<object>(new { kind = "error", code = "task_not_found", message = $"Task '{taskId}' was not found." });
-        return Task.FromResult<object>(new { kind = "task", projection = CanvasTaskProjection.From(result, markdown) });
+            return Task.FromResult<object>(new { kind = "error", code = "task_not_found", message = $"Task '{taskId}' was not found.", driftDetected, driftMessage });
+        return Task.FromResult<object>(new { kind = "task", projection = CanvasTaskProjection.From(result, markdown), driftDetected, driftMessage });
     }
 
     catch (Exception ex)
     {
-        return Task.FromResult<object>(new { kind = "error", code = "projection_failed", message = ex.Message });
+        return Task.FromResult<object>(new { kind = "error", code = "projection_failed", message = ex.Message, driftDetected, driftMessage });
     }
 }
 
@@ -190,13 +211,18 @@ static JsonObject EnrichProjection(
     return node;
 }
 
-sealed record HostOptions(string SessionId, string Token, string? UiStatePath)
+sealed record HostOptions(string SessionId, string Token, string? UiStatePath, string? CurrentStatePath)
 {
     public static HostOptions Parse(string[] args)
     {
         string Value(string name) { var i = Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : ""; }
         string? uiStatePath = Value("--ui-state-path");
-        return new(Value("--session-id"), Value("--token"), string.IsNullOrEmpty(uiStatePath) ? null : uiStatePath);
+        string? currentStatePath = Value("--current-state-path");
+        return new(
+            Value("--session-id"),
+            Value("--token"),
+            string.IsNullOrEmpty(uiStatePath) ? null : uiStatePath,
+            string.IsNullOrEmpty(currentStatePath) ? null : currentStatePath);
     }
     public static int Fail(string code, string message)
     {
