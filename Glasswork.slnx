@@ -11,10 +11,12 @@
     <Project Path="src/Glasswork.Mcp/Glasswork.Mcp.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Glasswork.CanvasHost.Tests/Glasswork.CanvasHost.Tests.csproj" />
     <Project Path="tests/Glasswork.Tests/Glasswork.Tests.csproj" />
     <Project Path="tests/Glasswork.Mcp.Tests/Glasswork.Mcp.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
+    <Project Path="tools/Glasswork.CanvasHost/Glasswork.CanvasHost.csproj" />
     <Project Path="tools/Glasswork.Maintenance/Glasswork.Maintenance.csproj" />
     <Project Path="tools/Glasswork.VisualVerification/Glasswork.VisualVerification.csproj" />
   </Folder>
