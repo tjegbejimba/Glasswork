@@ -31,19 +31,43 @@ if ($LASTEXITCODE -ne 0) { throw "Publish failed" }
 # Publish the user-scoped canvas extension beside the app release. The host is
 # self-contained so opening a Task does not depend on the native app process or
 # a separately installed .NET runtime.
-$extensionSource = Join-Path $RepoRoot ".github\extensions\glasswork-task-viewer"
-$extensionDestination = Join-Path $env:USERPROFILE ".copilot\extensions\glasswork-task-viewer"
-New-Item -ItemType Directory -Force -Path $extensionDestination | Out-Null
-Copy-Item (Join-Path $extensionSource "extension.mjs") $extensionDestination -Force
-$hostDestination = Join-Path $extensionDestination "host"
 $version = (Select-String -Path (Join-Path $AppProject "Glasswork.csproj") -Pattern '<Version>([^<]+)</Version>').Matches.Groups[1].Value
 if ([string]::IsNullOrWhiteSpace($version)) { throw "Unable to determine the Glasswork version for the canvas host bundle." }
-$versionedHostDestination = Join-Path $hostDestination $version
-New-Item -ItemType Directory -Force -Path $hostDestination | Out-Null
-dotnet publish (Join-Path $RepoRoot "tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj") `
-    -c Release -r win-x64 --self-contained -o $versionedHostDestination --nologo --verbosity minimal
-if ($LASTEXITCODE -ne 0) { throw "Canvas host publish failed" }
-Set-Content -Path (Join-Path $hostDestination "active.txt") -Value $version -Encoding ascii
+$sourceRevision = (& git -C $RepoRoot rev-parse HEAD 2>$null)
+if ([string]::IsNullOrWhiteSpace($sourceRevision)) { $sourceRevision = "local" }
+
+$canvasBundleStaging = Join-Path $env:TEMP "Glasswork-CanvasBundle-$([guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Force -Path $canvasBundleStaging | Out-Null
+try {
+    Copy-Item (Join-Path $RepoRoot ".github\extensions\glasswork-task-viewer\extension.mjs") $canvasBundleStaging -Force
+    $versionedHostStaging = Join-Path $canvasBundleStaging "host\$version"
+    dotnet publish (Join-Path $RepoRoot "tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj") `
+        -c Release -r win-x64 --self-contained -o $versionedHostStaging `
+        -p:Version=$version -p:RepositoryCommit=$sourceRevision `
+        --nologo --verbosity minimal
+    if ($LASTEXITCODE -ne 0) { throw "Canvas host publish failed" }
+    Set-Content -Path (Join-Path $canvasBundleStaging "host\active.txt") -Value $version -Encoding ascii
+    $canvasHostSha256 = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $versionedHostStaging "Glasswork.CanvasHost.exe")).Hash.ToLowerInvariant()
+    [ordered]@{
+        version        = $version
+        sourceRevision = $sourceRevision
+        sha256         = $canvasHostSha256
+    } | ConvertTo-Json | Set-Content -Path (Join-Path $canvasBundleStaging "manifest.json")
+
+    . (Join-Path $RepoRoot "scripts\Install-CanvasExtension.ps1")
+    $canvasInstallResult = Install-GlassworkCanvasExtension -SourcePath $canvasBundleStaging
+    if ($canvasInstallResult.Status -eq "Failed") {
+        Write-Warning "Canvas extension activation failed: $($canvasInstallResult.Message)"
+    }
+    else {
+        Write-Host "  [OK] Canvas extension: $($canvasInstallResult.Status) v$($canvasInstallResult.Version)" -ForegroundColor Green
+    }
+}
+finally {
+    if (Test-Path $canvasBundleStaging) {
+        Remove-Item -Recurse -Force $canvasBundleStaging -ErrorAction SilentlyContinue
+    }
+}
 
 # 3. Verify critical files
 $exe = Join-Path $InstallDir "Glasswork.exe"

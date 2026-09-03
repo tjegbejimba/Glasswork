@@ -13,6 +13,7 @@ function New-ReleasePackage {
         "Glasswork.exe",
         "Updater\release-update.ps1",
         "Updater\Invoke-ReleaseUpdate.ps1",
+        "Updater\Install-CanvasExtension.ps1",
         "McpUpdater\install-mcp.ps1",
         "McpUpdater\Install-McpTool.ps1",
         "McpUpdater\Validate-McpReleasePublication.ps1"
