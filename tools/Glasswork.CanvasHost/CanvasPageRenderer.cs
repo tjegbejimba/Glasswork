@@ -15,11 +15,30 @@ internal static class CanvasPageRenderer
     private const string Template = """
 <!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,">
-<title>Glasswork task</title>
+<title>Glasswork Tasks</title>
 <style>
 :root{color-scheme:light dark}*{box-sizing:border-box}
-body{margin:0;padding:24px;background:var(--background-color-default,#fff);color:var(--text-color-default,#1f2328);font:14px/1.5 var(--font-sans,Segoe UI,sans-serif)}
-main{max-width:900px;margin:auto}.card,details{border:1px solid var(--border-color-default,#d0d7de);border-radius:12px;padding:16px;margin-top:16px;background:var(--background-color-subtle,transparent)}
+body{margin:0;padding:0;background:var(--background-color-default,#fff);color:var(--text-color-default,#1f2328);font:14px/1.5 var(--font-sans,Segoe UI,sans-serif)}
+#app{display:flex;flex-direction:row;align-items:stretch;min-height:100vh}
+.rail{flex:0 0 280px;max-width:280px;border-right:1px solid var(--border-color-default,#d0d7de);overflow-y:auto;padding:12px}
+.rail-header{align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.rail-header h2{margin:0;font-size:15px}
+.rail-list{list-style:none;margin:0;padding:0;flex-direction:column;gap:6px}
+details[open] .rail-header,details[open] .rail-list{display:flex}
+details:not([open]) .rail-header,details:not([open]) .rail-list{display:none}
+.rail-row{display:flex;align-items:flex-start;gap:6px;border:1px solid var(--border-color-default,#d0d7de);border-radius:8px;padding:6px}
+.rail-row.selected{border-color:var(--border-color-accent,#0969da);background:var(--background-color-subtle,rgba(9,105,218,.08))}
+.rail-row.unavailable{border-style:dashed}
+.rail-select{flex:1;text-align:left;background:none;border:0;padding:2px;cursor:pointer;color:inherit;font:inherit}
+.rail-title{font-weight:600;display:block}
+.rail-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;font-size:12px;color:var(--text-color-muted,#656d76)}
+.chip{border:1px solid var(--border-color-default,#d0d7de);border-radius:999px;padding:0 6px}
+.chip.blocked{color:var(--true-color-red,#cf222e);border-color:var(--true-color-red,#cf222e)}
+.chip.unavailable{color:var(--true-color-red,#cf222e);border-color:var(--true-color-red,#cf222e)}
+.remove-btn{border:0;background:none;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:4px}
+.remove-btn:hover{color:var(--true-color-red,#cf222e)}
+.detail{flex:1;min-width:0;padding:24px;max-width:900px}
+.card,details{border:1px solid var(--border-color-default,#d0d7de);border-radius:12px;padding:16px;margin-top:16px;background:var(--background-color-subtle,transparent)}
 h1{margin:0 0 8px;font-size:26px}h2{margin:0 0 8px;font-size:18px}.muted{color:var(--text-color-muted,#656d76)}.error{border-color:var(--true-color-red,#cf222e)}
 summary{cursor:pointer;font-weight:600}.artifact-meta{font-size:12px;font-weight:400;margin-left:8px}.artifact-body{margin-top:12px}.artifact-actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
 button{font:inherit;color:inherit;background:var(--button-default-background,#f6f8fa);border:1px solid var(--border-color-default,#d0d7de);border-radius:6px;padding:5px 10px;cursor:pointer}
@@ -28,22 +47,117 @@ pre{white-space:pre-wrap;overflow:auto;max-height:480px;background:var(--backgro
 img{display:block;max-width:100%;max-height:540px;object-fit:contain}iframe{display:block;width:100%;height:480px;border:1px solid var(--border-color-default,#d0d7de);border-radius:8px;background:white}
 blockquote,.callout{margin:8px 0;padding:8px 12px;border-left:4px solid var(--border-color-accent,#0969da);background:var(--background-color-muted,#f6f8fa)}
 .table-scroll{overflow-x:auto}table{border-collapse:collapse}th,td{border:1px solid var(--border-color-default,#d0d7de);padding:6px 8px}.reason{padding:10px;border-radius:6px;background:var(--background-color-muted,#f6f8fa)}
-@media(max-width:560px){body{padding:12px}.card,details{padding:12px}h1{font-size:22px}iframe{height:360px}}
-@media(prefers-color-scheme:dark){body{background:#0d1117;color:#e6edf3}pre,.reason,blockquote,.callout{background:#161b22}button{background:#21262d;border-color:#30363d}.card,details,iframe{border-color:#30363d}}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* Wide layout: the rail is a permanently visible sidebar. Narrow layout below
+   turns it into an explicit disclosure (an accessible drawer) driven by a
+   native <summary> toggle: closed state hides the rail content (display:none,
+   overriding any residual browser default), open state shows it as a flex
+   column. Once past the breakpoint, content is forced visible with
+   `!important` regardless of the `open` attribute so resizing from a
+   collapsed narrow drawer up to desktop always shows the fixed rail. */
+@media(max-width:719px){
+  #app{flex-direction:column}
+  .rail{flex:0 0 auto;max-width:none;border-right:0;border-bottom:1px solid var(--border-color-default,#d0d7de);overflow-y:visible;overflow-x:hidden}
+  .rail-summary{display:flex;align-items:center;justify-content:space-between;list-style:none}
+  .rail-summary::-webkit-details-marker{display:none}
+  .detail{padding:12px}
+}
+@media(min-width:720px){
+  .rail-summary{display:none}
+  .rail-header,.rail-list{display:flex!important}
+}
+@media(max-width:560px){.detail{padding:12px}.card,details{padding:12px}h1{font-size:22px}iframe{height:360px}}
+@media(prefers-color-scheme:dark){body{background:#0d1117;color:#e6edf3}pre,.reason,blockquote,.callout{background:#161b22}button{background:#21262d;border-color:#30363d}.card,details,iframe,.rail-row{border-color:#30363d}}
 </style></head><body><main id="app"></main>
 <script nonce="__NONCE__">
 "use strict";
-const data=__PAYLOAD__;
+let data=__PAYLOAD__;
 const app=document.querySelector("#app");
 const query=new URLSearchParams(location.search);
 const token=query.get("token")||"";
 let activePreview=null;
 let previewGeneration=0;
+let pollHandle=null;
+let railOpen=true;
+const wideQuery=window.matchMedia("(min-width:720px)");
 
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=String(text);return node}
 function api(path,params={}){const url=new URL(path,location.origin);url.searchParams.set("token",token);for(const [key,value] of Object.entries(params))url.searchParams.set(key,value);return url}
 async function readText(path,params){const response=await fetch(api(path,params),{cache:"no-store"});if(!response.ok){let message="Content is unavailable.";try{message=(await response.json()).message||message}catch{}throw new Error(message)}return response.text()}
-async function post(path,payload){const response=await fetch(api(path),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});if(!response.ok){let message="Action failed.";try{message=(await response.json()).message||message}catch{}throw new Error(message)}}
+async function post(path,payload){const response=await fetch(api(path),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload||{})});let body=null;try{body=await response.json()}catch{}if(!response.ok){throw new Error((body&&body.message)||"Action failed.")}return body}
+async function getJson(path){const response=await fetch(api(path),{cache:"no-store"});return response.json()}
+
+function dueLabel(due){if(!due)return null;const date=new Date(due);return isNaN(date)?null:date.toLocaleDateString(undefined,{month:"short",day:"numeric"})}
+
+function renderRailRow(member){
+  const li=element("li","rail-row"+(member.taskId===data.selectedTaskId?" selected":"")+(member.isUnavailable?" unavailable":""));
+  li.setAttribute("role","option");
+  li.setAttribute("aria-selected",member.taskId===data.selectedTaskId?"true":"false");
+  const select=element("button","rail-select");
+  select.type="button";
+  if(member.taskId===data.selectedTaskId)select.setAttribute("aria-current","true");
+  select.append(element("span","rail-title",member.title||member.taskId));
+  const meta=element("span","rail-meta");
+  if(member.isUnavailable){
+    meta.append(element("span","chip unavailable","Unavailable"));
+  }else{
+    meta.append(element("span","chip",member.statusLabel));
+    if(member.priority)meta.append(element("span","chip","Priority: "+member.priority));
+    const due=dueLabel(member.due);
+    if(due)meta.append(element("span","chip","Due "+due));
+    if(member.isBlocked)meta.append(element("span","chip blocked","Blocked"));
+  }
+  select.append(meta);
+  select.addEventListener("click",()=>selectTask(member.taskId));
+  li.append(select);
+  const remove=element("button","remove-btn","✕");
+  remove.type="button";
+  remove.setAttribute("aria-label","Remove "+(member.title||member.taskId)+" from canvas");
+  remove.title="Remove from canvas";
+  remove.addEventListener("click",()=>unloadTask(member.taskId));
+  li.append(remove);
+  return li;
+}
+
+function renderRail(){
+  const wide=element("div","rail");
+  const details=element("details");
+  const summary=element("summary","rail-summary","Loaded Tasks ("+data.members.length+")");
+  details.append(summary);
+  const header=element("div","rail-header");
+  header.append(element("h2",null,"Loaded Tasks"));
+  const clear=element("button",null,"Clear all");
+  clear.type="button";
+  clear.disabled=data.members.length===0;
+  clear.addEventListener("click",clearAll);
+  header.append(clear);
+  details.append(header);
+  const list=element("ul","rail-list");
+  list.setAttribute("role","listbox");
+  list.setAttribute("aria-label","Loaded Tasks");
+  if(data.members.length===0){
+    list.append(element("li","muted","No Tasks loaded yet."));
+  }else{
+    data.members.forEach(member=>list.append(renderRailRow(member)));
+  }
+  details.append(list);
+  details.open=wideQuery.matches?true:railOpen;
+  details.addEventListener("toggle",()=>{if(!wideQuery.matches)railOpen=details.open});
+  wide.append(details);
+  return wide;
+}
+
+function renderEmptyState(){
+  const card=element("article","card");
+  card.append(element("h1",null,"Glasswork Tasks"),element("p","muted","Ask an agent to load a Glasswork Task to get started."));
+  return card;
+}
+
+function renderErrorState(detail){
+  const card=element("article","card error");
+  card.append(element("h1",null,"Task unavailable"),element("p",null,detail.message));
+  return card;
+}
 
 function renderReference(body,row,reason){
   body.replaceChildren();
@@ -61,10 +175,10 @@ function renderReference(body,row,reason){
   body.append(actions);
 }
 async function artifactAction(row,operation,body){
-  try{await post("/api/artifact/action",{taskId:data.projection.taskId,name:row.fileName,operation})}
+  try{await post("/api/artifact/action",{taskId:data.selectedTaskId,name:row.fileName,operation})}
   catch(error){body.prepend(element("p","error",error.message))}
 }
-function sourceParams(row){return{task_id:data.projection.taskId,name:row.fileName}}
+function sourceParams(row){return{task_id:data.selectedTaskId,name:row.fileName}}
 async function showHtmlSource(row,body){
   previewGeneration++;
   if(activePreview?.body===body)activePreview=null;
@@ -138,21 +252,65 @@ function renderArtifact(row){
   if(details.open)load();details.addEventListener("toggle",()=>{if(details.open)load()});return details;
 }
 function renderTask(p){
-  app.append(element("h1",null,p.title||p.taskId),element("p","muted",`${p.status.label} · ${p.taskId}`));
-  const description=element("section","card");description.append(element("h2",null,"Description"));const descriptionBody=element("div","markdown");descriptionBody.innerHTML=p.descriptionHtml||"<p class='muted'>No description.</p>";description.append(descriptionBody);app.append(description);
-  const notes=element("section","card");notes.append(element("h2",null,"Notes"));const notesBody=element("div","markdown");notesBody.innerHTML=p.notesHtml||"<p class='muted'>No notes.</p>";notes.append(notesBody);app.append(notes);
-  const subtasks=element("section","card");subtasks.append(element("h2",null,"Subtasks"),element("p",null,`${p.activeSubtasks.length} active · ${p.completedSubtasks.length} completed`));app.append(subtasks);
-  if(p.artifactRows.length){const heading=element("h2",null,"Artifacts");heading.style.marginTop="20px";app.append(heading);p.artifactRows.forEach(row=>app.append(renderArtifact(row)))}
+  const section=element("section");
+  const header=element("div");
+  header.append(element("h1",null,p.title||p.taskId),element("p","muted",`${p.status.label} · ${p.taskId}`));
+  const refresh=element("button",null,"Refresh");
+  refresh.type="button";
+  refresh.addEventListener("click",refreshSelected);
+  header.append(refresh);
+  section.append(header);
+  const description=element("section","card");description.append(element("h2",null,"Description"));const descriptionBody=element("div","markdown");descriptionBody.innerHTML=p.descriptionHtml||"<p class='muted'>No description.</p>";description.append(descriptionBody);section.append(description);
+  const notes=element("section","card");notes.append(element("h2",null,"Notes"));const notesBody=element("div","markdown");notesBody.innerHTML=p.notesHtml||"<p class='muted'>No notes.</p>";notes.append(notesBody);section.append(notes);
+  const subtasks=element("section","card");subtasks.append(element("h2",null,"Subtasks"),element("p",null,`${p.activeSubtasks.length} active · ${p.completedSubtasks.length} completed`));section.append(subtasks);
+  if(p.artifactRows.length){const heading=element("h2",null,"Artifacts");heading.style.marginTop="20px";section.append(heading);p.artifactRows.forEach(row=>section.append(renderArtifact(row)))}
+  return section;
+}
+function renderDetail(){
+  const detail=element("div","detail");
+  detail.setAttribute("role","region");
+  detail.setAttribute("aria-label","Task detail");
+  if(!data.selectedTaskId){detail.append(renderEmptyState());return detail}
+  const sd=data.selectedDetail;
+  if(!sd||sd.kind==="error"){detail.append(renderErrorState(sd||{message:"This Task is unavailable."}));return detail}
+  detail.append(renderTask(sd.projection));
+  return detail;
+}
+function render(){
+  app.replaceChildren(renderRail(),renderDetail());
+}
+async function refreshState(){
+  data=await getJson("/canvas-state");
+  render();
+}
+async function selectTask(taskId){
+  await post("/api/tasks/select",{taskId});
+  await refreshState();
+}
+async function unloadTask(taskId){
+  await post("/api/tasks/unload",{taskId});
+  await refreshState();
+}
+async function clearAll(){
+  await post("/api/tasks/clear");
+  await refreshState();
+}
+async function refreshSelected(){
+  await post("/api/tasks/refresh-selected");
+  await refreshState();
 }
 app.addEventListener("click",event=>{
   const target=event.target.closest("[data-task-id],[data-external-url],[data-vault-path]");if(!target)return;
-  if(target.dataset.taskId){const next=new URL(location.href);next.searchParams.set("task_id",target.dataset.taskId);location.assign(next);return}
+  if(target.dataset.taskId){post("/api/tasks/load",{taskIds:[target.dataset.taskId]}).then(refreshState).catch(()=>{});return}
   if(target.dataset.externalUrl)post("/api/link/action",{url:target.dataset.externalUrl}).catch(()=>{});
   if(target.dataset.vaultPath)post("/api/vault/action",{url:target.dataset.vaultPath}).catch(()=>{});
 });
-if(data.kind==="empty"){const card=element("article","card");card.append(element("h1",null,"Glasswork task"),element("p","muted",data.message));app.append(card)}
-else if(data.kind==="error"){const card=element("article","card error");card.append(element("h1",null,"Task unavailable"),element("p",null,data.message));app.append(card)}
-else renderTask(data.projection);
+render();
+wideQuery.addEventListener("change",render);
+// Background refresh only ever updates this already-open page's DOM — it
+// never calls anything that opens or focuses the canvas, so it can never
+// steal host focus the way an explicit load does.
+pollHandle=setInterval(()=>{refreshState().catch(()=>{})},5000);
 </script></body></html>
 """;
 }
