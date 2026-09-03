@@ -12,7 +12,12 @@ const extensionRoot = dirname(fileURLToPath(import.meta.url));
 const inputSchema = {
     type: "object",
     properties: {
-        task_id: { type: "string", minLength: 1, description: "Optional Glasswork task ID to view." },
+        task_id: { type: "string", minLength: 1, description: "Optional Glasswork task ID to load and select. Compatible shorthand for task_ids: [task_id]." },
+        task_ids: {
+            type: "array",
+            items: { type: "string", minLength: 1 },
+            description: "Optional canonical Glasswork task IDs to load into the Session Task Set. Merged with task_id when both are present.",
+        },
     },
     additionalProperties: false,
 };
@@ -22,6 +27,29 @@ const actionSchema = {
     properties: { task_id: { type: "string", minLength: 1 } },
     additionalProperties: false,
 };
+
+const taskIdSchema = {
+    type: "object",
+    required: ["task_id"],
+    properties: { task_id: { type: "string", minLength: 1, description: "Canonical Glasswork task ID." } },
+    additionalProperties: false,
+};
+
+const taskIdsSchema = {
+    type: "object",
+    required: ["task_ids"],
+    properties: {
+        task_ids: {
+            type: "array",
+            items: { type: "string", minLength: 1 },
+            minItems: 1,
+            description: "Canonical Glasswork task IDs to load into the Session Task Set.",
+        },
+    },
+    additionalProperties: false,
+};
+
+const noInputSchema = { type: "object", properties: {}, additionalProperties: false };
 
 const artifactActionSchema = {
     type: "object",
@@ -114,23 +142,98 @@ function stopHost(sessionId) {
     if (!host.child.killed) host.child.kill();
 }
 
-function canvasUrl(host, taskId) {
+function canvasUrl(host) {
     const url = new URL(host.url);
     url.pathname = "/canvas";
     url.searchParams.set("token", host.token);
-    if (taskId) url.searchParams.set("task_id", taskId);
     return url.toString();
+}
+
+function requestedTaskIds(input) {
+    const ids = [];
+    const single = typeof input?.task_id === "string" ? input.task_id.trim() : "";
+    if (single) ids.push(single);
+    if (Array.isArray(input?.task_ids)) {
+        for (const id of input.task_ids) {
+            const trimmed = typeof id === "string" ? id.trim() : "";
+            if (trimmed) ids.push(trimmed);
+        }
+    }
+    return ids;
+}
+
+async function callTasksEndpoint(host, path, body) {
+    const response = await fetch(`${host.url}${path}?token=${encodeURIComponent(host.token)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new CanvasError(payload.code ?? "host_request_failed", payload.message ?? "Canvas host request failed.");
+    return payload;
 }
 
 async function open(ctx) {
     const host = startHost(ctx.sessionId);
     await host.ready;
-    const taskId = typeof ctx.input?.task_id === "string" ? ctx.input.task_id.trim() : "";
+    const taskIds = requestedTaskIds(ctx.input);
+    // Explicit load opens/focuses the stable canvas and selects the requested
+    // Task; the background refresh poll never calls this, so it can never
+    // steal host focus the way an explicit load does.
+    if (taskIds.length > 0) await callTasksEndpoint(host, "/api/tasks/load", { taskIds });
     return {
-        title: taskId ? `Glasswork task: ${taskId}` : "Glasswork task",
-        status: taskId ? `Loading ${taskId}` : "Choose a task to view",
-        url: canvasUrl(host, taskId),
+        title: "Glasswork Tasks",
+        status: taskIds.length > 0 ? `Loading ${taskIds.join(", ")}` : "Manage your Session Task Set",
+        url: canvasUrl(host),
     };
+}
+
+async function loadAction(ctx) {
+    const host = hosts.get(ctx.sessionId);
+    if (!host) throw new CanvasError("host_not_running", "The session canvas host is not running.");
+    await host.ready;
+    const taskIds = requestedTaskIds(ctx.input);
+    if (taskIds.length === 0) throw new CanvasError("invalid_input", "Provide task_id or task_ids to load.");
+    return callTasksEndpoint(host, "/api/tasks/load", { taskIds });
+}
+
+async function unloadAction(ctx) {
+    const host = hosts.get(ctx.sessionId);
+    if (!host) throw new CanvasError("host_not_running", "The session canvas host is not running.");
+    await host.ready;
+    const taskId = typeof ctx.input?.task_id === "string" ? ctx.input.task_id.trim() : "";
+    if (!taskId) throw new CanvasError("invalid_input", "Provide task_id to remove from the canvas.");
+    return callTasksEndpoint(host, "/api/tasks/unload", { taskId });
+}
+
+async function clearAction(ctx) {
+    const host = hosts.get(ctx.sessionId);
+    if (!host) throw new CanvasError("host_not_running", "The session canvas host is not running.");
+    await host.ready;
+    return callTasksEndpoint(host, "/api/tasks/clear");
+}
+
+async function selectAction(ctx) {
+    const host = hosts.get(ctx.sessionId);
+    if (!host) throw new CanvasError("host_not_running", "The session canvas host is not running.");
+    await host.ready;
+    const taskId = typeof ctx.input?.task_id === "string" ? ctx.input.task_id.trim() : "";
+    if (!taskId) throw new CanvasError("invalid_input", "Provide task_id to select.");
+    return callTasksEndpoint(host, "/api/tasks/select", { taskId });
+}
+
+async function selectedRefreshAction(ctx) {
+    const host = hosts.get(ctx.sessionId);
+    if (!host) throw new CanvasError("host_not_running", "The session canvas host is not running.");
+    await host.ready;
+    return callTasksEndpoint(host, "/api/tasks/refresh-selected");
+}
+
+async function refreshAllAction(ctx) {
+    const host = hosts.get(ctx.sessionId);
+    if (!host) throw new CanvasError("host_not_running", "The session canvas host is not running.");
+    await host.ready;
+    return callTasksEndpoint(host, "/api/tasks/refresh-all");
 }
 
 async function refresh(ctx) {
@@ -175,8 +278,8 @@ const session = await joinSession({
     canvases: [
         createCanvas({
             id: CANVAS_ID,
-            displayName: "Glasswork task",
-            description: "Read-only Task detail backed by the shared Glasswork projection.",
+            displayName: "Glasswork Tasks",
+            description: "Manage an in-memory Session Task Set of loaded Glasswork Tasks in a responsive master-detail canvas.",
             inputSchema,
             actions: [
                 { name: "refresh", description: "Reload the selected Task from the shared projection.", inputSchema: actionSchema, handler: refresh },
@@ -185,6 +288,42 @@ const session = await joinSession({
                     description: "Open or reveal one projected Artifact under the native external-open safety policy.",
                     inputSchema: artifactActionSchema,
                     handler: artifactAction,
+                },
+                {
+                    name: "load",
+                    description: "Load one or several canonical Task IDs into the Session Task Set, selecting the last one that loads successfully.",
+                    inputSchema: taskIdsSchema,
+                    handler: loadAction,
+                },
+                {
+                    name: "unload",
+                    description: "Remove a loaded Task from the Session Task Set. Never mutates the Vault.",
+                    inputSchema: taskIdSchema,
+                    handler: unloadAction,
+                },
+                {
+                    name: "clear",
+                    description: "Empty the Session Task Set back to its guidance state. Never mutates the Vault.",
+                    inputSchema: noInputSchema,
+                    handler: clearAction,
+                },
+                {
+                    name: "select",
+                    description: "Select an already-loaded Task without changing its recency order.",
+                    inputSchema: taskIdSchema,
+                    handler: selectAction,
+                },
+                {
+                    name: "selected_refresh",
+                    description: "Re-read the selected Task from the Vault, refreshing it or marking it unavailable.",
+                    inputSchema: noInputSchema,
+                    handler: selectedRefreshAction,
+                },
+                {
+                    name: "refresh_all",
+                    description: "Re-read every loaded Task from the Vault, preserving order and selection.",
+                    inputSchema: noInputSchema,
+                    handler: refreshAllAction,
                 },
             ],
             open,

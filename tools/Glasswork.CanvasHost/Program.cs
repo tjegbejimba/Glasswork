@@ -43,6 +43,9 @@ var vault = new VaultService(todoPath);
 var projection = new TaskDetailProjectionService(vault, new FileSystemArtifactStore(vaultRoot));
 var markdown = new CanvasMarkdownRenderer(vaultRoot);
 var artifactAccess = new CanvasArtifactAccess(vaultRoot, projection);
+var uiState = new JsonFileUiStateService(options.UiStatePath ?? JsonFileUiStateService.DefaultFilePath());
+var sessionTaskSetStore = new SessionTaskSetStateStore(uiState);
+var taskSet = new SessionTaskSetService(new TaskDetailProjectionService(vault), sessionTaskSetStore, options.SessionId);
 
 // Version-drift detection (issue #562): this host keeps running its
 // already-loaded assets even after a newer bundle activates elsewhere
@@ -73,18 +76,42 @@ app.Use(async (context, next) =>
 });
 
 app.MapGet("/health", () => Results.Ok(new { ok = true, session_id = options.SessionId }));
+app.MapGet("/api/tasks", () => Results.Ok(SnapshotPayload(taskSet.Snapshot(), jsonOptions)));
+app.MapPost("/api/tasks/load", (TaskIdsRequest request) =>
+{
+    var result = taskSet.Load(request.TaskIds ?? []);
+    return result.Ok
+        ? Results.Ok(SnapshotPayload(result.Snapshot, jsonOptions))
+        : Results.Conflict(new { code = result.Code, message = result.Message });
+});
+app.MapPost("/api/tasks/unload", (TaskIdRequest request) =>
+{
+    var result = taskSet.Unload(request.TaskId ?? string.Empty);
+    return result.Ok
+        ? Results.Ok(SnapshotPayload(result.Snapshot, jsonOptions))
+        : Results.NotFound(new { code = result.Code, message = result.Message });
+});
+app.MapPost("/api/tasks/clear", () => Results.Ok(SnapshotPayload(taskSet.Clear().Snapshot, jsonOptions)));
+app.MapPost("/api/tasks/select", (TaskIdRequest request) =>
+{
+    var result = taskSet.Select(request.TaskId ?? string.Empty);
+    return result.Ok
+        ? Results.Ok(SnapshotPayload(result.Snapshot, jsonOptions))
+        : Results.NotFound(new { code = result.Code, message = result.Message });
+});
+app.MapPost("/api/tasks/refresh-selected", () => Results.Ok(SnapshotPayload(taskSet.RefreshSelected().Snapshot, jsonOptions)));
+app.MapPost("/api/tasks/refresh-all", () => Results.Ok(SnapshotPayload(taskSet.RefreshAll().Snapshot, jsonOptions)));
 app.MapGet("/api/task", (HttpContext context) =>
 {
-    var (driftDetected, driftMessage) = DetectCurrentDrift(currentStatePath, ownIdentity);
     var taskId = context.Request.Query["task_id"].ToString().Trim();
-    if (taskId.Length == 0) return Results.Ok(new { kind = "empty", message = "Open this canvas with task_id to view a Task.", driftDetected, driftMessage });
+    if (taskId.Length == 0) return Results.Ok(new { kind = "empty", message = "Open this canvas with task_id to view a Task." });
     if (!IsSafeTaskId(taskId)) return Results.BadRequest(new { code = "invalid_task_id", message = "task_id must contain only lowercase letters, numbers, and hyphens." });
     try
     {
         var result = projection.Build(taskId);
         return result is null
             ? Results.NotFound(new { code = "task_not_found", message = $"Task '{taskId}' was not found." })
-            : Results.Ok(new { kind = "task", projection = EnrichProjection(result, markdown, jsonOptions), driftDetected, driftMessage });
+            : Results.Ok(new { kind = "task", projection = EnrichProjection(result, markdown, jsonOptions) });
     }
     catch (Exception ex)
     {
@@ -135,11 +162,19 @@ app.MapPost("/api/vault/action", (LinkActionRequest request) =>
     var result = artifactAccess.OpenVaultPage(request.Url);
     return result.Ok ? Results.Ok(new { ok = true }) : Results.BadRequest(new { code = result.Code, message = result.Message });
 });
+app.MapGet("/canvas-state", async () =>
+{
+    var (driftDetected, driftMessage) = DetectCurrentDrift(currentStatePath, ownIdentity);
+    return Results.Ok(await BuildCanvasPayload(taskSet, projection, markdown, driftDetected, driftMessage));
+});
 app.MapGet("/canvas", async (HttpContext context) =>
 {
+    // Backward-compatible shorthand: visiting the canvas URL with ?task_id=
+    // loads that Task, exactly like the pre-multi-Task singular contract.
     var taskId = context.Request.Query["task_id"].ToString().Trim();
+    if (taskId.Length > 0) taskSet.Load([taskId]);
     var (driftDetected, driftMessage) = DetectCurrentDrift(currentStatePath, ownIdentity);
-    var payload = await BuildCanvasPayload(taskId, projection, markdown, driftDetected, driftMessage);
+    var payload = await BuildCanvasPayload(taskSet, projection, markdown, driftDetected, driftMessage);
     var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
     context.Response.Headers["Content-Security-Policy"] =
         $"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
@@ -173,28 +208,62 @@ static (bool Detected, string? Message) DetectCurrentDrift(string? currentStateP
     return CanvasVersionDriftDetector.Detect(state, ownIdentity);
 }
 
-static Task<object> BuildCanvasPayload(
-    string taskId,
+static object SnapshotPayload(SessionTaskSetSnapshot snapshot, JsonSerializerOptions jsonOptions) => new
+{
+    members = snapshot.Members,
+    selectedTaskId = snapshot.SelectedTaskId,
+    limit = snapshot.Limit,
+    restoreError = RestoreErrorPayload(snapshot),
+};
+
+static object? RestoreErrorPayload(SessionTaskSetSnapshot snapshot) =>
+    snapshot.RestoreErrorCode is null ? null : new { code = snapshot.RestoreErrorCode, message = snapshot.RestoreErrorMessage };
+
+static async Task<object> BuildCanvasPayload(
+    SessionTaskSetService taskSet,
     TaskDetailProjectionService projection,
     CanvasMarkdownRenderer markdown,
     bool driftDetected,
     string? driftMessage)
 {
-    if (string.IsNullOrWhiteSpace(taskId))
-        return Task.FromResult<object>(new { kind = "empty", message = "Open this canvas with task_id to view a Task.", driftDetected, driftMessage });
+    var snapshot = taskSet.Snapshot();
+    object? selectedDetail = null;
+    if (snapshot.SelectedTaskId is { } selectedTaskId)
+    {
+        selectedDetail = await BuildDetailPayload(selectedTaskId, projection, markdown);
+    }
+    return new
+    {
+        kind = "state",
+        canvasName = "Glasswork Tasks",
+        railLabel = "Loaded Tasks",
+        members = snapshot.Members,
+        selectedTaskId = snapshot.SelectedTaskId,
+        limit = snapshot.Limit,
+        restoreError = RestoreErrorPayload(snapshot),
+        selectedDetail,
+        driftDetected,
+        driftMessage,
+    };
+}
+
+static Task<object> BuildDetailPayload(
+    string taskId,
+    TaskDetailProjectionService projection,
+    CanvasMarkdownRenderer markdown)
+{
     if (!IsSafeTaskId(taskId))
-        return Task.FromResult<object>(new { kind = "error", code = "invalid_task_id", message = "task_id must contain only lowercase letters, numbers, and hyphens.", driftDetected, driftMessage });
+        return Task.FromResult<object>(new { kind = "error", code = "invalid_task_id", message = "task_id must contain only lowercase letters, numbers, and hyphens." });
     try
     {
         var result = projection.Build(taskId);
         if (result is null)
-            return Task.FromResult<object>(new { kind = "error", code = "task_not_found", message = $"Task '{taskId}' was not found.", driftDetected, driftMessage });
-        return Task.FromResult<object>(new { kind = "task", projection = CanvasTaskProjection.From(result, markdown), driftDetected, driftMessage });
+            return Task.FromResult<object>(new { kind = "error", code = "task_not_found", message = $"Task '{taskId}' was not found." });
+        return Task.FromResult<object>(new { kind = "task", projection = CanvasTaskProjection.From(result, markdown) });
     }
-
     catch (Exception ex)
     {
-        return Task.FromResult<object>(new { kind = "error", code = "projection_failed", message = ex.Message, driftDetected, driftMessage });
+        return Task.FromResult<object>(new { kind = "error", code = "projection_failed", message = ex.Message });
     }
 }
 

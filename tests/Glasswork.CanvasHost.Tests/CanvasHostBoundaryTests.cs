@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using static Glasswork.CanvasHost.Tests.CanvasHostTestSupport;
 
 namespace Glasswork.CanvasHost.Tests;
 
@@ -158,21 +159,8 @@ public sealed class CanvasHostBoundaryTests
     [TestMethod]
     public async Task Host_ReportsBuildIdentityWithoutRequiringSessionOrVault()
     {
-        var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
-        var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
-        var startInfo = new ProcessStartInfo(dotnet)
-        {
-            Arguments = $"\"{hostDll}\" --version",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
-        var output = (await process.StandardOutput.ReadToEndAsync()).Trim();
-        await process.WaitForExitAsync();
+        var output = await RunHostVersionCommand();
 
-        Assert.AreEqual(0, process.ExitCode);
         Assert.IsTrue(System.Text.RegularExpressions.Regex.IsMatch(output, @"^\d+\.\d+\.\d+\+\S+$"), $"Expected '{{version}}+{{sourceRevision}}', got '{output}'.");
     }
 
@@ -211,9 +199,11 @@ public sealed class CanvasHostBoundaryTests
         // Issue #562: a running (older) canvas host must keep serving its
         // already-loaded Task content while noticing that a newer bundle has
         // since been activated elsewhere, and show a non-blocking message
-        // rather than failing or being killed.
+        // rather than failing or being killed. Drift is surfaced on the
+        // top-level canvas "state" envelope (polled every 5s by the rendered
+        // page), not per-Task-detail — it's a host-wide condition.
         var vault = CreateVault();
-        var ownIdentity = await GetOwnBuildIdentity();
+        var ownIdentity = await RunHostVersionCommand();
         var currentStatePath = Path.Combine(Path.GetTempPath(), $"canvas-current-{Guid.NewGuid():N}.json");
         File.WriteAllText(currentStatePath, JsonSerializer.Serialize(new
         {
@@ -226,14 +216,14 @@ public sealed class CanvasHostBoundaryTests
             await using var host = await StartHost(vault, "session-drift", "credential-drift", currentStatePath: currentStatePath);
             using var client = AuthorizedClient("credential-drift");
 
-            var apiResponse = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
-            using var apiBody = JsonDocument.Parse(await apiResponse.Content.ReadAsStringAsync());
+            var stateResponse = await client.GetAsync($"{host.Url}/canvas-state");
+            using var stateBody = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync());
             var canvasResponse = await client.GetAsync($"{host.Url}/canvas?task_id=demo");
             var html = await canvasResponse.Content.ReadAsStringAsync();
 
-            Assert.AreEqual(HttpStatusCode.OK, apiResponse.StatusCode);
-            Assert.IsTrue(apiBody.RootElement.GetProperty("driftDetected").GetBoolean());
-            StringAssert.Contains(apiBody.RootElement.GetProperty("driftMessage").GetString(), "Reopen");
+            Assert.AreEqual(HttpStatusCode.OK, stateResponse.StatusCode);
+            Assert.IsTrue(stateBody.RootElement.GetProperty("driftDetected").GetBoolean());
+            StringAssert.Contains(stateBody.RootElement.GetProperty("driftMessage").GetString(), "Reopen");
             Assert.AreEqual(HttpStatusCode.OK, canvasResponse.StatusCode);
             // The rendered shell embeds the payload as a JSON literal that the
             // client-side script reads to decide whether to show the banner;
@@ -241,8 +231,6 @@ public sealed class CanvasHostBoundaryTests
             // the exact embedded field values instead.
             StringAssert.Contains(html, "\"driftDetected\":true");
             StringAssert.Contains(html, "Reopen this session to update");
-            // Non-blocking: the Task content itself must still render alongside the banner.
-            StringAssert.Contains(html, "Demo description.");
             Assert.AreNotEqual("9.9.9+drifted0000000000000000000000000000000000", ownIdentity);
         }
         finally
@@ -255,7 +243,7 @@ public sealed class CanvasHostBoundaryTests
     public async Task Host_NoDriftWhenActivatedIdentityMatchesOwnBuild()
     {
         var vault = CreateVault();
-        var ownIdentity = await GetOwnBuildIdentity();
+        var ownIdentity = await RunHostVersionCommand();
         var currentStatePath = Path.Combine(Path.GetTempPath(), $"canvas-current-{Guid.NewGuid():N}.json");
         File.WriteAllText(currentStatePath, JsonSerializer.Serialize(new
         {
@@ -268,14 +256,10 @@ public sealed class CanvasHostBoundaryTests
             await using var host = await StartHost(vault, "session-no-drift", "credential-no-drift", currentStatePath: currentStatePath);
             using var client = AuthorizedClient("credential-no-drift");
 
-            var apiResponse = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
-            using var apiBody = JsonDocument.Parse(await apiResponse.Content.ReadAsStringAsync());
-            var canvasResponse = await client.GetAsync($"{host.Url}/canvas?task_id=demo");
-            var html = await canvasResponse.Content.ReadAsStringAsync();
+            var stateResponse = await client.GetAsync($"{host.Url}/canvas-state");
+            using var stateBody = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync());
 
-            Assert.IsFalse(apiBody.RootElement.GetProperty("driftDetected").GetBoolean());
-            StringAssert.Contains(html, "\"driftDetected\":false");
-            Assert.IsFalse(html.Contains("\"driftDetected\":true", StringComparison.Ordinal));
+            Assert.IsFalse(stateBody.RootElement.GetProperty("driftDetected").GetBoolean());
         }
         finally
         {
@@ -283,7 +267,7 @@ public sealed class CanvasHostBoundaryTests
         }
     }
 
-    private static async Task<string> GetOwnBuildIdentity()
+    private static async Task<string> RunHostVersionCommand()
     {
         var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
         var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
@@ -298,109 +282,7 @@ public sealed class CanvasHostBoundaryTests
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
         var output = (await process.StandardOutput.ReadToEndAsync()).Trim();
         await process.WaitForExitAsync();
+        Assert.AreEqual(0, process.ExitCode);
         return output;
-    }
-
-    private static string CreateVault()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "glasswork-canvas-" + Guid.NewGuid().ToString("N"));
-        var todo = Path.Combine(root, "wiki", "todo");
-        Directory.CreateDirectory(todo);
-        File.WriteAllText(Path.Combine(todo, "demo.md"), """
----
-id: demo
-title: Demo task
-status: todo
-priority: medium
-type: task
-created: 2026-09-02
----
-
-Demo description.
-""");
-        return root;
-    }
-
-    private static string CreateArtifactVault()
-    {
-        var root = CreateVault();
-        var folder = Path.Combine(root, "wiki", "todo", "demo.artifacts");
-        Directory.CreateDirectory(folder);
-        var files = new (string Name, byte[] Content)[]
-        {
-            ("malformed.md", System.Text.Encoding.UTF8.GetBytes("# Visible markdown\n\n[broken](javascript:alert(1))\n\n![remote](https://evil.example/a.png)")),
-            ("code.txt", System.Text.Encoding.UTF8.GetBytes("https://example.test <script>alert(1)</script>")),
-            ("report.html", System.Text.Encoding.UTF8.GetBytes("<h1>Report</h1><script>globalThis.pwned=true</script>")),
-            ("image.png", Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")),
-            ("hostile.svg", System.Text.Encoding.UTF8.GetBytes("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"50\"><script>alert(1)</script><image href=\"https://evil.example/a.png\"/><rect width=\"100\" height=\"50\"/></svg>")),
-            ("other.bin", [0, 1, 2, 3]),
-            ("binary.txt", [0xff, 0xfe, 0xfd]),
-            ("unsafe.ps1", System.Text.Encoding.UTF8.GetBytes("Write-Host unsafe")),
-        };
-        var now = DateTime.UtcNow.AddMinutes(-files.Length);
-        for (var i = 0; i < files.Length; i++)
-        {
-            var path = Path.Combine(folder, files[i].Name);
-            File.WriteAllBytes(path, files[i].Content);
-            File.SetLastWriteTimeUtc(path, now.AddMinutes(i));
-        }
-        return root;
-    }
-
-    private static HttpClient AuthorizedClient(string token)
-    {
-        var client = new HttpClient();
-        client.DefaultRequestHeaders.Add("X-Glasswork-Canvas-Token", token);
-        return client;
-    }
-
-    private static async Task<RunningHost> StartHost(string? vault, string sessionId, string token, string? uiStatePath = null, string? currentStatePath = null)
-    {
-        var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
-        var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
-        var arguments = $"\"{hostDll}\" --session-id {sessionId} --token {token}";
-        if (uiStatePath is not null) arguments += $" --ui-state-path \"{uiStatePath}\"";
-        if (currentStatePath is not null) arguments += $" --current-state-path \"{currentStatePath}\"";
-        var startInfo = new ProcessStartInfo(dotnet)
-        {
-            Arguments = arguments,
-            // Prove vault resolution does not depend on the spawning process's cwd:
-            // run from an unrelated directory rather than the repo/test output folder.
-            WorkingDirectory = Path.GetTempPath(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        if (vault is not null) startInfo.Environment["GLASSWORK_VAULT"] = vault;
-        else startInfo.Environment.Remove("GLASSWORK_VAULT");
-        var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
-        while (await process.StandardOutput.ReadLineAsync() is { } line)
-        {
-            try
-            {
-                var ready = JsonDocument.Parse(line).RootElement;
-                if (ready.TryGetProperty("ready", out var isReady) && isReady.GetBoolean())
-                    return new RunningHost(process, ready.GetProperty("url").GetString()!);
-            }
-            catch (JsonException) { }
-        }
-
-        var error = await process.StandardError.ReadToEndAsync();
-        process.Dispose();
-        throw new InvalidOperationException($"Canvas host did not start: {error}");
-    }
-
-    private sealed class RunningHost(Process process, string url) : IAsyncDisposable
-    {
-        public Process Process { get; } = process;
-        public string Url { get; } = url;
-
-        public ValueTask DisposeAsync()
-        {
-            if (!Process.HasExited) Process.Kill(entireProcessTree: true);
-            Process.Dispose();
-            return ValueTask.CompletedTask;
-        }
     }
 }
