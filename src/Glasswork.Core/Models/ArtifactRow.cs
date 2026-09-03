@@ -18,6 +18,8 @@ public sealed record ArtifactRow(
     public string Title => Artifact.Title;
     public string Body => Artifact.Body ?? "";
     public string Path => Artifact.Path;
+    public string FileName => System.IO.Path.GetFileName(Path);
+    public DateTime ModifiedUtc => Artifact.ModifiedUtc;
 
     /// <summary>The render/handling strategy for this artifact.</summary>
     public ArtifactKind Kind => Artifact.Kind;
@@ -68,12 +70,26 @@ public sealed record ArtifactRow(
         || Kind == ArtifactKind.Other
         || (Kind == ArtifactKind.Markdown && !HasInlineBody)
         || (Kind == ArtifactKind.Text && !HasInlineBody)
+        || (Kind == ArtifactKind.Html && SizeBytes > ArtifactCaps.InlineTextBytes)
         || (Kind == ArtifactKind.Image && SizeBytes > ArtifactCaps.InlineImageBytes);
+
+    /// <summary>Canonical explanation shown when inline content is unavailable.</summary>
+    public string? ReferenceReason => HasLoadError
+        ? $"Content couldn't be loaded: {LoadError}"
+        : Kind == ArtifactKind.Other
+            ? "This file type is not available inline."
+            : Kind is ArtifactKind.Markdown or ArtifactKind.Text && !HasInlineBody
+                ? $"File exceeds the {FormatSize(ArtifactCaps.InlineTextBytes)} inline text limit."
+                : Kind == ArtifactKind.Html && SizeBytes > ArtifactCaps.InlineTextBytes
+                    ? $"File exceeds the {FormatSize(ArtifactCaps.InlineTextBytes)} HTML source/preview limit."
+                : Kind == ArtifactKind.Image && SizeBytes > ArtifactCaps.InlineImageBytes
+                    ? $"File exceeds the {FormatSize(ArtifactCaps.InlineImageBytes)} inline image limit."
+                    : null;
 
     /// <summary>Human-readable size, e.g. "0 B", "512 B", "12.3 KB", "1.5 MB".</summary>
     public string SizeDisplay => FormatSize(SizeBytes);
 
-    private static string FormatSize(long bytes)
+    public static string FormatSize(long bytes)
     {
         const long kb = 1024;
         const long mb = kb * 1024;
@@ -91,15 +107,15 @@ public sealed record ArtifactRow(
     /// </summary>
     public static List<ArtifactRow> Project(IReadOnlyList<Artifact> artifacts, DateTime nowUtc)
     {
-        var newestIndex = artifacts
-            .Select((artifact, index) => new { artifact.ModifiedUtc, index })
-            .MaxBy(x => x.ModifiedUtc)?
-            .index ?? -1;
+        var ordered = artifacts
+            .OrderByDescending(a => a.ModifiedUtc)
+            .ThenBy(a => a.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        return artifacts
+        return ordered
             .Select((a, i) => new ArtifactRow(
                 a,
-                IsExpanded: i == newestIndex && a.SizeBytes <= ArtifactCaps.AutoExpandBytes,
+                IsExpanded: i == 0 && a.SizeBytes <= ArtifactCaps.AutoExpandBytes,
                 TimeBadge: FormatRelative(nowUtc - a.ModifiedUtc)))
             .ToList();
     }

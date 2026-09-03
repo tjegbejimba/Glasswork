@@ -43,12 +43,23 @@ public sealed class FileSystemArtifactStore : IArtifactStore
             {
                 try
                 {
-                    body = File.ReadAllText(file);
+                    var read = ArtifactTextReader.Read(file, ArtifactCaps.InlineTextBytes);
+                    body = read.Content;
+                    loadError = read.Error;
                 }
                 catch (Exception ex)
                 {
                     loadError = ex.Message;
                 }
+            }
+            else if (kind == ArtifactKind.Html && sizeBytes <= ArtifactCaps.InlineTextBytes)
+            {
+                loadError = ArtifactTextReader.Read(file, ArtifactCaps.InlineTextBytes).Error;
+            }
+            else if (kind == ArtifactKind.Image && sizeBytes <= ArtifactCaps.InlineImageBytes)
+            {
+                var validation = ArtifactImageValidator.Validate(file);
+                loadError = validation.IsValid ? null : validation.Error;
             }
             
             // Title: Markdown → WikiPageTitleResolver; others → filename with extension
@@ -71,7 +82,8 @@ public sealed class FileSystemArtifactStore : IArtifactStore
         }
 
         return artifacts
-            .OrderBy(a => a.ModifiedUtc)
+            .OrderByDescending(a => a.ModifiedUtc)
+            .ThenBy(a => a.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 }

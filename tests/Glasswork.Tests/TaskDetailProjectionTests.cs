@@ -135,27 +135,33 @@ public sealed class TaskDetailProjectionTests
     [TestMethod]
     public void Create_MultiFormatArtifacts_PreservesDescriptorsAndMissingValues()
     {
+        var now = new DateTime(2026, 9, 2, 18, 0, 0, DateTimeKind.Utc);
         var projection = TaskDetailProjection.Create(
             new GlassworkTask { Id = "formats" },
             artifacts:
             [
-                new Artifact("readme.md", "Readme", DateTime.UtcNow, "# readme") { Kind = ArtifactKind.Markdown },
-                new Artifact("data.json", "Data", DateTime.UtcNow, "{}") { Kind = ArtifactKind.Text },
-                new Artifact("preview.html", "Preview", DateTime.UtcNow, "<p>x</p>") { Kind = ArtifactKind.Html },
-                new Artifact("photo.png", "Photo", DateTime.UtcNow, null)
+                new Artifact("readme.md", "Readme", now.AddMinutes(-4), "# readme") { Kind = ArtifactKind.Markdown },
+                new Artifact("data.json", "Data", now.AddMinutes(-3), "{}") { Kind = ArtifactKind.Text },
+                new Artifact("preview.html", "Preview", now.AddMinutes(-2), null) { Kind = ArtifactKind.Html },
+                new Artifact("photo.png", "Photo", now.AddMinutes(-1), null)
                     { Kind = ArtifactKind.Image, SizeBytes = ArtifactCaps.InlineImageBytes + 1 },
-                new Artifact("unknown.bin", "Unknown", DateTime.UtcNow, null)
+                new Artifact("unknown.bin", "Unknown", now, null)
                     { Kind = ArtifactKind.Other, LoadError = "unsupported" },
-            ]);
-        var rows = ArtifactRow.Project(projection.Artifacts, DateTime.UtcNow);
+            ],
+            nowUtc: now);
 
         Assert.AreEqual(5, projection.Artifacts.Count);
         Assert.AreEqual(ArtifactKind.Markdown, projection.Artifacts[0].Kind);
         Assert.AreEqual(ArtifactKind.Text, projection.Artifacts[1].Kind);
         Assert.AreEqual(ArtifactKind.Html, projection.Artifacts[2].Kind);
-        Assert.IsTrue(rows[3].IsReference);
-        Assert.IsTrue(rows[4].HasLoadError);
-        Assert.IsTrue(rows[4].IsReference);
+        Assert.HasCount(5, projection.ArtifactRows);
+        Assert.AreEqual("Unknown", projection.ArtifactRows[0].Title, "shared rows are newest-first");
+        Assert.IsTrue(projection.ArtifactRows[0].HasLoadError);
+        Assert.IsTrue(projection.ArtifactRows[0].IsReference);
+        Assert.IsTrue(projection.ArtifactRows[1].IsReference);
+        Assert.IsTrue(projection.ArtifactRows[0].IsExpanded, "newest bounded artifact auto-expands");
+        Assert.IsFalse(projection.ArtifactRows[1].IsExpanded, "over-cap images never auto-expand");
+        Assert.IsFalse(projection.ArtifactRows[2].IsExpanded, "only the newest artifact auto-expands");
     }
 
     [TestMethod]

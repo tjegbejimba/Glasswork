@@ -384,17 +384,14 @@ public sealed partial class TaskDetailPage : Page
 
         if (artifacts.Count == 0)
         {
-            DetailProjection = DetailProjection with
-            {
-                Artifacts = Array.Empty<Artifact>(),
-                Visibility = DetailProjection.Visibility with { ShowArtifacts = false },
-            };
+            DetailProjection = DetailProjection.WithArtifacts(Array.Empty<Artifact>());
             ArtifactsSection.Visibility = Visibility.Collapsed;
             ArtifactsList.ItemsSource = null;
             return;
         }
 
-        var rows = ArtifactRow.Project(artifacts, DateTime.UtcNow);
+        DetailProjection = DetailProjection.WithArtifacts(artifacts, DateTime.UtcNow);
+        var rows = DetailProjection.ArtifactRows;
 
         // Prune expand state for artifacts that no longer exist, then apply any
         // user-set state on top of the projection's size-bounded auto-expand default.
@@ -411,41 +408,24 @@ public sealed partial class TaskDetailPage : Page
             .ToList();
 
         ArtifactsSection.Visibility = Visibility.Visible;
-        DetailProjection = DetailProjection with
-        {
-            Artifacts = artifacts.ToList(),
-            Visibility = DetailProjection.Visibility with { ShowArtifacts = projected.Count > 0 },
-        };
         ArtifactsList.ItemsSource = projected;
     }
 
     private void RefreshRelationshipProjection()
     {
         var existingArtifacts = DetailProjection.Artifacts;
-        var refreshed = App.TaskDetailProjection.Build(Task, includeArtifacts: false);
-        DetailProjection = refreshed with
-        {
-            Artifacts = existingArtifacts,
-            Visibility = refreshed.Visibility with
-            {
-                ShowArtifacts = existingArtifacts.Count > 0,
-            },
-        };
+        DetailProjection = App.TaskDetailProjection
+            .Build(Task, includeArtifacts: false)
+            .WithArtifacts(existingArtifacts);
     }
 
     private void ApplyReadOnlyTaskSnapshot(GlassworkTask task)
     {
         var existingArtifacts = DetailProjection.Artifacts;
         Task = task;
-        var refreshed = App.TaskDetailProjection.Build(task, includeArtifacts: false);
-        DetailProjection = refreshed with
-        {
-            Artifacts = existingArtifacts,
-            Visibility = refreshed.Visibility with
-            {
-                ShowArtifacts = existingArtifacts.Count > 0,
-            },
-        };
+        DetailProjection = App.TaskDetailProjection
+            .Build(task, includeArtifacts: false)
+            .WithArtifacts(existingArtifacts);
         BindSubtasks(DetailProjection.ActiveSubtasks, DetailProjection.CompletedSubtasks);
     }
 
