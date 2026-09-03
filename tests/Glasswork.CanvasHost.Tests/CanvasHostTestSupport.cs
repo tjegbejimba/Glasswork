@@ -86,19 +86,33 @@ created: 2026-09-02{links}
         return client;
     }
 
-    public static async Task<RunningHost> StartHost(string vault, string sessionId, string token)
+    public static string NewUiStatePath() =>
+        Path.Combine(Path.GetTempPath(), $"glasswork-canvas-ui-state-{Guid.NewGuid():N}.json");
+
+    public static async Task<RunningHost> StartHost(string? vault, string sessionId, string token, string? uiStatePath = null)
     {
+        // Every spawned test host gets its own isolated UI State file unless
+        // a caller explicitly shares one (e.g. persistence/cold-restore
+        // tests). This keeps tests from reading or polluting the real
+        // developer machine's %LocalAppData%\Glasswork\ui-state.json now
+        // that the Session Task Set persists (see issue #557).
+        uiStatePath ??= NewUiStatePath();
         var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
         var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
+        var arguments = $"\"{hostDll}\" --session-id {sessionId} --token {token} --ui-state-path \"{uiStatePath}\"";
         var startInfo = new ProcessStartInfo(dotnet)
         {
-            Arguments = $"\"{hostDll}\" --session-id {sessionId} --token {token}",
+            Arguments = arguments,
+            // Prove vault resolution does not depend on the spawning process's cwd:
+            // run from an unrelated directory rather than the repo/test output folder.
+            WorkingDirectory = Path.GetTempPath(),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        startInfo.Environment["GLASSWORK_VAULT"] = vault;
+        if (vault is not null) startInfo.Environment["GLASSWORK_VAULT"] = vault;
+        else startInfo.Environment.Remove("GLASSWORK_VAULT");
         var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
         while (await process.StandardOutput.ReadLineAsync() is { } line)
         {

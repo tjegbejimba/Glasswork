@@ -42,7 +42,9 @@ var vault = new VaultService(todoPath);
 var projection = new TaskDetailProjectionService(vault, new FileSystemArtifactStore(vaultRoot));
 var markdown = new CanvasMarkdownRenderer(vaultRoot);
 var artifactAccess = new CanvasArtifactAccess(vaultRoot, projection);
-var taskSet = new SessionTaskSetService(new TaskDetailProjectionService(vault));
+var uiState = new JsonFileUiStateService(options.UiStatePath ?? JsonFileUiStateService.DefaultFilePath());
+var sessionTaskSetStore = new SessionTaskSetStateStore(uiState);
+var taskSet = new SessionTaskSetService(new TaskDetailProjectionService(vault), sessionTaskSetStore, options.SessionId);
 var builder = WebApplication.CreateBuilder();
 builder.WebHost.UseKestrel(server => server.Listen(IPAddress.Loopback, 0));
 var app = builder.Build();
@@ -189,7 +191,11 @@ static object SnapshotPayload(SessionTaskSetSnapshot snapshot, JsonSerializerOpt
     members = snapshot.Members,
     selectedTaskId = snapshot.SelectedTaskId,
     limit = snapshot.Limit,
+    restoreError = RestoreErrorPayload(snapshot),
 };
+
+static object? RestoreErrorPayload(SessionTaskSetSnapshot snapshot) =>
+    snapshot.RestoreErrorCode is null ? null : new { code = snapshot.RestoreErrorCode, message = snapshot.RestoreErrorMessage };
 
 static async Task<object> BuildCanvasPayload(
     SessionTaskSetService taskSet,
@@ -210,6 +216,7 @@ static async Task<object> BuildCanvasPayload(
         members = snapshot.Members,
         selectedTaskId = snapshot.SelectedTaskId,
         limit = snapshot.Limit,
+        restoreError = RestoreErrorPayload(snapshot),
         selectedDetail,
     };
 }

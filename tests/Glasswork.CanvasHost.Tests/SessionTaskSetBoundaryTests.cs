@@ -6,11 +6,11 @@ using static Glasswork.CanvasHost.Tests.CanvasHostTestSupport;
 namespace Glasswork.CanvasHost.Tests;
 
 /// <summary>
-/// Black-box coverage for the in-memory Session Task Set introduced by
-/// issue #556 (ADR 0026): batch loading, de-duplication, recency, selection,
-/// the 20-member cap, removal, clear, every Task status, unavailable
-/// members, and the master-detail canvas rendering. Membership never
-/// persists across host restarts — that restoration is a later slice.
+/// Black-box coverage for the Session Task Set introduced by issue #556
+/// (ADR 0026): batch loading, de-duplication, recency, selection, the
+/// 20-member cap, removal, clear, every Task status, unavailable members,
+/// and the master-detail canvas rendering. Persisted restoration across host
+/// restarts (issue #557) is covered separately below.
 /// </summary>
 [TestClass]
 public sealed class SessionTaskSetBoundaryTests
