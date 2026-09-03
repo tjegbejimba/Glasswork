@@ -77,10 +77,60 @@ public sealed class ChildActivitySummaryService
 
     public ChildActivitySummaryState ReadState(string parentId)
     {
+        if (string.IsNullOrWhiteSpace(parentId))
+            throw new ArgumentException("Parent Task ID is required.", nameof(parentId));
+
+        return ReadStates([parentId])[parentId];
+    }
+
+    /// <summary>
+    /// Reads summary freshness for several Parent Tasks from one coherent Vault snapshot.
+    /// This avoids reparsing the entire task directory once per visible Parent row.
+    /// </summary>
+    public IReadOnlyDictionary<string, ChildActivitySummaryState> ReadStates(
+        IEnumerable<string> parentIds)
+    {
+        ArgumentNullException.ThrowIfNull(parentIds);
+        var ids = parentIds
+            .Select(parentId => parentId?.Trim())
+            .Where(parentId => !string.IsNullOrEmpty(parentId))
+            .Distinct(StringComparer.Ordinal)
+            .Cast<string>()
+            .ToArray();
+        if (ids.Length == 0)
+            return new Dictionary<string, ChildActivitySummaryState>(StringComparer.Ordinal);
+
+        using var lease = VaultScopedCoordinator.EnterShared(_taskDirectory);
+        IReadOnlyList<GlassworkTask> tasks;
+        try
+        {
+            tasks = ReadTasksUnsafe();
+        }
+        catch (Exception exception) when (
+            ResourceMutationService.IsExpectedPersistenceFailure(exception))
+        {
+            return ids.ToDictionary(
+                id => id,
+                _ => new ChildActivitySummaryState(
+                    ChildActivitySummaryStateKind.Failed,
+                    Error: $"Child activity summary inputs could not be read: {exception.Message}"),
+                StringComparer.Ordinal);
+        }
+
+        return ids.ToDictionary(
+            id => id,
+            id => ReadState(id, tasks),
+            StringComparer.Ordinal);
+    }
+
+    private ChildActivitySummaryState ReadState(
+        string parentId,
+        IReadOnlyList<GlassworkTask> tasks)
+    {
         ChildActivitySummaryCapture capture;
         try
         {
-            capture = Capture(parentId);
+            capture = CaptureSnapshot(parentId, tasks);
         }
         catch (ChildActivitySummaryException exception)
         {

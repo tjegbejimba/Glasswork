@@ -24,10 +24,15 @@ public partial class GlassworkTask : ObservableObject
     public partial string Status { get; set; } = "todo";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPriorityChip))]
+    [NotifyPropertyChangedFor(nameof(MyDayParentPriorityContext))]
+    [NotifyPropertyChangedFor(nameof(HasMyDayParentPriorityContext))]
     public partial string Priority { get; set; } = "medium";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsMyDayContainer))]
+    [NotifyPropertyChangedFor(nameof(IsMyDayParentContextRow))]
+    [NotifyPropertyChangedFor(nameof(IsParentCoordinationRow))]
     [NotifyPropertyChangedFor(nameof(ShowLeafCompleteAffordance))]
+    [NotifyPropertyChangedFor(nameof(ShowCardDetails))]
     public partial string Type { get; set; } = "task";
     private string? _sourceKind;
     public string? SourceKind
@@ -71,6 +76,8 @@ public partial class GlassworkTask : ObservableObject
     [NotifyPropertyChangedFor(nameof(DueUrgency))]
     [NotifyPropertyChangedFor(nameof(DueChipText))]
     [NotifyPropertyChangedFor(nameof(HasDue))]
+    [NotifyPropertyChangedFor(nameof(MyDayParentDueContext))]
+    [NotifyPropertyChangedFor(nameof(HasMyDayParentDueContext))]
     public partial DateTime? Due { get; set; }
     [ObservableProperty] public partial DateTime? Start { get; set; }
     [ObservableProperty]
@@ -338,7 +345,8 @@ public partial class GlassworkTask : ObservableObject
     /// <summary>
     /// True when a card layout should be rendered for this task in lists (active and not collapsed).
     /// </summary>
-    public bool ShowCardDetails => IsActive && !IsManuallyCollapsed;
+    public bool ShowCardDetails =>
+        !Types.IsParent(Type) && IsActive && !IsManuallyCollapsed;
 
     /// <summary>
     /// Subtasks that should render inline beneath this task on the My Day surface — the
@@ -355,8 +363,8 @@ public partial class GlassworkTask : ObservableObject
 
     /// <summary>
     /// Cross-file child Tasks (separate vault files) that are in My Day today and should
-    /// render nested beneath this task when it is a PBI container on the My Day surface
-    /// (issue #337 / ADR 0017). Parallel to <see cref="TodaysSubtasks"/> (which is the
+    /// render nested beneath this task's nearest-Parent context on the My Day surface
+    /// (ADR 0026). Parallel to <see cref="TodaysSubtasks"/> (which is the
     /// in-file checklist subtasks). Populated by
     /// <see cref="Glasswork.Core.Services.MyDayContainerGrouper"/> at refresh time and
     /// consumed by the My Day card template. Transient (not serialized, not cloned).
@@ -364,12 +372,56 @@ public partial class GlassworkTask : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasTodaysChildren))]
     [NotifyPropertyChangedFor(nameof(IsMyDayContainer))]
+    [NotifyPropertyChangedFor(nameof(IsParentCoordinationRow))]
     [NotifyPropertyChangedFor(nameof(ShowLeafCompleteAffordance))]
     [NotifyPropertyChangedFor(nameof(ShowTodaysChildren))]
     public partial System.Collections.Generic.IReadOnlyList<GlassworkTask>? TodaysChildren { get; set; }
 
     /// <summary>True when there is at least one cross-file child Task to render nested in My Day.</summary>
     public bool HasTodaysChildren => TodaysChildren is { Count: > 0 };
+
+    /// <summary>Exact source-kind label for a Parent context row on My Day.</summary>
+    [ObservableProperty] public partial string? MyDaySourceKindBadge { get; set; }
+
+    /// <summary>Root-first titles of ancestors above the nearest Parent context row.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasMyDayAncestorBreadcrumb))]
+    public partial string? MyDayAncestorBreadcrumb { get; set; }
+
+    public bool HasMyDayAncestorBreadcrumb =>
+        !string.IsNullOrWhiteSpace(MyDayAncestorBreadcrumb);
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasChildActivitySummaryStatus))]
+    public partial string? ChildActivitySummaryStatusLabel { get; set; }
+
+    public bool HasChildActivitySummaryStatus =>
+        !string.IsNullOrWhiteSpace(ChildActivitySummaryStatusLabel);
+
+    public bool IsParentCoordinationRow =>
+        Types.IsParent(Type) && !HasTodaysChildren;
+
+    public bool IsMyDayParentContextRow => Types.IsParent(Type);
+
+    public string MyDayParentDueContext =>
+        !Types.IsParent(Type) || !Due.HasValue
+            ? string.Empty
+            : DueUrgency switch
+            {
+                DueUrgency.Overdue => "Parent overdue",
+                DueUrgency.Today => "Parent due today",
+                _ => $"Parent target: {Due.Value:MMM d}",
+            };
+
+    public bool HasMyDayParentDueContext => MyDayParentDueContext.Length > 0;
+
+    public string MyDayParentPriorityContext =>
+        Types.IsParent(Type) && Priority is Priorities.High or Priorities.Urgent
+            ? $"Parent priority: {Priority}"
+            : string.Empty;
+
+    public bool HasMyDayParentPriorityContext =>
+        MyDayParentPriorityContext.Length > 0;
 
     /// <summary>
     /// Accessible name for the per-row "Remove from My Day" button. Includes the title so
@@ -387,17 +439,16 @@ public partial class GlassworkTask : ObservableObject
     public string AddToMyDayLabel => $"Add {Title} to My Day";
 
     /// <summary>
-    /// True when this row is a PBI rendered as a My Day container — a <c>pbi</c> hosting
-    /// in-My-Day cross-file children (issue #337 / ADR 0017).
+    /// True when this row is a Parent Task hosting in-My-Day cross-file children.
     /// </summary>
     public bool IsMyDayContainer =>
         Types.IsParent(Type) && HasTodaysChildren;
 
     /// <summary>
-    /// True when the leaf "complete" affordance (circle checkbox) should render. Suppressed
-    /// for a PBI container — you complete its children, not the container itself (ADR 0016/0017).
+    /// True when the leaf "complete" affordance (circle checkbox) should render. Parent Tasks
+    /// coordinate child work and never expose leaf completion from My Day.
     /// </summary>
-    public bool ShowLeafCompleteAffordance => !IsMyDayContainer;
+    public bool ShowLeafCompleteAffordance => !Types.IsParent(Type);
 
     /// <summary>
     /// True when a container's nested children should render: present and not manually

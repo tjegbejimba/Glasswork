@@ -47,7 +47,29 @@ public class GlassworkTaskContainerPropsTests
     public void ShowLeafCompleteAffordance_SuppressedForContainer_ShownOtherwise()
     {
         Assert.IsFalse(PbiWithChild().ShowLeafCompleteAffordance, "A PBI container hides the leaf complete checkbox.");
+        Assert.IsFalse(
+            new GlassworkTask { Id = "parent", Type = GlassworkTask.Types.Parent }
+                .ShowLeafCompleteAffordance,
+            "A Parent coordination row hides the leaf complete checkbox.");
         Assert.IsTrue(new GlassworkTask { Id = "t" }.ShowLeafCompleteAffordance, "A normal task shows the complete checkbox.");
+    }
+
+    [TestMethod]
+    public void ParentContext_LabelsDueAndPriorityWithoutRenderingLeafCardDetails()
+    {
+        var parent = new GlassworkTask
+        {
+            Id = "parent",
+            Type = GlassworkTask.Types.Parent,
+            Due = DateTime.Today.AddDays(-1),
+            Priority = GlassworkTask.Priorities.Urgent,
+            Description = "Coordination context",
+        };
+
+        Assert.AreEqual("Parent overdue", parent.MyDayParentDueContext);
+        Assert.AreEqual("Parent priority: urgent", parent.MyDayParentPriorityContext);
+        Assert.IsFalse(parent.ShowCardDetails,
+            "Parent context stays compact even when the Parent has rich prose.");
     }
 
     [TestMethod]

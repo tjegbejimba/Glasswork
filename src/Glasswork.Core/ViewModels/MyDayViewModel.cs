@@ -18,6 +18,7 @@ public partial class MyDayViewModel : ObservableObject
     private readonly VaultService _vault;
     private readonly IndexService _index;
     private readonly ResourceMutationService _mutations;
+    private readonly ChildActivitySummaryService _childActivitySummaries;
     private readonly IUiStateService? _uiState;
     private readonly IPerformanceTracer _performanceTracer;
     private readonly ITaskQuery _taskQuery;
@@ -74,6 +75,10 @@ public partial class MyDayViewModel : ObservableObject
         _taskService = taskService ?? throw new ArgumentNullException(nameof(taskService));
         _index = index ?? throw new ArgumentNullException(nameof(index));
         _mutations = _vault.Mutations;
+        _childActivitySummaries = new ChildActivitySummaryService(
+            _vault.VaultPath,
+            _vault,
+            _mutations);
         _uiState = uiState;
         _performanceTracer = performanceTracer ?? PerformanceTracer.Disabled;
         _taskQuery = taskQuery ?? new WarmIndexTaskQuery(index, new BacklinkIndex());
@@ -135,7 +140,7 @@ public partial class MyDayViewModel : ObservableObject
         foreach (var task in todayTasks)
         {
             // Attach TodaysSubtasks for virtually-promoted tasks per ADR 0008
-            // A PBI is a container: it must not count its own (import-stamped)
+            // A Parent Task is a container: it must not count its own (import-stamped)
             // due as a direct promotion, otherwise its actionable children get
             // hidden (TodaysSubtasks nulled). It still renders as a container
             // when surfaced via a child subtask.
@@ -154,11 +159,21 @@ public partial class MyDayViewModel : ObservableObject
             .Select(task => task.Id)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Cross-file PBI container grouping (issue #337 / ADR 0017): nest promoted child
-        // Tasks under their parent PBI, pulling the PBI in as a container-only host.
+        // Nearest-Parent grouping (ADR 0026): nest promoted actionable leaves under
+        // their Parent context row and compress higher ancestry into a breadcrumb.
         // Presentation-only — the promotion policy that produced targetTodayTasks above
-        // is unchanged; a container-only PBI is a host, not independently "in My Day".
+        // is unchanged; a pulled-in Parent is context, not independently "in My Day".
         var groupedTodayTasks = MyDayContainerGrouper.Group(targetTodayTasks, all, today);
+        var parentRows = groupedTodayTasks
+            .Where(task => GlassworkTask.Types.IsParent(task.Type))
+            .ToArray();
+        var summaryStates = _childActivitySummaries.ReadStates(
+            parentRows.Select(task => task.Id));
+        foreach (var parent in parentRows)
+        {
+            parent.ChildActivitySummaryStatusLabel =
+                SummaryStatusLabel(summaryStates[parent.Id].Kind);
+        }
         ReconcileTaskCollection(TodayTasks, groupedTodayTasks);
 
         // Recently completed: tasks completed today that were on My Day today (real or virtual).
@@ -186,10 +201,12 @@ public partial class MyDayViewModel : ObservableObject
         var suggestions = all.Values.Where(t =>
             !t.IsTerminal &&
             t.Status != GlassworkTask.Statuses.Blocked &&
+            !IsDismissedToday(t.Id) &&
             !alreadyToday.Contains(t.Id) &&
             (
                 (t.MyDay.HasValue && t.MyDay.Value.Date < System.DateTime.Today) || // carryover
-                t.Priority is "high" or "urgent"                                      // high priority
+                (!GlassworkTask.Types.IsParent(t.Type)
+                 && t.Priority is "high" or "urgent")                              // actionable priority
             ))
             .Take(10)
             .ToList();
@@ -296,8 +313,20 @@ public partial class MyDayViewModel : ObservableObject
 
         target.TodaysSubtasks = source.TodaysSubtasks;
         target.TodaysChildren = source.TodaysChildren;
+        target.MyDaySourceKindBadge = source.MyDaySourceKindBadge;
+        target.MyDayAncestorBreadcrumb = source.MyDayAncestorBreadcrumb;
+        target.ChildActivitySummaryStatusLabel = source.ChildActivitySummaryStatusLabel;
         target.IsManuallyCollapsed = isManuallyCollapsed;
     }
+
+    private static string SummaryStatusLabel(ChildActivitySummaryStateKind state) =>
+        state switch
+        {
+            ChildActivitySummaryStateKind.Current => "Summary current",
+            ChildActivitySummaryStateKind.OutOfDate => "Summary out of date",
+            ChildActivitySummaryStateKind.Missing => "Summary not created",
+            _ => "Summary unavailable",
+        };
 
     /// <summary>
     /// Raised synchronously at the very top of <see cref="Refresh"/>, BEFORE

@@ -184,7 +184,9 @@ public class MyDayViewModelCrossFileContainerTests
         var pbi = CreatePbi("Sprint epic");
         pbi.Due = today.AddDays(-7); // stale: container-only host, never self-promotes
         _vault.Save(pbi);
-        CreateChild("Wire up the API", pbi.Id, due: today);
+        var highPriorityChild = CreateChild("Wire up the API", pbi.Id, due: today);
+        highPriorityChild.Priority = GlassworkTask.Priorities.High;
+        _vault.Save(highPriorityChild);
         CreateChild("Add the integration test", pbi.Id, due: today);
 
         var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
@@ -207,7 +209,9 @@ public class MyDayViewModelCrossFileContainerTests
         var pbi = CreatePbi("Sprint epic");
         pbi.MyDay = today; // independently promoted (pinned) AND hosts children
         _vault.Save(pbi);
-        CreateChild("Wire up the API", pbi.Id, due: today);
+        var highPriorityChild = CreateChild("Wire up the API", pbi.Id, due: today);
+        highPriorityChild.Priority = GlassworkTask.Priorities.High;
+        _vault.Save(highPriorityChild);
         CreateChild("Add the integration test", pbi.Id, due: today);
 
         var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
@@ -220,6 +224,32 @@ public class MyDayViewModelCrossFileContainerTests
             "A pinned PBI container must not pop back as a standalone row after the X — the whole group leaves My Day.");
         Assert.IsFalse(vm.TodayTasks.Any(t => t.Title is "Wire up the API" or "Add the integration test"),
             "Children are gone too.");
+        Assert.IsFalse(vm.Suggestions.Any(t => t.Title is "Wire up the API" or "Add the integration test"),
+            "Dismissed group children must not immediately resurface as Suggestions.");
+        Assert.IsNull(_vault.Load(pbi.Id)!.MyDay,
+            "Removing a pinned Parent group must clear the Parent pin so it cannot rebuild as coordination.");
+        Assert.IsTrue(_uiState.Get<bool>(
+            MyDayDismissals.KeyFor(pbi.Id, DateOnly.FromDateTime(today))));
+    }
+
+    [TestMethod]
+    public void RemoveFromMyDay_OnCoordinationRow_ClearsPinAndDismissesParent()
+    {
+        var today = DateTime.Today;
+        var parent = CreatePbi("Coordinate release");
+        parent.MyDay = today;
+        _vault.Save(parent);
+
+        var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
+        vm.Refresh();
+        var row = vm.TodayTasks.Single(task => task.Id == parent.Id);
+
+        vm.RemoveFromMyDayCommand.Execute(row);
+
+        Assert.IsFalse(vm.TodayTasks.Any(task => task.Id == parent.Id));
+        Assert.IsNull(_vault.Load(parent.Id)!.MyDay);
+        Assert.IsTrue(_uiState.Get<bool>(
+            MyDayDismissals.KeyFor(parent.Id, DateOnly.FromDateTime(today))));
     }
 
     [TestMethod]

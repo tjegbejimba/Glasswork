@@ -375,6 +375,16 @@ public sealed partial class MyDayPage : Page
         }
     }
 
+    private void CopyRefreshSummary_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        {
+            CopyToClipboard(
+                Glasswork.Core.Services.TaskInvocationFormatter.FormatRefreshChildActivitySummary(task.Id),
+                "Refresh summary");
+        }
+    }
+
     private void CopyToClipboard(string text, string label)
     {
         var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();

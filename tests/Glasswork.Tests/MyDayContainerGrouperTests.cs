@@ -115,7 +115,7 @@ public class MyDayContainerGrouperTests
     }
 
     [TestMethod]
-    public void Group_ContainersOrderedByEarliestChildDue()
+    public void Group_ContainersPreserveFirstPromotedChildOrder()
     {
         var later = Pbi("later", "Later epic");
         var sooner = Pbi("sooner", "Sooner epic");
@@ -128,12 +128,12 @@ public class MyDayContainerGrouperTests
             promoted, Index(later, sooner, laterChild, soonerChild), Today);
 
         Assert.HasCount(2, rows);
-        Assert.AreEqual("sooner", rows[0].Id, "Container with the earliest child due sorts first.");
-        Assert.AreEqual("later", rows[1].Id);
+        Assert.AreEqual("later", rows[0].Id, "The first promoted child fixes its group position.");
+        Assert.AreEqual("sooner", rows[1].Id);
     }
 
     [TestMethod]
-    public void Group_ChildrenOrderedByDueAscending()
+    public void Group_ChildrenPreservePromotedOrder()
     {
         var pbi = Pbi("epic");
         var late = Child("late", parent: "epic", due: Today.AddDays(2).ToDateTime(default));
@@ -144,8 +144,8 @@ public class MyDayContainerGrouperTests
 
         Assert.HasCount(1, rows);
         var children = rows[0].TodaysChildren!;
-        Assert.AreEqual("early", children[0].Id, "Earlier-due child sorts first.");
-        Assert.AreEqual("late", children[1].Id);
+        Assert.AreEqual("late", children[0].Id, "Grouping must preserve Task Query leaf ordering.");
+        Assert.AreEqual("early", children[1].Id);
     }
 
     [TestMethod]
@@ -166,5 +166,85 @@ public class MyDayContainerGrouperTests
         Assert.IsNotNull(rows[0].TodaysChildren);
         Assert.AreEqual("t", rows[0].TodaysChildren![0].Id, "The leaf child nests under its direct PBI parent.");
         Assert.IsFalse(rows.Any(r => r.Id == "a"), "The grandparent PBI is not pulled in as a second level.");
+    }
+
+    [TestMethod]
+    public void Group_DeepHierarchy_UsesNearestParentWithExactKindAndCompactBreadcrumb()
+    {
+        var epic = Pbi("epic", "Platform");
+        epic.SourceKind = "Epic";
+        var feature = Pbi("feature", "Parent hierarchy");
+        feature.SourceKind = "Feature";
+        feature.Parent = epic.Id;
+        var nearest = Pbi("story", "My Day grouping");
+        nearest.SourceKind = "User Story";
+        nearest.Parent = feature.Id;
+        var leaf = Child("leaf", nearest.Id, Today.ToDateTime(default));
+
+        var rows = MyDayContainerGrouper.Group(
+            [leaf],
+            Index(epic, feature, nearest, leaf),
+            Today);
+
+        Assert.HasCount(1, rows, "Higher ancestors must not render as nested cards.");
+        Assert.AreEqual(nearest.Id, rows[0].Id, "The actionable leaf groups under its nearest Parent.");
+        Assert.AreEqual("User Story", rows[0].MyDaySourceKindBadge);
+        Assert.AreEqual("Platform › Parent hierarchy", rows[0].MyDayAncestorBreadcrumb);
+        Assert.AreEqual(leaf.Id, rows[0].TodaysChildren!.Single().Id);
+    }
+
+    [TestMethod]
+    public void Group_StandaloneLeavesKeepTheirOrderBeforeParentGroups()
+    {
+        var before = new GlassworkTask { Id = "before", Title = "Before" };
+        var parent = Pbi("parent", "Grouped parent");
+        var child = Child("child", parent.Id, Today.ToDateTime(default));
+        var after = new GlassworkTask { Id = "after", Title = "After" };
+
+        var rows = MyDayContainerGrouper.Group(
+            [before, child, after],
+            Index(before, parent, child, after),
+            Today);
+
+        CollectionAssert.AreEqual(
+            new[] { "before", "after", "parent" },
+            rows.Select(row => row.Id).ToArray(),
+            "Standalone leaves retain their existing order before Parent context groups.");
+    }
+
+    [TestMethod]
+    public void Group_PinnedParentInDeepHierarchy_RemainsTopLevelCoordination()
+    {
+        var root = Pbi("root", "Portfolio");
+        var parent = Pbi("parent", "Coordinate feature");
+        parent.Parent = root.Id;
+        parent.MyDay = Today.ToDateTime(default);
+
+        var rows = MyDayContainerGrouper.Group(
+            [parent],
+            Index(root, parent),
+            Today);
+
+        Assert.HasCount(1, rows);
+        Assert.AreEqual(parent.Id, rows[0].Id);
+        Assert.IsTrue(rows[0].IsParentCoordinationRow);
+        Assert.AreEqual("Portfolio", rows[0].MyDayAncestorBreadcrumb);
+    }
+
+    [TestMethod]
+    public void Group_LeafWithTerminalParent_RemainsStandalone()
+    {
+        var parent = Pbi("parent", "Archived parent");
+        parent.Status = GlassworkTask.Statuses.Cancelled;
+        var leaf = Child("leaf", parent.Id, Today.ToDateTime(default));
+
+        var rows = MyDayContainerGrouper.Group(
+            [leaf],
+            Index(parent, leaf),
+            Today);
+
+        Assert.HasCount(1, rows);
+        Assert.AreEqual(leaf.Id, rows[0].Id);
+        Assert.IsNull(rows[0].TodaysChildren);
     }
 }
