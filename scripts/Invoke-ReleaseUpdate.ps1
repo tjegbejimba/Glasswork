@@ -154,6 +154,12 @@ function Invoke-ReleaseUpdate {
         Move-Item -Path $installDirectory -Destination $backupDirectory
         $installMoved = $true
         Move-Item -Path $stagingDirectory -Destination $installDirectory
+        $extensionBundle = Join-Path $installDirectory "CopilotExtensions\glasswork-task-viewer"
+        if (Test-Path $extensionBundle) {
+            $extensionDestination = Join-Path $env:USERPROFILE ".copilot\extensions\glasswork-task-viewer"
+            New-Item -ItemType Directory -Force -Path $extensionDestination | Out-Null
+            Copy-Item -Path (Join-Path $extensionBundle "*") -Destination $extensionDestination -Recurse -Force
+        }
 
         & $Relauncher $InstallExePath
         $installMoved = $false

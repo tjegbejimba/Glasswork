@@ -160,6 +160,18 @@ jobs:
             --output artifacts\publish `
             --nologo `
             --verbosity minimal
+          $canvasBundle = "artifacts\publish\CopilotExtensions\glasswork-task-viewer"
+          $canvasHostVersion = "${{ inputs.version }}"
+          New-Item -ItemType Directory -Force -Path "$canvasBundle\host\$canvasHostVersion" | Out-Null
+          Copy-Item .github\extensions\glasswork-task-viewer\extension.mjs "$canvasBundle\extension.mjs" -Force
+          dotnet publish tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj `
+            --configuration Release `
+            --self-contained `
+            --runtime win-x64 `
+            --output "$canvasBundle\host\$canvasHostVersion" `
+            --nologo `
+            --verbosity minimal
+          Set-Content -Path "$canvasBundle\host\active.txt" -Value $canvasHostVersion -Encoding ascii
           . .\scripts\New-ReleasePackage.ps1
           $artifact = New-ReleasePackage `
             -PublishDirectory artifacts\publish `
