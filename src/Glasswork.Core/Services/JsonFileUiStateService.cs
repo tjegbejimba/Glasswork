@@ -1,7 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace Glasswork.Core.Services;
 
@@ -10,9 +14,16 @@ namespace Glasswork.Core.Services;
 /// Default location is <c>%LocalAppData%\Glasswork\ui-state.json</c>.
 /// Uses merge-on-save to avoid cross-process clobber: each process tracks only
 /// the keys it mutated, then merges those changes on top of the current disk state.
+/// The merge-read-then-write section is additionally guarded by a named,
+/// cross-process <see cref="Mutex"/> keyed by the file's full path: without it,
+/// two processes racing to save around the same instant can each read a disk
+/// snapshot that predates the other's write and silently drop it (a classic
+/// lost-update), even though neither process's own dirty keys collide.
 /// </summary>
 public sealed class JsonFileUiStateService : IUiStateService
 {
+    private static readonly ConcurrentDictionary<string, Mutex> FileMutexes = new(StringComparer.Ordinal);
+
     private readonly string _filePath;
     private readonly Dictionary<string, JsonElement> _state;
     private readonly HashSet<string> _dirtyKeys = new();
@@ -65,38 +76,76 @@ public sealed class JsonFileUiStateService : IUiStateService
     {
         lock (_lock)
         {
-            // Merge-on-save: re-read current disk state, apply our changes on top
-            var diskState = Load(_filePath);
-            
-            // Apply this instance's dirty keys
-            foreach (var key in _dirtyKeys)
+            var mutex = GetFileMutex(_filePath);
+            var acquired = false;
+            try
             {
-                if (_state.TryGetValue(key, out var value))
+                try { acquired = mutex.WaitOne(TimeSpan.FromSeconds(10)); }
+                catch (AbandonedMutexException)
                 {
-                    diskState[key] = value;
+                    // A prior holder (e.g. a killed canvas host process) exited
+                    // without releasing it. Ownership still transfers to us —
+                    // proceed; we always re-read disk state fresh below.
+                    acquired = true;
                 }
+
+                // Merge-on-save: re-read current disk state, apply our changes on top
+                var diskState = Load(_filePath);
+
+                // Apply this instance's dirty keys
+                foreach (var key in _dirtyKeys)
+                {
+                    if (_state.TryGetValue(key, out var value))
+                    {
+                        diskState[key] = value;
+                    }
+                }
+
+                // Apply this instance's deletions
+                foreach (var key in _deletedKeys)
+                {
+                    diskState.Remove(key);
+                }
+
+                // Write merged state atomically
+                var dir = Path.GetDirectoryName(_filePath);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+                var json = JsonSerializer.Serialize(diskState, new JsonSerializerOptions { WriteIndented = true });
+                // Unique per call (not just per-instance) so two writers whose
+                // Mutex acquisitions land back-to-back never contend for the
+                // same temp path — Windows can briefly keep a just-closed file
+                // "in use" (AV/indexing), which a shared ".tmp" name would hit.
+                var tmp = _filePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                File.WriteAllText(tmp, json);
+                if (File.Exists(_filePath)) File.Replace(tmp, _filePath, null);
+                else File.Move(tmp, _filePath);
+
+                // Clear dirty tracking after successful save
+                _dirtyKeys.Clear();
+                _deletedKeys.Clear();
             }
-            
-            // Apply this instance's deletions
-            foreach (var key in _deletedKeys)
+            finally
             {
-                diskState.Remove(key);
+                if (acquired) mutex.ReleaseMutex();
             }
-            
-            // Write merged state atomically
-            var dir = Path.GetDirectoryName(_filePath);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            
-            var json = JsonSerializer.Serialize(diskState, new JsonSerializerOptions { WriteIndented = true });
-            var tmp = _filePath + ".tmp";
-            File.WriteAllText(tmp, json);
-            if (File.Exists(_filePath)) File.Replace(tmp, _filePath, null);
-            else File.Move(tmp, _filePath);
-            
-            // Clear dirty tracking after successful save
-            _dirtyKeys.Clear();
-            _deletedKeys.Clear();
         }
+    }
+
+    /// <summary>
+    /// Resolves the named cross-process <see cref="Mutex"/> guarding
+    /// <paramref name="filePath"/>'s merge-on-save section. Named by a hash of
+    /// the full, case-normalized path rather than the raw path so it stays
+    /// within named-object length/character limits regardless of the
+    /// underlying path's length or casing.
+    /// </summary>
+    private static Mutex GetFileMutex(string filePath)
+    {
+        var fullPath = Path.GetFullPath(filePath);
+        var normalized = OperatingSystem.IsWindows() ? fullPath.ToUpperInvariant() : fullPath;
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
+        var name = "Glasswork.UiState." + hash;
+        return FileMutexes.GetOrAdd(name, n => new Mutex(initiallyOwned: false, name: n));
     }
 
     public void RemoveKeysNotIn(string keyPrefix, IReadOnlyCollection<string> liveSuffixes)

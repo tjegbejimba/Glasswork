@@ -40,12 +40,29 @@ if (!Directory.Exists(todoPath))
 }
 
 var vault = new VaultService(todoPath);
-var projection = new TaskDetailProjectionService(vault, new FileSystemArtifactStore(vaultRoot));
+var index = new IndexService(vault);
+index.EnsureLoaded();
+var backlinkIndex = new BacklinkIndex();
+backlinkIndex.Build(vaultRoot);
+var uiState = new JsonFileUiStateService(options.UiStatePath ?? JsonFileUiStateService.DefaultFilePath());
+var adoBaseUrl = (uiState.Get<string>("ado.baseUrl") ?? string.Empty).Trim().TrimEnd('/');
+var projection = new TaskDetailProjectionService(vault, new FileSystemArtifactStore(vaultRoot), backlinkIndex, index);
 var markdown = new CanvasMarkdownRenderer(vaultRoot);
 var artifactAccess = new CanvasArtifactAccess(vaultRoot, projection);
-var uiState = new JsonFileUiStateService(options.UiStatePath ?? JsonFileUiStateService.DefaultFilePath());
 var sessionTaskSetStore = new SessionTaskSetStateStore(uiState);
-var taskSet = new SessionTaskSetService(new TaskDetailProjectionService(vault), sessionTaskSetStore, options.SessionId);
+var taskSet = new SessionTaskSetService(projection, sessionTaskSetStore, options.SessionId);
+
+// Relationship inputs (Direct Children, Backlinks) are read from in-memory
+// snapshots that were built once at startup. This slice reads the Vault fresh
+// for the primary Task file on every request; keeping those two snapshots
+// reasonably current without a full debounced watcher pipeline (deferred to
+// the live-refresh slice, issue #560) is a cheap, read-only re-scan right
+// before each relationship-bearing build.
+void RefreshRelationshipSnapshots()
+{
+    try { index.Rehydrate(); } catch { /* best-effort — a stale index must not hide the Task itself. */ }
+    try { backlinkIndex.Build(vaultRoot); } catch { /* best-effort — see above. */ }
+}
 
 // Version-drift detection (issue #562): this host keeps running its
 // already-loaded assets even after a newer bundle activates elsewhere
@@ -108,10 +125,11 @@ app.MapGet("/api/task", (HttpContext context) =>
     if (!IsSafeTaskId(taskId)) return Results.BadRequest(new { code = "invalid_task_id", message = "task_id must contain only lowercase letters, numbers, and hyphens." });
     try
     {
+        RefreshRelationshipSnapshots();
         var result = projection.Build(taskId);
         return result is null
             ? Results.NotFound(new { code = "task_not_found", message = $"Task '{taskId}' was not found." })
-            : Results.Ok(new { kind = "task", projection = EnrichProjection(result, markdown, jsonOptions) });
+            : Results.Ok(new { kind = "task", projection = EnrichProjection(result, markdown, index, adoBaseUrl, jsonOptions) });
     }
     catch (Exception ex)
     {
@@ -165,7 +183,7 @@ app.MapPost("/api/vault/action", (LinkActionRequest request) =>
 app.MapGet("/canvas-state", async () =>
 {
     var (driftDetected, driftMessage) = DetectCurrentDrift(currentStatePath, ownIdentity);
-    return Results.Ok(await BuildCanvasPayload(taskSet, projection, markdown, driftDetected, driftMessage));
+    return Results.Ok(await BuildCanvasPayload(taskSet, projection, markdown, index, adoBaseUrl, RefreshRelationshipSnapshots, driftDetected, driftMessage));
 });
 app.MapGet("/canvas", async (HttpContext context) =>
 {
@@ -174,7 +192,7 @@ app.MapGet("/canvas", async (HttpContext context) =>
     var taskId = context.Request.Query["task_id"].ToString().Trim();
     if (taskId.Length > 0) taskSet.Load([taskId]);
     var (driftDetected, driftMessage) = DetectCurrentDrift(currentStatePath, ownIdentity);
-    var payload = await BuildCanvasPayload(taskSet, projection, markdown, driftDetected, driftMessage);
+    var payload = await BuildCanvasPayload(taskSet, projection, markdown, index, adoBaseUrl, RefreshRelationshipSnapshots, driftDetected, driftMessage);
     var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
     context.Response.Headers["Content-Security-Policy"] =
         $"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
@@ -223,6 +241,9 @@ static async Task<object> BuildCanvasPayload(
     SessionTaskSetService taskSet,
     TaskDetailProjectionService projection,
     CanvasMarkdownRenderer markdown,
+    IndexService index,
+    string adoBaseUrl,
+    Action refreshRelationshipSnapshots,
     bool driftDetected,
     string? driftMessage)
 {
@@ -230,7 +251,8 @@ static async Task<object> BuildCanvasPayload(
     object? selectedDetail = null;
     if (snapshot.SelectedTaskId is { } selectedTaskId)
     {
-        selectedDetail = await BuildDetailPayload(selectedTaskId, projection, markdown);
+        refreshRelationshipSnapshots();
+        selectedDetail = await BuildDetailPayload(selectedTaskId, projection, markdown, index, adoBaseUrl);
     }
     return new
     {
@@ -250,7 +272,9 @@ static async Task<object> BuildCanvasPayload(
 static Task<object> BuildDetailPayload(
     string taskId,
     TaskDetailProjectionService projection,
-    CanvasMarkdownRenderer markdown)
+    CanvasMarkdownRenderer markdown,
+    IndexService index,
+    string adoBaseUrl)
 {
     if (!IsSafeTaskId(taskId))
         return Task.FromResult<object>(new { kind = "error", code = "invalid_task_id", message = "task_id must contain only lowercase letters, numbers, and hyphens." });
@@ -259,7 +283,7 @@ static Task<object> BuildDetailPayload(
         var result = projection.Build(taskId);
         if (result is null)
             return Task.FromResult<object>(new { kind = "error", code = "task_not_found", message = $"Task '{taskId}' was not found." });
-        return Task.FromResult<object>(new { kind = "task", projection = CanvasTaskProjection.From(result, markdown) });
+        return Task.FromResult<object>(new { kind = "task", projection = CanvasTaskProjection.From(result, markdown, index, adoBaseUrl) });
     }
     catch (Exception ex)
     {
@@ -270,10 +294,12 @@ static Task<object> BuildDetailPayload(
 static JsonObject EnrichProjection(
     TaskDetailProjection projection,
     CanvasMarkdownRenderer markdown,
+    IndexService index,
+    string adoBaseUrl,
     JsonSerializerOptions jsonOptions)
 {
     var node = JsonSerializer.SerializeToNode(projection, jsonOptions)!.AsObject();
-    var canvas = CanvasTaskProjection.From(projection, markdown);
+    var canvas = CanvasTaskProjection.From(projection, markdown, index, adoBaseUrl);
     node["descriptionHtml"] = canvas.DescriptionHtml;
     node["notesHtml"] = canvas.NotesHtml;
     node["artifactRows"] = JsonSerializer.SerializeToNode(canvas.ArtifactRows, jsonOptions);
