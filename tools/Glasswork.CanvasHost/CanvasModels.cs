@@ -77,3 +77,7 @@ internal sealed record CanvasTaskProjection(
 internal sealed record ArtifactActionRequest(string TaskId, string Name, string Operation);
 
 internal sealed record LinkActionRequest(string Url);
+
+internal sealed record TaskIdRequest(string? TaskId);
+
+internal sealed record TaskIdsRequest(IReadOnlyList<string>? TaskIds);

@@ -42,6 +42,7 @@ var vault = new VaultService(todoPath);
 var projection = new TaskDetailProjectionService(vault, new FileSystemArtifactStore(vaultRoot));
 var markdown = new CanvasMarkdownRenderer(vaultRoot);
 var artifactAccess = new CanvasArtifactAccess(vaultRoot, projection);
+var taskSet = new SessionTaskSetService(new TaskDetailProjectionService(vault));
 var builder = WebApplication.CreateBuilder();
 builder.WebHost.UseKestrel(server => server.Listen(IPAddress.Loopback, 0));
 var app = builder.Build();
@@ -63,6 +64,31 @@ app.Use(async (context, next) =>
 });
 
 app.MapGet("/health", () => Results.Ok(new { ok = true, session_id = options.SessionId }));
+app.MapGet("/api/tasks", () => Results.Ok(SnapshotPayload(taskSet.Snapshot(), jsonOptions)));
+app.MapPost("/api/tasks/load", (TaskIdsRequest request) =>
+{
+    var result = taskSet.Load(request.TaskIds ?? []);
+    return result.Ok
+        ? Results.Ok(SnapshotPayload(result.Snapshot, jsonOptions))
+        : Results.Conflict(new { code = result.Code, message = result.Message });
+});
+app.MapPost("/api/tasks/unload", (TaskIdRequest request) =>
+{
+    var result = taskSet.Unload(request.TaskId ?? string.Empty);
+    return result.Ok
+        ? Results.Ok(SnapshotPayload(result.Snapshot, jsonOptions))
+        : Results.NotFound(new { code = result.Code, message = result.Message });
+});
+app.MapPost("/api/tasks/clear", () => Results.Ok(SnapshotPayload(taskSet.Clear().Snapshot, jsonOptions)));
+app.MapPost("/api/tasks/select", (TaskIdRequest request) =>
+{
+    var result = taskSet.Select(request.TaskId ?? string.Empty);
+    return result.Ok
+        ? Results.Ok(SnapshotPayload(result.Snapshot, jsonOptions))
+        : Results.NotFound(new { code = result.Code, message = result.Message });
+});
+app.MapPost("/api/tasks/refresh-selected", () => Results.Ok(SnapshotPayload(taskSet.RefreshSelected().Snapshot, jsonOptions)));
+app.MapPost("/api/tasks/refresh-all", () => Results.Ok(SnapshotPayload(taskSet.RefreshAll().Snapshot, jsonOptions)));
 app.MapGet("/api/task", (HttpContext context) =>
 {
     var taskId = context.Request.Query["task_id"].ToString().Trim();
@@ -124,10 +150,14 @@ app.MapPost("/api/vault/action", (LinkActionRequest request) =>
     var result = artifactAccess.OpenVaultPage(request.Url);
     return result.Ok ? Results.Ok(new { ok = true }) : Results.BadRequest(new { code = result.Code, message = result.Message });
 });
+app.MapGet("/canvas-state", async () => Results.Ok(await BuildCanvasPayload(taskSet, projection, markdown)));
 app.MapGet("/canvas", async (HttpContext context) =>
 {
+    // Backward-compatible shorthand: visiting the canvas URL with ?task_id=
+    // loads that Task, exactly like the pre-multi-Task singular contract.
     var taskId = context.Request.Query["task_id"].ToString().Trim();
-    var payload = await BuildCanvasPayload(taskId, projection, markdown);
+    if (taskId.Length > 0) taskSet.Load([taskId]);
+    var payload = await BuildCanvasPayload(taskSet, projection, markdown);
     var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
     context.Response.Headers["Content-Security-Policy"] =
         $"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
@@ -154,13 +184,41 @@ static bool IsAuthorized(HttpContext context, string token)
 
 static bool IsSafeTaskId(string value) => value.Length <= 160 && value.All(c => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') && value[0] != '-';
 
-static Task<object> BuildCanvasPayload(
+static object SnapshotPayload(SessionTaskSetSnapshot snapshot, JsonSerializerOptions jsonOptions) => new
+{
+    members = snapshot.Members,
+    selectedTaskId = snapshot.SelectedTaskId,
+    limit = snapshot.Limit,
+};
+
+static async Task<object> BuildCanvasPayload(
+    SessionTaskSetService taskSet,
+    TaskDetailProjectionService projection,
+    CanvasMarkdownRenderer markdown)
+{
+    var snapshot = taskSet.Snapshot();
+    object? selectedDetail = null;
+    if (snapshot.SelectedTaskId is { } selectedTaskId)
+    {
+        selectedDetail = await BuildDetailPayload(selectedTaskId, projection, markdown);
+    }
+    return new
+    {
+        kind = "state",
+        canvasName = "Glasswork Tasks",
+        railLabel = "Loaded Tasks",
+        members = snapshot.Members,
+        selectedTaskId = snapshot.SelectedTaskId,
+        limit = snapshot.Limit,
+        selectedDetail,
+    };
+}
+
+static Task<object> BuildDetailPayload(
     string taskId,
     TaskDetailProjectionService projection,
     CanvasMarkdownRenderer markdown)
 {
-    if (string.IsNullOrWhiteSpace(taskId))
-        return Task.FromResult<object>(new { kind = "empty", message = "Open this canvas with task_id to view a Task." });
     if (!IsSafeTaskId(taskId))
         return Task.FromResult<object>(new { kind = "error", code = "invalid_task_id", message = "task_id must contain only lowercase letters, numbers, and hyphens." });
     try
@@ -170,7 +228,6 @@ static Task<object> BuildCanvasPayload(
             return Task.FromResult<object>(new { kind = "error", code = "task_not_found", message = $"Task '{taskId}' was not found." });
         return Task.FromResult<object>(new { kind = "task", projection = CanvasTaskProjection.From(result, markdown) });
     }
-
     catch (Exception ex)
     {
         return Task.FromResult<object>(new { kind = "error", code = "projection_failed", message = ex.Message });
