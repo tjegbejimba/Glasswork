@@ -311,6 +311,12 @@ function Install-GlassworkCanvasExtension {
 
         Copy-Item -Path $manifest.ExtensionFilePath -Destination (Join-Path $extensionDirectory "extension.mjs.new") -Force
         Move-Item -Path (Join-Path $extensionDirectory "extension.mjs.new") -Destination (Join-Path $extensionDirectory "extension.mjs") -Force
+        # active.txt is the real atomic cutover pointer (ADR 0024) that new
+        # Copilot sessions read; it is written before current.json (the
+        # health/diagnostic record) so a failure recording health never rolls
+        # back an already-successful activation. This mirrors
+        # Install-McpTool.ps1's Set-CopilotGlassworkMcpCommand-then-current.json
+        # ordering for the same reason.
         Write-CanvasExtensionAtomicFile -Path (Join-Path $hostVersionsRoot "active.txt") -Content $manifest.Version
 
         Write-CanvasExtensionAtomicFile `
