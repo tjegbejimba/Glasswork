@@ -161,11 +161,23 @@ created: 2026-09-02{links}
         public Process Process { get; } = process;
         public string Url { get; } = url;
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
-            if (!Process.HasExited) Process.Kill(entireProcessTree: true);
+            // Kill() only issues termination; it does not block until the
+            // process (and, for entireProcessTree, its children) has actually
+            // exited. Without awaiting WaitForExitAsync(), an `await using`
+            // block returns "done" while dotnet.exe is still tearing down,
+            // so the next test's freshly spawned host can start while the
+            // dying one is still consuming CPU/handles — a real source of
+            // CI-only flakiness in these black-box process-spawning tests,
+            // where the shared CI runner has far less headroom than a local
+            // dev machine.
+            if (!Process.HasExited)
+            {
+                Process.Kill(entireProcessTree: true);
+                await Process.WaitForExitAsync();
+            }
             Process.Dispose();
-            return ValueTask.CompletedTask;
         }
     }
 }
