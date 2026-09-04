@@ -20,7 +20,7 @@ namespace Glasswork.CanvasHost.Tests;
 /// fails the build instead of shipping a silently narrower canvas view.
 /// </summary>
 [TestClass]
-public sealed class ProjectionParityGuardTests
+public sealed class ProjectionParityGuardTests : CanvasHostTestBase
 {
     [TestMethod]
     public async Task ApiTask_SerializesEveryTaskDetailProjectionPropertyForCanvas()

@@ -14,7 +14,7 @@ namespace Glasswork.CanvasHost.Tests;
 /// ArtifactLinkPolicy allowlist rather than a bespoke canvas-only path.
 /// </summary>
 [TestClass]
-public sealed class RelationshipsAndSafeNavigationTests
+public sealed class RelationshipsAndSafeNavigationTests : CanvasHostTestBase
 {
     /// <summary>
     /// Every test in this class starts an isolated host with an empty,
@@ -118,10 +118,10 @@ public sealed class RelationshipsAndSafeNavigationTests
         AddRichTask(vault);
         await using var host = await StartHost(vault, "session-links", "credential-links", CreateEmptyUiStatePath());
         using var client = AuthorizedClient("credential-links");
-        await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "rich" } });
+        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "rich" } }));
 
         var response = await client.GetAsync($"{host.Url}/canvas-state");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var body = (await ReadJsonResponseAsync(response)).Body;
         var links = body.RootElement.GetProperty("selectedDetail").GetProperty("projection").GetProperty("links");
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
@@ -141,10 +141,10 @@ public sealed class RelationshipsAndSafeNavigationTests
         AddConceptPageLinkingToRich(vault);
         await using var host = await StartHost(vault, "session-related", "credential-related", CreateEmptyUiStatePath());
         using var client = AuthorizedClient("credential-related");
-        await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "rich" } });
+        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "rich" } }));
 
         var response = await client.GetAsync($"{host.Url}/canvas-state");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var body = (await ReadJsonResponseAsync(response)).Body;
         var related = body.RootElement.GetProperty("selectedDetail").GetProperty("projection").GetProperty("relatedEntries");
 
         Assert.AreEqual(2, related.GetArrayLength());
@@ -163,18 +163,18 @@ public sealed class RelationshipsAndSafeNavigationTests
         await using var host = await StartHost(vault, "session-children", "credential-children", CreateEmptyUiStatePath());
         using var client = AuthorizedClient("credential-children");
 
-        await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } });
+        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } }));
         var response = await client.GetAsync($"{host.Url}/canvas-state");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var body = (await ReadJsonResponseAsync(response)).Body;
         var children = body.RootElement.GetProperty("selectedDetail").GetProperty("projection").GetProperty("directChildren");
 
         Assert.AreEqual(1, children.GetArrayLength(), "the shared projection's direct-Children rule must surface a Task whose parent field matches");
         Assert.AreEqual("child-of-demo", children[0].GetProperty("id").GetString());
         Assert.AreEqual("Child of demo", children[0].GetProperty("title").GetString());
 
-        await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "child-of-demo" } });
+        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "child-of-demo" } }));
         var childResponse = await client.GetAsync($"{host.Url}/canvas-state");
-        using var childBody = JsonDocument.Parse(await childResponse.Content.ReadAsStringAsync());
+        using var childBody = (await ReadJsonResponseAsync(childResponse)).Body;
         var childProjection = childBody.RootElement.GetProperty("selectedDetail").GetProperty("projection");
         Assert.IsTrue(childProjection.GetProperty("showParent").GetBoolean());
         Assert.AreEqual("demo", childProjection.GetProperty("parent").GetString());
@@ -189,10 +189,10 @@ public sealed class RelationshipsAndSafeNavigationTests
         AddConceptPageLinkingToRich(vault);
         await using var host = await StartHost(vault, "session-backlinks", "credential-backlinks", CreateEmptyUiStatePath());
         using var client = AuthorizedClient("credential-backlinks");
-        await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "rich" } });
+        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "rich" } }));
 
         var response = await client.GetAsync($"{host.Url}/canvas-state");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var body = (await ReadJsonResponseAsync(response)).Body;
         var backlinks = body.RootElement.GetProperty("selectedDetail").GetProperty("projection").GetProperty("backlinks");
 
         Assert.AreEqual(1, backlinks.GetArrayLength());
@@ -207,10 +207,10 @@ public sealed class RelationshipsAndSafeNavigationTests
         AddBlockedTask(vault);
         await using var host = await StartHost(vault, "session-blocked", "credential-blocked", CreateEmptyUiStatePath());
         using var client = AuthorizedClient("credential-blocked");
-        await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "blocked-valid" } });
+        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "blocked-valid" } }));
 
         var response = await client.GetAsync($"{host.Url}/canvas-state");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var body = (await ReadJsonResponseAsync(response)).Body;
         var projection = body.RootElement.GetProperty("selectedDetail").GetProperty("projection");
 
         Assert.AreEqual("Blocked: Waiting on design review", projection.GetProperty("blockedStatusText").GetString());
@@ -256,11 +256,11 @@ public sealed class RelationshipsAndSafeNavigationTests
         AddChildOfDemo(vault);
         await using var host = await StartHost(vault, "session-activate-child", "credential-activate-child", CreateEmptyUiStatePath());
         using var client = AuthorizedClient("credential-activate-child");
-        await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } });
+        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } }));
 
         // Simulates clicking the rendered data-task-id row for the direct Child.
         var response = await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "child-of-demo" } });
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var body = (await ReadJsonResponseAsync(response)).Body;
         var members = body.RootElement.GetProperty("members");
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);

@@ -24,7 +24,7 @@ namespace Glasswork.CanvasHost.Tests;
 /// without becoming flaky on a loaded CI machine.
 /// </summary>
 [TestClass]
-public sealed class PerformanceBoundaryTests
+public sealed class PerformanceBoundaryTests : CanvasHostTestBase
 {
     private static readonly TimeSpan ResponsivenessBound = TimeSpan.FromSeconds(3);
 
@@ -63,7 +63,7 @@ public sealed class PerformanceBoundaryTests
         await AssertRespondsWithin("refreshing all members", () => client.PostAsync($"{host.Url}/api/tasks/refresh-all", null));
 
         var finalState = await client.GetAsync($"{host.Url}/api/tasks");
-        using var body = JsonDocument.Parse(await finalState.Content.ReadAsStringAsync());
+        using var body = (await ReadJsonResponseAsync(finalState)).Body;
         Assert.AreEqual(20, body.RootElement.GetProperty("members").GetArrayLength(), "the full rail must remain intact after the responsiveness pass");
     }
 }

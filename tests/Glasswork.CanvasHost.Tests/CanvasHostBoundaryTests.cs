@@ -7,7 +7,7 @@ using static Glasswork.CanvasHost.Tests.CanvasHostTestSupport;
 namespace Glasswork.CanvasHost.Tests;
 
 [TestClass]
-public sealed class CanvasHostBoundaryTests
+public sealed class CanvasHostBoundaryTests : CanvasHostTestBase
 {
     [TestMethod]
     public async Task Host_UsesLoopbackEphemeralPortAndServesProjection()
@@ -38,7 +38,8 @@ public sealed class CanvasHostBoundaryTests
 
         Assert.AreEqual(HttpStatusCode.Unauthorized, unauthorized.StatusCode);
         Assert.AreEqual(HttpStatusCode.OK, empty.StatusCode);
-        Assert.AreEqual("empty", JsonDocument.Parse(await empty.Content.ReadAsStringAsync()).RootElement.GetProperty("kind").GetString());
+        using var emptyBody = (await ReadJsonResponseAsync(empty)).Body;
+        Assert.AreEqual("empty", emptyBody.RootElement.GetProperty("kind").GetString());
     }
 
     [TestMethod]
@@ -68,7 +69,7 @@ public sealed class CanvasHostBoundaryTests
         using var client = AuthorizedClient("credential-artifacts");
 
         var response = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var body = (await ReadJsonResponseAsync(response)).Body;
         var rows = body.RootElement.GetProperty("projection").GetProperty("artifactRows");
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
@@ -151,7 +152,8 @@ public sealed class CanvasHostBoundaryTests
             new { taskId = "demo", name = "report.html", operation = "open_in_obsidian" });
 
         Assert.AreEqual(HttpStatusCode.BadRequest, unsafeLaunch.StatusCode);
-        Assert.AreEqual("launch_denied", JsonDocument.Parse(await unsafeLaunch.Content.ReadAsStringAsync()).RootElement.GetProperty("code").GetString());
+        using var unsafeLaunchBody = (await ReadJsonResponseAsync(unsafeLaunch)).Body;
+        Assert.AreEqual("launch_denied", unsafeLaunchBody.RootElement.GetProperty("code").GetString());
         Assert.AreEqual(HttpStatusCode.NotFound, invalidReference.StatusCode);
         Assert.AreEqual(HttpStatusCode.BadRequest, wrongObsidianKind.StatusCode);
     }
@@ -185,7 +187,8 @@ public sealed class CanvasHostBoundaryTests
             var response = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
 
             Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-            Assert.AreEqual("task", JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("kind").GetString());
+            using var body = (await ReadJsonResponseAsync(response)).Body;
+            Assert.AreEqual("task", body.RootElement.GetProperty("kind").GetString());
         }
         finally
         {
@@ -217,7 +220,7 @@ public sealed class CanvasHostBoundaryTests
             using var client = AuthorizedClient("credential-drift");
 
             var stateResponse = await client.GetAsync($"{host.Url}/canvas-state");
-            using var stateBody = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync());
+            using var stateBody = (await ReadJsonResponseAsync(stateResponse)).Body;
             var canvasResponse = await client.GetAsync($"{host.Url}/canvas?task_id=demo");
             var html = await canvasResponse.Content.ReadAsStringAsync();
 
@@ -257,7 +260,7 @@ public sealed class CanvasHostBoundaryTests
             using var client = AuthorizedClient("credential-no-drift");
 
             var stateResponse = await client.GetAsync($"{host.Url}/canvas-state");
-            using var stateBody = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync());
+            using var stateBody = (await ReadJsonResponseAsync(stateResponse)).Body;
 
             Assert.IsFalse(stateBody.RootElement.GetProperty("driftDetected").GetBoolean());
         }
