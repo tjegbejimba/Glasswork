@@ -26,6 +26,9 @@ function Get-RequiredNativeOutputLine {
 function Test-ReleaseScheduleGate {
     param(
         [Parameter(Mandatory = $true)]
+        [string]$ScheduledCron,
+
+        [Parameter(Mandatory = $true)]
         [datetime]$UtcNow
     )
 
@@ -56,11 +59,18 @@ function Test-ReleaseScheduleGate {
     else {
         $UtcNow
     }
-    $pacificNow = [System.TimeZoneInfo]::ConvertTimeFromUtc($utc, $timeZone)
-    return $pacificNow.DayOfWeek -notin @(
-        [System.DayOfWeek]::Saturday,
-        [System.DayOfWeek]::Sunday
-    ) -and $pacificNow.Hour -eq 9
+    $normalizedCron = ($ScheduledCron -replace '\s+', ' ').Trim()
+    if ($normalizedCron -notin @("0 16 * * 1-5", "0 17 * * 1-5")) {
+        throw "Unexpected release schedule cron '$ScheduledCron'."
+    }
+
+    $utcOffsetHours = [int]($timeZone.GetUtcOffset($utc).TotalHours)
+    $expectedUtcHour = 9 - $utcOffsetHours
+    if ($expectedUtcHour -notin @(16, 17)) {
+        throw "Unexpected America/Los_Angeles UTC offset '$utcOffsetHours'."
+    }
+
+    return $normalizedCron -eq "0 $expectedUtcHour * * 1-5"
 }
 
 function Get-LatestPublishedReleaseTag {

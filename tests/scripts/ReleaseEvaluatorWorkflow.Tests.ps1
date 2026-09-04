@@ -15,6 +15,8 @@ Describe "Release evaluator workflow" {
         $workflow | Should -Match "'0 16 \* \* 1-5'"
         $workflow | Should -Match "'0 17 \* \* 1-5'"
         $workflow | Should -Match "Test-ReleaseScheduleGate"
+        $workflow | Should -Match 'SCHEDULE: \$\{\{ github\.event\.schedule \}\}'
+        $workflow | Should -Match '-ScheduledCron \$env:SCHEDULE'
         $workflow | Should -Match "force_evaluate"
         $workflow | Should -Match "dry_run"
     }

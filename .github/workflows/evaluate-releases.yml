@@ -45,12 +45,15 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           FORCE_EVALUATE: ${{ inputs.force_evaluate }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
           $ErrorActionPreference = "Stop"
           . .\scripts\ReleaseAutomation.ps1
           $shouldRun = $env:EVENT_NAME -eq "workflow_dispatch" -or
               $env:FORCE_EVALUATE -eq "true" -or
-              (Test-ReleaseScheduleGate -UtcNow ([datetime]::UtcNow))
+              (Test-ReleaseScheduleGate `
+                  -ScheduledCron $env:SCHEDULE `
+                  -UtcNow ([datetime]::UtcNow))
           $candidate = (& git rev-parse HEAD).Trim()
           "candidate_sha=$candidate" >> $env:GITHUB_OUTPUT
           "should_run=$($shouldRun.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
