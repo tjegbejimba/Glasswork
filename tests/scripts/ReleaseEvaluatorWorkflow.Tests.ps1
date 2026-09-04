@@ -92,12 +92,19 @@ Describe "Release evaluator workflow" {
         $workflow | Should -Match "RecordFailure"
         $workflow | Should -Match "CloseBlocker"
         $workflow | Should -Match "actions/upload-artifact@v4"
+        $workflow | Should -Match '\$env:RUNNER_TEMP[\\/]release-plan-app\.json'
+        $workflow | Should -Match '\$env:RUNNER_TEMP[\\/]release-notes-prompt-app\.txt'
+        $workflow | Should -Match '\$env:RUNNER_TEMP[\\/]release-error-app\.txt'
+        $workflow | Should -Match '\$env:RUNNER_TEMP[\\/]release-plan-mcp\.json'
+        $workflow | Should -Match '\$env:RUNNER_TEMP[\\/]release-notes-prompt-mcp\.txt'
+        $workflow | Should -Match '\$env:RUNNER_TEMP[\\/]release-error-mcp\.txt'
+        $workflow | Should -Not -Match '(?m)^\s+-PlanPath artifacts[\\/]'
+        $workflow | Should -Not -Match '(?m)^\s+-PromptPath artifacts[\\/]'
+        $workflow | Should -Not -Match '(?m)^\s+-FailurePath artifacts[\\/]'
         ([regex]::Matches(
                 $workflow,
                 "(?s)- name: Upload (?:App|MCP) Release plan\s+if: always\(\)")).Count |
             Should -Be 2
-        $workflow | Should -Match "artifacts/release-error-app\.txt"
-        $workflow | Should -Match "artifacts/release-error-mcp\.txt"
         $workflow | Should -Match "if-no-files-found: warn"
         $workflow | Should -Match "retention-days: 90"
         $workflow | Should -Match "GITHUB_STEP_SUMMARY"

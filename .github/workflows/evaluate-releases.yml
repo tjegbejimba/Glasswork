@@ -102,9 +102,9 @@ jobs:
               -Stream App `
               -Repository $env:GITHUB_REPOSITORY `
               -CandidateSha $env:CANDIDATE_SHA `
-              -PlanPath artifacts\release-plan-app.json `
-              -PromptPath artifacts\release-notes-prompt-app.txt `
-              -FailurePath artifacts\release-error-app.txt `
+              -PlanPath "$env:RUNNER_TEMP/release-plan-app.json" `
+              -PromptPath "$env:RUNNER_TEMP/release-notes-prompt-app.txt" `
+              -FailurePath "$env:RUNNER_TEMP/release-error-app.txt" `
               -SummaryPath $env:GITHUB_STEP_SUMMARY `
               -DryRun:$dryRun `
               -ForceEvaluate:($env:FORCE_EVALUATE -eq "true")
@@ -120,7 +120,7 @@ jobs:
         continue-on-error: true
         uses: actions/ai-inference@2c43c91ae16266ca159d311430343c67a5ffa222 # v3
         with:
-          prompt-file: artifacts/release-notes-prompt-app.txt
+          prompt-file: ${{ runner.temp }}/release-notes-prompt-app.txt
           model: gpt-5.6-luna
           provider: copilot
           system-prompt: >-
@@ -145,9 +145,9 @@ jobs:
               -Stream App `
               -Repository $env:GITHUB_REPOSITORY `
               -CandidateSha $env:CANDIDATE_SHA `
-              -PlanPath artifacts\release-plan-app.json `
+              -PlanPath "$env:RUNNER_TEMP/release-plan-app.json" `
               -AiResponsePath $env:AI_RESPONSE_FILE `
-              -FailurePath artifacts\release-error-app.txt `
+              -FailurePath "$env:RUNNER_TEMP/release-error-app.txt" `
               -SummaryPath $env:GITHUB_STEP_SUMMARY `
               -AppSlug $env:APP_SLUG
 
@@ -180,7 +180,7 @@ jobs:
               -Stream App `
               -Repository $env:GITHUB_REPOSITORY `
               -BlockerStage Evaluation `
-              -FailurePath artifacts\release-error-app.txt `
+              -FailurePath "$env:RUNNER_TEMP/release-error-app.txt" `
               -SummaryPath $env:GITHUB_STEP_SUMMARY
 
       - name: Upload App Release plan
@@ -189,8 +189,8 @@ jobs:
         with:
           name: release-plan-app
           path: |
-            artifacts/release-plan-app.json
-            artifacts/release-error-app.txt
+            ${{ runner.temp }}/release-plan-app.json
+            ${{ runner.temp }}/release-error-app.txt
           if-no-files-found: warn
           retention-days: 90
 
@@ -233,9 +233,9 @@ jobs:
               -Stream Mcp `
               -Repository $env:GITHUB_REPOSITORY `
               -CandidateSha $env:CANDIDATE_SHA `
-              -PlanPath artifacts\release-plan-mcp.json `
-              -PromptPath artifacts\release-notes-prompt-mcp.txt `
-              -FailurePath artifacts\release-error-mcp.txt `
+              -PlanPath "$env:RUNNER_TEMP/release-plan-mcp.json" `
+              -PromptPath "$env:RUNNER_TEMP/release-notes-prompt-mcp.txt" `
+              -FailurePath "$env:RUNNER_TEMP/release-error-mcp.txt" `
               -SummaryPath $env:GITHUB_STEP_SUMMARY `
               -DryRun:$dryRun `
               -ForceEvaluate:($env:FORCE_EVALUATE -eq "true")
@@ -251,7 +251,7 @@ jobs:
         continue-on-error: true
         uses: actions/ai-inference@2c43c91ae16266ca159d311430343c67a5ffa222 # v3
         with:
-          prompt-file: artifacts/release-notes-prompt-mcp.txt
+          prompt-file: ${{ runner.temp }}/release-notes-prompt-mcp.txt
           model: gpt-5.6-luna
           provider: copilot
           system-prompt: >-
@@ -276,9 +276,9 @@ jobs:
               -Stream Mcp `
               -Repository $env:GITHUB_REPOSITORY `
               -CandidateSha $env:CANDIDATE_SHA `
-              -PlanPath artifacts\release-plan-mcp.json `
+              -PlanPath "$env:RUNNER_TEMP/release-plan-mcp.json" `
               -AiResponsePath $env:AI_RESPONSE_FILE `
-              -FailurePath artifacts\release-error-mcp.txt `
+              -FailurePath "$env:RUNNER_TEMP/release-error-mcp.txt" `
               -SummaryPath $env:GITHUB_STEP_SUMMARY `
               -AppSlug $env:APP_SLUG
 
@@ -311,7 +311,7 @@ jobs:
               -Stream Mcp `
               -Repository $env:GITHUB_REPOSITORY `
               -BlockerStage Evaluation `
-              -FailurePath artifacts\release-error-mcp.txt `
+              -FailurePath "$env:RUNNER_TEMP/release-error-mcp.txt" `
               -SummaryPath $env:GITHUB_STEP_SUMMARY
 
       - name: Upload MCP Release plan
@@ -320,7 +320,7 @@ jobs:
         with:
           name: release-plan-mcp
           path: |
-            artifacts/release-plan-mcp.json
-            artifacts/release-error-mcp.txt
+            ${{ runner.temp }}/release-plan-mcp.json
+            ${{ runner.temp }}/release-error-mcp.txt
           if-no-files-found: warn
           retention-days: 90
