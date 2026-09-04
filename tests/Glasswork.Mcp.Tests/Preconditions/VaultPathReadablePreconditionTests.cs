@@ -14,7 +14,7 @@ public sealed class VaultPathReadablePreconditionTests
         var result = precondition.Evaluate();
 
         Assert.IsFalse(result.IsOk);
-        Assert.IsTrue(!string.IsNullOrWhiteSpace(result.Reason));
+        Assert.IsFalse(string.IsNullOrWhiteSpace(result.Reason));
     }
 
     [TestMethod]

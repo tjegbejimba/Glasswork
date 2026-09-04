@@ -58,14 +58,14 @@ public class DeleteSubtaskToolTests
         // Assert: Returns updated subtask list
         var doc = JsonDocument.Parse(json);
         var subtasks = doc.RootElement.GetProperty("subtasks").EnumerateArray().ToList();
-        Assert.AreEqual(2, subtasks.Count, "Must return updated subtask list");
+        Assert.HasCount(2, subtasks, "Must return updated subtask list");
         Assert.AreEqual("keep me", subtasks[0].GetProperty("text").GetString());
         Assert.AreEqual("also keep", subtasks[1].GetProperty("text").GetString());
         Assert.AreEqual("future_bucket", subtasks[1].GetProperty("size").GetString());
 
         // Assert: Subtask removed from disk
         var reloaded = _vault.Load("parent-del")!;
-        Assert.AreEqual(2, reloaded.Subtasks.Count, "Subtask must be persisted on disk");
+        Assert.HasCount(2, reloaded.Subtasks, "Subtask must be persisted on disk");
         Assert.IsFalse(reloaded.Subtasks.Any(s => s.Text == "delete me"), "Deleted subtask must not exist");
         Assert.AreEqual("future_bucket", reloaded.Subtasks[1].Size);
     }
@@ -148,7 +148,7 @@ public class DeleteSubtaskToolTests
 
         var markerFile = Path.Combine(TasksDir, ".glasswork", "recent-writes.json");
         var markerContent = File.ReadAllText(markerFile);
-        
+
         StringAssert.Contains(markerContent, "parent-task.md",
             "Marker must contain parent task (rewrite)");
     }

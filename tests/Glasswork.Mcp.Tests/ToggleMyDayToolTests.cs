@@ -69,7 +69,7 @@ public class ToggleMyDayToolTests
         var json = JsonSerializer.Deserialize<JsonElement>(result);
         Assert.AreEqual(taskId, json.GetProperty("task_id").GetString());
         Assert.AreEqual("Clear Task", json.GetProperty("title").GetString());
-        Assert.AreEqual(false, json.GetProperty("in_my_day").GetBoolean());
+        Assert.IsFalse(json.GetProperty("in_my_day").GetBoolean());
 
         // Assert: vault file no longer has my_day
         var task = _vault.Load(taskId);
@@ -93,7 +93,7 @@ public class ToggleMyDayToolTests
         // Arrange: task with due date today (virtual promotion) AND direct my_day pin
         var addJson = _tools.AddTask("Task with due date");
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
-        
+
         // Manually add due: today to the task file (insert before closing ---)
         var taskPath = Path.Combine(TasksDir, $"{taskId}.md");
         var lines = File.ReadAllLines(taskPath).ToList();
@@ -103,7 +103,7 @@ public class ToggleMyDayToolTests
             lines.Insert(closingIdx, $"due: {DateTime.Today:yyyy-MM-dd}");
             File.WriteAllLines(taskPath, lines);
         }
-        
+
         _vault.SetMyDay(taskId, DateTime.Today);
 
         // Act: remove direct pin
@@ -112,7 +112,7 @@ public class ToggleMyDayToolTests
         // Assert: in_my_day is still true (promoted by due date)
         var json = JsonSerializer.Deserialize<JsonElement>(result);
         Assert.AreEqual(taskId, json.GetProperty("task_id").GetString());
-        Assert.IsTrue(json.GetProperty("in_my_day").GetBoolean(), 
+        Assert.IsTrue(json.GetProperty("in_my_day").GetBoolean(),
             "Task should still be in My Day (promoted by due date) even after removing direct pin.");
 
         // Verify vault file: my_day field removed, but due remains

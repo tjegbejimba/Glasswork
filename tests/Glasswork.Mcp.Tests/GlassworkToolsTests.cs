@@ -177,7 +177,7 @@ public class GlassworkToolsTests
 
         Assert.AreEqual($"{taskId}.md", path,
             "add_task must return a todo-relative path of the form '<id>.md'.");
-        Assert.IsFalse(path.Contains('\\'), "Path must not contain backslashes.");
+        Assert.DoesNotContain('\\', path, "Path must not contain backslashes.");
         Assert.IsFalse(Path.IsPathRooted(path), "Path must not be absolute.");
     }
 
@@ -274,7 +274,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("Regular Task", type: "task");
         var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
         var task = _vault.Load(taskId);
-        
+
         Assert.IsNotNull(task);
         Assert.AreEqual("task", task.Type);
     }
@@ -285,7 +285,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("Product Backlog Item", type: "pbi");
         var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
         var task = _vault.Load(taskId);
-        
+
         Assert.IsNotNull(task);
         Assert.AreEqual("pbi", task.Type);
     }
@@ -296,7 +296,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("Fix the crash", type: "bug");
         var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
         var task = _vault.Load(taskId);
-        
+
         Assert.IsNotNull(task);
         Assert.AreEqual("bug", task.Type);
     }
@@ -307,7 +307,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("User Story", type: "Product Backlog Item");
         var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
         var task = _vault.Load(taskId);
-        
+
         Assert.IsNotNull(task);
         Assert.AreEqual("pbi", task.Type);
     }
@@ -318,7 +318,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("User Story", type: "User Story");
         var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
         var task = _vault.Load(taskId);
-        
+
         Assert.IsNotNull(task);
         Assert.AreEqual("pbi", task.Type);
     }
@@ -329,7 +329,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("Epic", type: "Epic");
         var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
         var task = _vault.Load(taskId);
-        
+
         Assert.IsNotNull(task);
         Assert.AreEqual("pbi", task.Type);
     }
@@ -340,7 +340,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("Feature", type: "Feature");
         var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
         var task = _vault.Load(taskId);
-        
+
         Assert.IsNotNull(task);
         Assert.AreEqual("pbi", task.Type);
     }
@@ -351,7 +351,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("No Type Specified");
         var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
         var task = _vault.Load(taskId);
-        
+
         Assert.IsNotNull(task);
         Assert.AreEqual("task", task.Type);
     }
@@ -362,7 +362,7 @@ public class GlassworkToolsTests
         var json = _tools.AddTask("Invalid Type", type: "invalid-type");
         var taskId = JsonDocument.Parse(json).RootElement.GetProperty("task_id").GetString()!;
         var task = _vault.Load(taskId);
-        
+
         Assert.IsNotNull(task);
         Assert.AreEqual("task", task.Type);
     }
@@ -485,8 +485,8 @@ public class GlassworkToolsTests
         var json = _tools.ListTasks();
         var task = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
 
-        Assert.AreEqual(true, task.GetProperty("ready").GetBoolean());
-        Assert.IsTrue(task.GetProperty("urgency_score").GetDouble() > 0);
+        Assert.IsTrue(task.GetProperty("ready").GetBoolean());
+        Assert.IsGreaterThan(0, task.GetProperty("urgency_score").GetDouble());
     }
 
     [TestMethod]
@@ -623,7 +623,7 @@ public class GlassworkToolsTests
             var path = tasks[i].GetProperty("path").GetString()!;
             Assert.AreEqual($"{id}.md", path,
                 "list_tasks summary path must be todo-relative.");
-            Assert.IsFalse(path.Contains('\\'), "Path must not contain backslashes.");
+            Assert.DoesNotContain('\\', path, "Path must not contain backslashes.");
         }
     }
 
@@ -886,8 +886,8 @@ public class GlassworkToolsTests
         var json = _tools.SearchTasks("batch");
         var task = JsonDocument.Parse(json).RootElement.GetProperty("tasks")[0];
 
-        Assert.AreEqual(true, task.GetProperty("ready").GetBoolean());
-        Assert.IsTrue(task.GetProperty("urgency_score").GetDouble() > 0);
+        Assert.IsTrue(task.GetProperty("ready").GetBoolean());
+        Assert.IsGreaterThan(0, task.GetProperty("urgency_score").GetDouble());
     }
 
     [TestMethod]
@@ -913,7 +913,7 @@ public class GlassworkToolsTests
         Assert.AreEqual("doing", tasks[0].GetProperty("status").GetString());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("todo", "todo")]
     [DataRow("Done", "done")]
     [DataRow(" done ", "done")]
@@ -1127,7 +1127,7 @@ public class GlassworkToolsTests
         var json = _tools.GetTask(taskId);
         var path = JsonDocument.Parse(json).RootElement.GetProperty("artifacts")[0].GetProperty("path").GetString()!;
 
-        Assert.IsFalse(path.Contains('\\'), "Artifact path must not contain backslashes.");
+        Assert.DoesNotContain('\\', path, "Artifact path must not contain backslashes.");
     }
 
     [TestMethod]
@@ -1231,7 +1231,7 @@ public class GlassworkToolsTests
         var path = JsonDocument.Parse(json).RootElement.GetProperty("path").GetString()!;
 
         Assert.AreEqual($"{taskId}.artifacts/notes.md", path);
-        Assert.IsFalse(path.Contains('\\'), "Path must not contain backslashes.");
+        Assert.DoesNotContain('\\', path, "Path must not contain backslashes.");
     }
 
     [TestMethod]
@@ -1584,7 +1584,7 @@ public class GlassworkToolsTests
         var doc = JsonDocument.Parse(json);
 
         var artifacts = doc.RootElement.GetProperty("artifacts").EnumerateArray().ToList();
-        Assert.AreEqual(2, artifacts.Count);
+        Assert.HasCount(2, artifacts);
 
         var notes = artifacts[0];
         Assert.AreEqual("notes.md", notes.GetProperty("filename").GetString());
@@ -1607,7 +1607,7 @@ public class GlassworkToolsTests
         var doc = JsonDocument.Parse(json);
 
         var artifacts = doc.RootElement.GetProperty("artifacts").EnumerateArray().ToList();
-        Assert.AreEqual(1, artifacts.Count);
+        Assert.HasCount(1, artifacts);
 
         var plan = artifacts[0];
         Assert.AreEqual("plan.md", plan.GetProperty("filename").GetString());
@@ -1627,7 +1627,7 @@ public class GlassworkToolsTests
         var doc = JsonDocument.Parse(json);
 
         var artifacts = doc.RootElement.GetProperty("artifacts").EnumerateArray().ToList();
-        Assert.AreEqual(1, artifacts.Count);
+        Assert.HasCount(1, artifacts);
 
         var plan = artifacts[0];
         Assert.AreEqual("plan.md", plan.GetProperty("filename").GetString());
@@ -1793,7 +1793,7 @@ public class GlassworkToolsTests
 
         var updated = _vault.Load(taskId)!;
         Assert.AreEqual("Existing notes\n\nAppended text", updated.Notes);
-        Assert.IsFalse(updated.Notes.Contains("\n\n\n"));
+        Assert.DoesNotContain("\n\n\n", updated.Notes);
         CollectionAssert.AreEqual(new[] { "notes" }, UpdatedFieldsFrom(updateJson));
     }
 
@@ -2002,7 +2002,7 @@ public class GlassworkToolsTests
 
         var updatedFields = UpdatedFieldsFrom(updateJson);
         CollectionAssert.Contains(updatedFields, "due_date");
-        
+
         var reloaded = _vault.Load(taskId);
         Assert.IsNotNull(reloaded);
         Assert.IsNotNull(reloaded.Due);
@@ -2019,7 +2019,7 @@ public class GlassworkToolsTests
 
         var updatedFields = UpdatedFieldsFrom(updateJson);
         CollectionAssert.Contains(updatedFields, "due_date");
-        
+
         var reloaded = _vault.Load(taskId);
         Assert.IsNotNull(reloaded);
         Assert.IsNull(reloaded.Due);
@@ -2035,7 +2035,7 @@ public class GlassworkToolsTests
 
         var updatedFields = UpdatedFieldsFrom(updateJson);
         CollectionAssert.Contains(updatedFields, "scheduled");
-        
+
         var reloaded = _vault.Load(taskId);
         Assert.IsNotNull(reloaded);
         Assert.IsNotNull(reloaded.MyDay);
@@ -2052,7 +2052,7 @@ public class GlassworkToolsTests
 
         var updatedFields = UpdatedFieldsFrom(updateJson);
         CollectionAssert.Contains(updatedFields, "scheduled");
-        
+
         var reloaded = _vault.Load(taskId);
         Assert.IsNotNull(reloaded);
         Assert.IsNull(reloaded.MyDay);
@@ -2068,7 +2068,7 @@ public class GlassworkToolsTests
 
         var doc = JsonDocument.Parse(updateJson);
         Assert.AreEqual("invalid_due_date", doc.RootElement.GetProperty("error").GetString());
-        Assert.IsTrue(doc.RootElement.GetProperty("message").GetString()!.Contains("yyyy-MM-dd"));
+        Assert.Contains("yyyy-MM-dd", doc.RootElement.GetProperty("message").GetString()!);
     }
 
     [TestMethod]
@@ -2081,7 +2081,7 @@ public class GlassworkToolsTests
 
         var doc = JsonDocument.Parse(updateJson);
         Assert.AreEqual("invalid_scheduled", doc.RootElement.GetProperty("error").GetString());
-        Assert.IsTrue(doc.RootElement.GetProperty("message").GetString()!.Contains("yyyy-MM-dd"));
+        Assert.Contains("yyyy-MM-dd", doc.RootElement.GetProperty("message").GetString()!);
     }
 
     [TestMethod]
@@ -2137,7 +2137,7 @@ public class GlassworkToolsTests
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
 
         var updateJson = UpdateTask(taskId, """{ "type": "Product Backlog Item" }""");
-        
+
         var task = _vault.Load(taskId);
         Assert.AreEqual("pbi", task!.Type);
     }
@@ -2149,7 +2149,7 @@ public class GlassworkToolsTests
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
 
         var updateJson = UpdateTask(taskId, """{ "type": "User Story" }""");
-        
+
         var task = _vault.Load(taskId);
         Assert.AreEqual("pbi", task!.Type);
     }
@@ -2161,7 +2161,7 @@ public class GlassworkToolsTests
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
 
         var updateJson = UpdateTask(taskId, """{ "type": "Epic" }""");
-        
+
         var task = _vault.Load(taskId);
         Assert.AreEqual("pbi", task!.Type);
     }
@@ -2173,7 +2173,7 @@ public class GlassworkToolsTests
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
 
         var updateJson = UpdateTask(taskId, """{ "type": "Feature" }""");
-        
+
         var task = _vault.Load(taskId);
         Assert.AreEqual("pbi", task!.Type);
     }
@@ -2185,7 +2185,7 @@ public class GlassworkToolsTests
         var taskId = JsonDocument.Parse(addJson).RootElement.GetProperty("task_id").GetString()!;
 
         var updateJson = UpdateTask(taskId, """{ "type": "invalid-type" }""");
-        
+
         var task = _vault.Load(taskId);
         Assert.AreEqual("task", task!.Type);
     }
@@ -2261,7 +2261,7 @@ public class GlassworkToolsTests
         var json = _tools.LoadContext(taskId);
         var path = JsonDocument.Parse(json).RootElement.GetProperty("artifacts")[0].GetProperty("path").GetString()!;
 
-        Assert.IsFalse(path.Contains('\\'),
+        Assert.DoesNotContain('\\', path,
             "load_context artifact path must use forward slashes only.");
     }
 
@@ -2280,7 +2280,7 @@ public class GlassworkToolsTests
         var sourcePath = JsonDocument.Parse(json).RootElement
             .GetProperty("backlinks")[0].GetProperty("source_path").GetString()!;
 
-        Assert.IsFalse(sourcePath.Contains('\\'),
+        Assert.DoesNotContain('\\', sourcePath,
             "Backlink source_path must use forward slashes only.");
     }
 
@@ -2476,7 +2476,7 @@ This concept references [[{taskId}]].
 
         var first = backlinks[0];
         Assert.IsTrue(first.TryGetProperty("linking_page_path", out var path));
-        Assert.IsTrue(path.GetString()!.Contains("wiki/concepts/foo.md"));
+        Assert.Contains("wiki/concepts/foo.md", path.GetString()!);
         Assert.IsTrue(first.TryGetProperty("linking_page_title", out var title));
         Assert.AreEqual("Foo Concept", title.GetString());
         Assert.IsTrue(first.TryGetProperty("page_type", out var pageType));
@@ -2554,13 +2554,13 @@ References [[{taskId}]].
         //         grandparent -> parent2
         var grandparentJson = _tools.AddTask("Grandparent");
         var grandparentId = JsonDocument.Parse(grandparentJson).RootElement.GetProperty("task_id").GetString()!;
-        
+
         var parent1Json = _tools.AddTask("Parent 1", parent_task_id: grandparentId);
         var parent1Id = JsonDocument.Parse(parent1Json).RootElement.GetProperty("task_id").GetString()!;
-        
+
         var parent2Json = _tools.AddTask("Parent 2", parent_task_id: grandparentId);
         var parent2Id = JsonDocument.Parse(parent2Json).RootElement.GetProperty("task_id").GetString()!;
-        
+
         var childJson = _tools.AddTask("Child", parent_task_id: parent1Id);
         var childId = JsonDocument.Parse(childJson).RootElement.GetProperty("task_id").GetString()!;
 
@@ -2597,7 +2597,7 @@ References [[{taskId}]].
 
         // Assert: Should reject with circular_parent error
         Assert.AreEqual("circular_parent", result.RootElement.GetProperty("error").GetString());
-        Assert.IsTrue(result.RootElement.GetProperty("message").GetString()!.Contains("circular"));
+        Assert.Contains("circular", result.RootElement.GetProperty("message").GetString()!);
 
         // Verify parent wasn't changed
         var grandparent = _vault.Load(grandparentId)!;
@@ -2720,7 +2720,7 @@ References [[{taskId}]].
 
         // Verify the subtask was marked done AND checkbox is checked
         var reloaded = _vault.Load(task.Id)!;
-        Assert.AreEqual(2, reloaded.Subtasks.Count);
+        Assert.HasCount(2, reloaded.Subtasks);
         Assert.AreEqual("done", reloaded.Subtasks[0].Status);
         Assert.IsTrue(reloaded.Subtasks[0].IsCompleted, "status: done should check the box (IsCompleted=true)");
     }

@@ -262,7 +262,7 @@ public sealed class TransactTasksTests
         Assert.AreEqual("future_bucket", vault.Load("preserve-unknown-size")!.Subtasks[0].Size);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("""
         [
           { "text": "Known step", "size": "quick" },
@@ -837,10 +837,9 @@ public sealed class TransactTasksTests
 
         Assert.AreEqual("Conditioned task", result.GetProperty("title").GetString());
         Assert.IsFalse(File.Exists(journalPath));
-        Assert.IsTrue(Directory.GetFiles(
-                Path.GetDirectoryName(journalPath)!,
-                "mutation-journal.json.corrupt-*")
-            .Length > 0);
+        Assert.IsNotEmpty(Directory.GetFiles(
+            Path.GetDirectoryName(journalPath)!,
+            "mutation-journal.json.corrupt-*"));
     }
 
     [TestMethod]
@@ -978,9 +977,8 @@ public sealed class TransactTasksTests
         var result = JsonDocument.Parse(_tools.TransactTasks("graph-4", operations.RootElement)).RootElement;
 
         Assert.AreEqual("validation_error", result.GetProperty("error").GetString());
-        Assert.AreEqual(
-            0,
-            Directory.GetFiles(Path.Combine(_vaultDir, "wiki", "todo"), "*.md").Length);
+        Assert.IsEmpty(
+            Directory.GetFiles(Path.Combine(_vaultDir, "wiki", "todo"), "*.md"));
         CollectionAssert.Contains(
             result.GetProperty("diagnostics").EnumerateArray().Select(item => item.GetProperty("code").GetString()).ToArray(),
             "dependency_cycle");

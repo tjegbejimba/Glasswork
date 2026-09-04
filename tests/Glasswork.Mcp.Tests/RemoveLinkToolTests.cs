@@ -46,17 +46,17 @@ public class RemoveLinkToolTests
         // Assert: response shape
         var doc = JsonDocument.Parse(removeJson);
         Assert.AreEqual(taskId, doc.RootElement.GetProperty("task_id").GetString());
-        
+
         var removedLink = doc.RootElement.GetProperty("link");
         Assert.AreEqual("pr", removedLink.GetProperty("type").GetString());
         Assert.AreEqual("https://github.com/owner/repo/pull/123", removedLink.GetProperty("url").GetString());
         Assert.AreEqual("Fix bug", removedLink.GetProperty("title").GetString());
-        
+
         Assert.AreEqual(0, doc.RootElement.GetProperty("total_links").GetInt32());
 
         // Assert: vault file has no links
         var task = _vault.Load(taskId);
-        Assert.AreEqual(0, task!.Links.Count, "Task must have no links after removal.");
+        Assert.IsEmpty(task!.Links, "Task must have no links after removal.");
     }
 
     [TestMethod]
@@ -78,7 +78,7 @@ public class RemoveLinkToolTests
 
         // Assert: vault file preserves order
         var task = _vault.Load(taskId);
-        Assert.AreEqual(2, task!.Links.Count);
+        Assert.HasCount(2, task!.Links);
         Assert.AreEqual("pr", task.Links[0].Type);
         Assert.AreEqual("https://pr1", task.Links[0].Value);
         Assert.AreEqual("doc", task.Links[1].Type);
@@ -132,7 +132,7 @@ public class RemoveLinkToolTests
         Assert.AreEqual(1, doc.RootElement.GetProperty("total_links").GetInt32());
 
         var task = _vault.Load(taskId);
-        Assert.AreEqual(1, task!.Links.Count);
+        Assert.HasCount(1, task!.Links);
         Assert.AreEqual("doc", task.Links[0].Type);
     }
 
