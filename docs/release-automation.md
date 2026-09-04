@@ -5,6 +5,11 @@ America/Los_Angeles. The evaluator creates narrow Release PRs, enables
 auto-merge through normal protection, and dispatches publication at the exact
 merge commit. See ADR 0025.
 
+GitHub may start scheduled workflows hours after their cron slot. The evaluator
+therefore selects the active daylight/standard-time cron from
+`github.event.schedule`; it does not require the runner to start during the
+Pacific 09:00 hour.
+
 ## One-time GitHub App setup
 
 Create and install a repository-scoped GitHub App with no protection bypass and

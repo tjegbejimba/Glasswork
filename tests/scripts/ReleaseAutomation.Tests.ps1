@@ -6,23 +6,31 @@ BeforeAll {
 }
 
 Describe "Test-ReleaseScheduleGate" {
-    It "opens during the Pacific 9 AM hour in summer" {
-        Test-ReleaseScheduleGate -UtcNow ([datetime]"2026-07-06T16:37:00Z") |
+    It "opens for the active summer cron even when GitHub starts the run late" {
+        Test-ReleaseScheduleGate `
+            -ScheduledCron "0 16 * * 1-5" `
+            -UtcNow ([datetime]"2026-09-03T19:39:00Z") |
             Should -BeTrue
     }
 
-    It "opens during the Pacific 9 AM hour in winter" {
-        Test-ReleaseScheduleGate -UtcNow ([datetime]"2026-01-05T17:12:00Z") |
+    It "opens for the active winter cron even when GitHub starts the run late" {
+        Test-ReleaseScheduleGate `
+            -ScheduledCron "0 17 * * 1-5" `
+            -UtcNow ([datetime]"2026-01-05T20:12:00Z") |
             Should -BeTrue
     }
 
-    It "stays closed outside the weekday Pacific 9 AM hour" {
-        Test-ReleaseScheduleGate -UtcNow ([datetime]"2026-07-06T17:00:00Z") |
+    It "rejects the inactive DST cron in summer" {
+        Test-ReleaseScheduleGate `
+            -ScheduledCron "0 17 * * 1-5" `
+            -UtcNow ([datetime]"2026-09-03T19:39:00Z") |
             Should -BeFalse
     }
 
-    It "stays closed on weekends" {
-        Test-ReleaseScheduleGate -UtcNow ([datetime]"2026-07-04T16:30:00Z") |
+    It "rejects the inactive DST cron in winter" {
+        Test-ReleaseScheduleGate `
+            -ScheduledCron "0 16 * * 1-5" `
+            -UtcNow ([datetime]"2026-01-05T20:12:00Z") |
             Should -BeFalse
     }
 }

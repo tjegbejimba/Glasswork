@@ -16,7 +16,8 @@ without coupling one stream's recovery to the other.
 
 A repository-owned **Release evaluator** runs at 09:00
 `America/Los_Angeles` on weekdays. Two UTC cron entries cover standard and
-daylight time; an in-workflow timezone guard rejects the inactive entry.
+daylight time; an in-workflow timezone guard uses the triggering cron identity
+to reject the inactive entry, rather than the delayed job start time.
 `workflow_dispatch` supports dry-run and forced evaluation.
 
 The evaluator treats App and MCP as independent state machines:
