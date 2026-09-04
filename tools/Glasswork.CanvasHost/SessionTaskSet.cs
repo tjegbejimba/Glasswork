@@ -17,10 +17,12 @@ internal sealed record SessionTaskMember(
     string StatusLabel,
     bool IsBlocked,
     string Priority,
-    DateTime? Due)
+    DateTime? Due,
+    bool IsStale,
+    string? StaleError)
 {
     public static SessionTaskMember Unavailable(string taskId, string title, string error) =>
-        new(taskId, title, true, error, string.Empty, string.Empty, false, string.Empty, null);
+        new(taskId, title, true, error, string.Empty, string.Empty, false, string.Empty, null, false, null);
 }
 
 /// <summary>Immutable read of the current Session Task Set for one canvas host.</summary>
@@ -29,9 +31,13 @@ internal sealed record SessionTaskSetSnapshot(
     string? SelectedTaskId,
     int Limit,
     string? RestoreErrorCode,
-    string? RestoreErrorMessage);
+    string? RestoreErrorMessage,
+    DateTime? LastUpdatedUtc);
 
 internal sealed record SessionTaskSetResult(bool Ok, string? Code, string? Message, SessionTaskSetSnapshot Snapshot);
+
+/// <summary>Outcome of refreshing one member, used to report Refresh all partial failures per member (issue #560).</summary>
+internal sealed record MemberRefreshOutcome(string TaskId, bool Ok, string? Error);
 
 /// <summary>
 /// The explicit, recency-ordered Session Task Set for one Copilot session's
@@ -65,6 +71,7 @@ internal sealed class SessionTaskSetService
     private string? _selectedTaskId;
     private string? _restoreErrorCode;
     private string? _restoreErrorMessage;
+    private DateTime? _lastUpdatedUtc;
 
     public SessionTaskSetService(TaskDetailProjectionService projections, SessionTaskSetStateStore stateStore, string sessionId)
     {
@@ -93,7 +100,7 @@ internal sealed class SessionTaskSetService
 
         foreach (var persisted in result.Members)
         {
-            _members.Add(BuildMember(persisted.TaskId, persisted.Title));
+            _members.Add(BuildMember(persisted.TaskId, persisted.Title, previous: null));
         }
         // Recency order is preserved as persisted (index 0 = most recent);
         // restoring always selects the most-recent member.
@@ -147,7 +154,8 @@ internal sealed class SessionTaskSetService
             string? lastSuccessful = null;
             foreach (var taskId in requested)
             {
-                var member = BuildMember(taskId);
+                var previous = _members.FirstOrDefault(m => m.TaskId == taskId);
+                var member = BuildMember(taskId, previous?.Title, previous);
                 _members.RemoveAll(m => m.TaskId == taskId);
                 _members.Insert(0, member);
                 if (!member.IsUnavailable) lastSuccessful = taskId;
@@ -214,6 +222,18 @@ internal sealed class SessionTaskSetService
         }
     }
 
+    /// <summary>Whether a Task ID is currently a loaded member (used by the live-refresh coordinator to filter Vault events).</summary>
+    public bool IsMember(string taskId)
+    {
+        lock (_gate) return _members.Any(m => m.TaskId == taskId);
+    }
+
+    /// <summary>The currently-selected Task ID, or null. Read-only — selecting is done through <see cref="Select"/>.</summary>
+    public string? SelectedTaskId
+    {
+        get { lock (_gate) return _selectedTaskId; }
+    }
+
     /// <summary>Re-reads the selected member from the Vault, refreshing or marking it unavailable.</summary>
     public SessionTaskSetResult RefreshSelected()
     {
@@ -226,26 +246,66 @@ internal sealed class SessionTaskSetService
         }
     }
 
-    /// <summary>Re-reads every member from the Vault, preserving order and selection.</summary>
-    public SessionTaskSetResult RefreshAll()
+    /// <summary>
+    /// Re-reads one member from the Vault regardless of selection. Shared by
+    /// the manual per-row Retry action and the debounced live-refresh
+    /// coordinator (issue #560); returns not-found if the id raced an Unload.
+    /// </summary>
+    public SessionTaskSetResult RefreshOne(string taskId)
     {
         lock (_gate)
         {
-            foreach (var taskId in _members.Select(m => m.TaskId).ToList())
-                RefreshMemberLocked(taskId);
+            if (_members.All(m => m.TaskId != taskId))
+                return new(false, "task_not_member", $"'{taskId}' is not a loaded Task.", Copy());
+            RefreshMemberLocked(taskId);
             Persist();
             return new(true, null, null, Copy());
         }
     }
 
-    private void RefreshMemberLocked(string taskId)
+    /// <summary>Re-reads every member from the Vault, preserving order and selection, and reports a per-member outcome for partial-failure display.</summary>
+    public (SessionTaskSetSnapshot Snapshot, IReadOnlyList<MemberRefreshOutcome> Outcomes) RefreshAll()
     {
-        var index = _members.FindIndex(m => m.TaskId == taskId);
-        if (index < 0) return;
-        _members[index] = BuildMember(taskId, _members[index].Title);
+        lock (_gate)
+        {
+            var outcomes = _members.Select(m => m.TaskId).ToList().Select(RefreshMemberLocked).ToList();
+            Persist();
+            return (Copy(), outcomes);
+        }
     }
 
-    private SessionTaskMember BuildMember(string taskId, string? fallbackTitle = null)
+    private MemberRefreshOutcome RefreshMemberLocked(string taskId)
+    {
+        var index = _members.FindIndex(m => m.TaskId == taskId);
+        if (index < 0) return new(taskId, false, "Task is no longer a loaded member.");
+
+        var previous = _members[index];
+        var refreshed = BuildMember(taskId, previous.Title, previous);
+        _members[index] = refreshed;
+        _lastUpdatedUtc = DateTime.UtcNow;
+
+        var ok = !refreshed.IsUnavailable && !refreshed.IsStale;
+        var error = refreshed.IsUnavailable ? refreshed.UnavailableError : refreshed.IsStale ? refreshed.StaleError : null;
+        return new(taskId, ok, error);
+    }
+
+    /// <summary>Records that a background observation pass ran, even when it did not change any member (e.g. an Artifact/Backlink change affecting only the selected Task's full detail, which is rebuilt on every canvas-state poll rather than cached here).</summary>
+    public void TouchLastUpdated()
+    {
+        lock (_gate) _lastUpdatedUtc = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Builds a fresh member. On success, returns live data. When the Task is
+    /// genuinely missing, returns <see cref="SessionTaskMember.Unavailable"/>.
+    /// On any other exception (e.g. a parse failure reading mid an atomic
+    /// external write), a previously-good <paramref name="previous"/> member
+    /// is retained unchanged except for <c>IsStale</c>/<c>StaleError</c> —
+    /// never discarded — so bursts of writes never produce a durable blank
+    /// "success" view (ADR 0026, issue #560). Only when there is no prior
+    /// good data to fall back on does an exception resolve to Unavailable.
+    /// </summary>
+    private SessionTaskMember BuildMember(string taskId, string? fallbackTitle = null, SessionTaskMember? previous = null)
     {
         try
         {
@@ -263,13 +323,17 @@ internal sealed class SessionTaskSetService
                 projection.Status.Label,
                 projection.Status.IsBlocked || projection.OpenBlockers.Count > 0,
                 projection.Priority,
-                projection.Due);
+                projection.Due,
+                false,
+                null);
         }
         catch (Exception ex)
         {
+            if (previous is { IsUnavailable: false })
+                return previous with { IsStale = true, StaleError = ex.Message };
             return SessionTaskMember.Unavailable(taskId, fallbackTitle ?? taskId, ex.Message);
         }
     }
 
-    private SessionTaskSetSnapshot Copy() => new(_members.ToList(), _selectedTaskId, MemberLimit, _restoreErrorCode, _restoreErrorMessage);
+    private SessionTaskSetSnapshot Copy() => new(_members.ToList(), _selectedTaskId, MemberLimit, _restoreErrorCode, _restoreErrorMessage, _lastUpdatedUtc);
 }
