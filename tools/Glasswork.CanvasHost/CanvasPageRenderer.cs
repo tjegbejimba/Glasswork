@@ -36,6 +36,10 @@ details:not([open]) .rail-header,details:not([open]) .rail-list{display:none}
 .chip{border:1px solid var(--border-color-default,#d0d7de);border-radius:999px;padding:0 6px}
 .chip.blocked{color:var(--true-color-red,#cf222e);border-color:var(--true-color-red,#cf222e)}
 .chip.unavailable{color:var(--true-color-red,#cf222e);border-color:var(--true-color-red,#cf222e)}
+.chip.stale{color:var(--true-color-orange,#9a6700);border-color:var(--true-color-orange,#9a6700)}
+.retry-btn{border:1px solid var(--border-color-default,#d0d7de);border-radius:999px;padding:0 8px;background:none;cursor:pointer;font:inherit;color:inherit}
+.rail-updated{margin:0 0 8px;font-size:12px;color:var(--text-color-muted,#656d76)}
+.stale-banner{margin:0 0 12px;padding:10px 12px;border:1px solid var(--true-color-orange,#9a6700);border-radius:8px;background:var(--background-color-attention,#fff8c5);display:flex;align-items:center;justify-content:space-between;gap:12px}
 .remove-btn{border:0;background:none;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:4px}
 .remove-btn:hover{color:var(--true-color-red,#cf222e)}
 .restore-banner{margin:12px;padding:10px 12px;border:1px solid var(--true-color-red,#cf222e);border-radius:8px;background:var(--background-color-subtle,rgba(207,34,46,.08))}
@@ -135,10 +139,18 @@ function renderRailRow(member){
     const due=dueLabel(member.due);
     if(due)meta.append(element("span","chip","Due "+due));
     if(member.isBlocked)meta.append(element("span","chip blocked","Blocked"));
+    if(member.isStale)meta.append(element("span","chip stale","Stale"));
   }
   select.append(meta);
   select.addEventListener("click",()=>selectTask(member.taskId));
   li.append(select);
+  if(member.isStale){
+    const retry=element("button","retry-btn","Retry");
+    retry.type="button";
+    retry.title=member.staleError||"Couldn't refresh this Task.";
+    retry.addEventListener("click",event=>{event.stopPropagation();retryTask(member.taskId)});
+    li.append(retry);
+  }
   const remove=element("button","remove-btn","✕");
   remove.type="button";
   remove.setAttribute("aria-label","Remove "+(member.title||member.taskId)+" from canvas");
@@ -161,6 +173,10 @@ function renderRail(){
   clear.addEventListener("click",clearAll);
   header.append(clear);
   details.append(header);
+  if(data.lastUpdatedUtc){
+    const updatedAt=isoDateTime(data.lastUpdatedUtc);
+    if(updatedAt)details.append(element("p","rail-updated","Updated "+updatedAt));
+  }
   const list=element("ul","rail-list");
   list.setAttribute("role","listbox");
   list.setAttribute("aria-label","Loaded Tasks");
@@ -285,8 +301,8 @@ function renderImage(row,body){
   const image=element("img");image.alt=row.title;image.src=api("/api/artifact/image",sourceParams(row));image.addEventListener("error",()=>renderReference(body,row,"Image could not be decoded."));
   body.append(controls,image);
 }
-function renderArtifact(row){
-  const details=element("details");details.open=row.isExpanded;
+function renderArtifact(row,taskId){
+  const details=element("details");details.open=row.isExpanded;details.dataset.stateKey="artifact:"+taskId+":"+row.fileName;
   const summary=element("summary",null,row.title);summary.append(element("span","artifact-meta",`${row.kind} · ${row.sizeDisplay} · ${row.timeBadge}`));details.append(summary);
   const body=element("div","artifact-body");body.setAttribute("data-mode","source");details.append(body);
   if(row.showOpenInObsidian){const open=element("button",null,"Open in Obsidian");open.addEventListener("click",()=>artifactAction(row,"open_in_obsidian",body));body.append(open)}
@@ -354,6 +370,15 @@ function renderTask(p){
   header.append(actions);
   header.append(element("p","readonly-indicator","Read-only view — actions here don't change this Task. Edit in Glasswork or Obsidian."));
   section.append(header);
+  if(p.isStale){
+    const banner=element("div","stale-banner");
+    banner.setAttribute("role","status");
+    banner.append(element("span",null,"Showing the last known good data — "+(p.staleError||"couldn't refresh this Task.")));
+    const retry=element("button",null,"Retry");retry.type="button";
+    retry.addEventListener("click",()=>retryTask(p.taskId));
+    banner.append(retry);
+    section.append(banner);
+  }
   const description=element("section","card");description.append(element("h2",null,"Description"));const descriptionBody=element("div","markdown");descriptionBody.innerHTML=p.descriptionHtml||"<p class='muted'>No description.</p>";description.append(descriptionBody);section.append(description);
   const notes=element("section","card");notes.append(element("h2",null,"Notes"));const notesBody=element("div","markdown");notesBody.innerHTML=p.notesHtml||"<p class='muted'>No notes.</p>";notes.append(notesBody);section.append(notes);
   if(p.activeSubtasks.length||p.completedSubtasks.length){
@@ -363,6 +388,7 @@ function renderTask(p){
     subtasks.append(activeList);
     if(p.showCompletedSubtasks&&p.completedSubtasks.length){
       const completedDetails=element("details");
+      completedDetails.dataset.stateKey="completed-subtasks:"+p.taskId;
       completedDetails.append(element("summary",null,`Completed (${p.completedSubtasks.length})`));
       const completedList=element("div","subtask-list");
       p.completedSubtasks.forEach(s=>completedList.append(renderSubtaskRow(s)));
@@ -415,7 +441,7 @@ function renderTask(p){
   if(p.completedAt){const c=isoDateTime(p.completedAt);if(c)metadata.append(element("p",null,"Completed: "+c))}
   if(p.cancelledAt){const c=isoDateTime(p.cancelledAt);if(c)metadata.append(element("p",null,`Cancelled: ${c} - ${p.cancellationReason||""}`))}
   section.append(metadata);
-  if(p.artifactRows.length){const heading=element("h2",null,"Artifacts");heading.style.marginTop="20px";section.append(heading);p.artifactRows.forEach(row=>section.append(renderArtifact(row)))}
+  if(p.artifactRows.length){const heading=element("h2",null,"Artifacts");heading.style.marginTop="20px";section.append(heading);p.artifactRows.forEach(row=>section.append(renderArtifact(row,p.taskId)))}
   return section;
 }
 function renderDetail(){
@@ -425,14 +451,37 @@ function renderDetail(){
   if(!data.selectedTaskId){detail.append(renderEmptyState());return detail}
   const sd=data.selectedDetail;
   if(!sd||sd.kind==="error"){detail.append(renderErrorState(sd||{message:"This Task is unavailable."}));return detail}
-  detail.append(renderTask(sd.projection));
+  detail.append(renderTask({...sd.projection,isStale:sd.isStale,staleError:sd.staleError}));
   return detail;
 }
+function captureUiState(){
+  const state={windowScrollY:window.scrollY,railScrollTop:0,openDetails:new Set(),seenKeys:new Set()};
+  const railList=app.querySelector(".rail-list");
+  if(railList)state.railScrollTop=railList.scrollTop;
+  app.querySelectorAll("details[data-state-key]").forEach(d=>{state.seenKeys.add(d.dataset.stateKey);if(d.open)state.openDetails.add(d.dataset.stateKey)});
+  return state;
+}
+function applyUiState(state){
+  if(!state)return;
+  const railList=app.querySelector(".rail-list");
+  if(railList)railList.scrollTop=state.railScrollTop||0;
+  app.querySelectorAll("details[data-state-key]").forEach(d=>{
+    // Only override the freshly-rendered default for a <details> that was
+    // already present at capture time — otherwise a newly-appearing element
+    // (e.g. an Artifact that wasn't loaded before, or the first render) would
+    // always be forced closed instead of honoring its own server-computed
+    // default (row.isExpanded).
+    if(state.seenKeys.has(d.dataset.stateKey))d.open=state.openDetails.has(d.dataset.stateKey);
+  });
+  window.scrollTo(0,state.windowScrollY||0);
+}
 function render(){
+  const uiState=captureUiState();
   const row=element("div","body-row");
   row.append(renderRail(),renderDetail());
   const banners=[renderDriftBanner(),renderRestoreBanner()].filter(Boolean);
   app.replaceChildren(...banners,row);
+  applyUiState(uiState);
 }
 async function refreshState(){
   data=await getJson("/canvas-state");
@@ -452,6 +501,10 @@ async function clearAll(){
 }
 async function refreshSelected(){
   await post("/api/tasks/refresh-selected");
+  await refreshState();
+}
+async function retryTask(taskId){
+  await post("/api/tasks/refresh",{taskId});
   await refreshState();
 }
 app.addEventListener("click",event=>{

@@ -79,6 +79,31 @@ created: 2026-09-02{links}
 """);
     }
 
+    /// <summary>
+    /// Polls <paramref name="fetch"/> until <paramref name="isDone"/> accepts
+    /// the parsed body, or a timeout elapses. Used for the debounced
+    /// live-refresh boundary tests (issue #560), where a background watcher
+    /// observes a real <see cref="FileSystemWatcher"/> event on its own
+    /// thread-pool timing rather than responding synchronously to a request.
+    /// </summary>
+    public static async Task<JsonDocument> PollUntilAsync(
+        Func<Task<HttpResponseMessage>> fetch,
+        Func<JsonElement, bool> isDone,
+        TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        JsonDocument? last = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            last?.Dispose();
+            var response = await fetch();
+            last = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (isDone(last.RootElement)) return last;
+            await Task.Delay(150);
+        }
+        return last ?? throw new InvalidOperationException("PollUntilAsync never fetched a response.");
+    }
+
     public static HttpClient AuthorizedClient(string token)
     {
         var client = new HttpClient();
