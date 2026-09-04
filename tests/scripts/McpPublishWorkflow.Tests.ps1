@@ -44,7 +44,14 @@ Describe "Publish MCP workflow" {
     It "runs serial tests, Release build, clean pack, and package identity validation" {
         $workflow = Get-Content $script:WorkflowPath -Raw
 
-        $workflow | Should -Match "Invoke-Pester -Path tests\\scripts -Output Detailed -CI"
+        $workflow | Should -Match "pwsh -NoProfile -File scripts\\Invoke-ScriptTests\.ps1"
+        $workflow | Should -Match "-TestPath tests\\scripts"
+        $workflow | Should -Match "-ResultPath TestResults\\pester\\script-tests\.xml"
+        $workflow | Should -Match "(?s)Upload MCP Release script test diagnostics.*?if: always\(\)"
+        $workflow | Should -Match "mcp-release-script-test-diagnostics"
+        $workflow | Should -Match "if-no-files-found: warn"
+        $workflow | Should -Not -Match "Install-Module Pester"
+        $workflow | Should -Not -Match "Invoke-Pester"
         $workflow | Should -Match "dotnet test tests\\Glasswork\.Mcp\.Tests\\Glasswork\.Mcp\.Tests\.csproj"
         $workflow | Should -Match "MSTest\.Parallelize\.Workers=1"
         $workflow | Should -Match "dotnet build src\\Glasswork\.Mcp\\Glasswork\.Mcp\.csproj"

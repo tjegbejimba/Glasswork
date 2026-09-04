@@ -136,13 +136,18 @@ jobs:
 
       - name: Run release script tests
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $pesterVersion = "5.7.1"
-          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [version]$pesterVersion })) {
-              Install-Module Pester -RequiredVersion $pesterVersion -Scope CurrentUser -Force
-          }
-          Invoke-Pester -Path tests\scripts -Output Detailed -CI
+        run: >-
+          pwsh -NoProfile -File scripts\Invoke-ScriptTests.ps1
+          -TestPath tests\scripts
+          -ResultPath TestResults\pester\script-tests.xml
+
+      - name: Upload App Release script test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-script-test-diagnostics
+          path: TestResults\pester\script-tests.xml
+          if-no-files-found: warn
 
       - name: Run Core tests
         run: dotnet test tests\Glasswork.Tests\Glasswork.Tests.csproj --configuration Release --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1
@@ -155,7 +160,17 @@ jobs:
         run: dotnet build tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj --configuration Debug --nologo --verbosity minimal
 
       - name: Run canvas host tests
-        run: dotnet test tests\Glasswork.CanvasHost.Tests\Glasswork.CanvasHost.Tests.csproj --configuration Release --nologo --verbosity minimal
+        run: dotnet test tests\Glasswork.CanvasHost.Tests\Glasswork.CanvasHost.Tests.csproj --configuration Release --nologo --verbosity minimal --logger "trx;LogFileName=canvas-host.trx" --results-directory TestResults\canvas-host
+
+      - name: Upload canvas host test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canvas-host-test-diagnostics
+          path: |
+            TestResults\canvas-host\canvas-host.trx
+            TestResults\canvas-host\diagnostics\*.json
+          if-no-files-found: warn
 
       - name: Publish Windows update package
         id: package
