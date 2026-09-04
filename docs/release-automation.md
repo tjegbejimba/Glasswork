@@ -105,6 +105,10 @@ Failures update one issue titled `[Release automation][App] Blocked` or
 successful evaluation from closing an unresolved publication failure, and vice
 versa.
 
+Evaluator plan, prompt, and failure scratch files live under the runner's
+temporary directory, outside the checkout. This keeps generated workflow state
+out of the Release PR changed-file allowlist.
+
 ## Publication timing
 
 Automation invokes the App or MCP publication `workflow_dispatch` only after
