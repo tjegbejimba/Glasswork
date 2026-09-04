@@ -770,7 +770,7 @@ function Invoke-ApplyMode {
     $version = [string]$plan.NextVersion
     $branch = "automation/release-$($Stream.ToLowerInvariant())"
     $streamLabel = "release:$($Stream.ToLowerInvariant())"
-    $expectedAuthor = "$AppSlug[bot]"
+    $expectedAuthor = "${AppSlug}[bot]"
 
     $openPullRequests = @(
         Invoke-GhJson `
@@ -876,7 +876,9 @@ function Invoke-ApplyMode {
         )
         if ($existingPullRequest.headRefName -ne $branch -or
             $existingPullRequest.baseRefName -ne "main" -or
-            $existingPullRequest.author.login -ne $expectedAuthor -or
+            -not (Test-ReleaseAutomationActor `
+                -Login ([string]$existingPullRequest.author.login) `
+                -AppSlug $AppSlug) -or
             $existingLabels.Count -ne 3 -or
             $existingLabels -notcontains "release-automation" -or
             $existingLabels -notcontains $streamLabel -or

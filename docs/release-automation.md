@@ -49,6 +49,9 @@ Token responsibilities are deliberately split:
 Do not rotate the App private key while an automation Release PR is open. Its
 signed provenance marker is verified with that key after merge; rotate only
 after open automation Release PRs have merged or been closed and reconciled.
+GitHub may expose the App author as either `<slug>[bot]` through REST or
+`app/<slug>` through GraphQL; evaluator ownership checks accept only those two
+reserved representations of the configured App.
 
 ## Labels
 

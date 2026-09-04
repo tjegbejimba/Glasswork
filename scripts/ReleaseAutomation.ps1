@@ -396,6 +396,7 @@ function Get-NextReleaseVersion {
 function Test-ReleaseNetDiff {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowNull()]
         [AllowEmptyCollection()]
         [AllowEmptyString()]
         [string[]]$NameStatusLines
@@ -433,6 +434,29 @@ function Test-ReleaseNetDiff {
     return $hasEffectiveChange
 }
 
+function Test-ReleaseAutomationActor {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Login,
+
+        [Parameter(Mandatory = $true)]
+        [string]$AppSlug
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Login) -or
+        [string]::IsNullOrWhiteSpace($AppSlug)) {
+        return $false
+    }
+
+    return $Login.Equals(
+            "${AppSlug}[bot]",
+            [System.StringComparison]::OrdinalIgnoreCase) -or
+        $Login.Equals(
+            "app/${AppSlug}",
+            [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function New-ReleasePlan {
     param(
         [Parameter(Mandatory = $true)]
@@ -449,6 +473,7 @@ function New-ReleasePlan {
         [string]$CandidateSha,
 
         [Parameter(Mandatory = $true)]
+        [AllowNull()]
         [AllowEmptyCollection()]
         [AllowEmptyString()]
         [string[]]$NameStatusLines,

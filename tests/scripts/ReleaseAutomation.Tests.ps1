@@ -226,6 +226,7 @@ Describe "Test-ReleaseNetDiff" {
     It "treats a reverted empty range as net zero" {
         Test-ReleaseNetDiff -NameStatusLines @() | Should -BeFalse
         Test-ReleaseNetDiff -NameStatusLines @("") | Should -BeFalse
+        Test-ReleaseNetDiff -NameStatusLines $null | Should -BeFalse
     }
 
     It "accepts ordinary changes and renames" {
@@ -240,6 +241,30 @@ Describe "Test-ReleaseNetDiff" {
             Should -Throw "*Malformed git name-status entry*"
         { Test-ReleaseNetDiff -NameStatusLines @("R100`told-only") } |
             Should -Throw "*Malformed git name-status entry*"
+    }
+}
+
+Describe "Test-ReleaseAutomationActor" {
+    It "accepts the GitHub REST and GraphQL identities for the configured App" {
+        Test-ReleaseAutomationActor `
+            -Login "glasswork-release-automation[bot]" `
+            -AppSlug "glasswork-release-automation" |
+            Should -BeTrue
+        Test-ReleaseAutomationActor `
+            -Login "app/glasswork-release-automation" `
+            -AppSlug "glasswork-release-automation" |
+            Should -BeTrue
+    }
+
+    It "rejects other bot and user identities" {
+        Test-ReleaseAutomationActor `
+            -Login "other-release-automation[bot]" `
+            -AppSlug "glasswork-release-automation" |
+            Should -BeFalse
+        Test-ReleaseAutomationActor `
+            -Login "glasswork-release-automation" `
+            -AppSlug "glasswork-release-automation" |
+            Should -BeFalse
     }
 }
 
@@ -313,6 +338,21 @@ Describe "New-ReleasePlan" {
             -BaseVersion "1.8.2" `
             -CandidateSha ("b" * 40) `
             -NameStatusLines @() `
+            -LabelsByPullRequest @() `
+            -Force
+
+        $plan.Eligible | Should -BeFalse
+        $plan.Reason | Should -Be "NoNetChanges"
+        $plan.NextVersion | Should -BeNullOrEmpty
+    }
+
+    It "keeps a native empty diff represented as null ineligible" {
+        $plan = New-ReleasePlan `
+            -Stream App `
+            -BaseTag "v1.8.2" `
+            -BaseVersion "1.8.2" `
+            -CandidateSha ("b" * 40) `
+            -NameStatusLines $null `
             -LabelsByPullRequest @() `
             -Force
 
