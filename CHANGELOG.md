@@ -43,6 +43,47 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## Mcp v0.11.2 — 2026-09-04
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Refresh guarded Ralph slice reconciliation ([#537](https://github.com/tjegbejimba/Glasswork/pull/537)) — @tjegbejimba
+- Refresh Ralph reconciliation linkage scripts ([#538](https://github.com/tjegbejimba/Glasswork/pull/538)) — @tjegbejimba
+- Refresh Ralph stale-reference reconciliation ([#539](https://github.com/tjegbejimba/Glasswork/pull/539)) — @tjegbejimba
+- Refresh canonical Ralph run selection ([#540](https://github.com/tjegbejimba/Glasswork/pull/540)) — @tjegbejimba
+- Refresh Ralph reconciliation timestamp guard ([#542](https://github.com/tjegbejimba/Glasswork/pull/542)) — @tjegbejimba
+- Refresh Ralph guarded startup progress scripts ([#543](https://github.com/tjegbejimba/Glasswork/pull/543)) — @tjegbejimba
+- Refresh Ralph worker recovery script ([#545](https://github.com/tjegbejimba/Glasswork/pull/545)) — @tjegbejimba
+- Refresh Ralph failed-delivery reconciliation ([#547](https://github.com/tjegbejimba/Glasswork/pull/547)) — @tjegbejimba
+- Fix App release automation path discovery ([#551](https://github.com/tjegbejimba/Glasswork/pull/551)) — @tjegbejimba
+- Publish the session task set canvas architecture decision ([#564](https://github.com/tjegbejimba/Glasswork/pull/564)) — @tjegbejimba
+- Refresh Ralph human-in-the-loop recovery scripts ([#565](https://github.com/tjegbejimba/Glasswork/pull/565)) — @tjegbejimba
+- Share Task Detail semantics through a unified projection ([#566](https://github.com/tjegbejimba/Glasswork/pull/566)) — @tjegbejimba
+- Add an isolated Task canvas host ([#568](https://github.com/tjegbejimba/Glasswork/pull/568)) — @tjegbejimba
+- Render task artifacts safely in the canvas ([#569](https://github.com/tjegbejimba/Glasswork/pull/569)) — @tjegbejimba
+- Install the Tasks canvas extension for every Copilot session ([#570](https://github.com/tjegbejimba/Glasswork/pull/570)) — @tjegbejimba
+- Add Session Task Set master-detail canvas support ([#571](https://github.com/tjegbejimba/Glasswork/pull/571)) — @tjegbejimba
+- Restore Session Task Sets safely across sessions ([#572](https://github.com/tjegbejimba/Glasswork/pull/572)) — @tjegbejimba
+- Match task relationships and enable safe canvas navigation ([#573](https://github.com/tjegbejimba/Glasswork/pull/573)) — @tjegbejimba
+- Activate canvas updates with visible health status ([#574](https://github.com/tjegbejimba/Glasswork/pull/574)) — @tjegbejimba
+- Refresh loaded tasks live without losing context ([#575](https://github.com/tjegbejimba/Glasswork/pull/575)) — @tjegbejimba
+- Enforce native and canvas Task Detail parity ([#576](https://github.com/tjegbejimba/Glasswork/pull/576)) — @tjegbejimba
+- Fix delayed automated release evaluation ([#577](https://github.com/tjegbejimba/Glasswork/pull/577)) — @tjegbejimba
+- Fix release evaluator scratch-file rejection ([#580](https://github.com/tjegbejimba/Glasswork/pull/580)) — @tjegbejimba
+- Fix release evaluator recovery ([#586](https://github.com/tjegbejimba/Glasswork/pull/586)) — @tjegbejimba
+
 ## App v1.4.12 — 2026-09-04
 
 ### Breaking
