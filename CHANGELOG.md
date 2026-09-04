@@ -43,6 +43,24 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## App v1.4.13 — 2026-09-04
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Improve release evaluator recovery ([#586](https://github.com/tjegbejimba/Glasswork/pull/586)) — @tjegbejimba
+
 ## App v1.4.12 — 2026-09-04
 
 ### Breaking
