@@ -106,7 +106,19 @@ created: 2026-09-02{links}
 
     public static HttpClient AuthorizedClient(string token)
     {
-        var client = new HttpClient();
+        // A default HttpClient pools and reuses keep-alive connections across
+        // requests. Against a freshly spawned host under CI-level resource
+        // pressure (slow process startup/teardown, GC pauses), the server can
+        // close a pooled connection at almost the same instant the client
+        // tries to reuse it for the next sequential request in a test — a
+        // well-known race that surfaces as a successful-looking request
+        // returning a completely empty response body (a bare "The input does
+        // not contain any JSON tokens" JsonException), never a connection
+        // error the caller could retry on. Disabling pooling (a fresh
+        // connection per request) removes the whole race class; these are
+        // low-volume black-box boundary tests, not a throughput benchmark.
+        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero };
+        var client = new HttpClient(handler);
         client.DefaultRequestHeaders.Add("X-Glasswork-Canvas-Token", token);
         return client;
     }
