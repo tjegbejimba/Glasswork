@@ -365,6 +365,14 @@ sessions already using an older build. See ADR 0024.
   subtask due-date. Computed by `MyDayViewModel`; the vault is never
   written to reflect the promotion. Dismiss-for-today is the only
   per-day override and lives in `IUiStateService`. See ADR 0008.
+- **Task Detail Projection parity** — `TaskDetailProjection`
+  (`Glasswork.Core.Models`) is the single presentation-neutral read model
+  shared by native Task Detail (Presentation) and the per-Copilot-session
+  canvas host (`Glasswork.CanvasHost`, outside `Glasswork.App`). A semantic
+  change to the projection must update both renderers' contract tests in the
+  same change; platform-only interaction changes are exempt. Pixel equality
+  between WinUI and HTML is explicitly not required — only semantic/
+  hierarchy parity is. See ADR 0026 and issue #563.
 
 ## Out of scope (for this design slice)
 

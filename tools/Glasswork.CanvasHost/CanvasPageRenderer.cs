@@ -93,6 +93,8 @@ blockquote,.callout{margin:8px 0;padding:8px 12px;border-left:4px solid var(--bo
 }
 @media(max-width:560px){.detail{padding:12px}.card,details{padding:12px}h1{font-size:22px}iframe{height:360px}}
 @media(prefers-color-scheme:dark){body{background:#0d1117;color:#e6edf3}pre,.reason,blockquote,.callout{background:#161b22}button{background:#21262d;border-color:#30363d}.card,details,iframe,.rail-row{border-color:#30363d}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+@media(forced-colors:active){.rail-row.selected{outline:2px solid Highlight}.rail-select:focus-visible,.remove-btn:focus-visible,.retry-btn:focus-visible,button:focus-visible{outline:2px solid Highlight}}
 </style></head><body><main id="app"></main>
 <script nonce="__NONCE__">
 "use strict";
@@ -105,6 +107,11 @@ let previewGeneration=0;
 let pollHandle=null;
 let railOpen=true;
 const wideQuery=window.matchMedia("(min-width:720px)");
+// Tracks the last "Updated" text actually announced to assistive tech, so the
+// aria-live region (below) only takes on live semantics when the timestamp
+// really changed — otherwise every 5s poll would insert a fresh live-region
+// node with identical text and most screen readers re-announce it anyway.
+let lastAnnouncedUpdate=null;
 
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=String(text);return node}
 function api(path,params={}){const url=new URL(path,location.origin);url.searchParams.set("token",token);for(const [key,value] of Object.entries(params))url.searchParams.set(key,value);return url}
@@ -128,6 +135,11 @@ function renderRailRow(member){
   li.setAttribute("aria-selected",member.taskId===data.selectedTaskId?"true":"false");
   const select=element("button","rail-select");
   select.type="button";
+  // A distinct dataset key (not data-task-id) so this button does not also
+  // match the delegated #app click handler's "[data-task-id]" selector below
+  // (issue #563) -- that handler POSTs /api/tasks/load, which reorders the
+  // rail, so a rail-select click would otherwise both select AND reorder.
+  select.dataset.railTaskId=member.taskId;
   if(member.taskId===data.selectedTaskId)select.setAttribute("aria-current","true");
   select.append(element("span","rail-title",member.title||member.taskId));
   const meta=element("span","rail-meta");
@@ -175,7 +187,22 @@ function renderRail(){
   details.append(header);
   if(data.lastUpdatedUtc){
     const updatedAt=isoDateTime(data.lastUpdatedUtc);
-    if(updatedAt)details.append(element("p","rail-updated","Updated "+updatedAt));
+    if(updatedAt){
+      const updated=element("p","rail-updated","Updated "+updatedAt);
+      // Announces auto-refresh (issue #560) to assistive tech without the
+      // noise of making the whole rail list a live region: only this small,
+      // infrequently-changing timestamp is polite/atomic. Every render
+      // recreates this node from scratch (issue #563), so live semantics are
+      // only attached when the announced value actually changed — otherwise
+      // an unrelated 5s poll would insert a "new" live-region node with
+      // identical text and get re-announced anyway.
+      if(updatedAt!==lastAnnouncedUpdate){
+        updated.setAttribute("aria-live","polite");
+        updated.setAttribute("aria-atomic","true");
+        lastAnnouncedUpdate=updatedAt;
+      }
+      details.append(updated);
+    }
   }
   const list=element("ul","rail-list");
   list.setAttribute("role","listbox");
@@ -455,10 +482,17 @@ function renderDetail(){
   return detail;
 }
 function captureUiState(){
-  const state={windowScrollY:window.scrollY,railScrollTop:0,openDetails:new Set(),seenKeys:new Set()};
+  const state={windowScrollY:window.scrollY,railScrollTop:0,openDetails:new Set(),seenKeys:new Set(),focusedRailTaskId:null};
   const railList=app.querySelector(".rail-list");
   if(railList)state.railScrollTop=railList.scrollTop;
   app.querySelectorAll("details[data-state-key]").forEach(d=>{state.seenKeys.add(d.dataset.stateKey);if(d.open)state.openDetails.add(d.dataset.stateKey)});
+  // Every render() rebuilds the rail's buttons from scratch, which would
+  // otherwise silently drop keyboard focus (and roving-focus navigation,
+  // issue #563) to document.body on each 5s poll. Track which row was
+  // focused by its stable Task ID so applyUiState can restore focus to the
+  // equivalent freshly-rendered button.
+  const focused=document.activeElement;
+  if(focused&&focused.classList&&focused.classList.contains("rail-select"))state.focusedRailTaskId=focused.dataset.railTaskId||null;
   return state;
 }
 function applyUiState(state){
@@ -474,6 +508,10 @@ function applyUiState(state){
     if(state.seenKeys.has(d.dataset.stateKey))d.open=state.openDetails.has(d.dataset.stateKey);
   });
   window.scrollTo(0,state.windowScrollY||0);
+  if(state.focusedRailTaskId){
+    const next=app.querySelector(".rail-select[data-rail-task-id=\""+CSS.escape(state.focusedRailTaskId)+"\"]");
+    if(next)next.focus();
+  }
 }
 function render(){
   const uiState=captureUiState();
@@ -512,6 +550,25 @@ app.addEventListener("click",event=>{
   if(target.dataset.taskId){post("/api/tasks/load",{taskIds:[target.dataset.taskId]}).then(refreshState).catch(()=>{});return}
   if(target.dataset.externalUrl)post("/api/link/action",{url:target.dataset.externalUrl}).catch(()=>{});
   if(target.dataset.vaultPath)post("/api/vault/action",{url:target.dataset.vaultPath}).catch(()=>{});
+});
+// Delegated (not per-row) so it keeps working across the 5s poll re-renders
+// that replace every rail row: implements the ARIA listbox keyboard pattern
+// (Up/Down/Home/End move focus among options) on top of the rows' already-
+// native Tab/Enter/Space button operability.
+app.addEventListener("keydown",event=>{
+  if(!["ArrowDown","ArrowUp","Home","End"].includes(event.key))return;
+  const list=event.target.closest(".rail-list");
+  if(!list)return;
+  const options=Array.from(list.querySelectorAll(".rail-select"));
+  const current=options.indexOf(document.activeElement);
+  if(current===-1)return;
+  let next=current;
+  if(event.key==="ArrowDown")next=Math.min(current+1,options.length-1);
+  else if(event.key==="ArrowUp")next=Math.max(current-1,0);
+  else if(event.key==="Home")next=0;
+  else if(event.key==="End")next=options.length-1;
+  event.preventDefault();
+  options[next].focus();
 });
 render();
 wideQuery.addEventListener("change",render);

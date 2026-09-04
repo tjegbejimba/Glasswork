@@ -191,6 +191,23 @@ inside Ubuntu.
    > It also feeds rule 6: a real render is what surfaces the silent
    > `STOWED_EXCEPTION` crash that init-time cross-references cause.
 
+8. **Semantic Task Detail projection changes must update both renderers
+   together** (ADR 0026, issue #563). `TaskDetailProjection`
+   (`src/Glasswork.Core/Models/TaskDetailProjection.cs`) is the single
+   presentation-neutral read model native Task Detail and the canvas host
+   (`tools/Glasswork.CanvasHost`) both consume. If you add, rename, or change
+   the meaning of a semantic property on it, update **both**:
+   - Native Task Detail's binding/rendering, plus `TaskDetailProjectionTests`
+     (`tests/Glasswork.Tests`).
+   - The canvas renderer, plus `Glasswork.CanvasHost.Tests` — including
+     `ProjectionParityGuardTests`, which fails the build if a projection
+     property stops reaching the canvas `/api/task` JSON payload.
+
+   Platform-only interaction changes (e.g. a native keyboard shortcut, or a
+   canvas-only ARIA/keyboard affordance) that don't change what the
+   projection *means* are exempt — they only need the one renderer they
+   touch.
+
 ## Investigation guidance (for issue triage & root-cause analysis)
 
 When assigned a user-reported issue (label `user-report`):

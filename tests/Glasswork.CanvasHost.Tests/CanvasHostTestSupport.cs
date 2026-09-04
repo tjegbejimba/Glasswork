@@ -106,7 +106,19 @@ created: 2026-09-02{links}
 
     public static HttpClient AuthorizedClient(string token)
     {
-        var client = new HttpClient();
+        // A default HttpClient pools and reuses keep-alive connections across
+        // requests. Against a freshly spawned host under CI-level resource
+        // pressure (slow process startup/teardown, GC pauses), the server can
+        // close a pooled connection at almost the same instant the client
+        // tries to reuse it for the next sequential request in a test — a
+        // well-known race that surfaces as a successful-looking request
+        // returning a completely empty response body (a bare "The input does
+        // not contain any JSON tokens" JsonException), never a connection
+        // error the caller could retry on. Disabling pooling (a fresh
+        // connection per request) removes the whole race class; these are
+        // low-volume black-box boundary tests, not a throughput benchmark.
+        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero };
+        var client = new HttpClient(handler);
         client.DefaultRequestHeaders.Add("X-Glasswork-Canvas-Token", token);
         return client;
     }
@@ -161,11 +173,23 @@ created: 2026-09-02{links}
         public Process Process { get; } = process;
         public string Url { get; } = url;
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
-            if (!Process.HasExited) Process.Kill(entireProcessTree: true);
+            // Kill() only issues termination; it does not block until the
+            // process (and, for entireProcessTree, its children) has actually
+            // exited. Without awaiting WaitForExitAsync(), an `await using`
+            // block returns "done" while dotnet.exe is still tearing down,
+            // so the next test's freshly spawned host can start while the
+            // dying one is still consuming CPU/handles — a real source of
+            // CI-only flakiness in these black-box process-spawning tests,
+            // where the shared CI runner has far less headroom than a local
+            // dev machine.
+            if (!Process.HasExited)
+            {
+                Process.Kill(entireProcessTree: true);
+                await Process.WaitForExitAsync();
+            }
             Process.Dispose();
-            return ValueTask.CompletedTask;
         }
     }
 }

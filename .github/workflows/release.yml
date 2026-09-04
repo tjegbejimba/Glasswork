@@ -147,6 +147,16 @@ jobs:
       - name: Run Core tests
         run: dotnet test tests\Glasswork.Tests\Glasswork.Tests.csproj --configuration Release --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1
 
+      - name: Build canvas host (debug)
+        shell: pwsh
+        # Glasswork.CanvasHost.Tests spawns the host as a child process from its
+        # Debug output path regardless of the test project's own configuration,
+        # so a Debug build must exist before the canvas host tests run.
+        run: dotnet build tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj --configuration Debug --nologo --verbosity minimal
+
+      - name: Run canvas host tests
+        run: dotnet test tests\Glasswork.CanvasHost.Tests\Glasswork.CanvasHost.Tests.csproj --configuration Release --nologo --verbosity minimal
+
       - name: Publish Windows update package
         id: package
         shell: pwsh
