@@ -53,6 +53,22 @@ img{display:block;max-width:100%;max-height:540px;object-fit:contain}iframe{disp
 blockquote,.callout{margin:8px 0;padding:8px 12px;border-left:4px solid var(--border-color-accent,#0969da);background:var(--background-color-muted,#f6f8fa)}
 .table-scroll{overflow-x:auto}table{border-collapse:collapse}th,td{border:1px solid var(--border-color-default,#d0d7de);padding:6px 8px}.reason{padding:10px;border-radius:6px;background:var(--background-color-muted,#f6f8fa)}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.title-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.type-chip{border:1px solid var(--border-color-default,#d0d7de);border-radius:999px;padding:0 8px;font-size:12px;text-transform:uppercase;color:var(--text-color-muted,#656d76)}
+.blocked-text,.blocker-text{color:var(--true-color-red,#cf222e);font-weight:600}
+.readonly-indicator{color:var(--text-color-muted,#656d76);font-size:12px;border:1px solid var(--border-color-default,#d0d7de);border-radius:6px;padding:6px 10px;margin:8px 0 0}
+.task-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.copy-status{font-size:12px;color:var(--text-color-muted,#656d76)}
+.subtask-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.subtask-row{display:flex;align-items:flex-start;gap:8px;border:1px solid var(--border-color-default,#d0d7de);border-radius:8px;padding:8px}
+.subtask-row.done .subtask-text{text-decoration:line-through;opacity:.6}
+.subtask-body{flex:1;min-width:0}
+.subtask-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.subtask-notes{margin:4px 0 0;font-size:12px;opacity:.75;white-space:pre-wrap}
+.related-row,.child-row,.backlink-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;margin-top:6px;padding:8px 10px}
+.link-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.link-badge{border-radius:2px;padding:2px 6px;font-size:10px;font-weight:600;color:white}
+.metadata{opacity:.6;font-size:12px;margin-top:16px;display:flex;flex-direction:column;gap:4px}
 /* Wide layout: the rail is a permanently visible sidebar. Narrow layout below
    turns it into an explicit disclosure (an accessible drawer) driven by a
    native <summary> toggle: closed state hides the rail content (display:none,
@@ -93,6 +109,14 @@ async function post(path,payload){const response=await fetch(api(path),{method:"
 async function getJson(path){const response=await fetch(api(path),{cache:"no-store"});return response.json()}
 
 function dueLabel(due){if(!due)return null;const date=new Date(due);return isNaN(date)?null:date.toLocaleDateString(undefined,{month:"short",day:"numeric"})}
+function pad2(n){return String(n).padStart(2,"0")}
+function isoDate(value){const d=new Date(value);return isNaN(d)?null:`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`}
+function isoDateTime(value){const d=new Date(value);return isNaN(d)?null:`${isoDate(value)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`}
+async function copyToClipboard(text,label,statusEl){
+  try{await navigator.clipboard.writeText(text);statusEl.textContent=label+" copied";}
+  catch{statusEl.textContent="Couldn't copy "+label.toLowerCase();}
+  setTimeout(()=>{statusEl.textContent=""},4000);
+}
 
 function renderRailRow(member){
   const li=element("li","rail-row"+(member.taskId===data.selectedTaskId?" selected":"")+(member.isUnavailable?" unavailable":""));
@@ -277,18 +301,120 @@ function renderArtifact(row){
   };
   if(details.open)load();details.addEventListener("toggle",()=>{if(details.open)load()});return details;
 }
+function renderSubtaskRow(s){
+  const row=element("div","subtask-row"+(s.isEffectivelyDone?" done":""));
+  row.append(element("span",null,s.isEffectivelyDone?"☑":"☐"));
+  const body=element("div","subtask-body");
+  body.append(element("span","subtask-text",s.text));
+  const chips=element("div","subtask-chips");
+  if(s.statusPillVisible)chips.append(element("span","chip",s.statusPillText));
+  if(s.dueVisible)chips.append(element("span","chip",s.dueChipText));
+  if(chips.childNodes.length)body.append(chips);
+  if(s.blockerVisible)body.append(element("p","blocker-text",s.blockerText));
+  if(s.hasNotes)body.append(element("p","subtask-notes",s.notes));
+  row.append(body);
+  return row;
+}
 function renderTask(p){
   const section=element("section");
   const header=element("div");
-  header.append(element("h1",null,p.title||p.taskId),element("p","muted",`${p.status.label} · ${p.taskId}`));
-  const refresh=element("button",null,"Refresh");
-  refresh.type="button";
-  refresh.addEventListener("click",refreshSelected);
-  header.append(refresh);
+  const titleRow=element("div","title-row");
+  titleRow.append(element("h1",null,p.title||p.taskId));
+  if(p.showType)titleRow.append(element("span","type-chip",p.type));
+  header.append(titleRow);
+  const metaParts=[p.status.label,"Priority: "+(p.priority||"—")];
+  const due=dueLabel(p.due);
+  if(due)metaParts.push("Due "+due);
+  metaParts.push(p.taskId);
+  header.append(element("p","muted",metaParts.join(" · ")));
+  if(p.blockedStatusText)header.append(element("p","blocked-text",p.blockedStatusText));
+  if(p.showParent){
+    const parentLine=element("p",null,"Parent: ");
+    if(p.parentIsTask){const btn=element("button","inline-link",p.parent);btn.dataset.taskId=p.parent;parentLine.append(btn)}
+    else parentLine.append(document.createTextNode(p.parent));
+    header.append(parentLine);
+  }
+  if(p.showAdoLink){
+    const adoLine=element("p",null,`ADO: #${p.adoLink} — ${p.adoTitle||"linked"}`);
+    if(p.adoUrl){const btn=element("button","inline-link","Open in ADO");btn.dataset.externalUrl=p.adoUrl;adoLine.append(document.createTextNode(" "),btn)}
+    header.append(adoLine);
+  }
+  const actions=element("div","task-actions");
+  const refresh=element("button",null,"Refresh");refresh.type="button";refresh.addEventListener("click",refreshSelected);
+  const openGlasswork=element("button",null,"Open in Glasswork");openGlasswork.type="button";
+  openGlasswork.addEventListener("click",()=>post("/api/link/action",{url:p.taskDeepLink}).catch(()=>{}));
+  const openObsidian=element("button",null,"Open in Obsidian");openObsidian.type="button";
+  openObsidian.addEventListener("click",()=>post("/api/vault/action",{url:p.taskObsidianPath}).catch(()=>{}));
+  const status=element("span","copy-status");
+  const copyId=element("button",null,"Copy Task ID");copyId.type="button";
+  copyId.addEventListener("click",()=>copyToClipboard(p.taskId,"Task ID",status));
+  const copyLink=element("button",null,"Copy Task link");copyLink.type="button";
+  copyLink.addEventListener("click",()=>copyToClipboard(p.taskDeepLink,"Task link",status));
+  actions.append(refresh,openGlasswork,openObsidian,copyId,copyLink,status);
+  header.append(actions);
+  header.append(element("p","readonly-indicator","Read-only view — actions here don't change this Task. Edit in Glasswork or Obsidian."));
   section.append(header);
   const description=element("section","card");description.append(element("h2",null,"Description"));const descriptionBody=element("div","markdown");descriptionBody.innerHTML=p.descriptionHtml||"<p class='muted'>No description.</p>";description.append(descriptionBody);section.append(description);
   const notes=element("section","card");notes.append(element("h2",null,"Notes"));const notesBody=element("div","markdown");notesBody.innerHTML=p.notesHtml||"<p class='muted'>No notes.</p>";notes.append(notesBody);section.append(notes);
-  const subtasks=element("section","card");subtasks.append(element("h2",null,"Subtasks"),element("p",null,`${p.activeSubtasks.length} active · ${p.completedSubtasks.length} completed`));section.append(subtasks);
+  if(p.activeSubtasks.length||p.completedSubtasks.length){
+    const subtasks=element("section","card");subtasks.append(element("h2",null,"Subtasks"));
+    const activeList=element("div","subtask-list");
+    p.activeSubtasks.forEach(s=>activeList.append(renderSubtaskRow(s)));
+    subtasks.append(activeList);
+    if(p.showCompletedSubtasks&&p.completedSubtasks.length){
+      const completedDetails=element("details");
+      completedDetails.append(element("summary",null,`Completed (${p.completedSubtasks.length})`));
+      const completedList=element("div","subtask-list");
+      p.completedSubtasks.forEach(s=>completedList.append(renderSubtaskRow(s)));
+      completedDetails.append(completedList);
+      subtasks.append(completedDetails);
+    }
+    section.append(subtasks);
+  }
+  if(p.links.length){
+    const linksSection=element("section","card");linksSection.append(element("h2",null,"Links"));
+    p.links.forEach(link=>{
+      const row=element("div","link-row");
+      const badge=element("span","link-badge",link.typeBadgeText);badge.style.background=link.typeBadgeColor;row.append(badge);
+      if(link.resolvedUrl){const btn=element("button","inline-link",link.displayText);btn.dataset.externalUrl=link.resolvedUrl;row.append(btn)}
+      else row.append(element("span","muted",link.displayText));
+      linksSection.append(row);
+    });
+    section.append(linksSection);
+  }
+  if(p.showRelated){
+    const relatedSection=element("section","card");relatedSection.append(element("h2",null,"Related"));
+    p.relatedEntries.forEach(entry=>{
+      const btn=element("button","inline-link related-row");btn.type="button";btn.dataset.vaultPath=entry.vaultPath;
+      btn.append(element("span",null,entry.typeGlyph),element("span",null,entry.title));
+      if(entry.isMissing)btn.append(element("span","chip unavailable","missing"));
+      relatedSection.append(btn);
+    });
+    section.append(relatedSection);
+  }
+  if(p.showChildren){
+    const childrenSection=element("section","card");childrenSection.append(element("h2",null,`Children (${p.directChildren.length})`));
+    p.directChildren.forEach(child=>{
+      const btn=element("button","inline-link child-row");btn.type="button";btn.dataset.taskId=child.id;btn.textContent=child.title||child.id;
+      childrenSection.append(btn);
+    });
+    section.append(childrenSection);
+  }
+  if(p.showBacklinks){
+    const backlinksSection=element("section","card");backlinksSection.append(element("h2",null,`Backlinks (${p.backlinks.length})`));
+    p.backlinks.forEach(bl=>{
+      const btn=element("button","inline-link backlink-row");btn.type="button";btn.dataset.vaultPath=bl.path;
+      btn.append(element("span",null,bl.title),element("span","chip",bl.typeLabel));
+      backlinksSection.append(btn);
+    });
+    section.append(backlinksSection);
+  }
+  const metadata=element("div","metadata");
+  const created=isoDate(p.created);
+  if(created)metadata.append(element("p",null,"Created: "+created));
+  if(p.completedAt){const c=isoDateTime(p.completedAt);if(c)metadata.append(element("p",null,"Completed: "+c))}
+  if(p.cancelledAt){const c=isoDateTime(p.cancelledAt);if(c)metadata.append(element("p",null,`Cancelled: ${c} - ${p.cancellationReason||""}`))}
+  section.append(metadata);
   if(p.artifactRows.length){const heading=element("h2",null,"Artifacts");heading.style.marginTop="20px";section.append(heading);p.artifactRows.forEach(row=>section.append(renderArtifact(row)))}
   return section;
 }

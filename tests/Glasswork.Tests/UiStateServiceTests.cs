@@ -273,4 +273,41 @@ public class UiStateServiceTests
         var verify = new JsonFileUiStateService(path);
         Assert.AreEqual(2, verify.Get<int>("k"), "Last writer must win for the same key");
     }
+
+    /// <summary>
+    /// Regression test for a genuine lost-update race: two instances (one per
+    /// simulated process, matching how two canvas hosts share one UI State
+    /// file) each set a distinct key and call Save() truly concurrently
+    /// (rather than the sequential Save-then-Save pattern used by the other
+    /// merge-on-save tests above). Without a cross-process lock around the
+    /// read-current-disk-state-then-write section, one Save() can read a disk
+    /// snapshot that predates the other's write and silently overwrite it,
+    /// even though the two processes never touched the same key.
+    /// </summary>
+    [TestMethod]
+    public async Task MergeOnSave_PreservesBothKeys_WhenTwoProcessesSaveConcurrently()
+    {
+        var dir = NewTempDir();
+        var path = Path.Combine(dir, "ui-state.json");
+
+        // Repeat several iterations against fresh files: a race that depends
+        // on OS thread scheduling may not reproduce on every single attempt.
+        for (var iteration = 0; iteration < 20; iteration++)
+        {
+            var iterationPath = Path.Combine(dir, $"ui-state-{iteration}.json");
+            var processA = new JsonFileUiStateService(iterationPath);
+            var processB = new JsonFileUiStateService(iterationPath);
+            processA.Set("key-a", iteration);
+            processB.Set("key-b", iteration);
+
+            var barrier = new Barrier(2);
+            var taskA = Task.Run(() => { barrier.SignalAndWait(); processA.Save(); });
+            var taskB = Task.Run(() => { barrier.SignalAndWait(); processB.Save(); });
+            await Task.WhenAll(taskA, taskB);
+
+            var verify = new JsonFileUiStateService(iterationPath);
+            Assert.AreEqual(iteration, verify.Get<int>("key-a"), $"iteration {iteration}: Process A's concurrently-saved key must survive Process B's concurrent save");
+            Assert.AreEqual(iteration, verify.Get<int>("key-b"), $"iteration {iteration}: Process B's concurrently-saved key must survive Process A's concurrent save");
+        }
+    }
 }
