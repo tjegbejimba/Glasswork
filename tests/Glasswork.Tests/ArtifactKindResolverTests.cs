@@ -107,20 +107,20 @@ public sealed class ArtifactKindResolverTests
     public void ExecutableDenyList_ContainsCommonExecutableExtensions()
     {
         var denyList = ArtifactKindResolver.ExecutableDenyList;
-        
-        Assert.IsTrue(denyList.Contains(".exe"));
-        Assert.IsTrue(denyList.Contains(".com"));
-        Assert.IsTrue(denyList.Contains(".cmd"));
-        Assert.IsTrue(denyList.Contains(".bat"));
-        Assert.IsTrue(denyList.Contains(".ps1"));
-        Assert.IsTrue(denyList.Contains(".psm1"));
-        Assert.IsTrue(denyList.Contains(".vbs"));
-        Assert.IsTrue(denyList.Contains(".js"));
-        Assert.IsTrue(denyList.Contains(".jar"));
-        Assert.IsTrue(denyList.Contains(".msi"));
-        Assert.IsTrue(denyList.Contains(".dll"));
-        Assert.IsTrue(denyList.Contains(".lnk"));
-        Assert.IsTrue(denyList.Contains(".url"));
+
+        Assert.Contains(".exe", denyList);
+        Assert.Contains(".com", denyList);
+        Assert.Contains(".cmd", denyList);
+        Assert.Contains(".bat", denyList);
+        Assert.Contains(".ps1", denyList);
+        Assert.Contains(".psm1", denyList);
+        Assert.Contains(".vbs", denyList);
+        Assert.Contains(".js", denyList);
+        Assert.Contains(".jar", denyList);
+        Assert.Contains(".msi", denyList);
+        Assert.Contains(".dll", denyList);
+        Assert.Contains(".lnk", denyList);
+        Assert.Contains(".url", denyList);
     }
 
     [TestMethod]
@@ -129,10 +129,10 @@ public sealed class ArtifactKindResolverTests
         // .js and .ps1 should resolve to Text for rendering but be in deny list for launch
         Assert.AreEqual(ArtifactKind.Text, ArtifactKindResolver.Resolve("script.js"));
         Assert.AreEqual(ArtifactKind.Text, ArtifactKindResolver.Resolve("deploy.ps1"));
-        
+
         var denyList = ArtifactKindResolver.ExecutableDenyList;
-        Assert.IsTrue(denyList.Contains(".js"));
-        Assert.IsTrue(denyList.Contains(".ps1"));
+        Assert.Contains(".js", denyList);
+        Assert.Contains(".ps1", denyList);
     }
 
     [TestMethod]

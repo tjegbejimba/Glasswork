@@ -165,8 +165,8 @@ public class GitHubReleaseDetectorTests
         Assert.IsFalse(result.IsSuccess);
         Assert.IsNull(result.Version);
         Assert.IsNotNull(result.FailureReason);
-        Assert.IsTrue(result.FailureReason.Contains("404"),
-            $"Expected 404 in failure reason but got: {result.FailureReason}");
+        Assert.Contains("404",
+            result.FailureReason, $"Expected 404 in failure reason but got: {result.FailureReason}");
     }
 
     [TestMethod]
@@ -187,8 +187,9 @@ public class GitHubReleaseDetectorTests
 
         // Assert
         Assert.IsFalse(result.IsSuccess);
-        Assert.IsTrue(result.FailureReason.Contains("not a string"),
-            $"Expected 'not a string' in failure reason but got: {result.FailureReason}");
+        Assert.IsNotNull(result.FailureReason);
+        Assert.Contains("not a string",
+            result.FailureReason, $"Expected 'not a string' in failure reason but got: {result.FailureReason}");
     }
 
     [TestMethod]
@@ -207,8 +208,8 @@ public class GitHubReleaseDetectorTests
         Assert.IsFalse(result.IsSuccess);
         Assert.IsNull(result.Version);
         Assert.IsNotNull(result.FailureReason);
-        Assert.IsTrue(result.FailureReason.Contains("500"),
-            $"Expected 500 in failure reason but got: {result.FailureReason}");
+        Assert.Contains("500",
+            result.FailureReason, $"Expected 500 in failure reason but got: {result.FailureReason}");
     }
 
     [TestMethod]
@@ -251,8 +252,8 @@ public class GitHubReleaseDetectorTests
         Assert.IsFalse(result.IsSuccess);
         Assert.IsNull(result.Version);
         Assert.IsNotNull(result.FailureReason);
-        Assert.IsTrue(result.FailureReason.Contains("tag_name"),
-            $"Expected tag_name in failure reason but got: {result.FailureReason}");
+        Assert.Contains("tag_name",
+            result.FailureReason, $"Expected tag_name in failure reason but got: {result.FailureReason}");
     }
 
     [TestMethod]
@@ -271,8 +272,8 @@ public class GitHubReleaseDetectorTests
         Assert.IsFalse(result.IsSuccess);
         Assert.IsNull(result.Version);
         Assert.IsNotNull(result.FailureReason);
-        Assert.IsTrue(result.FailureReason.Contains("Network"),
-            $"Expected Network in failure reason but got: {result.FailureReason}");
+        Assert.Contains("Network",
+            result.FailureReason, $"Expected Network in failure reason but got: {result.FailureReason}");
     }
 
     [TestMethod]
@@ -291,8 +292,8 @@ public class GitHubReleaseDetectorTests
         Assert.IsFalse(result.IsSuccess);
         Assert.IsNull(result.Version);
         Assert.IsNotNull(result.FailureReason);
-        Assert.IsTrue(result.FailureReason.Contains("timeout"),
-            $"Expected timeout in failure reason but got: {result.FailureReason}");
+        Assert.Contains("timeout",
+            result.FailureReason, $"Expected timeout in failure reason but got: {result.FailureReason}");
     }
 
     [TestMethod]

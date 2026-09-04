@@ -23,7 +23,7 @@ public class RelatedLinkParserTests
     public void Parse_NoRelatedSection_ReturnsEmptyList()
     {
         var task = _parser.Parse(Header);
-        Assert.AreEqual(0, task.RelatedLinks.Count);
+        Assert.IsEmpty(task.RelatedLinks);
     }
 
     [TestMethod]
@@ -39,7 +39,7 @@ public class RelatedLinkParserTests
 
         var task = _parser.Parse(md);
 
-        Assert.AreEqual(3, task.RelatedLinks.Count);
+        Assert.HasCount(3, task.RelatedLinks);
         Assert.AreEqual("decisions/glasswork-v2-prd", task.RelatedLinks[0].Slug);
         Assert.IsNull(task.RelatedLinks[0].DisplayName);
         Assert.AreEqual("contacts/jane-doe", task.RelatedLinks[1].Slug);
@@ -59,7 +59,7 @@ public class RelatedLinkParserTests
 
         var task = _parser.Parse(md);
 
-        Assert.AreEqual(2, task.RelatedLinks.Count);
+        Assert.HasCount(2, task.RelatedLinks);
         Assert.AreEqual("decisions/foo", task.RelatedLinks[0].Slug);
         Assert.AreEqual("notes/bar", task.RelatedLinks[1].Slug);
         Assert.AreEqual("Bar Note", task.RelatedLinks[1].DisplayName);
@@ -78,7 +78,7 @@ public class RelatedLinkParserTests
 
         var task = _parser.Parse(md);
 
-        Assert.AreEqual(1, task.RelatedLinks.Count);
+        Assert.HasCount(1, task.RelatedLinks);
         Assert.AreEqual("decisions/foo", task.RelatedLinks[0].Slug);
     }
 
@@ -97,7 +97,7 @@ public class RelatedLinkParserTests
 
         var task = _parser.Parse(md);
 
-        Assert.AreEqual(1, task.RelatedLinks.Count);
+        Assert.HasCount(1, task.RelatedLinks);
         Assert.AreEqual("decisions/foo", task.RelatedLinks[0].Slug);
     }
 
@@ -114,8 +114,8 @@ public class RelatedLinkParserTests
 
         var task = _parser.Parse(md);
 
-        Assert.IsTrue(task.Description.Contains("## Related"), "Related section should remain in Description.");
-        Assert.IsTrue(task.Description.Contains("[[decisions/foo]]"), "Related links should remain in Description.");
+        Assert.Contains("## Related", task.Description, "Related section should remain in Description.");
+        Assert.Contains("[[decisions/foo]]", task.Description, "Related links should remain in Description.");
     }
 
     [TestMethod]
@@ -168,7 +168,7 @@ public class RelatedLinkParserTests
         var reSerialized = _parser.Serialize(parsed);
         var reParsed = _parser.Parse(reSerialized);
 
-        Assert.AreEqual(2, reParsed.RelatedLinks.Count);
+        Assert.HasCount(2, reParsed.RelatedLinks);
         Assert.AreEqual("decisions/foo", reParsed.RelatedLinks[0].Slug);
         Assert.AreEqual("contacts/jane", reParsed.RelatedLinks[1].Slug);
         Assert.AreEqual("Jane Doe", reParsed.RelatedLinks[1].DisplayName);

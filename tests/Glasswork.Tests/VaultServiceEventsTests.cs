@@ -62,7 +62,7 @@ public class VaultServiceEventsTests
     {
         _vault.Delete("ghost");
 
-        Assert.AreEqual(0, _deleted.Count);
+        Assert.IsEmpty(_deleted);
     }
 
     [TestMethod]
@@ -88,7 +88,7 @@ public class VaultServiceEventsTests
 
         _vault.UpdateSubtaskCheckbox("t1", "nonexistent", isCompleted: true);
 
-        Assert.AreEqual(0, _written.Count);
+        Assert.IsEmpty(_written);
     }
 
     [TestMethod]

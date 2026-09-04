@@ -36,7 +36,7 @@ public class AdoParentTitleCacheStoreTests
 
         var loaded = store.LoadFresh(new[] { 12345 });
 
-        Assert.AreEqual(1, loaded.Count);
+        Assert.HasCount(1, loaded);
         Assert.AreEqual("Real Title", loaded[12345]);
     }
 
@@ -50,7 +50,7 @@ public class AdoParentTitleCacheStoreTests
 
         var loaded = store.LoadFresh(new[] { 12345 });
 
-        Assert.AreEqual(0, loaded.Count);
+        Assert.IsEmpty(loaded);
     }
 
     [TestMethod]
@@ -61,7 +61,7 @@ public class AdoParentTitleCacheStoreTests
 
         var loaded = store.LoadFresh(new[] { 99999 });
 
-        Assert.AreEqual(0, loaded.Count);
+        Assert.IsEmpty(loaded);
     }
 
     [TestMethod]
@@ -90,7 +90,7 @@ public class AdoParentTitleCacheStoreTests
         store.Save();
 
         var loaded = store.LoadFresh(new[] { 7, 8 });
-        Assert.AreEqual(0, loaded.Count);
+        Assert.IsEmpty(loaded);
     }
 
     [TestMethod]
@@ -110,7 +110,7 @@ public class AdoParentTitleCacheStoreTests
         var store2 = new AdoParentTitleCacheStore(ui2);
         var loaded = store2.LoadFresh(new[] { 1, 2, 3 });
 
-        Assert.AreEqual(2, loaded.Count);
+        Assert.HasCount(2, loaded);
         Assert.IsTrue(loaded.ContainsKey(1));
         Assert.IsTrue(loaded.ContainsKey(3));
         Assert.IsFalse(loaded.ContainsKey(2));

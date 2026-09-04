@@ -49,7 +49,7 @@ public class VaultReorderSubtaskTests
         _vault.ReorderSubtask(taskId, fromIndex: 0, toIndex: 2);
 
         var loaded = _vault.Load(taskId)!;
-        Assert.AreEqual(3, loaded.Subtasks.Count);
+        Assert.HasCount(3, loaded.Subtasks);
         Assert.AreEqual("Beta", loaded.Subtasks[0].Text);
         Assert.AreEqual("Gamma", loaded.Subtasks[1].Text);
         Assert.AreEqual("Alpha", loaded.Subtasks[2].Text);

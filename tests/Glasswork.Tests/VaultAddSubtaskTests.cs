@@ -222,7 +222,7 @@ public class VaultAddSubtaskTests
 
         var loaded = _vault.Load(id);
         Assert.IsNotNull(loaded);
-        Assert.AreEqual(2, loaded!.Subtasks.Count);
+        Assert.HasCount(2, loaded!.Subtasks);
         var fresh = loaded.Subtasks.Last();
         Assert.AreEqual("Fresh subtask", fresh.Text);
         Assert.IsFalse(fresh.IsCompleted);
@@ -271,7 +271,7 @@ public class VaultAddSubtaskTests
 
         var actual = File.ReadAllText(path);
         StringAssert.Contains(actual, "### [ ] Padded\n");
-        Assert.IsFalse(actual.Contains("### [ ]   Padded"));
+        Assert.DoesNotContain("### [ ]   Padded", actual);
     }
 
     [TestMethod]
@@ -319,8 +319,8 @@ public class VaultAddSubtaskTests
         _vault.AddSubtask(id, "Added");
 
         var actual = File.ReadAllText(path);
-        Assert.IsFalse(actual.Replace("\r\n", "").Contains('\n'),
-            "File should contain only CRLF line endings, no bare LF.");
+        Assert.DoesNotContain('\n',
+actual.Replace("\r\n", ""), "File should contain only CRLF line endings, no bare LF.");
         StringAssert.Contains(actual, "### [ ] Added\r\n");
     }
 

@@ -55,7 +55,7 @@ public class LinkUriPolicyTypeCoercionTests
         };
 
         var display = LinkUriPolicy.DisplayText(link);
-        Assert.IsTrue(display.Contains("example.com"), $"Unknown type should show host, got: {display}");
+        Assert.Contains("example.com", display, $"Unknown type should show host, got: {display}");
     }
 
     [TestMethod]

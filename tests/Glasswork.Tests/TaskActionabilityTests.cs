@@ -144,8 +144,8 @@ public sealed class TaskActionabilityTests
         var high = TaskActionability.Compute(actionable, new TaskSignalContext(today, BacklinkCount: 4));
         var low = TaskActionability.Compute(blockedFuture, new TaskSignalContext(today, BacklinkCount: 0));
 
-        Assert.IsTrue(high.UrgencyScore > low.UrgencyScore);
-        Assert.IsTrue(high.UrgencyScore > 20);
-        Assert.IsTrue(low.UrgencyScore < 1);
+        Assert.IsGreaterThan(low.UrgencyScore, high.UrgencyScore);
+        Assert.IsGreaterThan(20, high.UrgencyScore);
+        Assert.IsLessThan(1, low.UrgencyScore);
     }
 }

@@ -13,15 +13,15 @@ public class VaultMarkdownParserTests
     [TestMethod]
     public void Empty_ReturnsZeroBlocks()
     {
-        Assert.AreEqual(0, NewParser().Parse(string.Empty).Count);
-        Assert.AreEqual(0, NewParser().Parse(null!).Count);
+        Assert.IsEmpty(NewParser().Parse(string.Empty));
+        Assert.IsEmpty(NewParser().Parse(null!));
     }
 
     [TestMethod]
     public void SingleHeading_ProducesHeadingBlockWithCorrectLevel()
     {
         var blocks = NewParser().Parse("## Hello");
-        Assert.AreEqual(1, blocks.Count);
+        Assert.HasCount(1, blocks);
         var heading = (HeadingBlock)blocks[0];
         Assert.AreEqual(2, heading.Level);
         Assert.AreEqual("Hello", ((TextSpan)heading.Inlines[0]).Text);
@@ -51,15 +51,15 @@ public class VaultMarkdownParserTests
         var blocks = NewParser().Parse(md);
 
         // Expect: heading, paragraph, unordered list, ordered list, code, quote, hr
-        Assert.AreEqual(7, blocks.Count);
+        Assert.HasCount(7, blocks);
         Assert.IsInstanceOfType(blocks[0], typeof(HeadingBlock));
         Assert.IsInstanceOfType(blocks[1], typeof(ParagraphBlock));
         var ul = (ListBlock)blocks[2];
         Assert.IsFalse(ul.Ordered);
-        Assert.AreEqual(2, ul.Items.Count);
+        Assert.HasCount(2, ul.Items);
         var ol = (ListBlock)blocks[3];
         Assert.IsTrue(ol.Ordered);
-        Assert.AreEqual(2, ol.Items.Count);
+        Assert.HasCount(2, ol.Items);
         Assert.IsInstanceOfType(blocks[4], typeof(CodeBlockNode));
         Assert.IsInstanceOfType(blocks[5], typeof(QuoteBlockNode));
         Assert.IsInstanceOfType(blocks[6], typeof(ThematicBreakNode));
@@ -120,7 +120,7 @@ public class VaultMarkdownParserTests
     {
         var thrower = new VaultMarkdownParser(_ => throw new InvalidOperationException("forced"));
         var blocks = thrower.Parse("# would have been a heading");
-        Assert.AreEqual(1, blocks.Count);
+        Assert.HasCount(1, blocks);
         var fallback = (FallbackPlainTextNode)blocks[0];
         Assert.AreEqual("# would have been a heading", fallback.Text);
     }
@@ -130,7 +130,7 @@ public class VaultMarkdownParserTests
     {
         var blocks = NewParser().Parse("> hello\n> world");
         var quote = (QuoteBlockNode)blocks[0];
-        Assert.AreEqual(1, quote.Children.Count);
+        Assert.HasCount(1, quote.Children);
         Assert.IsInstanceOfType(quote.Children[0], typeof(ParagraphBlock));
     }
 
@@ -157,7 +157,7 @@ public class VaultMarkdownParserTests
     public void WikiLink_BareStem_NoResolver_IsUnresolved()
     {
         var inlines = ParaInlines(NewParser().Parse("[[foo]]"));
-        Assert.AreEqual(1, inlines.Count);
+        Assert.HasCount(1, inlines);
         var link = (WikiLinkSpan)inlines[0];
         Assert.AreEqual("foo", link.Stem);
         Assert.IsNull(link.Display);
@@ -177,7 +177,7 @@ public class VaultMarkdownParserTests
     public void WikiLink_MixedWithText_ProducesTextThenLinkThenText()
     {
         var inlines = ParaInlines(NewParser().Parse("see [[foo]] for context"));
-        Assert.AreEqual(3, inlines.Count);
+        Assert.HasCount(3, inlines);
         Assert.AreEqual("see ", ((TextSpan)inlines[0]).Text);
         Assert.AreEqual("foo", ((WikiLinkSpan)inlines[1]).Stem);
         Assert.AreEqual(" for context", ((TextSpan)inlines[2]).Text);
@@ -203,7 +203,7 @@ public class VaultMarkdownParserTests
     public void WikiLink_EmptyStem_LeftAsLiteralText()
     {
         var inlines = ParaInlines(NewParser().Parse("[[ ]]"));
-        Assert.AreEqual(1, inlines.Count);
+        Assert.HasCount(1, inlines);
         Assert.IsInstanceOfType(inlines[0], typeof(TextSpan));
     }
 
@@ -212,7 +212,7 @@ public class VaultMarkdownParserTests
     {
         var inlines = ParaInlines(NewParser().Parse("*[[foo]]*"));
         var italic = (ItalicSpan)inlines[0];
-        Assert.AreEqual(1, italic.Inlines.Count);
+        Assert.HasCount(1, italic.Inlines);
         Assert.IsInstanceOfType(italic.Inlines[0], typeof(WikiLinkSpan));
     }
 
@@ -237,12 +237,12 @@ public class VaultMarkdownParserTests
             "| 1 | 2 |",
             "| 3 | 4 |");
         var blocks = NewParser().Parse(md);
-        Assert.AreEqual(1, blocks.Count);
+        Assert.HasCount(1, blocks);
         var table = (TableBlock)blocks[0];
-        Assert.AreEqual(2, table.Columns.Count);
-        Assert.AreEqual(2, table.Header.Cells.Count);
+        Assert.HasCount(2, table.Columns);
+        Assert.HasCount(2, table.Header.Cells);
         Assert.AreEqual("A", ((TextSpan)table.Header.Cells[0].Inlines[0]).Text);
-        Assert.AreEqual(2, table.Body.Count);
+        Assert.HasCount(2, table.Body);
         Assert.AreEqual("3", ((TextSpan)table.Body[1].Cells[0].Inlines[0]).Text);
     }
 
@@ -279,9 +279,9 @@ public class VaultMarkdownParserTests
             "- [x] done two",
             "- normal item");
         var list = (ListBlock)NewParser().Parse(md)[0];
-        Assert.AreEqual(3, list.Items.Count);
-        Assert.AreEqual(false, list.Items[0].IsChecked);
-        Assert.AreEqual(true, list.Items[1].IsChecked);
+        Assert.HasCount(3, list.Items);
+        Assert.IsFalse(list.Items[0].IsChecked);
+        Assert.IsTrue(list.Items[1].IsChecked);
         Assert.IsNull(list.Items[2].IsChecked);
     }
 
@@ -294,7 +294,7 @@ public class VaultMarkdownParserTests
         var callout = (CalloutBlock)NewParser().Parse(md)[0];
         Assert.AreEqual(CalloutType.Note, callout.Type);
         Assert.IsNull(callout.Title);
-        Assert.AreEqual(1, callout.Body.Count);
+        Assert.HasCount(1, callout.Body);
         var p = (ParagraphBlock)callout.Body[0];
         Assert.AreEqual("Body line", ((TextSpan)p.Inlines[0]).Text);
     }
@@ -348,8 +348,8 @@ public class VaultMarkdownParserTests
         var p = (ParagraphBlock)quote.Children[0];
         // Marker is stripped; body remains.
         var text = string.Concat(p.Inlines.OfType<TextSpan>().Select(t => t.Text));
-        Assert.IsFalse(text.Contains("[!foo]"), $"marker leaked: '{text}'");
-        Assert.IsTrue(text.Contains("body"), $"body missing: '{text}'");
+        Assert.DoesNotContain("[!foo]", text, $"marker leaked: '{text}'");
+        Assert.Contains("body", text, $"body missing: '{text}'");
     }
 
     [TestMethod]
@@ -372,7 +372,7 @@ public class VaultMarkdownParserTests
         var c = (CalloutBlock)NewParser().Parse(md)[0];
         Assert.AreEqual(CalloutType.Warning, c.Type);
         Assert.AreEqual("Heads up", c.Title);
-        Assert.AreEqual(2, c.Body.Count);
+        Assert.HasCount(2, c.Body);
         Assert.IsInstanceOfType(c.Body[0], typeof(ParagraphBlock));
         Assert.IsInstanceOfType(c.Body[1], typeof(ListBlock));
     }

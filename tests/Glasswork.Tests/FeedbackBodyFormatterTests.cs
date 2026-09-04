@@ -88,8 +88,8 @@ public class FeedbackBodyFormatterTests
 
         StringAssert.Contains(body, "_Filed from Glasswork feedback dialog");
         StringAssert.Contains(body, "thoughts");
-        Assert.IsFalse(body.Contains("## Context"),
-            "Context section should be omitted when context is null.");
+        Assert.DoesNotContain("## Context",
+body, "Context section should be omitted when context is null.");
     }
 
     [TestMethod]
@@ -133,8 +133,8 @@ public class FeedbackBodyFormatterTests
             SampleContext(activeTaskId: "task-foo|bar|baz"));
 
         StringAssert.Contains(body, "task-foo\\|bar\\|baz");
-        Assert.IsFalse(body.Contains("task-foo|bar"),
-            "Raw unescaped pipe leaked into table cell.");
+        Assert.DoesNotContain("task-foo|bar",
+body, "Raw unescaped pipe leaked into table cell.");
     }
 
     [TestMethod]
@@ -168,8 +168,8 @@ public class FeedbackBodyFormatterTests
         var body = FeedbackBodyFormatter.Build("Bug", "x", ctx);
 
         StringAssert.Contains(body, "2026-04-24T17:30:15Z");
-        Assert.IsFalse(body.Contains("2026-04-24T10:30:15Z"),
-            "Timestamp was not converted to UTC before rendering.");
+        Assert.DoesNotContain("2026-04-24T10:30:15Z",
+body, "Timestamp was not converted to UTC before rendering.");
     }
 
     [TestMethod]

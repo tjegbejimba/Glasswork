@@ -126,7 +126,7 @@ public class TaskTypeBackfillServiceVaultTests
         CollectionAssert.Contains(report.Stamped.ToArray(), "pbi-file.md");
         Assert.IsTrue(report.DryRun);
         var onDisk = File.ReadAllText(Path.Combine(_todo, "pbi-file.md"));
-        Assert.IsFalse(onDisk.Contains("type: pbi"), "dry-run must not modify the file");
+        Assert.DoesNotContain("type: pbi", onDisk, "dry-run must not modify the file");
     }
 
     [TestMethod]
@@ -137,17 +137,17 @@ public class TaskTypeBackfillServiceVaultTests
         var classification = new[] { new BackfillClassification("pbi-file.md", 14480984, "pbi") };
 
         var first = svc.Run(classification, dryRun: false);
-        Assert.AreEqual(1, first.Stamped.Count);
+        Assert.HasCount(1, first.Stamped);
         var afterFirst = File.ReadAllText(Path.Combine(_todo, "pbi-file.md"));
 
         // Second dry-run: nothing left to do.
         var secondDry = svc.Run(classification, dryRun: true);
-        Assert.AreEqual(0, secondDry.Stamped.Count);
+        Assert.IsEmpty(secondDry.Stamped);
         CollectionAssert.Contains(secondDry.SkippedAlreadyTyped.ToArray(), "pbi-file.md");
 
         // Second apply: writes nothing; file byte-for-byte unchanged.
         var secondApply = svc.Run(classification, dryRun: false);
-        Assert.AreEqual(0, secondApply.Stamped.Count);
+        Assert.IsEmpty(secondApply.Stamped);
         Assert.AreEqual(afterFirst, File.ReadAllText(Path.Combine(_todo, "pbi-file.md")));
     }
 
@@ -163,7 +163,7 @@ public class TaskTypeBackfillServiceVaultTests
             new BackfillClassification("pbi-file.md", 14480984, "task"), // task not allowed
         ], dryRun: false);
 
-        Assert.AreEqual(0, report.Stamped.Count);
+        Assert.IsEmpty(report.Stamped);
         var rejectedPaths = report.Invalid.Select(r => r.RelativePath).ToArray();
         CollectionAssert.Contains(rejectedPaths, "does-not-exist.md");
         CollectionAssert.Contains(rejectedPaths, "pbi-file.md");
@@ -181,9 +181,9 @@ public class TaskTypeBackfillServiceVaultTests
             new BackfillClassification("pbi-file.md", 14480984, "pbi"),
         ], dryRun: false);
 
-        Assert.AreEqual(0, report.Stamped.Count);
+        Assert.IsEmpty(report.Stamped);
         CollectionAssert.Contains(report.Invalid.Select(r => r.RelativePath).ToArray(), "pbi-file.md");
-        Assert.IsFalse(File.ReadAllText(Path.Combine(_todo, "pbi-file.md")).Contains("type: pbi"));
+        Assert.DoesNotContain("type: pbi", File.ReadAllText(Path.Combine(_todo, "pbi-file.md")));
     }
 
     [TestMethod]
@@ -194,9 +194,9 @@ public class TaskTypeBackfillServiceVaultTests
 
         var report = svc.Run([new BackfillClassification("pbi-file.md", 99999999, "pbi")], dryRun: false);
 
-        Assert.AreEqual(0, report.Stamped.Count);
+        Assert.IsEmpty(report.Stamped);
         CollectionAssert.Contains(report.SkippedDrift.ToArray(), "pbi-file.md");
-        Assert.IsFalse(File.ReadAllText(Path.Combine(_todo, "pbi-file.md")).Contains("type: pbi"));
+        Assert.DoesNotContain("type: pbi", File.ReadAllText(Path.Combine(_todo, "pbi-file.md")));
     }
 
     [TestMethod]
@@ -213,11 +213,11 @@ public class TaskTypeBackfillServiceVaultTests
 
         var report = svc.Run([new BackfillClassification("pbi-file.md", 14480984, "pbi")], dryRun: false);
 
-        Assert.AreEqual(0, report.Stamped.Count, "must not overwrite a concurrently edited file");
+        Assert.IsEmpty(report.Stamped, "must not overwrite a concurrently edited file");
         CollectionAssert.Contains(report.SkippedConflict.ToArray(), "pbi-file.md");
         var onDisk = File.ReadAllText(fullPath);
         StringAssert.Contains(onDisk, "concurrently edited"); // the concurrent edit survived
-        Assert.IsFalse(onDisk.Contains("type: pbi"));
+        Assert.DoesNotContain("type: pbi", onDisk);
     }
 
     [TestMethod]
@@ -232,7 +232,7 @@ public class TaskTypeBackfillServiceVaultTests
 
         var report = svc.Run([new BackfillClassification("broken.md", 14480984, "pbi")], dryRun: false);
 
-        Assert.AreEqual(0, report.Stamped.Count);
+        Assert.IsEmpty(report.Stamped);
         CollectionAssert.Contains(report.Unstampable.ToArray(), "broken.md");
         CollectionAssert.DoesNotContain(report.SkippedAlreadyTyped.ToArray(), "broken.md");
     }

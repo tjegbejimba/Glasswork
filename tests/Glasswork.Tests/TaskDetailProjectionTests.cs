@@ -86,13 +86,13 @@ public sealed class TaskDetailProjectionTests
         CollectionAssert.AreEqual(new[] { "one", "two" }, projection.Tags.ToArray());
         Assert.AreEqual("A description", projection.Description);
         Assert.AreEqual("A note", projection.Notes);
-        Assert.AreEqual(1, projection.ActiveSubtasks.Count);
-        Assert.AreEqual(1, projection.CompletedSubtasks.Count);
-        Assert.AreEqual(1, projection.Artifacts.Count);
-        Assert.AreEqual(1, projection.Links.Count);
-        Assert.AreEqual(1, projection.RelatedEntries.Count);
-        Assert.AreEqual(1, projection.DirectChildren.Count);
-        Assert.AreEqual(1, projection.Backlinks.Count);
+        Assert.HasCount(1, projection.ActiveSubtasks);
+        Assert.HasCount(1, projection.CompletedSubtasks);
+        Assert.HasCount(1, projection.Artifacts);
+        Assert.HasCount(1, projection.Links);
+        Assert.HasCount(1, projection.RelatedEntries);
+        Assert.HasCount(1, projection.DirectChildren);
+        Assert.HasCount(1, projection.Backlinks);
         Assert.IsTrue(projection.Visibility.ShowArtifacts);
         Assert.IsTrue(projection.Visibility.ShowRelated);
         Assert.IsTrue(projection.Visibility.ShowChildren);
@@ -150,7 +150,7 @@ public sealed class TaskDetailProjectionTests
             ],
             nowUtc: now);
 
-        Assert.AreEqual(5, projection.Artifacts.Count);
+        Assert.HasCount(5, projection.Artifacts);
         Assert.AreEqual(ArtifactKind.Markdown, projection.Artifacts[0].Kind);
         Assert.AreEqual(ArtifactKind.Text, projection.Artifacts[1].Kind);
         Assert.AreEqual(ArtifactKind.Html, projection.Artifacts[2].Kind);
@@ -194,8 +194,8 @@ public sealed class TaskDetailProjectionTests
         Assert.AreEqual(string.Empty, projection.Description);
         Assert.AreEqual(string.Empty, projection.Notes);
         Assert.AreEqual(string.Empty, projection.ResourceRevision);
-        Assert.AreEqual(0, projection.ActiveSubtasks.Count);
-        Assert.AreEqual(0, projection.Links.Count);
+        Assert.IsEmpty(projection.ActiveSubtasks);
+        Assert.IsEmpty(projection.Links);
     }
 
     [TestMethod]
@@ -248,7 +248,7 @@ public sealed class TaskDetailProjectionTests
             var projection = new Glasswork.Core.Services.TaskDetailProjectionService(vault).Build(task);
 
             Assert.IsNotNull(projection);
-            Assert.AreEqual(2, projection.RelatedEntries.Count);
+            Assert.HasCount(2, projection.RelatedEntries);
             Assert.AreEqual("Valid page", projection.RelatedEntries[0].Title);
             Assert.AreEqual("bad\0slug", projection.RelatedEntries[1].Slug);
         }
@@ -310,7 +310,7 @@ public sealed class TaskDetailProjectionTests
             Assert.AreEqual(GlassworkTask.Statuses.Todo, minimal.Status.Value);
             Assert.IsTrue(blocked.Status.IsBlocked);
             Assert.IsTrue(cancelled.Status.IsCancelled);
-            Assert.AreEqual(4, artifacts.Artifacts.Count);
+            Assert.HasCount(4, artifacts.Artifacts);
             CollectionAssert.AreEquivalent(
                 new[] { ArtifactKind.Markdown, ArtifactKind.Html, ArtifactKind.Text, ArtifactKind.Other },
                 artifacts.Artifacts.Select(a => a.Kind).ToArray());

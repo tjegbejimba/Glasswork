@@ -246,7 +246,7 @@ public class NotesEditControllerTests
             "After 'keep mine', baseline must snap to the new disk content so the next external change doesn't re-trigger until it actually changes again.");
         Assert.AreEqual("user mid-sentence", c.Buffer);
         Assert.AreEqual(NotesEditMode.Edit, c.Mode);
-        Assert.AreEqual(0, transitions.Count, "Mode must not transition.");
+        Assert.IsEmpty(transitions, "Mode must not transition.");
     }
 
     [TestMethod]

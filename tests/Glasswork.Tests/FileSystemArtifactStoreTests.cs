@@ -156,7 +156,7 @@ public class FileSystemArtifactStoreTests
         var pngPath = Path.Combine(folder, "screenshot.png");
         var txtPath = Path.Combine(folder, "notes.txt");
         var svgPath = Path.Combine(folder, "diagram.svg");
-        
+
         File.WriteAllText(mdPath, "# Plan\n\nSome markdown");
         File.WriteAllText(htmlPath, "<html><body>Report</body></html>");
         File.WriteAllBytes(pngPath, new byte[] { 0x89, 0x50, 0x4E, 0x47 }); // PNG header
@@ -166,31 +166,31 @@ public class FileSystemArtifactStoreTests
         var result = new FileSystemArtifactStore(_vaultRoot).Load("multi-task");
 
         Assert.HasCount(5, result);
-        
+
         var md = result.First(a => a.Path.EndsWith("plan.md"));
         Assert.AreEqual(ArtifactKind.Markdown, md.Kind);
         Assert.IsNotNull(md.Body);
-        Assert.IsTrue(md.SizeBytes > 0);
-        
+        Assert.IsGreaterThan(0, md.SizeBytes);
+
         var html = result.First(a => a.Path.EndsWith("report.html"));
         Assert.AreEqual(ArtifactKind.Html, html.Kind);
         Assert.IsNull(html.Body);
-        Assert.IsTrue(html.SizeBytes > 0);
-        
+        Assert.IsGreaterThan(0, html.SizeBytes);
+
         var png = result.First(a => a.Path.EndsWith("screenshot.png"));
         Assert.AreEqual(ArtifactKind.Image, png.Kind);
         Assert.IsNull(png.Body);
-        Assert.IsTrue(png.SizeBytes > 0);
-        
+        Assert.IsGreaterThan(0, png.SizeBytes);
+
         var txt = result.First(a => a.Path.EndsWith("notes.txt"));
         Assert.AreEqual(ArtifactKind.Text, txt.Kind);
         Assert.IsNotNull(txt.Body);
-        Assert.IsTrue(txt.SizeBytes > 0);
-        
+        Assert.IsGreaterThan(0, txt.SizeBytes);
+
         var svg = result.First(a => a.Path.EndsWith("diagram.svg"));
         Assert.AreEqual(ArtifactKind.Image, svg.Kind);
         Assert.IsNull(svg.Body);
-        Assert.IsTrue(svg.SizeBytes > 0);
+        Assert.IsGreaterThan(0, svg.SizeBytes);
     }
 
     [TestMethod]
@@ -222,7 +222,7 @@ public class FileSystemArtifactStoreTests
         var artifact = result[0];
         Assert.AreEqual(ArtifactKind.Text, artifact.Kind);
         Assert.IsNull(artifact.Body);
-        Assert.IsTrue(artifact.SizeBytes > ArtifactCaps.InlineTextBytes);
+        Assert.IsGreaterThan(ArtifactCaps.InlineTextBytes, artifact.SizeBytes);
         Assert.AreEqual("huge.txt", artifact.Title);
     }
 
@@ -234,7 +234,7 @@ public class FileSystemArtifactStoreTests
         var badPath = Path.Combine(folder, "bad.txt");
         File.WriteAllText(goodPath, "good content");
         File.WriteAllText(badPath, "bad content");
-        
+
         // Make the file unreadable by opening it exclusively
         using (var stream = File.Open(badPath, FileMode.Open, FileAccess.Read, FileShare.None))
         {
@@ -244,7 +244,7 @@ public class FileSystemArtifactStoreTests
             var good = result.First(a => a.Path.EndsWith("good.txt"));
             Assert.IsNull(good.LoadError);
             Assert.IsNotNull(good.Body);
-            
+
             var bad = result.First(a => a.Path.EndsWith("bad.txt"));
             Assert.IsNotNull(bad.LoadError);
             Assert.IsNull(bad.Body);
@@ -263,7 +263,7 @@ public class FileSystemArtifactStoreTests
         Assert.HasCount(2, result);
         var html = result.First(a => a.Path.EndsWith("report.html"));
         Assert.AreEqual("report.html", html.Title);
-        
+
         var txt = result.First(a => a.Path.EndsWith("notes.txt"));
         Assert.AreEqual("notes.txt", txt.Title);
     }

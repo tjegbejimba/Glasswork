@@ -33,17 +33,27 @@ public class WorkLogServiceTests
         // Two tasks under same ADO item, one standalone
         var t1 = new GlassworkTask
         {
-            Id = "task-a", Title = "Fix auth bug", Status = "done",
-            CompletedAt = new DateTime(2026, 4, 15), AdoLink = 12345, AdoTitle = "Auth Epic"
+            Id = "task-a",
+            Title = "Fix auth bug",
+            Status = "done",
+            CompletedAt = new DateTime(2026, 4, 15),
+            AdoLink = 12345,
+            AdoTitle = "Auth Epic"
         };
         var t2 = new GlassworkTask
         {
-            Id = "task-b", Title = "Write auth tests", Status = "done",
-            CompletedAt = new DateTime(2026, 4, 16), AdoLink = 12345, AdoTitle = "Auth Epic"
+            Id = "task-b",
+            Title = "Write auth tests",
+            Status = "done",
+            CompletedAt = new DateTime(2026, 4, 16),
+            AdoLink = 12345,
+            AdoTitle = "Auth Epic"
         };
         var t3 = new GlassworkTask
         {
-            Id = "task-c", Title = "Update docs", Status = "done",
+            Id = "task-c",
+            Title = "Update docs",
+            Status = "done",
             CompletedAt = new DateTime(2026, 4, 14)
         };
         _vault.Save(t1);
@@ -56,11 +66,11 @@ public class WorkLogServiceTests
         var weekStart = new DateTime(2026, 4, 13); // Monday
         var log = service.GenerateWeeklyLog(weekStart);
 
-        Assert.IsTrue(log.Contains("Auth Epic"));
-        Assert.IsTrue(log.Contains("Fix auth bug"));
-        Assert.IsTrue(log.Contains("Write auth tests"));
-        Assert.IsTrue(log.Contains("Update docs"));
-        Assert.IsTrue(log.Contains("2026-04-13")); // week header
+        Assert.Contains("Auth Epic", log);
+        Assert.Contains("Fix auth bug", log);
+        Assert.Contains("Write auth tests", log);
+        Assert.Contains("Update docs", log);
+        Assert.Contains("2026-04-13", log); // week header
     }
 
     [TestMethod]
@@ -68,12 +78,16 @@ public class WorkLogServiceTests
     {
         var t1 = new GlassworkTask
         {
-            Id = "this-week", Title = "This week", Status = "done",
+            Id = "this-week",
+            Title = "This week",
+            Status = "done",
             CompletedAt = new DateTime(2026, 4, 15)
         };
         var t2 = new GlassworkTask
         {
-            Id = "last-week", Title = "Last week", Status = "done",
+            Id = "last-week",
+            Title = "Last week",
+            Status = "done",
             CompletedAt = new DateTime(2026, 4, 6)
         };
         _vault.Save(t1);
@@ -82,8 +96,8 @@ public class WorkLogServiceTests
         var service = new WorkLogService(_vault, _index);
         var log = service.GenerateWeeklyLog(new DateTime(2026, 4, 13));
 
-        Assert.IsTrue(log.Contains("This week"));
-        Assert.IsFalse(log.Contains("Last week"));
+        Assert.Contains("This week", log);
+        Assert.DoesNotContain("Last week", log);
     }
 
     [TestMethod]

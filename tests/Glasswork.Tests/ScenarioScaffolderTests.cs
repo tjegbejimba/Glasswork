@@ -35,7 +35,7 @@ public class ScenarioScaffolderTests
             Element(automationId: "BacklogHeader", depth: 1),
             Element(automationId: "BacklogSearchBox", depth: 2)));
 
-        Assert.AreEqual(2, scenario.Actions.Count);
+        Assert.HasCount(2, scenario.Actions);
         Assert.AreEqual("wait-for", scenario.Actions[0].Type);
         Assert.AreEqual("BacklogHeader", scenario.Actions[0].AutomationId);
     }
@@ -47,7 +47,7 @@ public class ScenarioScaffolderTests
             Element(automationId: "BacklogHeader")));
 
         Assert.AreEqual("glasswork://backlog", scenario.StartUri);
-        Assert.AreEqual(1, scenario.Captures.Count);
+        Assert.HasCount(1, scenario.Captures);
         Assert.AreEqual("backlog-smoke", scenario.Captures[0].Name);
     }
 
@@ -58,7 +58,7 @@ public class ScenarioScaffolderTests
             Element(automationId: "OffscreenHeader", isOffscreen: true),
             Element(automationId: "BacklogTaskList")));
 
-        Assert.AreEqual(1, scenario.Actions.Count);
+        Assert.HasCount(1, scenario.Actions);
         Assert.AreEqual("BacklogTaskList", scenario.Actions[0].AutomationId);
     }
 
@@ -70,7 +70,7 @@ public class ScenarioScaffolderTests
             Element(automationId: "BacklogHeader", depth: 2),
             Element(automationId: "BacklogTaskList", depth: 3)));
 
-        Assert.AreEqual(2, scenario.Actions.Count);
+        Assert.HasCount(2, scenario.Actions);
         CollectionAssert.AreEqual(
             new[] { "BacklogHeader", "BacklogTaskList" },
             scenario.Actions.Select(a => a.AutomationId).ToArray());
@@ -85,8 +85,8 @@ public class ScenarioScaffolderTests
             Elements = [Element(controlType: "Text")],
         });
 
-        Assert.AreEqual(0, scenario.Actions.Count);
-        Assert.AreEqual(1, scenario.Captures.Count);
+        Assert.IsEmpty(scenario.Actions);
+        Assert.HasCount(1, scenario.Captures);
         scenario.Validate();
     }
 
@@ -99,7 +99,7 @@ public class ScenarioScaffolderTests
         var json = ScenarioScaffolder.ToScenarioJson(scenario);
 
         StringAssert.Contains(json, "\"startUri\"");
-        Assert.IsFalse(json.Contains("\"StartUri\""));
+        Assert.DoesNotContain("\"StartUri\"", json);
 
         var reparsed = VisualVerificationScenario.FromJson(json);
         Assert.AreEqual("Backlog smoke", reparsed.Name);

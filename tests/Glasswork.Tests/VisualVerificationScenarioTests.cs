@@ -102,7 +102,7 @@ public class VisualVerificationScenarioTests
 
         Assert.AreEqual("backlog smoke", scenario.Name);
         Assert.AreEqual("glasswork://backlog", scenario.StartUri);
-        Assert.AreEqual(1, scenario.Tasks.Count);
+        Assert.HasCount(1, scenario.Tasks);
         Assert.AreEqual("verify-backlog-task", scenario.Tasks[0].Id);
         CollectionAssert.AreEqual(
             new[] { "concepts/async-callbacks" },

@@ -124,7 +124,7 @@ public class VaultServiceTests
 
         var tasks = _vault.LoadAll();
 
-        Assert.AreEqual(2, tasks.Count);
+        Assert.HasCount(2, tasks);
         Assert.IsTrue(tasks.Any(t => t.Id == "task-a"));
         Assert.IsTrue(tasks.Any(t => t.Id == "task-b"));
     }
@@ -169,7 +169,7 @@ public class VaultServiceTests
     {
         var longTitle = new string('a', 100);
         var id = VaultService.GenerateId(longTitle);
-        Assert.IsTrue(id.Length <= 60);
+        Assert.IsLessThanOrEqualTo(60, id.Length);
     }
 
     [TestMethod]
@@ -358,7 +358,7 @@ public class VaultServiceTests
 
         var actual = File.ReadAllText(path);
         StringAssert.Contains(actual, "parent: 22222");
-        Assert.IsFalse(actual.Contains("parent: 11111"), "old parent value must be gone");
+        Assert.DoesNotContain("parent: 11111", actual, "old parent value must be gone");
     }
 
     private sealed class ThrowingMutationFaults(ResourceMutationFailurePoint point)
@@ -389,7 +389,7 @@ public class VaultServiceTests
         _vault.SetParent(taskId, "");
 
         var actual = File.ReadAllText(path);
-        Assert.IsFalse(actual.Contains("parent:"), "parent line must be removed");
+        Assert.DoesNotContain("parent:", actual, "parent line must be removed");
         StringAssert.Contains(actual, "Body.");
     }
 
@@ -473,10 +473,10 @@ public class VaultServiceTests
 
         Assert.IsTrue(changed);
         var after = File.ReadAllText(path);
-        Assert.IsTrue(after.Contains("Plain V1 body."));
-        Assert.IsTrue(after.Contains("## Subtasks"));
-        Assert.IsTrue(after.Contains("## Notes"));
-        Assert.IsTrue(after.Contains("## Related"));
+        Assert.Contains("Plain V1 body.", after);
+        Assert.Contains("## Subtasks", after);
+        Assert.Contains("## Notes", after);
+        Assert.Contains("## Related", after);
 
         // Idempotent on second invocation
         var changedAgain = _vault.MigrateToV2(taskId);

@@ -146,7 +146,7 @@ public sealed class ResearchChangeLogStoreTests
             log.Entries.SelectMany(entry => entry.ChangedPageIds).ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("2026-08-18T23:48:25")]
     [DataRow("2026-08-18T23:48:25.Z")]
     public void Read_RejectsNonRfc3339Timestamp(string timestamp)

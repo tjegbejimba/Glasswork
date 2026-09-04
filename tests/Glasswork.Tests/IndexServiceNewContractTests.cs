@@ -50,7 +50,7 @@ public class IndexServiceNewContractTests
         await fresh.LoadAsync();
 
         Assert.AreEqual(2, fresh.Count);
-        Assert.AreEqual(0, freshDeltas.Count,
+        Assert.IsEmpty(freshDeltas,
             "LoadAsync must not fire Changed — it is a snapshot, not a delta.");
     }
 
@@ -77,7 +77,7 @@ public class IndexServiceNewContractTests
 
         var dict = _index.Tasks;
 
-        Assert.AreEqual(2, dict.Count);
+        Assert.HasCount(2, dict);
         Assert.IsTrue(dict.ContainsKey("a"));
         Assert.AreEqual("Beta", dict["b"].Title);
     }
@@ -107,11 +107,11 @@ public class IndexServiceNewContractTests
 
         _index.OnFileChangedOnDisk("ext");
 
-        Assert.AreEqual(1, _deltas.Count);
-        Assert.AreEqual(1, _deltas[0].Added.Count);
+        Assert.HasCount(1, _deltas);
+        Assert.HasCount(1, _deltas[0].Added);
         Assert.AreEqual("ext", _deltas[0].Added[0].Id);
-        Assert.AreEqual(0, _deltas[0].Changed.Count);
-        Assert.AreEqual(0, _deltas[0].Removed.Count);
+        Assert.IsEmpty(_deltas[0].Changed);
+        Assert.IsEmpty(_deltas[0].Removed);
     }
 
     [TestMethod]
@@ -126,11 +126,11 @@ public class IndexServiceNewContractTests
             "---\nid: a\ntitle: Updated\nstatus: todo\n---\n");
         _index.OnFileChangedOnDisk("a");
 
-        Assert.AreEqual(1, _deltas.Count);
-        Assert.AreEqual(1, _deltas[0].Changed.Count);
+        Assert.HasCount(1, _deltas);
+        Assert.HasCount(1, _deltas[0].Changed);
         Assert.AreEqual("Updated", _deltas[0].Changed[0].Title);
-        Assert.AreEqual(0, _deltas[0].Added.Count);
-        Assert.AreEqual(0, _deltas[0].Removed.Count);
+        Assert.IsEmpty(_deltas[0].Added);
+        Assert.IsEmpty(_deltas[0].Removed);
     }
 
     [TestMethod]
@@ -143,11 +143,11 @@ public class IndexServiceNewContractTests
 
         _index.OnFileChangedOnDisk("a");
 
-        Assert.AreEqual(1, _deltas.Count);
-        Assert.AreEqual(1, _deltas[0].Removed.Count);
+        Assert.HasCount(1, _deltas);
+        Assert.HasCount(1, _deltas[0].Removed);
         Assert.AreEqual("a", _deltas[0].Removed[0]);
-        Assert.AreEqual(0, _deltas[0].Added.Count);
-        Assert.AreEqual(0, _deltas[0].Changed.Count);
+        Assert.IsEmpty(_deltas[0].Added);
+        Assert.IsEmpty(_deltas[0].Changed);
     }
 
     [TestMethod]
@@ -163,7 +163,7 @@ public class IndexServiceNewContractTests
         // Prior snapshot survives, just like the typed overload.
         Assert.AreEqual("Original", _index.ById("a")!.Title);
         // And no misleading delta fires — parse failure is a true no-op.
-        Assert.AreEqual(0, _deltas.Count,
+        Assert.IsEmpty(_deltas,
             "Parse failure must not fire Changed — it is a no-op retention, not a delta.");
     }
 
@@ -177,7 +177,7 @@ public class IndexServiceNewContractTests
         _index.OnFileChangedOnDisk("");
         _index.OnFileChangedOnDisk((string?)null!);
 
-        Assert.AreEqual(0, _deltas.Count);
+        Assert.IsEmpty(_deltas);
         Assert.AreEqual(1, _index.Count);
     }
 
@@ -209,7 +209,7 @@ public class IndexServiceNewContractTests
         _index.OnFileChangedOnDisk("a");
 
         Assert.IsNull(_index.ById("a"));
-        Assert.AreEqual(1, _deltas.Count);
+        Assert.HasCount(1, _deltas);
         Assert.AreEqual("a", _deltas[0].Removed.Single());
     }
 }

@@ -256,7 +256,7 @@ public sealed class PlannerScopeResolverTests
         var group = PlannerScopeResolver.Resolve(snapshot).Groups.Single();
 
         Assert.AreEqual("zero", group.Container.TaskId);
-        Assert.AreEqual(0, group.Leaves.Count);
+        Assert.IsEmpty(group.Leaves);
         Assert.AreEqual(0, group.CapacityMinutes);
     }
 

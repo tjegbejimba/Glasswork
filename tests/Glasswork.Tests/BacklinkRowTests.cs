@@ -51,6 +51,6 @@ public class BacklinkRowTests
     public void Project_EmptyInput_ReturnsEmptyList()
     {
         var rows = BacklinkRow.Project(Array.Empty<Backlink>());
-        Assert.AreEqual(0, rows.Count);
+        Assert.IsEmpty(rows);
     }
 }

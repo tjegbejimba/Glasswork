@@ -83,7 +83,7 @@ public class SelfWriteCoordinatorTests
 
         var markerFile = Path.Combine(_tempDir, ".glasswork", "recent-writes.json");
         var json = File.ReadAllText(markerFile);
-        Assert.IsTrue(json.Contains("task.md"), "Marker file must contain the registered path.");
+        Assert.Contains("task.md", json, "Marker file must contain the registered path.");
     }
 
     [TestMethod]
@@ -104,7 +104,7 @@ public class SelfWriteCoordinatorTests
         // The stale entry should have been pruned from the file.
         var markerFile = Path.Combine(_tempDir, ".glasswork", "recent-writes.json");
         var json = File.ReadAllText(markerFile);
-        Assert.IsFalse(json.Contains("task.md"), "Marker file must not retain entries past TTL.");
+        Assert.DoesNotContain("task.md", json, "Marker file must not retain entries past TTL.");
     }
 
     [TestMethod]

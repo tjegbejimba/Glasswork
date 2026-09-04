@@ -360,7 +360,7 @@ public class MyDayPromotionPolicyTests
             ],
         };
         var result = MyDayPromotionPolicy.TodaysSubtasks(task, Today);
-        Assert.AreEqual(2, result.Count);
+        Assert.HasCount(2, result);
     }
 
     [TestMethod]
@@ -380,7 +380,7 @@ public class MyDayPromotionPolicyTests
             ],
         };
         var result = MyDayPromotionPolicy.TodaysSubtasks(task, Today);
-        Assert.AreEqual(0, result.Count);
+        Assert.IsEmpty(result);
     }
 
     [TestMethod]
@@ -399,7 +399,7 @@ public class MyDayPromotionPolicyTests
             ],
         };
         var result = MyDayPromotionPolicy.TodaysSubtasks(task, Today);
-        Assert.AreEqual(0, result.Count);
+        Assert.IsEmpty(result);
     }
 
     [TestMethod]
@@ -407,7 +407,7 @@ public class MyDayPromotionPolicyTests
     {
         var task = new GlassworkTask { Id = "ts4" };
         var result = MyDayPromotionPolicy.TodaysSubtasks(task, Today);
-        Assert.AreEqual(0, result.Count);
+        Assert.IsEmpty(result);
     }
 
     [TestMethod]
@@ -424,7 +424,7 @@ public class MyDayPromotionPolicyTests
             ],
         };
         var result = MyDayPromotionPolicy.TodaysSubtasks(task, Today);
-        Assert.AreEqual(3, result.Count);
+        Assert.HasCount(3, result);
         Assert.AreEqual("Due yesterday", result[0].Text);
         Assert.AreEqual("Due today", result[1].Text);
         Assert.AreEqual("Flagged (no due)", result[2].Text);

@@ -69,7 +69,7 @@ public sealed class TaskSearchServiceTests
 
         var hits = _search.Search("frobulator");
 
-        Assert.AreEqual(1, hits.Count);
+        Assert.HasCount(1, hits);
         CollectionAssert.AreEquivalent(
             new[] { "description", "notes" },
             hits[0].MatchedIn.ToArray());
@@ -91,7 +91,7 @@ public sealed class TaskSearchServiceTests
 
         var hits = _search.Search("batch", fields: ["subtasks", "tags"]);
 
-        Assert.AreEqual(1, hits.Count);
+        Assert.HasCount(1, hits);
         CollectionAssert.AreEquivalent(
             new[] { "subtasks", "tags" },
             hits[0].MatchedIn.ToArray());
@@ -109,7 +109,7 @@ public sealed class TaskSearchServiceTests
 
         var hits = _search.Search("snowflake-term", fields: ["title"]);
 
-        Assert.AreEqual(0, hits.Count);
+        Assert.IsEmpty(hits);
     }
 
     [TestMethod]
@@ -129,7 +129,7 @@ public sealed class TaskSearchServiceTests
 
         var hits = _search.Search("batch");
 
-        Assert.AreEqual(2, hits.Count);
+        Assert.HasCount(2, hits);
         Assert.AreEqual("title-hit", hits[0].Id);
     }
 
@@ -148,7 +148,7 @@ public sealed class TaskSearchServiceTests
 
         var hits = _search.Search("secret-batch-token");
 
-        Assert.AreEqual(0, hits.Count);
+        Assert.IsEmpty(hits);
     }
 
     [TestMethod]
@@ -180,7 +180,7 @@ public sealed class TaskSearchServiceTests
 
         var hits = _search.Search("sized", size: "FOCUS");
 
-        Assert.AreEqual(1, hits.Count);
+        Assert.HasCount(1, hits);
         Assert.AreEqual("explicit-focus", hits[0].Id);
         Assert.AreEqual("focus", hits[0].Size);
     }

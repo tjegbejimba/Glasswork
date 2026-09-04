@@ -51,7 +51,7 @@ public class VaultSetLinksTests
         });
 
         var task = _vault.Load(taskId)!;
-        Assert.AreEqual(2, task.Links.Count);
+        Assert.HasCount(2, task.Links);
         Assert.AreEqual(TaskLink.Types.Pr, task.Links[0].Type);
         Assert.AreEqual("https://github.com/org/repo/pull/42", task.Links[0].Value);
         Assert.AreEqual(TaskLink.Types.Other, task.Links[1].Type);
@@ -81,7 +81,7 @@ public class VaultSetLinksTests
         _vault.SetLinks(taskId, new List<TaskLink>());
 
         var task = _vault.Load(taskId)!;
-        Assert.AreEqual(0, task.Links.Count);
+        Assert.IsEmpty(task.Links);
     }
 
     [TestMethod]
@@ -109,7 +109,7 @@ public class VaultSetLinksTests
         });
 
         var task = _vault.Load(taskId)!;
-        Assert.AreEqual(1, task.Links.Count);
+        Assert.HasCount(1, task.Links);
         Assert.AreEqual(TaskLink.Types.Build, task.Links[0].Type);
         Assert.AreEqual("https://dev.azure.com/build/456", task.Links[0].Value);
     }
@@ -150,7 +150,7 @@ public class VaultSetLinksTests
         _vault.SetLinks(taskId, links);
 
         var task = _vault.Load(taskId)!;
-        Assert.AreEqual(6, task.Links.Count);
+        Assert.HasCount(6, task.Links);
         Assert.AreEqual(TaskLink.Types.Ado, task.Links[0].Type);
         Assert.AreEqual("My ADO item", task.Links[0].Label);
         Assert.AreEqual(TaskLink.Types.Pr, task.Links[1].Type);
@@ -190,8 +190,8 @@ public class VaultSetLinksTests
         });
 
         var task = _vault.Load(taskId)!;
-        Assert.AreEqual(1, task.Links.Count);
-        Assert.IsTrue(task.Description.Contains("Description body."), "Description should be preserved");
-        Assert.IsTrue(task.Notes.Contains("Some notes."), "Notes should be preserved");
+        Assert.HasCount(1, task.Links);
+        Assert.Contains("Description body.", task.Description, "Description should be preserved");
+        Assert.Contains("Some notes.", task.Notes, "Notes should be preserved");
     }
 }

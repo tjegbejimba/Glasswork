@@ -375,7 +375,7 @@ public class TaskServiceTests
 
         var carryover = _taskService.GetCarryoverTasks();
 
-        Assert.AreEqual(1, carryover.Count);
+        Assert.HasCount(1, carryover);
         Assert.AreEqual("stale-1", carryover[0].Id);
     }
 
@@ -413,10 +413,10 @@ public class TaskServiceTests
 
         // Subtask removed from parent
         var reloaded = _vault.Load("parent-task")!;
-        Assert.AreEqual(0, reloaded.Subtasks.Count);
+        Assert.IsEmpty(reloaded.Subtasks);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("focus")]
     [DataRow("future_bucket")]
     public void PromoteSubtask_PreservesRawSize(string size)
@@ -453,12 +453,12 @@ public class TaskServiceTests
 
         _taskService.DeleteSubtask(parent, 1);
 
-        Assert.AreEqual(2, parent.Subtasks.Count);
+        Assert.HasCount(2, parent.Subtasks);
         Assert.AreEqual("keep me", parent.Subtasks[0].Text);
         Assert.AreEqual("also keep", parent.Subtasks[1].Text);
 
         var reloaded = _vault.Load("parent-del")!;
-        Assert.AreEqual(2, reloaded.Subtasks.Count);
+        Assert.HasCount(2, reloaded.Subtasks);
         Assert.IsFalse(reloaded.Subtasks.Any(s => s.Text == "delete me"));
     }
 
@@ -532,7 +532,7 @@ public class TaskServiceTests
         _taskService.SetStatusOnly(task, GlassworkTask.Statuses.InProgress);
 
         Assert.AreEqual(myDayDate, task.MyDay, "SetStatusOnly should not modify MyDay");
-        
+
         var loaded = _vault.Load("myday-card")!;
         Assert.AreEqual(myDayDate, loaded.MyDay);
     }

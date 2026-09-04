@@ -106,8 +106,8 @@ public class BacklogViewModelRefreshingEventTests
 
         Assert.AreEqual(3, observedTasksCount,
             "Refreshing must fire before Tasks.Clear() — subscriber should still see the 3 pre-refresh tasks");
-        Assert.IsTrue(observedRowsCount >= 3,
-            $"Refreshing must fire before Rows.Clear() — subscriber should see at least the 3 pre-refresh rows " +
+        Assert.IsGreaterThanOrEqualTo(3,
+observedRowsCount, $"Refreshing must fire before Rows.Clear() — subscriber should see at least the 3 pre-refresh rows " +
             $"(plus optional group headers), but saw {observedRowsCount}");
     }
 

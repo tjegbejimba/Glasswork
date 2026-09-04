@@ -52,14 +52,14 @@ public class BacklinkIndexIncrementalTests
 
         var idx = new BacklinkIndex();
         idx.Build(_vault);
-        Assert.AreEqual(0, idx.GetBacklinks("TASK-1").Count);
+        Assert.IsEmpty(idx.GetBacklinks("TASK-1"));
 
         File.WriteAllText(pagePath, "# Auth\n\nSee [[TASK-1]] for context.");
         var affected = idx.UpdateForFile(_vault, pagePath);
 
         CollectionAssert.Contains(affected.ToArray(), "TASK-1");
         var links = idx.GetBacklinks("TASK-1");
-        Assert.AreEqual(1, links.Count);
+        Assert.HasCount(1, links);
         Assert.AreEqual(BacklinkPageType.Concept, links[0].PageType);
     }
 
@@ -71,13 +71,13 @@ public class BacklinkIndexIncrementalTests
 
         var idx = new BacklinkIndex();
         idx.Build(_vault);
-        Assert.AreEqual(1, idx.GetBacklinks("TASK-2").Count);
+        Assert.HasCount(1, idx.GetBacklinks("TASK-2"));
 
         File.WriteAllText(pagePath, "# ADR\n\nNo more links.");
         var affected = idx.UpdateForFile(_vault, pagePath);
 
         CollectionAssert.Contains(affected.ToArray(), "TASK-2");
-        Assert.AreEqual(0, idx.GetBacklinks("TASK-2").Count);
+        Assert.IsEmpty(idx.GetBacklinks("TASK-2"));
     }
 
     [TestMethod]
@@ -89,14 +89,14 @@ public class BacklinkIndexIncrementalTests
 
         var idx = new BacklinkIndex();
         idx.Build(_vault);
-        Assert.AreEqual(1, idx.GetBacklinks("TASK-A").Count);
-        Assert.AreEqual(1, idx.GetBacklinks("TASK-B").Count);
+        Assert.HasCount(1, idx.GetBacklinks("TASK-A"));
+        Assert.HasCount(1, idx.GetBacklinks("TASK-B"));
 
         var affected = idx.RemoveForFile(pagePath);
 
-        Assert.AreEqual(2, affected.Count);
-        Assert.AreEqual(0, idx.GetBacklinks("TASK-A").Count);
-        Assert.AreEqual(0, idx.GetBacklinks("TASK-B").Count);
+        Assert.HasCount(2, affected);
+        Assert.IsEmpty(idx.GetBacklinks("TASK-A"));
+        Assert.IsEmpty(idx.GetBacklinks("TASK-B"));
     }
 
     [TestMethod]
@@ -115,7 +115,7 @@ public class BacklinkIndexIncrementalTests
 
         CollectionAssert.Contains(affected.ToArray(), "TASK-R");
         var links = idx.GetBacklinks("TASK-R");
-        Assert.AreEqual(1, links.Count);
+        Assert.HasCount(1, links);
         Assert.AreEqual(newPath, links[0].LinkingPagePath, ignoreCase: true);
     }
 
@@ -178,8 +178,8 @@ public class BacklinkIndexIncrementalTests
 
         var affected = idx.UpdateForFile(_vault, Path.Combine(_todoDir, "TASK-X.md"));
 
-        Assert.AreEqual(0, affected.Count);
-        Assert.AreEqual(0, idx.GetBacklinks("TASK-Y").Count);
+        Assert.IsEmpty(affected);
+        Assert.IsEmpty(idx.GetBacklinks("TASK-Y"));
     }
 
     [TestMethod]
@@ -194,8 +194,8 @@ public class BacklinkIndexIncrementalTests
         try
         {
             var affected = idx.UpdateForFile(_vault, outsidePath);
-            Assert.AreEqual(0, affected.Count);
-            Assert.AreEqual(0, idx.GetBacklinks("TASK-Z").Count);
+            Assert.IsEmpty(affected);
+            Assert.IsEmpty(idx.GetBacklinks("TASK-Z"));
         }
         finally
         {
@@ -260,7 +260,7 @@ public class BacklinksWatcherTests
 
         var idx = new BacklinkIndex();
         idx.Build(_vault);
-        Assert.AreEqual(0, idx.GetBacklinks("TASK-1").Count);
+        Assert.IsEmpty(idx.GetBacklinks("TASK-1"));
 
         using var w = new BacklinksWatcher(_vault, idx, TimeSpan.FromMilliseconds(100));
         var signal = new ManualResetEventSlim(false);
@@ -273,7 +273,7 @@ public class BacklinksWatcherTests
         Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "BacklinksChanged should fire within 5s");
         Assert.IsNotNull(observed);
         CollectionAssert.Contains(observed!.AffectedTaskIds.ToArray(), "TASK-1");
-        Assert.AreEqual(1, idx.GetBacklinks("TASK-1").Count);
+        Assert.HasCount(1, idx.GetBacklinks("TASK-1"));
     }
 
     [TestMethod]
@@ -299,7 +299,7 @@ public class BacklinksWatcherTests
         Assert.IsFalse(
             signal.Wait(TimeSpan.FromMilliseconds(500)),
             "Same-process mutation writes are refreshed explicitly and must not echo through the watcher.");
-        Assert.AreEqual(1, index.GetBacklinks("TASK-SELF").Count);
+        Assert.HasCount(1, index.GetBacklinks("TASK-SELF"));
     }
 
     [TestMethod]
@@ -326,7 +326,7 @@ public class BacklinksWatcherTests
         Assert.IsTrue(
             signal.Wait(TimeSpan.FromSeconds(5)),
             "Cross-process mutation writes must refresh the desktop backlink index.");
-        Assert.AreEqual(0, index.GetBacklinks("TASK-MCP").Count);
+        Assert.IsEmpty(index.GetBacklinks("TASK-MCP"));
     }
 
     [TestMethod]
@@ -337,7 +337,7 @@ public class BacklinksWatcherTests
 
         var idx = new BacklinkIndex();
         idx.Build(_vault);
-        Assert.AreEqual(1, idx.GetBacklinks("TASK-D").Count);
+        Assert.HasCount(1, idx.GetBacklinks("TASK-D"));
 
         using var w = new BacklinksWatcher(_vault, idx, TimeSpan.FromMilliseconds(100));
         var signal = new ManualResetEventSlim(false);
@@ -347,7 +347,7 @@ public class BacklinksWatcherTests
         File.Delete(pagePath);
 
         Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "Delete should fire BacklinksChanged within 5s");
-        Assert.AreEqual(0, idx.GetBacklinks("TASK-D").Count);
+        Assert.IsEmpty(idx.GetBacklinks("TASK-D"));
     }
 
     [TestMethod]
@@ -379,7 +379,7 @@ public class BacklinksWatcherTests
 
         var idx = new BacklinkIndex();
         idx.Build(_vault);
-        Assert.AreEqual(1, idx.GetBacklinks("TASK-R").Count);
+        Assert.HasCount(1, idx.GetBacklinks("TASK-R"));
 
         using var w = new BacklinksWatcher(_vault, idx, TimeSpan.FromMilliseconds(100));
         var signal = new ManualResetEventSlim(false);
@@ -391,7 +391,7 @@ public class BacklinksWatcherTests
 
         Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "Rename should fire BacklinksChanged within 5s");
         var entries = idx.GetBacklinks("TASK-R");
-        Assert.AreEqual(1, entries.Count, "Single entry preserved across rename");
+        Assert.HasCount(1, entries, "Single entry preserved across rename");
         Assert.IsTrue(
             string.Equals(entries[0].LinkingPagePath, Path.GetFullPath(newPath), StringComparison.OrdinalIgnoreCase),
             $"Entry path should be the new path; got '{entries[0].LinkingPagePath}'");
@@ -424,7 +424,7 @@ public class BacklinksWatcherTests
 
         Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), $"At least one event must fire (got {count})");
         Thread.Sleep(500); // allow any duplicate debounced tick to arrive
-        Assert.IsTrue(count >= 1, $"At least one event must fire (got {count})");
-        Assert.IsTrue(count <= 2, $"Burst must coalesce — got {count} events");
+        Assert.IsGreaterThanOrEqualTo(1, count, $"At least one event must fire (got {count})");
+        Assert.IsLessThanOrEqualTo(2, count, $"Burst must coalesce — got {count} events");
     }
 }

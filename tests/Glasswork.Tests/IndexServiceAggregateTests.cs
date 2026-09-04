@@ -53,7 +53,7 @@ public class IndexServiceAggregateTests
         fresh.EnsureLoaded();
 
         Assert.AreEqual(2, fresh.Count);
-        Assert.AreEqual(0, freshDeltas.Count, "EnsureLoaded must not fire TasksChanged — it is a snapshot, not a delta.");
+        Assert.IsEmpty(freshDeltas, "EnsureLoaded must not fire TasksChanged — it is a snapshot, not a delta.");
     }
 
     [TestMethod]
@@ -114,7 +114,7 @@ public class IndexServiceAggregateTests
 
         _vault.Save(new GlassworkTask { Id = "a", Title = "Alpha" });
 
-        Assert.AreEqual(1, _deltas.Count);
+        Assert.HasCount(1, _deltas);
         Assert.AreEqual(1, _deltas[0].Added.Count());
         Assert.AreEqual("a", _deltas[0].Added.Single().Id);
         Assert.AreEqual(1, _index.Count);
@@ -129,7 +129,7 @@ public class IndexServiceAggregateTests
 
         _vault.Save(new GlassworkTask { Id = "a", Title = "Alpha v2" });
 
-        Assert.AreEqual(1, _deltas.Count);
+        Assert.HasCount(1, _deltas);
         var changed = _deltas[0].Changed.Single();
         Assert.AreEqual("Alpha", changed.Old!.Title);
         Assert.AreEqual("Alpha v2", changed.New!.Title);
@@ -201,7 +201,7 @@ public class IndexServiceAggregateTests
         Assert.IsNull(_index.ById("old"), "Old id must be gone after rename.");
         Assert.AreEqual("New Name", _index.ById("new")!.Title);
         // Single delta carrying both the removal and the add.
-        Assert.AreEqual(1, _deltas.Count);
+        Assert.HasCount(1, _deltas);
         Assert.AreEqual(1, _deltas[0].Removed.Count());
         Assert.AreEqual(1, _deltas[0].Added.Count());
     }
@@ -282,8 +282,8 @@ public class IndexServiceAggregateTests
 
         var indexMd = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
         StringAssert.Contains(indexMd, "Known");
-        Assert.IsFalse(indexMd.Contains("Ghost"),
-            "Refresh() must regenerate _index.md from the in-memory snapshot, " +
+        Assert.DoesNotContain("Ghost",
+indexMd, "Refresh() must regenerate _index.md from the in-memory snapshot, " +
             "not by re-reading the vault. Tasks the store does not know about " +
             "must arrive via OnFileChangedOnDisk / vault events, not via a " +
             "silent full reload that bypasses the delta channel.");

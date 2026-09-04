@@ -947,10 +947,10 @@ public sealed class ResearchCatalogTests
             "---\nid: startup-page-conflict\ntitle: External page survives\ntype: concept\nglasswork:\n  research: {}\n---\nExternal synthesis.";
         WriteOptedInPage(relativePath, "startup-page-conflict", "concept");
         using (var failed = new FileSystemResearchCatalog(_vaultRoot)
-               {
-                   BeforeRemovalPageSwapHook = () =>
-                       WritePage(relativePath, externalPage),
-               })
+        {
+            BeforeRemovalPageSwapHook = () =>
+                WritePage(relativePath, externalPage),
+        })
         {
             Assert.AreEqual(
                 ResearchRemovalErrorCode.RecoveryRequired,
@@ -983,10 +983,10 @@ public sealed class ResearchCatalogTests
         WriteOptedInPage(relativePath, "startup-log-conflict", "concept");
         WritePage(logPath, "# Research Change Log\n\nOriginal history.");
         using (var failed = new FileSystemResearchCatalog(_vaultRoot)
-               {
-                   BeforeRemovalLogMoveHook = () =>
-                       WritePage(logPath, externalLog),
-               })
+        {
+            BeforeRemovalLogMoveHook = () =>
+                WritePage(logPath, externalLog),
+        })
         {
             Assert.AreEqual(
                 ResearchRemovalErrorCode.RecoveryRequired,
@@ -1053,12 +1053,12 @@ public sealed class ResearchCatalogTests
         WritePage(relativePath, originalPage);
         WritePage(logPath, originalLog);
         using (var catalog = new FileSystemResearchCatalog(_vaultRoot)
-               {
-                   AfterRemovalPageReplacementHook = () =>
-                       throw new IOException("Injected apply failure."),
-                   BeforeRemovalRollbackHook = () =>
-                       throw new IOException("Injected rollback failure."),
-               })
+        {
+            AfterRemovalPageReplacementHook = () =>
+                throw new IOException("Injected apply failure."),
+            BeforeRemovalRollbackHook = () =>
+                throw new IOException("Injected rollback failure."),
+        })
         {
             var result = catalog.Remove("recover-removal");
 
@@ -1185,10 +1185,10 @@ public sealed class ResearchCatalogTests
         const string relativePath = "wiki/concepts/operation-cleanup.md";
         WriteOptedInPage(relativePath, "operation-cleanup", "concept");
         using (var catalog = new FileSystemResearchCatalog(_vaultRoot)
-               {
-                   BeforeRemovalOperationCleanupHook = () =>
-                       throw new IOException("Injected operation cleanup failure."),
-               })
+        {
+            BeforeRemovalOperationCleanupHook = () =>
+                throw new IOException("Injected operation cleanup failure."),
+        })
         {
             var result = catalog.Remove("operation-cleanup");
 
@@ -1221,10 +1221,10 @@ public sealed class ResearchCatalogTests
         const string relativePath = "wiki/concepts/journal-cleanup.md";
         WriteOptedInPage(relativePath, "journal-cleanup", "concept");
         using (var catalog = new FileSystemResearchCatalog(_vaultRoot)
-               {
-                   BeforeRemovalJournalCleanupHook = () =>
-                       throw new IOException("Injected journal cleanup failure."),
-               })
+        {
+            BeforeRemovalJournalCleanupHook = () =>
+                throw new IOException("Injected journal cleanup failure."),
+        })
         {
             var result = catalog.Remove("journal-cleanup");
 
@@ -1260,12 +1260,12 @@ public sealed class ResearchCatalogTests
         const string relativePath = "wiki/concepts/rollback-journal-cleanup.md";
         WriteOptedInPage(relativePath, "rollback-journal-cleanup", "concept");
         using (var catalog = new FileSystemResearchCatalog(_vaultRoot)
-               {
-                   AfterRemovalPageReplacementHook = () =>
-                       throw new IOException("Injected apply failure."),
-                   BeforeRemovalJournalCleanupHook = () =>
-                       throw new IOException("Injected rollback journal cleanup failure."),
-               })
+        {
+            AfterRemovalPageReplacementHook = () =>
+                throw new IOException("Injected apply failure."),
+            BeforeRemovalJournalCleanupHook = () =>
+                throw new IOException("Injected rollback journal cleanup failure."),
+        })
         {
             var result = catalog.Remove("rollback-journal-cleanup");
 
@@ -2499,9 +2499,9 @@ public sealed class ResearchCatalogTests
 
         Assert.AreEqual("topic", topic.Id);
         Assert.IsEmpty(topic.Context.RelatedPages);
-        Assert.AreEqual(
+        Assert.HasCount(
             3,
-            topic.Context.Warnings.Count,
+            topic.Context.Warnings,
             string.Join(
                 ", ",
                 topic.Context.Warnings.Select(warning =>

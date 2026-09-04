@@ -71,7 +71,7 @@ public class MyDayViewModelPbiContainerTests
         Assert.IsNotNull(row, "PBI with a due child subtask should still surface on My Day.");
         Assert.IsNotNull(row.TodaysSubtasks,
             "A PBI promoted via its child subtask must render as a container (TodaysSubtasks populated), not a bare row.");
-        Assert.AreEqual(1, row.TodaysSubtasks!.Count,
+        Assert.HasCount(1, row.TodaysSubtasks,
             "The actionable child subtask should appear inline beneath the PBI.");
     }
 

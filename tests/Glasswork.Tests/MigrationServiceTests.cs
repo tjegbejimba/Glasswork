@@ -103,16 +103,16 @@ public class MigrationServiceTests
 
         var migrated = _migration.MigrateToV2(v1);
 
-        Assert.IsTrue(migrated.Contains("Original body content."), "body must be preserved");
-        Assert.IsTrue(migrated.Contains("## Subtasks"), "must have Subtasks section");
-        Assert.IsTrue(migrated.Contains("## Notes"), "must have Notes section");
-        Assert.IsTrue(migrated.Contains("## Related"), "must have Related section");
+        Assert.Contains("Original body content.", migrated, "body must be preserved");
+        Assert.Contains("## Subtasks", migrated, "must have Subtasks section");
+        Assert.Contains("## Notes", migrated, "must have Notes section");
+        Assert.Contains("## Related", migrated, "must have Related section");
 
         var subIdx = migrated.IndexOf("## Subtasks", StringComparison.Ordinal);
         var notesIdx = migrated.IndexOf("## Notes", StringComparison.Ordinal);
         var relIdx = migrated.IndexOf("## Related", StringComparison.Ordinal);
-        Assert.IsTrue(subIdx < notesIdx, "Subtasks before Notes");
-        Assert.IsTrue(notesIdx < relIdx, "Notes before Related");
+        Assert.IsLessThan(notesIdx, subIdx, "Subtasks before Notes");
+        Assert.IsLessThan(relIdx, notesIdx, "Notes before Related");
     }
 
     [TestMethod]
@@ -152,12 +152,12 @@ public class MigrationServiceTests
 
         var migrated = _migration.MigrateToV2(v1);
 
-        Assert.IsTrue(migrated.Contains("id: legacy"));
-        Assert.IsTrue(migrated.Contains("title: Has frontmatter quirks"));
-        Assert.IsTrue(migrated.Contains("status: in-progress"));
-        Assert.IsTrue(migrated.Contains("priority: high"));
-        Assert.IsTrue(migrated.Contains("- alpha"));
-        Assert.IsTrue(migrated.Contains("- beta"));
+        Assert.Contains("id: legacy", migrated);
+        Assert.Contains("title: Has frontmatter quirks", migrated);
+        Assert.Contains("status: in-progress", migrated);
+        Assert.Contains("priority: high", migrated);
+        Assert.Contains("- alpha", migrated);
+        Assert.Contains("- beta", migrated);
     }
 
     [TestMethod]
@@ -177,9 +177,9 @@ public class MigrationServiceTests
 
         var migrated = _migration.MigrateToV2(v1);
 
-        Assert.IsTrue(migrated.Contains("Line 1."));
-        Assert.IsTrue(migrated.Contains("Line 2."));
-        Assert.IsTrue(migrated.Contains("A blank-line-separated paragraph."));
+        Assert.Contains("Line 1.", migrated);
+        Assert.Contains("Line 2.", migrated);
+        Assert.Contains("A blank-line-separated paragraph.", migrated);
     }
 
     [TestMethod]
@@ -225,10 +225,10 @@ public class MigrationServiceTests
 
         var migrated = _migration.MigrateToV2(partial);
 
-        Assert.IsTrue(migrated.Contains("## Subtasks"));
-        Assert.IsTrue(migrated.Contains("### [ ] one"), "existing subtask preserved");
-        Assert.IsTrue(migrated.Contains("## Notes"));
-        Assert.IsTrue(migrated.Contains("## Related"));
+        Assert.Contains("## Subtasks", migrated);
+        Assert.Contains("### [ ] one", migrated, "existing subtask preserved");
+        Assert.Contains("## Notes", migrated);
+        Assert.Contains("## Related", migrated);
 
         // Idempotent on partial too
         var twice = _migration.MigrateToV2(migrated);
@@ -275,9 +275,9 @@ public class MigrationServiceTests
 
         var markdown = _parser.Serialize(task);
 
-        Assert.IsTrue(markdown.Contains("## Subtasks"), "## Subtasks must appear even when no subtasks");
-        Assert.IsTrue(markdown.Contains("## Notes"), "## Notes must appear even when body is empty");
-        Assert.IsTrue(markdown.Contains("## Related"), "## Related must appear even when no related links");
+        Assert.Contains("## Subtasks", markdown, "## Subtasks must appear even when no subtasks");
+        Assert.Contains("## Notes", markdown, "## Notes must appear even when body is empty");
+        Assert.Contains("## Related", markdown, "## Related must appear even when no related links");
     }
 
     [TestMethod]
@@ -314,8 +314,8 @@ public class MigrationServiceTests
         var notesIdx = markdown.IndexOf("## Notes", StringComparison.Ordinal);
         var relIdx = markdown.IndexOf("## Related", StringComparison.Ordinal);
 
-        Assert.IsTrue(subIdx > 0, "Subtasks present");
-        Assert.IsTrue(notesIdx > subIdx, "Notes after Subtasks");
-        Assert.IsTrue(relIdx > notesIdx, "Related after Notes");
+        Assert.IsGreaterThan(0, subIdx, "Subtasks present");
+        Assert.IsGreaterThan(subIdx, notesIdx, "Notes after Subtasks");
+        Assert.IsGreaterThan(notesIdx, relIdx, "Related after Notes");
     }
 }

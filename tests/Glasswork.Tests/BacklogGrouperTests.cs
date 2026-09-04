@@ -27,7 +27,7 @@ public class BacklogGrouperTests
     public void EmptyInput_ReturnsEmpty()
     {
         var rows = BacklogGrouper.Group([]);
-        Assert.AreEqual(0, rows.Count);
+        Assert.IsEmpty(rows);
     }
 
     [TestMethod]
@@ -64,7 +64,7 @@ public class BacklogGrouperTests
     {
         var rows = BacklogGrouper.Group([Task("a"), Task("b"), Task("c")]);
 
-        Assert.AreEqual(3, rows.Count);
+        Assert.HasCount(3, rows);
         Assert.IsFalse(rows.Any(r => r is BacklogParentGroupHeader));
         CollectionAssert.AreEqual(
             new[] { "a", "b", "c" },
@@ -79,7 +79,7 @@ public class BacklogGrouperTests
             Task("b", "PBI 1"),
         ]);
 
-        Assert.AreEqual(3, rows.Count);
+        Assert.HasCount(3, rows);
         Assert.IsInstanceOfType(rows[0], typeof(BacklogParentGroupHeader));
         var header = (BacklogParentGroupHeader)rows[0];
         Assert.AreEqual("PBI 1", header.DisplayHeader);
@@ -99,7 +99,7 @@ public class BacklogGrouperTests
         ]);
 
         // Expected: orphan1, orphan2, [Alpha header], alpha-task, [Middle header], middle-task, [Zeta header], zeta-task
-        Assert.AreEqual(8, rows.Count);
+        Assert.HasCount(8, rows);
         Assert.AreEqual("orphan1", ((GlassworkTask)rows[0]).Id);
         Assert.AreEqual("orphan2", ((GlassworkTask)rows[1]).Id);
         Assert.AreEqual("Alpha", ((BacklogParentGroupHeader)rows[2]).DisplayHeader);
@@ -120,7 +120,7 @@ public class BacklogGrouperTests
         ]);
 
         var headers = rows.OfType<BacklogParentGroupHeader>().ToList();
-        Assert.AreEqual(1, headers.Count);
+        Assert.HasCount(1, headers);
         Assert.AreEqual(3, headers[0].TotalCount);
     }
 
@@ -145,7 +145,7 @@ public class BacklogGrouperTests
         ]);
 
         var headers = rows.OfType<BacklogParentGroupHeader>().ToList();
-        Assert.AreEqual(1, headers.Count);
+        Assert.HasCount(1, headers);
         Assert.AreEqual("PBI", headers[0].DisplayHeader);
         Assert.AreEqual(2, headers[0].TotalCount);
     }
@@ -159,7 +159,7 @@ public class BacklogGrouperTests
             Task("c", null),
         ]);
 
-        Assert.AreEqual(3, rows.Count);
+        Assert.HasCount(3, rows);
         Assert.IsFalse(rows.Any(r => r is BacklogParentGroupHeader));
     }
 
@@ -175,7 +175,7 @@ public class BacklogGrouperTests
         ], collapseState);
 
         // Expected: [PBI 1 header (collapsed)], [PBI 2 header], c
-        Assert.AreEqual(3, rows.Count);
+        Assert.HasCount(3, rows);
         var pbi1 = (BacklogParentGroupHeader)rows[0];
         Assert.AreEqual("PBI 1", pbi1.DisplayHeader);
         Assert.IsTrue(pbi1.IsCollapsed);
@@ -192,7 +192,7 @@ public class BacklogGrouperTests
     {
         var rows = BacklogGrouper.Group([Task("a", "Lonely")]);
 
-        Assert.AreEqual(2, rows.Count);
+        Assert.HasCount(2, rows);
         var header = (BacklogParentGroupHeader)rows[0];
         Assert.AreEqual("Lonely", header.DisplayHeader);
         Assert.AreEqual(1, header.TotalCount);
@@ -209,7 +209,7 @@ public class BacklogGrouperTests
             Task("m-task", "P"),
         ]);
 
-        Assert.AreEqual(4, rows.Count);
+        Assert.HasCount(4, rows);
         CollectionAssert.AreEqual(
             new[] { "z-task", "a-task", "m-task" },
             rows.OfType<GlassworkTask>().Select(t => t.Id).ToArray());

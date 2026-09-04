@@ -61,7 +61,7 @@ public class MyDayRemovalPolicyTests
 
         _ = MyDayRemovalPolicy.PlanRemoval(task);
 
-        Assert.AreEqual(subtasksBefore, task.Subtasks.Count);
+        Assert.HasCount(subtasksBefore, task.Subtasks);
         Assert.AreEqual(subFlagBefore, task.Subtasks[0].IsMyDay);
         Assert.AreEqual(subDueBefore, task.Subtasks[0].Due);
         Assert.AreEqual(myDayBefore, task.MyDay);
@@ -75,7 +75,7 @@ public class MyDayRemovalPolicyTests
 
         var targets = MyDayRemovalPolicy.RemovalTargets(task);
 
-        Assert.AreEqual(1, targets.Count);
+        Assert.HasCount(1, targets);
         Assert.AreSame(task, targets[0]);
     }
 

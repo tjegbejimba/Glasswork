@@ -109,7 +109,7 @@ public class MyDayViewModelRefreshingEventTests
         var vm = new MyDayViewModel(_vault, _taskService);
         vm.Refresh(); // prime TodayTasks with the two My Day tasks
 
-        Assert.AreEqual(2, vm.TodayTasks.Count, "precondition: both tasks land on My Day today");
+        Assert.HasCount(2, vm.TodayTasks, "precondition: both tasks land on My Day today");
 
         var observedTodayCount = -1;
         vm.Refreshing += () => observedTodayCount = vm.TodayTasks.Count;
@@ -346,7 +346,7 @@ public class MyDayViewModelRefreshingEventTests
         vm.Refresh();
 
         Assert.IsNotNull(_index.ById(task.Id), "precondition: the warm query snapshot includes the recreated Task");
-        Assert.AreEqual(0, vm.TodayTasks.Count,
+        Assert.IsEmpty(vm.TodayTasks,
             "dismissal lookup and My Day selection must use the same warm Index snapshot");
     }
 

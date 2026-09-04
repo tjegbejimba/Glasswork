@@ -44,7 +44,7 @@ public class IndexServiceSubtaskTests
         IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
-        Assert.IsTrue(content.Contains("Parent Task"), "Today should include parent of flagged subtask");
+        Assert.Contains("Parent Task", content, "Today should include parent of flagged subtask");
     }
 
     [TestMethod]
@@ -91,8 +91,8 @@ public class IndexServiceSubtaskTests
         IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
-        Assert.IsTrue(content.Contains("2/4 subtasks done"),
-            $"Expected '2/4 subtasks done' progress hint. Content:\n{content}");
+        Assert.Contains("2/4 subtasks done",
+content, $"Expected '2/4 subtasks done' progress hint. Content:\n{content}");
     }
 
     [TestMethod]
@@ -109,7 +109,7 @@ public class IndexServiceSubtaskTests
         IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
-        Assert.IsFalse(content.Contains("subtasks done"),
-            $"Should not show progress hint without subtasks. Content:\n{content}");
+        Assert.DoesNotContain("subtasks done",
+content, $"Should not show progress hint without subtasks. Content:\n{content}");
     }
 }

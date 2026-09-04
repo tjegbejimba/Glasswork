@@ -39,7 +39,7 @@ public sealed class SavedTaskViewServiceTests
         var reloaded = new SavedTaskViewService(new JsonFileUiStateService(_statePath));
         var views = reloaded.List();
 
-        Assert.AreEqual(1, views.Count);
+        Assert.HasCount(1, views);
         Assert.AreEqual(saved.Id, views[0].Id);
         Assert.AreEqual("High priority Backlog", views[0].Name);
         CollectionAssert.AreEqual(new[] { GlassworkTask.Priorities.High }, views[0].Filter.Priorities.ToArray());
@@ -67,7 +67,7 @@ public sealed class SavedTaskViewServiceTests
 
         var result = service.Apply([ready, scheduled], view, DateOnly.FromDateTime(DateTime.Today));
 
-        Assert.AreEqual(1, result.Count);
+        Assert.HasCount(1, result);
         Assert.AreEqual("ready", result[0].Id);
     }
 
@@ -111,7 +111,7 @@ public sealed class SavedTaskViewServiceTests
 
         var result = service.Apply([matching, wrongStatus, missingTag, notRecent], view, DateOnly.FromDateTime(DateTime.Today));
 
-        Assert.AreEqual(1, result.Count);
+        Assert.HasCount(1, result);
         Assert.AreEqual("match", result[0].Id);
         result[0].Title = "mutated";
         Assert.AreEqual("Gateway rollout", matching.Title);
