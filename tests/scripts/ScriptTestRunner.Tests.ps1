@@ -225,7 +225,12 @@ Describe "wildcard result fixture" {
         (Get-Content -LiteralPath $resultPath -Raw).Trim() | Should -Be $original
     }
 
-    It "rejects a non-XML result path without changing it" {
+    It "rejects a non-XML result path without changing it: <ResultName>" -TestCases @(
+        @{ ResultName = "script-tests.txt" }
+        @{ ResultName = ("long-result-" * 5) + "script-tests.txt" }
+    ) {
+        param($ResultName)
+
         $fixture = New-RunnerFixture -Name "non-xml-result" -Content @'
 Describe "non-XML result fixture" {
     It "passes" {
@@ -233,14 +238,16 @@ Describe "non-XML result fixture" {
     }
 }
 '@
-        $resultPath = Join-Path $TestDrive "script-tests.txt"
+        $resultPath = Join-Path $TestDrive $ResultName
         $original = "preserve non-XML result"
         Set-Content -LiteralPath $resultPath -Value $original
 
         $run = Invoke-TestScriptRunner -TestPath $fixture.TestPath -ResultPath $resultPath
 
         $run.ExitCode | Should -Be 1
-        $run.Output | Should -Match "must use the \.xml extension"
+        # ConciseView can wrap the diagnostic at any word and prefix each line with '|'.
+        ($run.Output -replace '(?m)^\s*\|\s?', '') |
+            Should -Match 'must\s+use\s+the\s+\.xml\s+extension'
         (Get-Content -LiteralPath $resultPath -Raw).Trim() | Should -Be $original
     }
 
