@@ -47,7 +47,6 @@ public partial class MigrationService
         if (!match.Success)
             throw new FormatException("Cannot migrate: missing YAML frontmatter delimiters (---).");
 
-        var frontmatter = match.Groups[1].Value;
         var body = match.Groups[2].Value;
 
         var hasSubtasks = SubtasksHeaderRegex().IsMatch(body);
@@ -57,30 +56,22 @@ public partial class MigrationService
         if (hasSubtasks && hasNotes && hasRelated)
             return content;
 
-        var sb = new StringBuilder();
-        sb.Append("---\n");
-        sb.Append(frontmatter);
-        sb.Append("\n---\n");
-
-        var trimmedBody = body.TrimEnd();
-        if (trimmedBody.Length > 0)
-        {
-            sb.Append('\n');
-            sb.Append(trimmedBody);
-            sb.Append('\n');
-        }
+        var newline = content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var sb = new StringBuilder(content);
+        if (!content.EndsWith(newline, StringComparison.Ordinal))
+            sb.Append(newline);
 
         if (!hasSubtasks)
         {
-            sb.Append("\n## Subtasks\n");
+            sb.Append(newline).Append("## Subtasks").Append(newline);
         }
         if (!hasNotes)
         {
-            sb.Append("\n## Notes\n");
+            sb.Append(newline).Append("## Notes").Append(newline);
         }
         if (!hasRelated)
         {
-            sb.Append("\n## Related\n");
+            sb.Append(newline).Append("## Related").Append(newline);
         }
 
         return sb.ToString();

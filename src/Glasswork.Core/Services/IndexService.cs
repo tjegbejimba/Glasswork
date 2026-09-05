@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Glasswork.Core.Models;
 
@@ -12,9 +13,10 @@ namespace Glasswork.Core.Services;
 /// In-memory aggregate over all tasks in the vault (issue #184).
 ///
 /// Owns the canonical <c>Dictionary&lt;TaskId, GlassworkTask&gt;</c> snapshot
-/// store and a typed delta channel (<see cref="TasksChanged"/>). Hydrated once
-/// at startup via <see cref="EnsureLoaded"/> from <see cref="VaultService.LoadAll"/>;
-/// kept fresh thereafter via two parallel paths:
+/// store and a typed delta channel (<see cref="TasksChanged"/>). App startup
+/// uses <see cref="CreateHydratedForStartupAsync"/> to migrate and seed from one
+/// managed Vault pass; compatibility callers may still use <see cref="EnsureLoaded"/>.
+/// The aggregate is kept fresh thereafter via two parallel paths:
 ///
 /// <list type="bullet">
 ///   <item><description><b>Same-process writes</b> arrive via the
@@ -117,10 +119,76 @@ public class IndexService
     public event EventHandler? ConvergencePending;
 
     public IndexService(VaultService vault)
+        : this(vault, subscribeToVault: true)
+    {
+    }
+
+    private IndexService(VaultService vault, bool subscribeToVault)
     {
         _vault = vault;
+        if (subscribeToVault)
+            SubscribeToVault();
+    }
+
+    /// <summary>
+    /// Runs the startup-only Task readiness stage on a worker thread. Managed
+    /// recovery, V1 migration, parsing, Resource Revision calculation, Index
+    /// seeding, and Vault-event subscription complete under one exclusive Vault
+    /// handoff. The returned Index needs no supplemental <see cref="EnsureLoaded"/>
+    /// or <see cref="VaultService.LoadAll"/> pass.
+    /// </summary>
+    /// <remarks>
+    /// Cancellation is observed before work, between candidate files, and before
+    /// subscription. Individual filesystem operations are not interruptible.
+    /// A canceled or faulted operation returns no subscribed Index; completed
+    /// per-file migrations remain valid and idempotent for the next attempt.
+    /// </remarks>
+    public static Task<IndexStartupHydrationResult> CreateHydratedForStartupAsync(
+        VaultService vault,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(vault);
+        return Task.Run(
+            () => vault.CreateStartupSnapshot(
+                snapshot =>
+                {
+                    var index = new IndexService(vault, subscribeToVault: false);
+                    index.SeedStartupSnapshot(snapshot.Tasks);
+                    vault.NotifyBeforeStartupIndexSubscription();
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var result = new IndexStartupHydrationResult(
+                        index,
+                        index.Count,
+                        snapshot.MigratedTaskCount,
+                        snapshot.ExaminedFileCount);
+                    index.SubscribeToVault();
+                    return result;
+                },
+                cancellationToken),
+            cancellationToken);
+    }
+
+    private void SubscribeToVault()
+    {
         _vault.TaskWritten += OnVaultTaskWritten;
         _vault.TaskDeleted += OnVaultTaskDeleted;
+    }
+
+    private void SeedStartupSnapshot(IReadOnlyList<GlassworkTask> tasks)
+    {
+        lock (_gate)
+        {
+            _store.Clear();
+            _versions.Clear();
+            foreach (var task in tasks)
+            {
+                if (string.IsNullOrEmpty(task.Id)) continue;
+                _store[task.Id] = task;
+                BumpVersion(task.Id);
+            }
+            _loaded = true;
+        }
     }
 
     /// <summary>Number of tasks currently held in the in-memory store.</summary>
@@ -204,11 +272,10 @@ public class IndexService
     }
 
     /// <summary>
-    /// Hydrate the in-memory store from <see cref="VaultService.LoadAll"/>.
+    /// Compatibility hydration from <see cref="VaultService.LoadAll"/>.
     /// Idempotent. Intentionally does <b>not</b> raise <see cref="TasksChanged"/> —
-    /// this is a snapshot, not a delta. Call once during app startup
-    /// (<c>App.InitVaultServices</c>) after migration completes and before any
-    /// page subscribes.
+    /// this is a snapshot, not a delta. New app startup composition should use
+    /// <see cref="CreateHydratedForStartupAsync"/> instead.
     /// </summary>
     public void EnsureLoaded()
     {
@@ -511,6 +578,9 @@ public class IndexService
 
     private void OnVaultTaskWritten(object? sender, string taskId)
     {
+        if (_vault.IsAlreadyRepresentedStartupNotification)
+            return;
+
         EnsureLoaded();
         var changes = new List<TaskChange>();
         ReplaceSnapshotFromDisk(taskId, changes);
@@ -520,6 +590,9 @@ public class IndexService
 
     private void OnVaultTaskDeleted(object? sender, string taskId)
     {
+        if (_vault.IsAlreadyRepresentedStartupNotification)
+            return;
+
         EnsureLoaded();
         var changes = new List<TaskChange>();
         RemoveSnapshot(taskId, changes);

@@ -7,6 +7,8 @@ helpers have been retired.
 **Amended**: 2026-08-14 - guarded Hard deletion emits one `TaskDeleted` event
 per removed Task and `TaskWritten` for surviving Task pages repaired in the same
 transaction; cross-process deletion still converges through watcher deltas.
+**Amended**: 2026-09-04 - startup migration and initial Index hydration share
+one managed Task scan through `IndexService.CreateHydratedForStartupAsync`.
 **Context slice**: `IndexService`, `VaultService`, `FileWatcherService`,
 `SelfWriteCoordinator`, every view model that used to call `VaultService.LoadAll()`.
 
@@ -113,19 +115,49 @@ side. v1 view models re-run their predicate on any delta.
 
 ### Startup order
 
-`App.InitVaultServices` now:
+Task readiness is one explicit operation:
 
-1. Constructs `VaultService` (no Index dependency).
-2. Runs `Vault.MigrateAllToV2()` — **before** seeding so the Index never
-   holds pre-migration parse artefacts.
-3. Constructs `IndexService(vault)` and `EnsureLoaded()`s it. `EnsureLoaded`
-   does **not** emit a delta — it's a snapshot, not a change.
-4. Constructs `TaskService(Vault, Index)`.
-5. UI-state GC iterates `Index.All` (no disk scan).
-6. Wires `_indexDebouncer` to fire on `Index.TasksChanged` (debounced
-   `_*.md` regeneration).
-7. Starts the watcher; `FileWatcherService.TaskFileChange` →
-   `Index.OnFileChangedOnDisk`.
+```csharp
+IndexStartupHydrationResult ready =
+    await IndexService.CreateHydratedForStartupAsync(vault, cancellationToken);
+```
+
+The operation runs off the UI thread and:
+
+1. completes managed Resource Mutation recovery;
+2. acquires the Vault exclusive lease;
+3. reads each top-level, non-underscore Task candidate once in the unchanged
+   case;
+4. validates and atomically persists any V1-to-V2 replacement through the
+   existing guarded Resource Mutation journal, preserving original bytes,
+   encoding preamble, line endings, unknown frontmatter, and Task prose;
+5. parses and assigns the Resource Revision from the final persisted bytes;
+6. seeds the complete Index snapshot and subscribes it to Vault mutations
+   before releasing the lease; and
+7. raises recovery/migration domain notifications as exactly tagged
+   "already represented" notifications, so ordinary subscribers still observe
+   them while the seeded Index neither re-reads each migrated Task nor publishes
+   intermediate startup deltas.
+
+`IndexStartupHydrationResult.Index` is ready for normal Task navigation and
+must not be followed by `EnsureLoaded()` or another `LoadAll()` startup pass.
+The result also reports distinct Task count, migrated Task count, and examined
+candidate count. Malformed and unreadable candidates count as examined but are
+not Tasks; generated underscore files are not candidates.
+
+App composition starts the Task watcher in buffering mode before this scan,
+replays buffered noncooperating-writer changes through
+`Index.OnFileChangedOnDisk`, then atomically switches to live delivery before
+publishing the service bundle. The Vault lease closes the cooperating-write
+handoff; watcher buffering closes the Obsidian/agent handoff.
+
+Cancellation is cooperative between files and before Index subscription;
+individual filesystem calls are not interruptible. A canceled or faulted
+operation returns no subscribed Index. Successfully committed per-file
+migrations remain valid and idempotent for a later retry.
+
+The ordinary `IndexService(vault)` + `EnsureLoaded()`, `LoadAll()`, and stateless
+MCP read paths remain available and retain their existing behavior.
 
 ### Shared Task Query seam
 

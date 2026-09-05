@@ -47,6 +47,10 @@ public static class VaultScopedCoordinator
         }
     }
 
+    internal static bool IsWriteLockHeldByCurrentThread(string vaultPath) =>
+        Locks.TryGetValue(Path.GetFullPath(vaultPath), out var gate)
+        && gate.IsWriteLockHeld;
+
     private static Mutex AcquireProcessMutex(string vaultPath)
     {
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(vaultPath))));
