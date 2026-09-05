@@ -37,19 +37,19 @@ public class GetActivityToolTests
     {
         // Arrange
         var today = DateTime.Today;
-        
+
         // Act
         var resultJson = _tools.GetActivity(period: "today");
         var result = JsonSerializer.Deserialize<JsonElement>(resultJson);
-        
+
         // Assert
         Assert.IsTrue(result.TryGetProperty("period", out var periodObj));
         Assert.IsTrue(periodObj.TryGetProperty("from", out var fromProp));
         Assert.IsTrue(periodObj.TryGetProperty("to", out var toProp));
-        
+
         var from = DateTime.Parse(fromProp.GetString()!);
         var to = DateTime.Parse(toProp.GetString()!);
-        
+
         Assert.AreEqual(today, from.Date);
         Assert.AreEqual(today.AddDays(1).AddTicks(-1), to);
     }
@@ -60,11 +60,11 @@ public class GetActivityToolTests
         // Arrange - create test tasks
         _tools.AddTask("Task completed today");
         _tools.AddTask("Task completed yesterday");
-        
+
         // Load and mark tasks as done with specific completion times
         var vault = new VaultService(_testVaultPath, new SelfWriteCoordinator(_testVaultPath));
         var allTasks = vault.LoadAll();
-        
+
         var todayTask = allTasks.First(t => t.Title == "Task completed today");
         todayTask.Status = "done";
         todayTask.CompletedAt = DateTime.Today.AddHours(10);
@@ -79,21 +79,21 @@ public class GetActivityToolTests
             },
         ];
         vault.Save(todayTask);
-        
+
         var yesterdayTask = allTasks.First(t => t.Title == "Task completed yesterday");
         yesterdayTask.Status = "done";
         yesterdayTask.CompletedAt = DateTime.Today.AddDays(-1).AddHours(15);
         vault.Save(yesterdayTask);
-        
+
         // Act
         var resultJson = _tools.GetActivity(period: "today");
         var result = JsonSerializer.Deserialize<JsonElement>(resultJson);
-        
+
         // Assert
         Assert.IsTrue(result.TryGetProperty("completed_tasks", out var completedTasksElem));
         var completedTasks = completedTasksElem.EnumerateArray().ToList();
-        
-        Assert.AreEqual(1, completedTasks.Count, "Should only include task completed today");
+
+        Assert.HasCount(1, completedTasks, "Should only include task completed today");
         Assert.AreEqual(todayTask.Id, completedTasks[0].GetProperty("id").GetString());
         Assert.AreEqual("Task completed today", completedTasks[0].GetProperty("title").GetString());
         Assert.AreEqual("high", completedTasks[0].GetProperty("priority").GetString());
@@ -105,7 +105,7 @@ public class GetActivityToolTests
             completedTasks[0].GetProperty("links")[0].GetProperty("Label").GetString());
         Assert.IsTrue(
             completedTasks[0].GetProperty("resource_revision").GetString()?.StartsWith("rr1-"));
-        
+
         // Stats should also reflect this
         Assert.IsTrue(result.TryGetProperty("stats", out var statsElem));
         Assert.AreEqual(1, statsElem.GetProperty("tasks_completed").GetInt32());
@@ -116,34 +116,34 @@ public class GetActivityToolTests
     {
         // Arrange
         var yesterday = DateTime.Today.AddDays(-1);
-        
+
         // Act
         var resultJson = _tools.GetActivity(period: "yesterday");
         var result = JsonSerializer.Deserialize<JsonElement>(resultJson);
-        
+
         // Assert
         Assert.IsTrue(result.TryGetProperty("period", out var periodObj));
         Assert.IsTrue(periodObj.TryGetProperty("from", out var fromProp));
         Assert.IsTrue(periodObj.TryGetProperty("to", out var toProp));
-        
+
         var from = DateTime.Parse(fromProp.GetString()!);
         var to = DateTime.Parse(toProp.GetString()!);
-        
+
         Assert.AreEqual(yesterday, from.Date);
         Assert.AreEqual(yesterday.AddDays(1).AddTicks(-1), to);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(GlassworkTask.Statuses.Todo)]
     [DataRow(GlassworkTask.Statuses.Cancelled)]
     public void GetActivity_TaskWithCompletedAtButNotDoneStatus_IsNotIncluded(string status)
     {
         // Arrange - create task with completed_at but status != done (stale/manual edit scenario)
         _tools.AddTask("Stale task");
-        
+
         var vault = new VaultService(_testVaultPath, new SelfWriteCoordinator(_testVaultPath));
         var task = vault.LoadAll().First(t => t.Title == "Stale task");
-        
+
         // Simulate stale state: has completed_at but status is still "todo"
         task.CompletedAt = DateTime.Today.AddHours(10);
         task.Status = status;
@@ -153,17 +153,17 @@ public class GetActivityToolTests
             task.CancellationReason = "Superseded";
         }
         vault.Save(task);
-        
+
         // Act
         var resultJson = _tools.GetActivity(period: "today");
         var result = JsonSerializer.Deserialize<JsonElement>(resultJson);
-        
+
         // Assert - should NOT appear in completed_tasks
         Assert.IsTrue(result.TryGetProperty("completed_tasks", out var completedTasksElem));
         var completedTasks = completedTasksElem.EnumerateArray().ToList();
-        
-        Assert.AreEqual(0, completedTasks.Count, "Task with completed_at but status != done should not appear");
-        
+
+        Assert.IsEmpty(completedTasks, "Task with completed_at but status != done should not appear");
+
         Assert.IsTrue(result.TryGetProperty("stats", out var statsElem));
         Assert.AreEqual(0, statsElem.GetProperty("tasks_completed").GetInt32());
     }

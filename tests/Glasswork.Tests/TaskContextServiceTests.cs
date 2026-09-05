@@ -52,7 +52,7 @@ public class TaskContextServiceTests
         Assert.AreEqual("Started with vendor docs.", bundle.Notes);
         Assert.AreEqual("future_bucket", bundle.Size);
         Assert.AreEqual(_vault.Load(task.Id)!.ResourceRevision, bundle.ResourceRevision);
-        Assert.IsTrue(bundle.TaskFilePath.EndsWith("research-api.md"));
+        Assert.EndsWith("research-api.md", bundle.TaskFilePath);
     }
 
     [TestMethod]
@@ -78,7 +78,7 @@ public class TaskContextServiceTests
 
         // Assert
         Assert.IsNotNull(bundle);
-        Assert.AreEqual(3, bundle.ActiveSubtasks.Count);
+        Assert.HasCount(3, bundle.ActiveSubtasks);
         Assert.AreEqual("Configure GitHub Actions", bundle.ActiveSubtasks[0].Text);
         Assert.AreEqual("todo", bundle.ActiveSubtasks[0].Status);
         Assert.AreEqual("Add test job", bundle.ActiveSubtasks[1].Text);
@@ -111,7 +111,7 @@ public class TaskContextServiceTests
 
         // Assert
         Assert.IsNotNull(bundle);
-        Assert.AreEqual(2, bundle.ActiveSubtasks.Count);
+        Assert.HasCount(2, bundle.ActiveSubtasks);
         Assert.AreEqual("Run migration scripts", bundle.ActiveSubtasks[0].Text);
         Assert.AreEqual("Verify data integrity", bundle.ActiveSubtasks[1].Text);
     }
@@ -139,7 +139,7 @@ public class TaskContextServiceTests
 
         // Assert
         Assert.IsNotNull(bundle);
-        Assert.AreEqual(2, bundle.OpenBlockers.Count);
+        Assert.HasCount(2, bundle.OpenBlockers);
         Assert.AreEqual("Run tests", bundle.OpenBlockers[0].Text);
         Assert.AreEqual("blocked", bundle.OpenBlockers[0].Status);
         Assert.AreEqual("Review changes", bundle.OpenBlockers[1].Text);
@@ -177,10 +177,10 @@ public class TaskContextServiceTests
 
         // Assert
         Assert.IsNotNull(bundle);
-        Assert.AreEqual(1, bundle.LatestArtifacts.Count);
+        Assert.HasCount(1, bundle.LatestArtifacts);
         Assert.AreEqual("Implementation Plan", bundle.LatestArtifacts[0].Title);
         Assert.IsNotNull(bundle.ArtifactsPath);
-        Assert.IsTrue(bundle.ArtifactsPath.EndsWith("test-task.artifacts"));
+        Assert.EndsWith("test-task.artifacts", bundle.ArtifactsPath);
 
         // Cleanup
         if (Directory.Exists(vaultRoot))
@@ -220,7 +220,7 @@ public class TaskContextServiceTests
 
         // Assert
         Assert.IsNotNull(bundle);
-        Assert.AreEqual(1, bundle.Backlinks.Count);
+        Assert.HasCount(1, bundle.Backlinks);
         Assert.AreEqual("api-design", bundle.Backlinks[0].LinkingPageTitle);
         Assert.AreEqual(BacklinkPageType.Concept, bundle.Backlinks[0].PageType);
 

@@ -3,7 +3,7 @@ using Glasswork.Core.AppUpdate;
 namespace Glasswork.CanvasHost.Tests;
 
 [TestClass]
-public sealed class CanvasVersionDriftDetectorTests
+public sealed class CanvasVersionDriftDetectorTests : CanvasHostTestBase
 {
     [TestMethod]
     public void Detect_NoRecordedState_IsNotDrift()

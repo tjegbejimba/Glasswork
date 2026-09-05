@@ -48,7 +48,7 @@ public class UiInspectionBuilderTests
             RawElements = [Raw(automationId: "NavBacklog")],
         });
 
-        Assert.AreEqual(1, snapshot.Elements.Count);
+        Assert.HasCount(1, snapshot.Elements);
         Assert.AreEqual("NavBacklog", snapshot.Elements[0].AutomationId);
         Assert.AreEqual(1, snapshot.SchemaVersion);
     }
@@ -61,7 +61,7 @@ public class UiInspectionBuilderTests
             RawElements = [Raw(patterns: ["InvokePatternIdentifiers.Pattern"])],
         });
 
-        Assert.AreEqual(1, snapshot.Elements.Count);
+        Assert.HasCount(1, snapshot.Elements);
         CollectionAssert.Contains(snapshot.Elements[0].Patterns.ToArray(), "Invoke");
     }
 
@@ -73,7 +73,7 @@ public class UiInspectionBuilderTests
             RawElements = [Raw(controlType: "Border")],
         });
 
-        Assert.AreEqual(0, snapshot.Elements.Count);
+        Assert.IsEmpty(snapshot.Elements);
     }
 
     [TestMethod]
@@ -88,7 +88,7 @@ public class UiInspectionBuilderTests
             ],
         });
 
-        Assert.AreEqual(1, snapshot.Elements.Count);
+        Assert.HasCount(1, snapshot.Elements);
         Assert.AreEqual("Visible label", snapshot.Elements[0].Name);
     }
 
@@ -119,7 +119,7 @@ public class UiInspectionBuilderTests
             RawElements = raws,
         });
 
-        Assert.AreEqual(3, snapshot.Elements.Count);
+        Assert.HasCount(3, snapshot.Elements);
         Assert.IsTrue(snapshot.Warnings.Any(w => w.Contains("truncated", System.StringComparison.OrdinalIgnoreCase)));
     }
 
@@ -135,9 +135,9 @@ public class UiInspectionBuilderTests
             ],
         });
 
-        Assert.AreEqual(1, snapshot.Candidates.Selectable.Count);
+        Assert.HasCount(1, snapshot.Candidates.Selectable);
         Assert.AreEqual("NavBacklog", snapshot.Candidates.Selectable[0].AutomationId);
-        Assert.AreEqual(1, snapshot.Candidates.ValueFields.Count);
+        Assert.HasCount(1, snapshot.Candidates.ValueFields);
         Assert.AreEqual("BacklogSearchBox", snapshot.Candidates.ValueFields[0].AutomationId);
     }
 

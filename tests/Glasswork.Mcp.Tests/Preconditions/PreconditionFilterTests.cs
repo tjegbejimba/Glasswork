@@ -58,7 +58,7 @@ public sealed class PreconditionFilterTests
         var (logger, sink) = NewLogger();
         PreconditionFilters.FilterUnavailableTools(result, registry, logger);
 
-        Assert.AreEqual(1, result.Tools.Count);
+        Assert.HasCount(1, result.Tools);
         Assert.AreEqual("list_tasks", result.Tools[0].Name);
         StringAssert.Contains(sink.ToString(), "tool_filtered");
         StringAssert.Contains(sink.ToString(), "add_task");
@@ -80,7 +80,7 @@ public sealed class PreconditionFilterTests
 
         PreconditionFilters.FilterUnavailableTools(result, registry);
 
-        Assert.AreEqual(2, result.Tools.Count);
+        Assert.HasCount(2, result.Tools);
     }
 
     // ---- T8 ----
@@ -95,7 +95,7 @@ public sealed class PreconditionFilterTests
 
         PreconditionFilters.FilterUnavailableTools(result, registry);
 
-        Assert.AreEqual(1, result.Tools.Count);
+        Assert.HasCount(1, result.Tools);
         Assert.AreEqual("unannotated_tool", result.Tools[0].Name);
     }
 
@@ -117,7 +117,7 @@ public sealed class PreconditionFilterTests
         var (logger, sink) = NewLogger();
         PreconditionFilters.FilterUnavailableTools(result, registry, logger);
 
-        Assert.AreEqual(0, result.Tools.Count);
+        Assert.IsEmpty(result.Tools);
         var log = sink.ToString();
         StringAssert.Contains(log, "precondition_error");
         StringAssert.Contains(log, "boom");
@@ -141,7 +141,7 @@ public sealed class PreconditionFilterTests
 
         var result = PreconditionFilters.BuildUnavailableCallResult("add_task", evaluation.Reason);
         Assert.IsTrue(result.IsError);
-        Assert.AreEqual(1, result.Content.Count);
+        Assert.HasCount(1, result.Content);
         var text = (TextContentBlock)result.Content[0];
         StringAssert.Contains(text.Text, "add_task");
         StringAssert.Contains(text.Text, "vault gone");

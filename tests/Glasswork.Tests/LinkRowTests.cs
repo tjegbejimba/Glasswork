@@ -24,7 +24,7 @@ public class LinkRowTests
         var rows = LinkRow.Project(links);
 
         // Assert
-        Assert.AreEqual(6, rows.Count);
+        Assert.HasCount(6, rows);
         Assert.AreEqual("ADO #1234", rows[0].DisplayText);
         Assert.AreEqual("PR (github.com)", rows[1].DisplayText);
         Assert.AreEqual("ICM 965114", rows[2].DisplayText);
@@ -43,7 +43,7 @@ public class LinkRowTests
         var rows = LinkRow.Project(new[] { link });
 
         // Assert
-        Assert.AreEqual(1, rows.Count);
+        Assert.HasCount(1, rows);
         Assert.AreSame(link, rows[0].Source);
     }
 
@@ -54,7 +54,7 @@ public class LinkRowTests
         var rows = LinkRow.Project(Array.Empty<TaskLink>());
 
         // Assert
-        Assert.AreEqual(0, rows.Count);
+        Assert.IsEmpty(rows);
     }
 
     [TestMethod]

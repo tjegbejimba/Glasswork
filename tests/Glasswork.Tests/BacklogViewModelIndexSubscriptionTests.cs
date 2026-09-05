@@ -55,11 +55,11 @@ public class BacklogViewModelIndexSubscriptionTests
         // Create initial task
         _taskService.CreateTask("Task 1");
         _taskService.CreateTask("Task 2");
-        
+
         var vm = new BacklogViewModel(_vault, _taskService, _index);
         vm.Refresh();
-        
-        Assert.AreEqual(2, vm.Tasks.Count, 
+
+        Assert.HasCount(2, vm.Tasks,
             "BacklogViewModel.Refresh() should read from Index.Tasks");
     }
 
@@ -74,7 +74,7 @@ public class BacklogViewModelIndexSubscriptionTests
 
         vm.SearchText = "search";
 
-        Assert.AreEqual(1, vm.Tasks.Count);
+        Assert.HasCount(1, vm.Tasks);
         Assert.AreEqual("Improve backlog search", vm.Tasks[0].Title);
         Assert.AreEqual(1, vm.Rows.OfType<GlassworkTask>().Count());
     }
@@ -141,7 +141,7 @@ public class BacklogViewModelIndexSubscriptionTests
         vm.RefreshSavedViews();
         vm.SelectedSavedViewId = saved.Id;
 
-        Assert.AreEqual(1, vm.Tasks.Count);
+        Assert.HasCount(1, vm.Tasks);
         Assert.AreEqual("Urgent customer work", vm.Tasks[0].Title);
     }
 
@@ -220,7 +220,7 @@ public class BacklogViewModelIndexSubscriptionTests
 
         var loaded = new AdoParentTitleCacheStore(new JsonFileUiStateService(uiStatePath))
             .LoadFresh(new[] { 1, 2 });
-        Assert.AreEqual(2, loaded.Count);
+        Assert.HasCount(2, loaded);
         Assert.AreEqual("Todo parent", loaded[1]);
         Assert.AreEqual("In-progress parent", loaded[2]);
     }
@@ -230,19 +230,19 @@ public class BacklogViewModelIndexSubscriptionTests
     {
         var task1 = _taskService.CreateTask("Task 1");
         var task2 = _taskService.CreateTask("Task 2");
-        
+
         var vm = new BacklogViewModel(_vault, _taskService, _index);
         vm.Refresh(); // Prime with 2 tasks
-        
+
         var refreshedCount = 0;
         vm.Refreshed += () => refreshedCount++;
-        
+
         vm.SelectedTask = task1;
         vm.SetStatusCommand.Execute(GlassworkTask.Statuses.Done);
-        
+
         Assert.AreEqual(1, refreshedCount,
             "SetStatusCommand should call Refresh() for immediate UI update");
-        Assert.AreEqual(1, vm.Tasks.Count,
+        Assert.HasCount(1, vm.Tasks,
             "VM should immediately filter out done task");
     }
 
@@ -251,17 +251,17 @@ public class BacklogViewModelIndexSubscriptionTests
     {
         var task1 = _taskService.CreateTask("Task 1");
         _taskService.SetStatus(task1, GlassworkTask.Statuses.InProgress);
-        
+
         var vm = new BacklogViewModel(_vault, _taskService, _index);
         vm.ViewMode = "board";
-        
-        Assert.AreEqual(3, vm.BoardColumns.Count,
+
+        Assert.HasCount(3, vm.BoardColumns,
             "Board mode should read from Index.Tasks");
-        Assert.AreEqual(0, vm.BoardColumns[0].Tasks.Count,
+        Assert.IsEmpty(vm.BoardColumns[0].Tasks,
             "Blocked column should be empty");
-        Assert.AreEqual(0, vm.BoardColumns[1].Tasks.Count,
+        Assert.IsEmpty(vm.BoardColumns[1].Tasks,
             "Todo column should be empty");
-        Assert.AreEqual(1, vm.BoardColumns[2].Tasks.Count,
+        Assert.HasCount(1, vm.BoardColumns[2].Tasks,
             "In Progress column should have 1 task");
     }
 
@@ -269,10 +269,10 @@ public class BacklogViewModelIndexSubscriptionTests
     public void Dispose_CancelsParentTitleFetches()
     {
         _taskService.CreateTask("Task 1");
-        
+
         var vm = new BacklogViewModel(_vault, _taskService, _index);
         vm.Refresh();
-        
+
         // Dispose should not throw
         if (vm is IDisposable disposable)
         {
@@ -287,13 +287,13 @@ public class BacklogViewModelIndexSubscriptionTests
         var task = _taskService.CreateTask("Task with Parent");
         task.Parent = "12345";
         _vault.Save(task);
-        
+
         var vm = new BacklogViewModel(_vault, _taskService, _index);
         vm.IsGrouped = true;
         vm.Refresh();
-        
+
         // After refresh, grouped rows should render
-        Assert.IsTrue(vm.Rows.Count > 0,
+        Assert.IsNotEmpty(vm.Rows,
             "Grouped rows should render with parent");
     }
 }

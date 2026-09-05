@@ -25,7 +25,7 @@ the exact merge commit. Use the manual steps below for deliberate recovery.
    ```powershell
    . .\scripts\Validate-McpReleasePublication.ps1
    Test-McpReleasePublicationInputs -RepoRoot $PWD -Version X.Y.Z
-   Invoke-Pester -Path tests\scripts -Output Detailed -CI
+   pwsh -NoProfile -File scripts\Invoke-ScriptTests.ps1 -TestPath tests\scripts -ResultPath TestResults\pester\script-tests.xml
    dotnet test tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj --configuration Release --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1
    dotnet build src\Glasswork.Mcp\Glasswork.Mcp.csproj --configuration Release --nologo --verbosity minimal
    ```

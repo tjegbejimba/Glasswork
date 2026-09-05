@@ -57,7 +57,7 @@ public class PromoteSubtaskToolTests
 
         Assert.IsFalse(string.IsNullOrEmpty(newTaskId), "New task must have an ID");
         Assert.AreEqual($"{newTaskId}.md", newTaskPath, "Path must be todo-relative");
-        
+
         var promoted = _vault.Load(newTaskId);
         Assert.IsNotNull(promoted, "New task must exist on disk");
         Assert.AreEqual("Do the thing", promoted.Title);
@@ -66,7 +66,7 @@ public class PromoteSubtaskToolTests
 
         // Assert: Subtask removed from parent
         var reloadedParent = _vault.Load("parent-task")!;
-        Assert.AreEqual(0, reloadedParent.Subtasks.Count, "Subtask must be removed from parent");
+        Assert.IsEmpty(reloadedParent.Subtasks, "Subtask must be removed from parent");
     }
 
     [TestMethod]
@@ -135,9 +135,9 @@ public class PromoteSubtaskToolTests
 
         var doc = JsonDocument.Parse(json);
         var newTaskId = doc.RootElement.GetProperty("task_id").GetString()!;
-        
+
         var promoted = _vault.Load(newTaskId)!;
-        Assert.AreEqual(GlassworkTask.Statuses.Done, promoted.Status, 
+        Assert.AreEqual(GlassworkTask.Statuses.Done, promoted.Status,
             "Completed subtask must become a done task");
     }
 
@@ -176,7 +176,7 @@ public class PromoteSubtaskToolTests
 
         var markerFile = Path.Combine(TasksDir, ".glasswork", "recent-writes.json");
         var markerContent = File.ReadAllText(markerFile);
-        
+
         StringAssert.Contains(markerContent, "parent-task.md",
             "Marker must contain parent task (source rewrite)");
         StringAssert.Contains(markerContent, Path.GetFileName(newTaskPath),

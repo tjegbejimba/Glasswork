@@ -26,7 +26,7 @@ public class SessionTaskSetStateStoreTests
         var result = store.Load("session-never-saved");
 
         Assert.IsTrue(result.Ok, "a session with no persisted key is a legitimate empty Session Task Set");
-        Assert.AreEqual(0, result.Members.Count);
+        Assert.IsEmpty(result.Members);
     }
 
     [TestMethod]
@@ -60,7 +60,7 @@ public class SessionTaskSetStateStoreTests
         var result = reader.Load("session-cold");
 
         Assert.IsTrue(result.Ok);
-        Assert.AreEqual(1, result.Members.Count);
+        Assert.HasCount(1, result.Members);
         Assert.AreEqual("demo", result.Members[0].TaskId);
         Assert.AreEqual("Demo task", result.Members[0].Title);
     }
@@ -76,9 +76,9 @@ public class SessionTaskSetStateStoreTests
         var a = store.Load("session-a");
         var b = store.Load("session-b");
 
-        Assert.AreEqual(1, a.Members.Count);
+        Assert.HasCount(1, a.Members);
         Assert.AreEqual("task-a", a.Members[0].TaskId);
-        Assert.AreEqual(1, b.Members.Count);
+        Assert.HasCount(1, b.Members);
         Assert.AreEqual("task-b", b.Members[0].TaskId);
     }
 
@@ -93,7 +93,7 @@ public class SessionTaskSetStateStoreTests
         var result = store.Load("session-clear");
 
         Assert.IsTrue(result.Ok, "clearing must never look like a malformed read");
-        Assert.AreEqual(0, result.Members.Count);
+        Assert.IsEmpty(result.Members);
         Assert.IsNull(ui.Get<object>(SessionTaskSetStateStore.KeyPrefix + "session-clear"), "the key must be removed, not just emptied");
     }
 
@@ -108,7 +108,7 @@ public class SessionTaskSetStateStoreTests
 
         Assert.IsFalse(result.Ok, "an unrecognized version must fail visibly, not silently become an empty set");
         Assert.AreEqual("unsupported_version", result.ErrorCode);
-        Assert.AreEqual(0, result.Members.Count);
+        Assert.IsEmpty(result.Members);
     }
 
     [TestMethod]
@@ -156,8 +156,8 @@ public class SessionTaskSetStateStoreTests
         var b = verifier.Load("session-b");
 
         Assert.IsTrue(a.Ok);
-        Assert.AreEqual(1, a.Members.Count, "session-a's save must survive session-b's concurrent save");
+        Assert.HasCount(1, a.Members, "session-a's save must survive session-b's concurrent save");
         Assert.IsTrue(b.Ok);
-        Assert.AreEqual(1, b.Members.Count);
+        Assert.HasCount(1, b.Members);
     }
 }

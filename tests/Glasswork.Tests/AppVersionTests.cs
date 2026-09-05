@@ -11,7 +11,7 @@ public class AppVersionTests
     {
         // Tracer bullet: parse "1.3.0"
         var result = AppVersion.TryParse("1.3.0", out var version);
-        
+
         Assert.IsTrue(result);
         Assert.IsNotNull(version);
         Assert.AreEqual(1, version.Major);
@@ -23,7 +23,7 @@ public class AppVersionTests
     public void Parse_FourComponentVersion_IgnoresFourthComponent()
     {
         var result = AppVersion.TryParse("1.3.0.0", out var version);
-        
+
         Assert.IsTrue(result);
         Assert.IsNotNull(version);
         Assert.AreEqual(1, version.Major);
@@ -35,7 +35,7 @@ public class AppVersionTests
     public void Parse_VersionWithVPrefix_StripsPrefix()
     {
         var result = AppVersion.TryParse("v1.4.0", out var version);
-        
+
         Assert.IsTrue(result);
         Assert.IsNotNull(version);
         Assert.AreEqual(1, version.Major);
@@ -47,7 +47,7 @@ public class AppVersionTests
     public void Parse_GarbageInput_ReturnsFalse()
     {
         var result = AppVersion.TryParse("not-a-version", out var version);
-        
+
         Assert.IsFalse(result);
         Assert.IsNull(version);
     }
@@ -56,7 +56,7 @@ public class AppVersionTests
     public void Parse_EmptyString_ReturnsFalse()
     {
         var result = AppVersion.TryParse("", out var version);
-        
+
         Assert.IsFalse(result);
         Assert.IsNull(version);
     }
@@ -65,7 +65,7 @@ public class AppVersionTests
     public void Parse_Null_ReturnsFalse()
     {
         var result = AppVersion.TryParse(null!, out var version);
-        
+
         Assert.IsFalse(result);
         Assert.IsNull(version);
     }
@@ -74,7 +74,7 @@ public class AppVersionTests
     public void Parse_NegativeVersion_ReturnsFalse()
     {
         var result = AppVersion.TryParse("-1.2.3", out var version);
-        
+
         Assert.IsFalse(result);
         Assert.IsNull(version);
     }
@@ -83,7 +83,7 @@ public class AppVersionTests
     public void Parse_TooManyComponents_ReturnsFalse()
     {
         var result = AppVersion.TryParse("1.2.3.4.5", out var version);
-        
+
         Assert.IsFalse(result);
         Assert.IsNull(version);
     }
@@ -92,7 +92,7 @@ public class AppVersionTests
     public void Parse_FourthComponentGarbage_ReturnsFalse()
     {
         var result = AppVersion.TryParse("1.2.3.garbage", out var version);
-        
+
         Assert.IsFalse(result);
         Assert.IsNull(version);
     }
@@ -102,7 +102,7 @@ public class AppVersionTests
     {
         AppVersion.TryParse("1.3.0", out var v1);
         AppVersion.TryParse("1.3.0", out var v2);
-        
+
         Assert.AreEqual(0, v1!.CompareTo(v2));
     }
 
@@ -111,9 +111,9 @@ public class AppVersionTests
     {
         AppVersion.TryParse("1.10.0", out var v1);
         AppVersion.TryParse("1.9.0", out var v2);
-        
-        Assert.IsTrue(v1!.CompareTo(v2) > 0);
-        Assert.IsTrue(v2!.CompareTo(v1) < 0);
+
+        Assert.IsGreaterThan(0, v1!.CompareTo(v2));
+        Assert.IsLessThan(0, v2!.CompareTo(v1));
     }
 
     [TestMethod]
@@ -121,8 +121,8 @@ public class AppVersionTests
     {
         AppVersion.TryParse("2.0.0", out var v1);
         AppVersion.TryParse("1.9.9", out var v2);
-        
-        Assert.IsTrue(v1!.CompareTo(v2) > 0);
+
+        Assert.IsGreaterThan(0, v1!.CompareTo(v2));
     }
 
     [TestMethod]
@@ -130,7 +130,7 @@ public class AppVersionTests
     {
         // AssemblyInformationalVersion includes +<commit-sha> by default
         var result = AppVersion.TryParse("1.3.0+8f3a1b2", out var version);
-        
+
         Assert.IsTrue(result);
         Assert.IsNotNull(version);
         Assert.AreEqual(1, version.Major);
@@ -142,7 +142,7 @@ public class AppVersionTests
     public void Parse_VersionWithPreReleaseTag_StripsPreReleaseTag()
     {
         var result = AppVersion.TryParse("1.3.0-beta", out var version);
-        
+
         Assert.IsTrue(result);
         Assert.IsNotNull(version);
         Assert.AreEqual(1, version.Major);
@@ -154,7 +154,7 @@ public class AppVersionTests
     public void Parse_VersionWithPreReleaseAndMetadata_StripsBoth()
     {
         var result = AppVersion.TryParse("1.3.0-beta+abc123", out var version);
-        
+
         Assert.IsTrue(result);
         Assert.IsNotNull(version);
         Assert.AreEqual(1, version.Major);

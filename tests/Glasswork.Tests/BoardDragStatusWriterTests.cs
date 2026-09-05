@@ -46,7 +46,7 @@ public class BoardDragStatusWriterTests
 
         Assert.IsTrue(result.Success, "Write should succeed without conflict");
         Assert.IsNull(result.ErrorMessage);
-        
+
         var loaded = _vault.Load("drag-card")!;
         Assert.AreEqual(GlassworkTask.Statuses.InProgress, loaded.Status);
     }
@@ -62,7 +62,7 @@ public class BoardDragStatusWriterTests
         await _writer.TryWriteStatusChange(task, GlassworkTask.Statuses.InProgress);
 
         // Self-write coordinator should suppress this path for the TTL window
-        Assert.IsTrue(_selfWrite.IsSuppressed(taskPath), 
+        Assert.IsTrue(_selfWrite.IsSuppressed(taskPath),
             "Write should be registered with SelfWriteCoordinator");
     }
 
@@ -81,7 +81,7 @@ public class BoardDragStatusWriterTests
         var result = await _writer.TryWriteStatusChange(task, GlassworkTask.Statuses.InProgress);
 
         Assert.IsTrue(result.Success, "Should succeed after retry");
-        
+
         var loaded = _vault.Load("conflict-once")!;
         Assert.AreEqual(GlassworkTask.Statuses.InProgress, loaded.Status);
         Assert.AreEqual("Changed externally", loaded.Description, "Retry should preserve external changes");
@@ -116,8 +116,8 @@ public class BoardDragStatusWriterTests
 
         Assert.IsFalse(result.Success, "Should fail after second conflict");
         Assert.IsNotNull(result.ErrorMessage);
-        Assert.IsTrue(result.ErrorMessage!.Contains("changed externally"));
-        
+        Assert.Contains("changed externally", result.ErrorMessage);
+
         // Original status should be unchanged
         var loaded = _vault.Load("conflict-twice")!;
         Assert.AreEqual(GlassworkTask.Statuses.Todo, loaded.Status);

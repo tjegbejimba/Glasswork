@@ -128,7 +128,7 @@ public class TaskTypeBackfillServiceTests
         var (result, changed) = TaskTypeBackfillService.StampType(content, "pbi");
 
         Assert.IsTrue(changed);
-        Assert.IsFalse(result.EndsWith("\n"), "trailing-newline state must be preserved");
+        Assert.DoesNotEndWith("\n", result, "trailing-newline state must be preserved");
         StringAssert.EndsWith(result, "body");
     }
 

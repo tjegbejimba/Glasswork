@@ -62,7 +62,7 @@ public class GlassworkTaskCloneTests
 
         // Different list instance.
         Assert.AreNotSame(src.Subtasks, copy.Subtasks);
-        Assert.AreEqual(1, copy.Subtasks.Count);
+        Assert.HasCount(1, copy.Subtasks);
         // Different SubTask instance.
         Assert.AreNotSame(src.Subtasks[0], copy.Subtasks[0]);
         Assert.AreEqual("step 1", copy.Subtasks[0].Text);
@@ -76,7 +76,7 @@ public class GlassworkTaskCloneTests
         copy.Subtasks.Add(new SubTask { Text = "added" });
         copy.Subtasks[0].Text = "MUTATED";
         copy.Subtasks[0].Metadata["blocker"] = "MUTATED";
-        Assert.AreEqual(1, src.Subtasks.Count);
+        Assert.HasCount(1, src.Subtasks);
         Assert.AreEqual("step 1", src.Subtasks[0].Text);
         Assert.AreEqual("waiting on Alice", src.Subtasks[0].Metadata["blocker"]);
     }
@@ -90,11 +90,11 @@ public class GlassworkTaskCloneTests
         var copy = src.Clone();
 
         Assert.AreNotSame(src.Links, copy.Links);
-        Assert.AreEqual(1, copy.Links.Count);
+        Assert.HasCount(1, copy.Links);
         Assert.AreEqual("1234", copy.Links[0].Value);
 
         copy.Links.Add(new TaskLink { Type = TaskLink.Types.Pr, Value = "https://pr" });
-        Assert.AreEqual(1, src.Links.Count);
+        Assert.HasCount(1, src.Links);
     }
 
     [TestMethod]
@@ -126,8 +126,8 @@ public class GlassworkTaskCloneTests
         Assert.AreNotSame(src.ContextLinks, copy.ContextLinks);
         copy.Tags.Add("MUTATED");
         copy.ContextLinks.Add("MUTATED");
-        Assert.AreEqual(1, src.Tags.Count);
-        Assert.AreEqual(1, src.ContextLinks.Count);
+        Assert.HasCount(1, src.Tags);
+        Assert.HasCount(1, src.ContextLinks);
     }
 
     [TestMethod]

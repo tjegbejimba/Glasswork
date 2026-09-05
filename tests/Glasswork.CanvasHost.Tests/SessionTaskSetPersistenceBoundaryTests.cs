@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Glasswork.Core.Services;
 using static Glasswork.CanvasHost.Tests.CanvasHostTestSupport;
@@ -14,7 +13,7 @@ namespace Glasswork.CanvasHost.Tests;
 /// through HTTP, exactly like <see cref="SessionTaskSetBoundaryTests"/>.
 /// </summary>
 [TestClass]
-public sealed class SessionTaskSetPersistenceBoundaryTests
+public sealed class SessionTaskSetPersistenceBoundaryTests : CanvasHostTestBase
 {
     [TestMethod]
     public async Task Restore_RebuildsMembershipAndRecencyOrderAndSelectsMostRecent_AfterHostRestart()
@@ -29,15 +28,15 @@ public sealed class SessionTaskSetPersistenceBoundaryTests
             using var client = AuthorizedClient("credential-restore");
             // Recency order after this batch is [third, second, demo] (see
             // SessionTaskSetBoundaryTests for why); "third" is selected.
-            await client.PostAsJsonAsync($"{first.Url}/api/tasks/load", new { taskIds = new[] { "demo", "second", "third" } });
+            await AssertJsonSuccessAsync(PostJsonAsync(client, $"{first.Url}/api/tasks/load", new { taskIds = new[] { "demo", "second", "third" } }));
         }
 
         // A brand-new host process for the SAME session id, reading the SAME
         // UI State file, simulates the canvas reopening after a cold resume.
         await using var restarted = await StartHost(vault, "session-restore", "credential-restore", uiStatePath);
         using var restartedClient = AuthorizedClient("credential-restore");
-        var response = await restartedClient.GetAsync($"{restarted.Url}/api/tasks");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var response = await GetJsonAsync(restartedClient, $"{restarted.Url}/api/tasks");
+        var body = response.Body;
         var order = body.RootElement.GetProperty("members").EnumerateArray().Select(m => m.GetProperty("taskId").GetString()).ToArray();
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
@@ -56,7 +55,7 @@ public sealed class SessionTaskSetPersistenceBoundaryTests
         await using (var first = await StartHost(vault, "session-restore-unavailable", "credential-restore-unavailable", uiStatePath))
         {
             using var client = AuthorizedClient("credential-restore-unavailable");
-            await client.PostAsJsonAsync($"{first.Url}/api/tasks/load", new { taskIds = new[] { "vanishing" } });
+            await AssertJsonSuccessAsync(PostJsonAsync(client, $"{first.Url}/api/tasks/load", new { taskIds = new[] { "vanishing" } }));
         }
 
         // The Task disappears from the Vault while no host is running.
@@ -64,8 +63,8 @@ public sealed class SessionTaskSetPersistenceBoundaryTests
 
         await using var restarted = await StartHost(vault, "session-restore-unavailable", "credential-restore-unavailable", uiStatePath);
         using var restartedClient = AuthorizedClient("credential-restore-unavailable");
-        var response = await restartedClient.GetAsync($"{restarted.Url}/api/tasks");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var response = await GetJsonAsync(restartedClient, $"{restarted.Url}/api/tasks");
+        var body = response.Body;
         var member = body.RootElement.GetProperty("members").EnumerateArray().Single();
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
@@ -83,14 +82,14 @@ public sealed class SessionTaskSetPersistenceBoundaryTests
         await using (var first = await StartHost(vault, "session-restore-clear", "credential-restore-clear", uiStatePath))
         {
             using var client = AuthorizedClient("credential-restore-clear");
-            await client.PostAsJsonAsync($"{first.Url}/api/tasks/load", new { taskIds = new[] { "demo" } });
-            await client.PostAsync($"{first.Url}/api/tasks/clear", null);
+            await AssertJsonSuccessAsync(PostJsonAsync(client, $"{first.Url}/api/tasks/load", new { taskIds = new[] { "demo" } }));
+            await AssertJsonSuccessAsync(PostJsonAsync(client, $"{first.Url}/api/tasks/clear"));
         }
 
         await using var restarted = await StartHost(vault, "session-restore-clear", "credential-restore-clear", uiStatePath);
         using var restartedClient = AuthorizedClient("credential-restore-clear");
-        var response = await restartedClient.GetAsync($"{restarted.Url}/api/tasks");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var response = await GetJsonAsync(restartedClient, $"{restarted.Url}/api/tasks");
+        var body = response.Body;
         var taskFile = Path.Combine(vault, "wiki", "todo", "demo.md");
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
@@ -117,14 +116,19 @@ public sealed class SessionTaskSetPersistenceBoundaryTests
 
             // Interleave the two hosts' explicit loads to exercise concurrent
             // merge-on-save rather than a strictly sequential save order.
-            var loadA = clientA.PostAsJsonAsync($"{hostA.Url}/api/tasks/load", new { taskIds = new[] { "task-a" } });
-            var loadB = clientB.PostAsJsonAsync($"{hostB.Url}/api/tasks/load", new { taskIds = new[] { "task-b" } });
-            await Task.WhenAll(loadA, loadB);
+            var loadA = PostJsonAsync(clientA, $"{hostA.Url}/api/tasks/load", new { taskIds = new[] { "task-a" } });
+            var loadB = PostJsonAsync(clientB, $"{hostB.Url}/api/tasks/load", new { taskIds = new[] { "task-b" } });
+            var loadResponses = await Task.WhenAll(loadA, loadB);
+            foreach (var loadResponse in loadResponses)
+            {
+                using (loadResponse)
+                    Assert.AreEqual(HttpStatusCode.OK, loadResponse.StatusCode);
+            }
 
-            var stateA = await clientA.GetAsync($"{hostA.Url}/api/tasks");
-            var stateB = await clientB.GetAsync($"{hostB.Url}/api/tasks");
-            using var bodyA = JsonDocument.Parse(await stateA.Content.ReadAsStringAsync());
-            using var bodyB = JsonDocument.Parse(await stateB.Content.ReadAsStringAsync());
+            using var stateA = await GetJsonAsync(clientA, $"{hostA.Url}/api/tasks");
+            using var stateB = await GetJsonAsync(clientB, $"{hostB.Url}/api/tasks");
+            var bodyA = stateA.Body;
+            var bodyB = stateB.Body;
 
             Assert.AreEqual(1, bodyA.RootElement.GetProperty("members").GetArrayLength(), "session-iso-a's own host must see only its own membership");
             Assert.AreEqual("task-a", bodyA.RootElement.GetProperty("members")[0].GetProperty("taskId").GetString());
@@ -138,10 +142,10 @@ public sealed class SessionTaskSetPersistenceBoundaryTests
         await using var restartedB = await StartHost(vault, "session-iso-b", "credential-iso-b", uiStatePath);
         using var restartedClientA = AuthorizedClient("credential-iso-a");
         using var restartedClientB = AuthorizedClient("credential-iso-b");
-        var restoredA = await restartedClientA.GetAsync($"{restartedA.Url}/api/tasks");
-        var restoredB = await restartedClientB.GetAsync($"{restartedB.Url}/api/tasks");
-        using var restoredBodyA = JsonDocument.Parse(await restoredA.Content.ReadAsStringAsync());
-        using var restoredBodyB = JsonDocument.Parse(await restoredB.Content.ReadAsStringAsync());
+        using var restoredA = await GetJsonAsync(restartedClientA, $"{restartedA.Url}/api/tasks");
+        using var restoredB = await GetJsonAsync(restartedClientB, $"{restartedB.Url}/api/tasks");
+        var restoredBodyA = restoredA.Body;
+        var restoredBodyB = restoredB.Body;
 
         Assert.AreEqual("task-a", restoredBodyA.RootElement.GetProperty("members")[0].GetProperty("taskId").GetString(), "restoring session-iso-a must never pick up session-iso-b's membership");
         Assert.AreEqual("task-b", restoredBodyB.RootElement.GetProperty("members")[0].GetProperty("taskId").GetString(), "restoring session-iso-b must never pick up session-iso-a's membership");
@@ -163,8 +167,8 @@ public sealed class SessionTaskSetPersistenceBoundaryTests
         await using var host = await StartHost(vault, "session-future-version", "credential-future-version", uiStatePath);
         using var client = AuthorizedClient("credential-future-version");
 
-        var apiResponse = await client.GetAsync($"{host.Url}/api/tasks");
-        using var apiBody = JsonDocument.Parse(await apiResponse.Content.ReadAsStringAsync());
+        using var apiResponse = await GetJsonAsync(client, $"{host.Url}/api/tasks");
+        var apiBody = apiResponse.Body;
         var canvasResponse = await client.GetAsync($"{host.Url}/canvas");
         var html = await canvasResponse.Content.ReadAsStringAsync();
 
@@ -177,8 +181,8 @@ public sealed class SessionTaskSetPersistenceBoundaryTests
 
         // Explicit Clear all must self-heal: it is always available (even
         // with zero members) and overwrites the malformed entry.
-        var clearResponse = await client.PostAsync($"{host.Url}/api/tasks/clear", null);
-        using var clearBody = JsonDocument.Parse(await clearResponse.Content.ReadAsStringAsync());
+        using var clearResponse = await PostJsonAsync(client, $"{host.Url}/api/tasks/clear");
+        var clearBody = clearResponse.Body;
         Assert.AreEqual(HttpStatusCode.OK, clearResponse.StatusCode);
         Assert.IsFalse(clearBody.RootElement.TryGetProperty("restoreError", out var clearedError) && clearedError.ValueKind != JsonValueKind.Null, "clearing must supersede the prior restore failure");
     }
@@ -195,8 +199,8 @@ public sealed class SessionTaskSetPersistenceBoundaryTests
         await using var host = await StartHost(vault, "session-malformed", "credential-malformed", uiStatePath);
         using var client = AuthorizedClient("credential-malformed");
 
-        var response = await client.GetAsync($"{host.Url}/api/tasks");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var response = await GetJsonAsync(client, $"{host.Url}/api/tasks");
+        var body = response.Body;
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
         Assert.AreEqual(0, body.RootElement.GetProperty("members").GetArrayLength());

@@ -148,13 +148,18 @@ jobs:
 
       - name: Run release script tests
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $pesterVersion = "5.7.1"
-          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [version]$pesterVersion })) {
-              Install-Module Pester -RequiredVersion $pesterVersion -Scope CurrentUser -Force
-          }
-          Invoke-Pester -Path tests\scripts -Output Detailed -CI
+        run: >-
+          pwsh -NoProfile -File scripts\Invoke-ScriptTests.ps1
+          -TestPath tests\scripts
+          -ResultPath TestResults\pester\script-tests.xml
+
+      - name: Upload MCP Release script test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-release-script-test-diagnostics
+          path: TestResults\pester\script-tests.xml
+          if-no-files-found: warn
 
       - name: Run serial MCP tests
         run: dotnet test tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj --configuration Release --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1

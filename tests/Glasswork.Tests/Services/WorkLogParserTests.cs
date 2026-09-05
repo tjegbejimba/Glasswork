@@ -60,13 +60,13 @@ Completed 7 tasks across 3 projects. Fixed authentication flow and promoted My D
         Assert.AreEqual(new DateTime(2026, 5, 26, 14, 0, 0, DateTimeKind.Utc), workLog.GeneratedAt);
         Assert.AreEqual("copilot", workLog.GeneratedBy);
         CollectionAssert.AreEqual(new[] { "auth-fix", "my-day-virtual-promotion" }, workLog.TasksReferenced);
-        
-        Assert.IsTrue(workLog.Summary.Contains("Completed 7 tasks"));
-        Assert.IsTrue(workLog.KeyInsights.Contains("race condition"));
-        Assert.IsTrue(workLog.StrategicThinking.Contains("Prioritized auth fix"));
-        Assert.IsTrue(workLog.TasksCompleted.Contains("[[auth-fix]]"));
-        Assert.IsTrue(workLog.InProgress.Contains("[[migration]]"));
-        Assert.IsTrue(workLog.Frustrations.Contains("Build server downtime"));
+
+        Assert.Contains("Completed 7 tasks", workLog.Summary);
+        Assert.Contains("race condition", workLog.KeyInsights);
+        Assert.Contains("Prioritized auth fix", workLog.StrategicThinking);
+        Assert.Contains("[[auth-fix]]", workLog.TasksCompleted);
+        Assert.Contains("[[migration]]", workLog.InProgress);
+        Assert.Contains("Build server downtime", workLog.Frustrations);
     }
 
     [TestMethod]
@@ -100,10 +100,10 @@ Minimal work log with only summary section.
         Assert.AreEqual(string.Empty, workLog.StrategicThinking);
         Assert.AreEqual(string.Empty, workLog.InProgress);
         Assert.AreEqual(string.Empty, workLog.Frustrations);
-        
+
         // Required sections should have content
-        Assert.IsTrue(workLog.Summary.Contains("Minimal work log"));
-        Assert.IsTrue(workLog.TasksCompleted.Contains("[[task-1]]"));
+        Assert.Contains("Minimal work log", workLog.Summary);
+        Assert.Contains("[[task-1]]", workLog.TasksCompleted);
     }
 
     [TestMethod]
@@ -127,7 +127,7 @@ Content here.
 
         // Act & Assert
         var ex = Assert.ThrowsExactly<FormatException>(() => parser.Parse(markdown));
-        Assert.IsTrue(ex.Message.Contains("generated_by"));
+        Assert.Contains("generated_by", ex.Message);
     }
 
     [TestMethod]
@@ -154,7 +154,7 @@ No tasks this week.
         var workLog = parser.Parse(markdown);
 
         // Assert
-        Assert.AreEqual(0, workLog.TasksReferenced.Count);
+        Assert.IsEmpty(workLog.TasksReferenced);
     }
 
     [TestMethod]
@@ -193,7 +193,7 @@ This is not a valid work log format.
 
         // Act & Assert
         var ex = Assert.ThrowsExactly<FormatException>(() => parser.Parse(markdown));
-        Assert.IsTrue(ex.Message.Contains("frontmatter delimiters"));
+        Assert.Contains("frontmatter delimiters", ex.Message);
     }
 
     [TestMethod]
@@ -218,6 +218,6 @@ Content.
 
         // Act & Assert
         var ex = Assert.ThrowsExactly<FormatException>(() => parser.Parse(markdown));
-        Assert.IsTrue(ex.Message.Contains("UTC"));
+        Assert.Contains("UTC", ex.Message);
     }
 }

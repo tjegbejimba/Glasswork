@@ -25,7 +25,7 @@ public class AddSubtaskToolTests
     }
 
     // ───────────────── Tracer bullet: happy path ─────────────────
-    
+
     [TestMethod]
     public void AddSubtask_AppendsSubtaskToTask_ReturnsUpdatedList()
     {
@@ -39,7 +39,7 @@ public class AddSubtaskToolTests
 
         // Assert: returns updated subtask list with the new subtask
         var subtasks = result.GetProperty("subtasks").EnumerateArray().ToArray();
-        Assert.AreEqual(1, subtasks.Length, "Should return 1 subtask");
+        Assert.HasCount(1, subtasks, "Should return 1 subtask");
         Assert.AreEqual("My first subtask", subtasks[0].GetProperty("text").GetString());
         Assert.AreEqual("todo", subtasks[0].GetProperty("status").GetString(), "New subtask should default to 'todo'");
         Assert.AreEqual(taskId, result.GetProperty("task_id").GetString());

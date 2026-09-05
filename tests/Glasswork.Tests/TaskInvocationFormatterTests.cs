@@ -51,11 +51,11 @@ public class TaskInvocationFormatterTests
         var line = TaskInvocationFormatter.FormatTriageReport(description);
 
         // Newlines must survive verbatim so Copilot CLI receives the full report.
-        Assert.IsTrue(line.StartsWith("Run the triage-issue skill on this report: "));
-        Assert.IsTrue(line.Contains("Steps:\n1. Empty vault\n2. Open app"));
-        Assert.IsTrue(line.EndsWith("Result: hard crash"));
+        Assert.StartsWith("Run the triage-issue skill on this report: ", line);
+        Assert.Contains("Steps:\n1. Empty vault\n2. Open app", line);
+        Assert.EndsWith("Result: hard crash", line);
         // No truncation of the description.
-        Assert.IsTrue(line.Length >= "Run the triage-issue skill on this report: ".Length + description.Length);
+        Assert.IsGreaterThanOrEqualTo("Run the triage-issue skill on this report: ".Length + description.Length, line.Length);
     }
 
     [TestMethod]

@@ -18,13 +18,13 @@ public class BacklogBoardGrouperTests
 
         var grouped = BacklogBoardGrouper.GroupByStatus(tasks);
 
-        Assert.AreEqual(3, grouped.Count, "Should have 3 columns");
+        Assert.HasCount(3, grouped, "Should have 3 columns");
         Assert.AreEqual("Blocked", grouped[0].ColumnName);
-        Assert.AreEqual(0, grouped[0].Tasks.Count);
+        Assert.IsEmpty(grouped[0].Tasks);
         Assert.AreEqual("To Do", grouped[1].ColumnName);
-        Assert.AreEqual(2, grouped[1].Tasks.Count);
+        Assert.HasCount(2, grouped[1].Tasks);
         Assert.AreEqual("In Progress", grouped[2].ColumnName);
-        Assert.AreEqual(1, grouped[2].Tasks.Count);
+        Assert.HasCount(1, grouped[2].Tasks);
     }
 
     [TestMethod]
@@ -63,7 +63,7 @@ public class BacklogBoardGrouperTests
         var grouped = BacklogBoardGrouper.GroupByStatus(tasks);
 
         var allTasks = grouped.SelectMany(c => c.Tasks).ToList();
-        Assert.AreEqual(2, allTasks.Count, "terminal tasks should not appear in board columns");
+        Assert.HasCount(2, allTasks, "terminal tasks should not appear in board columns");
         Assert.IsFalse(allTasks.Any(t => t.IsTerminal));
     }
 

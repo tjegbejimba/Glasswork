@@ -287,7 +287,7 @@ public class LinkUriPolicyTests
         };
 
         var result = LinkUriPolicy.DisplayText(link);
-        Assert.IsTrue(result.Contains("github.com"), $"Expected host in display text, got: {result}");
+        Assert.Contains("github.com", result, $"Expected host in display text, got: {result}");
     }
 
     [TestMethod]
@@ -312,7 +312,7 @@ public class LinkUriPolicyTests
         };
 
         var result = LinkUriPolicy.DisplayText(link);
-        Assert.IsTrue(result.Contains("eng.ms"), $"Expected host in display text, got: {result}");
+        Assert.Contains("eng.ms", result, $"Expected host in display text, got: {result}");
     }
 
     [TestMethod]
@@ -325,7 +325,7 @@ public class LinkUriPolicyTests
         };
 
         var result = LinkUriPolicy.DisplayText(link);
-        Assert.IsTrue(result.Contains("dev.azure.com"), $"Expected host in display text, got: {result}");
+        Assert.Contains("dev.azure.com", result, $"Expected host in display text, got: {result}");
     }
 
     [TestMethod]
@@ -338,6 +338,6 @@ public class LinkUriPolicyTests
         };
 
         var result = LinkUriPolicy.DisplayText(link);
-        Assert.IsTrue(result.Contains("example.com"), $"Expected host in display text, got: {result}");
+        Assert.Contains("example.com", result, $"Expected host in display text, got: {result}");
     }
 }

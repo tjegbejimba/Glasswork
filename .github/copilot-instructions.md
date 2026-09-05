@@ -59,16 +59,21 @@ that public docs don't explain — they're not required reading:
 
 ## Build & test constraints
 
-- **`Glasswork.Core`** — pure .NET 10, no Windows dependencies. **Builds and
-  tests cleanly on Linux**, including the Copilot cloud agent runner. This is
-  where domain logic lives.
+- **`Glasswork.Core`** — platform-neutral .NET 10, with domain logic covered by
+  the `net10.0` `Glasswork.Tests` project. A compatible target or local run is
+  not Ubuntu proof; report Linux verification only from an actual successful
+  Ubuntu run.
 - **`Glasswork.App`** — WinUI 3, **Windows-only**. Cannot be built or run on
   Linux runners. For cloud-agent triage, investigate statically (read code,
   trace call sites); do not attempt `dotnet build` on this project in cloud.
-- **Tests** — MSTest. Command: `dotnet test tests/Glasswork.Tests/`. Do not
-  add xUnit/NUnit or other test frameworks. **When implementing a feature
-  or fix, follow [`.github/skills/tdd.md`](skills/tdd.md)** — vertical-slice
-  red-green-refactor, not horizontal slices.
+- **Tests** — MSTest is the .NET test framework. Glasswork has separate Core,
+  MCP, Canvas Host, script, and native verification surfaces. Do not add
+  xUnit/NUnit or another .NET test framework.
+  **When implementing a feature or fix, follow
+  [`.github/skills/tdd.md`](skills/tdd.md)** to select the smallest relevant
+  surface, establish an executed behavioral RED, satisfy its prerequisites, and
+  expand across affected surfaces without replacing failed acceptance evidence
+  with an isolated rerun.
 - **.NET SDK** — 10.x. Preinstalled in cloud agent via
   `.github/workflows/copilot-setup-steps.yml`.
 - **MCP publication** — follow
@@ -183,6 +188,14 @@ inside Ubuntu.
    `Glasswork.Core` changes (no UI surface affected) may skip this. **Cloud /
    Linux agents cannot run this** — they must flag UI-touching work for local
    re-verification before merge.
+
+   Before merge, attach visual evidence for the exact current PR head using the
+   committed behavior-specific scenario and `invoke-visual-verification.ps1
+   -MergeEvidence`: include `result.json`, every captured PNG, and an explicit
+   human or agent inspection outcome. Any later head change invalidates that
+   evidence. Semantic Task Detail Projection changes also require an actual
+   browser-rendered CanvasHost PNG with equivalent semantics/hierarchy; pixel
+   equality is not required.
 
    > **Skill:** the step-by-step playbook for this rule — verifying changes,
    > writing scenarios, and discovering/scaffolding `AutomationId` selectors by

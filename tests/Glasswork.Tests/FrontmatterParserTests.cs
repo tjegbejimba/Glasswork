@@ -60,7 +60,7 @@ public class FrontmatterParserTests
         CollectionAssert.AreEqual(new[] { "[[some-context]]" }, task.ContextLinks);
         CollectionAssert.AreEqual(new[] { "dev", "setup" }, task.Tags);
         Assert.AreEqual("Some notes about this task.", task.Description);
-        Assert.AreEqual(2, task.Subtasks.Count);
+        Assert.HasCount(2, task.Subtasks);
         Assert.IsTrue(task.Subtasks[0].IsCompleted);
         Assert.AreEqual("Step one done", task.Subtasks[0].Text);
         Assert.IsFalse(task.Subtasks[1].IsCompleted);
@@ -119,7 +119,7 @@ public class FrontmatterParserTests
         Assert.AreEqual(original.Description, parsed.Description);
         CollectionAssert.AreEqual(original.ContextLinks, parsed.ContextLinks);
         CollectionAssert.AreEqual(original.Tags, parsed.Tags);
-        Assert.AreEqual(original.Subtasks.Count, parsed.Subtasks.Count);
+        Assert.HasCount(original.Subtasks.Count, parsed.Subtasks);
         Assert.AreEqual(original.Subtasks[0].Text, parsed.Subtasks[0].Text);
         Assert.AreEqual(original.Subtasks[0].IsCompleted, parsed.Subtasks[0].IsCompleted);
     }
@@ -306,7 +306,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.HasCount(1, task.Subtasks);
         Assert.AreEqual("Plain title", task.Subtasks[0].Text);
         Assert.IsFalse(task.Subtasks[0].IsCompleted);
     }
@@ -327,7 +327,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.HasCount(1, task.Subtasks);
         Assert.AreEqual("Done thing", task.Subtasks[0].Text);
         Assert.IsTrue(task.Subtasks[0].IsCompleted);
     }
@@ -352,7 +352,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(3, task.Subtasks.Count);
+        Assert.HasCount(3, task.Subtasks);
         Assert.AreEqual("First", task.Subtasks[0].Text);
         Assert.IsFalse(task.Subtasks[0].IsCompleted);
         Assert.AreEqual("Second", task.Subtasks[1].Text);
@@ -380,7 +380,7 @@ public class FrontmatterParserTests
         var task = _parser.Parse(markdown);
 
         Assert.AreEqual("legacy-v1", task.Id);
-        Assert.AreEqual(0, task.Subtasks.Count);
+        Assert.IsEmpty(task.Subtasks);
         Assert.AreEqual("Just a body of plain notes, no subtasks heading at all.", task.Description);
     }
 
@@ -401,7 +401,7 @@ public class FrontmatterParserTests
             """;
 
         var task = _parser.Parse(markdown);
-        Assert.AreEqual(3, task.Subtasks.Count);
+        Assert.HasCount(3, task.Subtasks);
 
         // Toggle: complete Beta, uncomplete Gamma
         task.Subtasks[1].IsCompleted = true;
@@ -409,7 +409,7 @@ public class FrontmatterParserTests
 
         var roundTripped = _parser.Parse(_parser.Serialize(task));
 
-        Assert.AreEqual(3, roundTripped.Subtasks.Count);
+        Assert.HasCount(3, roundTripped.Subtasks);
         Assert.AreEqual("Alpha", roundTripped.Subtasks[0].Text);
         Assert.IsFalse(roundTripped.Subtasks[0].IsCompleted);
         Assert.AreEqual("Beta", roundTripped.Subtasks[1].Text);
@@ -435,7 +435,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.HasCount(1, task.Subtasks);
         Assert.AreEqual("Build private package", task.Subtasks[0].Text);
         Assert.AreEqual("in_progress", task.Subtasks[0].Status);
     }
@@ -460,7 +460,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.HasCount(1, task.Subtasks);
         var sub = task.Subtasks[0];
         Assert.AreEqual("blocked", sub.Status);
         Assert.AreEqual("12345", sub.Metadata["ado"]);
@@ -488,7 +488,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.HasCount(1, task.Subtasks);
         Assert.AreEqual("in_progress", task.Subtasks[0].Status);
         Assert.AreEqual("12346", task.Subtasks[0].Metadata["ado"]);
         Assert.AreEqual("Build #1234 running. ETA 30 min.", task.Subtasks[0].Notes);
@@ -512,7 +512,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(2, task.Subtasks.Count);
+        Assert.HasCount(2, task.Subtasks);
         Assert.AreEqual("in_progress", task.Subtasks[0].Status);
         Assert.AreEqual(string.Empty, task.Subtasks[0].Notes);
         Assert.IsNull(task.Subtasks[1].Status);
@@ -538,7 +538,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.HasCount(1, task.Subtasks);
         var sub = task.Subtasks[0];
         Assert.IsTrue(sub.IsCompleted, "IsCompleted comes from the [x] character");
         Assert.AreEqual("in_progress", sub.Status, "Status field wins as source of truth");
@@ -566,7 +566,7 @@ public class FrontmatterParserTests
             """;
 
         var task = _parser.Parse(markdown);
-        Assert.AreEqual(2, task.Subtasks.Count);
+        Assert.HasCount(2, task.Subtasks);
 
         // Modify the rich one's status
         task.Subtasks[0].Status = "blocked";
@@ -574,7 +574,7 @@ public class FrontmatterParserTests
 
         var roundTripped = _parser.Parse(_parser.Serialize(task));
 
-        Assert.AreEqual(2, roundTripped.Subtasks.Count);
+        Assert.HasCount(2, roundTripped.Subtasks);
         Assert.AreEqual("Build private package", roundTripped.Subtasks[0].Text);
         Assert.AreEqual("blocked", roundTripped.Subtasks[0].Status);
         Assert.AreEqual("12346", roundTripped.Subtasks[0].Metadata["ado"]);
@@ -583,7 +583,7 @@ public class FrontmatterParserTests
 
         Assert.AreEqual("Plain follow-up", roundTripped.Subtasks[1].Text);
         Assert.IsNull(roundTripped.Subtasks[1].Status);
-        Assert.AreEqual(0, roundTripped.Subtasks[1].Metadata.Count);
+        Assert.IsEmpty(roundTripped.Subtasks[1].Metadata);
         Assert.AreEqual(string.Empty, roundTripped.Subtasks[1].Notes);
     }
 
@@ -621,9 +621,9 @@ public class FrontmatterParserTests
         var myDayIdx = markdown.IndexOf("- my_day:", StringComparison.Ordinal);
 
         Assert.IsTrue(statusIdx >= 0 && adoIdx > statusIdx, $"status should precede ado.\n{markdown}");
-        Assert.IsTrue(adoIdx < completedIdx, $"ado should precede completed.\n{markdown}");
-        Assert.IsTrue(completedIdx < blockerIdx, $"completed should precede blocker.\n{markdown}");
-        Assert.IsTrue(blockerIdx < myDayIdx, $"blocker should precede my_day.\n{markdown}");
+        Assert.IsLessThan(completedIdx, adoIdx, $"ado should precede completed.\n{markdown}");
+        Assert.IsLessThan(blockerIdx, completedIdx, $"completed should precede blocker.\n{markdown}");
+        Assert.IsLessThan(myDayIdx, blockerIdx, $"blocker should precede my_day.\n{markdown}");
     }
 
     [TestMethod]
@@ -648,7 +648,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(1, task.Subtasks.Count);
+        Assert.HasCount(1, task.Subtasks);
         var sub = task.Subtasks[0];
         Assert.AreEqual(new DateTime(2026, 5, 1), sub.Due);
         Assert.AreEqual("2026-05-01", sub.Metadata["due"]);
@@ -684,7 +684,7 @@ public class FrontmatterParserTests
         var myDayIdx = markdown.IndexOf("- my_day:", StringComparison.Ordinal);
 
         Assert.IsTrue(blockerIdx > 0 && dueIdx > blockerIdx, $"due should follow blocker.\n{markdown}");
-        Assert.IsTrue(dueIdx < myDayIdx, $"due should precede my_day.\n{markdown}");
+        Assert.IsLessThan(myDayIdx, dueIdx, $"due should precede my_day.\n{markdown}");
     }
 
     [TestMethod]
@@ -705,7 +705,7 @@ public class FrontmatterParserTests
         {
             Id = "rt-due",
             Title = "RT due",
-            Subtasks = [ new SubTask { Text = "A", Due = new DateTime(2027, 1, 15) } ],
+            Subtasks = [new SubTask { Text = "A", Due = new DateTime(2027, 1, 15) }],
         };
 
         var rt = _parser.Parse(_parser.Serialize(task));
@@ -728,7 +728,7 @@ public class FrontmatterParserTests
         Assert.AreEqual("Minimal task", task.Title);
         Assert.AreEqual("todo", task.Status);
         Assert.AreEqual("medium", task.Priority);
-        Assert.AreEqual(0, task.Subtasks.Count);
+        Assert.IsEmpty(task.Subtasks);
         Assert.AreEqual(string.Empty, task.Description);
     }
 
@@ -860,7 +860,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(2, task.Links.Count);
+        Assert.HasCount(2, task.Links);
         Assert.AreEqual("ado", task.Links[0].Type);
         Assert.AreEqual("1234", task.Links[0].Value);
         Assert.AreEqual("My ADO item", task.Links[0].Label);
@@ -889,8 +889,8 @@ public class FrontmatterParserTests
         StringAssert.Contains(markdown, "label: ADO Item");
         StringAssert.Contains(markdown, "- type: pr");
         StringAssert.Contains(markdown, "value: https://pr.url");
-        Assert.IsFalse(markdown.Contains("ado_link:"), "Legacy ado_link key should be omitted");
-        Assert.IsFalse(markdown.Contains("ado_title:"), "Legacy ado_title key should be omitted");
+        Assert.DoesNotContain("ado_link:", markdown, "Legacy ado_link key should be omitted");
+        Assert.DoesNotContain("ado_title:", markdown, "Legacy ado_title key should be omitted");
     }
 
     [TestMethod]
@@ -908,11 +908,11 @@ public class FrontmatterParserTests
         var task = _parser.Parse(markdown);
 
         // Legacy ado_link should appear in Links collection
-        Assert.AreEqual(1, task.Links.Count);
+        Assert.HasCount(1, task.Links);
         Assert.AreEqual("ado", task.Links[0].Type);
         Assert.AreEqual("5678", task.Links[0].Value);
         Assert.IsNull(task.Links[0].Label);
-        
+
         // Derived property should work
         Assert.AreEqual(5678, task.AdoLink);
     }
@@ -932,7 +932,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(1, task.Links.Count);
+        Assert.HasCount(1, task.Links);
         Assert.AreEqual("ado", task.Links[0].Type);
         Assert.AreEqual("9999", task.Links[0].Value);
         Assert.AreEqual("Legacy title", task.Links[0].Label);
@@ -957,8 +957,8 @@ public class FrontmatterParserTests
         var reserialized = _parser.Serialize(task);
 
         // After round-trip, legacy keys should be gone
-        Assert.IsFalse(reserialized.Contains("ado_link:"), "ado_link should be dropped after migration");
-        Assert.IsFalse(reserialized.Contains("ado_title:"), "ado_title should be dropped after migration");
+        Assert.DoesNotContain("ado_link:", reserialized, "ado_link should be dropped after migration");
+        Assert.DoesNotContain("ado_title:", reserialized, "ado_title should be dropped after migration");
         StringAssert.Contains(reserialized, "links:");
         StringAssert.Contains(reserialized, "type: ado");
         StringAssert.Contains(reserialized, "value: 1111");
@@ -970,7 +970,7 @@ public class FrontmatterParserTests
         var task = new GlassworkTask { Id = "test", Title = "Test" };
         task.AdoLink = 4242;
 
-        Assert.AreEqual(1, task.Links.Count);
+        Assert.HasCount(1, task.Links);
         Assert.AreEqual("ado", task.Links[0].Type);
         Assert.AreEqual("4242", task.Links[0].Value);
         Assert.IsNull(task.Links[0].Label);
@@ -983,7 +983,7 @@ public class FrontmatterParserTests
         task.AdoLink = 123;
         task.AdoLink = null;
 
-        Assert.AreEqual(0, task.Links.Count);
+        Assert.IsEmpty(task.Links);
     }
 
     [TestMethod]
@@ -993,7 +993,7 @@ public class FrontmatterParserTests
         task.AdoLink = 999;
         task.AdoTitle = "Updated title";
 
-        Assert.AreEqual(1, task.Links.Count);
+        Assert.HasCount(1, task.Links);
         Assert.AreEqual("Updated title", task.Links[0].Label);
         Assert.AreEqual("999", task.Links[0].Value);
     }
@@ -1004,7 +1004,7 @@ public class FrontmatterParserTests
         var task = new GlassworkTask { Id = "test", Title = "Test" };
         task.AdoTitle = "Title first";
 
-        Assert.AreEqual(1, task.Links.Count);
+        Assert.HasCount(1, task.Links);
         Assert.AreEqual("ado", task.Links[0].Type);
         Assert.AreEqual(string.Empty, task.Links[0].Value);
         Assert.AreEqual("Title first", task.Links[0].Label);
@@ -1025,7 +1025,7 @@ public class FrontmatterParserTests
 
         var task = _parser.Parse(markdown);
 
-        Assert.AreEqual(1, task.Links.Count);
+        Assert.HasCount(1, task.Links);
         Assert.AreEqual("other", task.Links[0].Type);
         Assert.AreEqual("xyz", task.Links[0].Value);
     }
@@ -1042,7 +1042,7 @@ public class FrontmatterParserTests
 
         var markdown = _parser.Serialize(task);
 
-        Assert.IsFalse(markdown.Contains("links:"), "Empty Links should not emit links: key");
+        Assert.DoesNotContain("links:", markdown, "Empty Links should not emit links: key");
     }
 
     // ===== type field (PBI vs Task distinction) =====
@@ -1090,7 +1090,7 @@ public class FrontmatterParserTests
 
         var markdown = _parser.Serialize(task);
 
-        Assert.IsFalse(markdown.Contains("type:"), "Default task type should not emit type: key");
+        Assert.DoesNotContain("type:", markdown, "Default task type should not emit type: key");
     }
 
     [TestMethod]
@@ -1106,7 +1106,7 @@ public class FrontmatterParserTests
 
         var markdown = _parser.Serialize(task);
 
-        Assert.IsTrue(markdown.Contains("type: pbi"), "PBI type should be written to YAML");
+        Assert.Contains("type: pbi", markdown, "PBI type should be written to YAML");
     }
 
     [TestMethod]

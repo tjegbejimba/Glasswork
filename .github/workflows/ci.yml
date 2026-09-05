@@ -8,9 +8,16 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ci:
     runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -21,44 +28,189 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Restore
+      - name: Run script tests
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts\Invoke-ScriptTests.ps1 -TestPath tests\scripts -ResultPath TestResults\pester\script-tests.xml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload script test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-pester-results-${{ github.run_attempt }}
+          path: TestResults\pester\script-tests.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Restore app
         shell: pwsh
         run: |
           dotnet restore src\Glasswork.App\Glasswork.csproj
-          dotnet restore tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj
-          dotnet restore tests\Glasswork.CanvasHost.Tests\Glasswork.CanvasHost.Tests.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Lint
+      - name: Restore Core tests
         shell: pwsh
         run: |
-          dotnet format src\Glasswork.Core\Glasswork.Core.csproj analyzers --verify-no-changes --verbosity minimal
-          dotnet format src\Glasswork.Mcp\Glasswork.Mcp.csproj analyzers --verify-no-changes --verbosity minimal
-          dotnet format tests\Glasswork.Tests\Glasswork.Tests.csproj analyzers --verify-no-changes --verbosity minimal
-          dotnet format tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj analyzers --verify-no-changes --verbosity minimal
-          dotnet format src\Glasswork.App\Glasswork.csproj analyzers --verify-no-changes --verbosity minimal
-          dotnet format tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj analyzers --verify-no-changes --verbosity minimal
-          dotnet format tests\Glasswork.CanvasHost.Tests\Glasswork.CanvasHost.Tests.csproj analyzers --verify-no-changes --verbosity minimal
+          dotnet restore tests\Glasswork.Tests\Glasswork.Tests.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Typecheck
+      - name: Restore MCP tests
+        shell: pwsh
+        run: |
+          dotnet restore tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Restore Canvas Host tests
+        shell: pwsh
+        run: |
+          dotnet restore tests\Glasswork.CanvasHost.Tests\Glasswork.CanvasHost.Tests.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Lint Core
+        shell: pwsh
+        run: |
+          dotnet format src\Glasswork.Core\Glasswork.Core.csproj analyzers --verify-no-changes --no-restore --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Lint MCP
+        shell: pwsh
+        run: |
+          dotnet format src\Glasswork.Mcp\Glasswork.Mcp.csproj analyzers --verify-no-changes --no-restore --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Lint Core tests
+        shell: pwsh
+        run: |
+          dotnet format tests\Glasswork.Tests\Glasswork.Tests.csproj analyzers --verify-no-changes --no-restore --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Lint MCP tests
+        shell: pwsh
+        run: |
+          dotnet format tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj analyzers --verify-no-changes --no-restore --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Lint app
+        shell: pwsh
+        run: |
+          dotnet format src\Glasswork.App\Glasswork.csproj analyzers --verify-no-changes --no-restore --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Lint Canvas Host
+        shell: pwsh
+        run: |
+          dotnet format tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj analyzers --verify-no-changes --no-restore --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Lint Canvas Host tests
+        shell: pwsh
+        run: |
+          dotnet format tests\Glasswork.CanvasHost.Tests\Glasswork.CanvasHost.Tests.csproj analyzers --verify-no-changes --no-restore --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Typecheck Core
         shell: pwsh
         run: |
           dotnet build src\Glasswork.Core\Glasswork.Core.csproj --configuration Release --no-restore --nologo --verbosity minimal
-          dotnet build src\Glasswork.Mcp\Glasswork.Mcp.csproj --configuration Release --no-restore --nologo --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build canvas host (debug)
+      - name: Typecheck MCP
+        shell: pwsh
+        run: |
+          dotnet build src\Glasswork.Mcp\Glasswork.Mcp.csproj --configuration Release --no-restore --nologo --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Canvas Host (debug)
         shell: pwsh
         # Glasswork.CanvasHost.Tests spawns the host as a child process from its
         # Debug output path regardless of the test project's own configuration,
-        # so a Debug build must exist before the canvas host tests run.
-        run: dotnet build tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj --configuration Debug --no-restore --nologo --verbosity minimal
+        # so a Debug build must exist before the Canvas Host tests run.
+        run: |
+          dotnet build tools\Glasswork.CanvasHost\Glasswork.CanvasHost.csproj --configuration Debug --no-restore --nologo --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Test
+      - name: Run Core tests
         shell: pwsh
         run: |
           dotnet test tests\Glasswork.Tests\Glasswork.Tests.csproj --configuration Release --no-restore --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1
-          dotnet test tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj --configuration Release --no-restore --nologo --verbosity minimal
-          dotnet test tests\Glasswork.CanvasHost.Tests\Glasswork.CanvasHost.Tests.csproj --configuration Release --no-restore --nologo --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build
+      - name: Run MCP tests
         shell: pwsh
-        run: dotnet build src\Glasswork.App\Glasswork.csproj --configuration Release -p:Platform=x64 --no-restore --nologo --verbosity minimal
+        run: |
+          dotnet test tests\Glasswork.Mcp.Tests\Glasswork.Mcp.Tests.csproj --configuration Release --no-restore --nologo --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run Canvas Host tests
+        shell: pwsh
+        run: |
+          dotnet test tests\Glasswork.CanvasHost.Tests\Glasswork.CanvasHost.Tests.csproj --configuration Release --no-restore --nologo --verbosity minimal --logger "trx;LogFileName=canvas-host.trx" --results-directory TestResults\canvas-host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Canvas Host test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-canvas-host-results-${{ github.run_attempt }}
+          path: |
+            TestResults\canvas-host\canvas-host.trx
+            TestResults\canvas-host\diagnostics\${{ github.run_id }}-${{ github.run_attempt }}\*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Build app
+        shell: pwsh
+        run: |
+          dotnet build src\Glasswork.App\Glasswork.csproj --configuration Release -p:Platform=x64 --no-restore --nologo --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  linux-tests:
+    name: Linux tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Verify portable test target
+        shell: bash
+        run: |
+          target_framework="$(dotnet msbuild tests/Glasswork.Tests/Glasswork.Tests.csproj -getProperty:TargetFramework -nologo)"
+          target_framework="${target_framework//$'\r'/}"
+          if [[ "$target_framework" != "net10.0" ]]; then
+            echo "Expected Glasswork.Tests TargetFramework net10.0, got '$target_framework'." >&2
+            exit 1
+          fi
+
+      - name: Restore Core tests
+        shell: bash
+        run: dotnet restore tests/Glasswork.Tests/Glasswork.Tests.csproj
+
+      - name: Restore MCP tests
+        shell: bash
+        run: dotnet restore tests/Glasswork.Mcp.Tests/Glasswork.Mcp.Tests.csproj
+
+      - name: Build Core
+        shell: bash
+        run: dotnet build src/Glasswork.Core/Glasswork.Core.csproj --configuration Release --no-restore --nologo --verbosity minimal
+
+      - name: Build MCP
+        shell: bash
+        run: dotnet build src/Glasswork.Mcp/Glasswork.Mcp.csproj --configuration Release --no-restore --nologo --verbosity minimal
+
+      - name: Run Core tests
+        shell: bash
+        run: dotnet test tests/Glasswork.Tests/Glasswork.Tests.csproj --configuration Release --no-restore --nologo --verbosity minimal -- MSTest.Parallelize.Workers=1
+
+      - name: Run MCP tests
+        shell: bash
+        run: dotnet test tests/Glasswork.Mcp.Tests/Glasswork.Mcp.Tests.csproj --configuration Release --no-restore --nologo --verbosity minimal

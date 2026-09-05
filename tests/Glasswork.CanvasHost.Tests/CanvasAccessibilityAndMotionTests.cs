@@ -16,7 +16,7 @@ namespace Glasswork.CanvasHost.Tests;
 /// suite already uses for ARIA roles and responsive breakpoints.
 /// </summary>
 [TestClass]
-public sealed class CanvasAccessibilityAndMotionTests
+public sealed class CanvasAccessibilityAndMotionTests : CanvasHostTestBase
 {
     [TestMethod]
     public async Task Canvas_RailSupportsArrowKeyNavigationAmongOptions()

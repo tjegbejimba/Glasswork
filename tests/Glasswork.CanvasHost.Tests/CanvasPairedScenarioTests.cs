@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using static Glasswork.CanvasHost.Tests.CanvasHostTestSupport;
 
 namespace Glasswork.CanvasHost.Tests;
@@ -22,7 +21,7 @@ namespace Glasswork.CanvasHost.Tests;
 /// single "one JSON file per dimension" catalog.
 /// </summary>
 [TestClass]
-public sealed class CanvasPairedScenarioTests
+public sealed class CanvasPairedScenarioTests : CanvasHostTestBase
 {
     [TestMethod]
     public async Task Canvas_ActivatesDarkThemeUnderPrefersColorScheme()
@@ -54,7 +53,7 @@ public sealed class CanvasPairedScenarioTests
         AddTask(vault, "long-content", longTitle);
         await using var host = await StartHost(vault, "session-canvas-long", "credential-canvas-long");
         using var client = AuthorizedClient("credential-canvas-long");
-        await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "long-content" } });
+        await AssertJsonSuccessAsync(PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "long-content" } }));
 
         var response = await client.GetAsync($"{host.Url}/canvas?task_id=long-content");
         var html = await response.Content.ReadAsStringAsync();

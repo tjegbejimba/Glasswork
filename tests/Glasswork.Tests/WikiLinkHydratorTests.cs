@@ -40,7 +40,7 @@ public class WikiLinkHydratorTests
 
         var result = hydrator.Hydrate(input, _wikiRoot);
 
-        Assert.AreEqual(1, result.Count);
+        Assert.HasCount(1, result);
         var h = result[0];
         Assert.IsFalse(h.IsMissing);
         Assert.AreEqual("Glasswork V2 PRD", h.Title);
@@ -72,7 +72,7 @@ public class WikiLinkHydratorTests
 
         var result = hydrator.Hydrate(input, _wikiRoot);
 
-        Assert.AreEqual(1, result.Count);
+        Assert.HasCount(1, result);
         Assert.IsTrue(result[0].IsMissing);
         Assert.AreEqual("does-not-exist", result[0].Title);
         Assert.IsNull(result[0].Created);
@@ -104,7 +104,7 @@ public class WikiLinkHydratorTests
         var hydrator = new WikiLinkHydrator();
         var result = hydrator.Hydrate(new[] { new RelatedLink { Slug = "notes/raw" } }, _wikiRoot);
 
-        Assert.AreEqual(1, result.Count);
+        Assert.HasCount(1, result);
         Assert.IsFalse(result[0].IsMissing);
         Assert.AreEqual("raw", result[0].Title);
     }
@@ -114,6 +114,6 @@ public class WikiLinkHydratorTests
     {
         var hydrator = new WikiLinkHydrator();
         var result = hydrator.Hydrate(System.Array.Empty<RelatedLink>(), _wikiRoot);
-        Assert.AreEqual(0, result.Count);
+        Assert.IsEmpty(result);
     }
 }

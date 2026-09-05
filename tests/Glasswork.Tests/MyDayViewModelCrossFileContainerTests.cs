@@ -75,7 +75,7 @@ public class MyDayViewModelCrossFileContainerTests
         var container = vm.TodayTasks.SingleOrDefault(t => t.Id == pbi.Id);
         Assert.IsNotNull(container, "The parent PBI should be pulled in to host its in-My-Day child.");
         Assert.IsNotNull(container.TodaysChildren, "The PBI must render as a container with its child nested.");
-        Assert.AreEqual(1, container.TodaysChildren!.Count);
+        Assert.HasCount(1, container.TodaysChildren);
         Assert.AreEqual(child.Id, container.TodaysChildren![0].Id);
         Assert.IsFalse(vm.TodayTasks.Any(t => t.Id == child.Id),
             "The nested child must not also appear as a standalone top-level row.");
@@ -94,7 +94,7 @@ public class MyDayViewModelCrossFileContainerTests
         var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
         vm.Refresh();
 
-        Assert.AreEqual(1, vm.TodayTasks.Count,
+        Assert.HasCount(1, vm.TodayTasks,
             "The imported PBI and child should render as one top-level container.");
         var container = vm.TodayTasks.Single();
         Assert.AreEqual(pbi.Id, container.Id);
@@ -115,7 +115,7 @@ public class MyDayViewModelCrossFileContainerTests
         var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
         vm.Refresh();
 
-        Assert.AreEqual(2, vm.TodayTasks.Count);
+        Assert.HasCount(2, vm.TodayTasks);
         Assert.AreEqual(pinned.Id, vm.TodayTasks[0].Id, "Standalone rows come first.");
         Assert.AreEqual(pbi.Id, vm.TodayTasks[1].Id, "PBI containers follow standalone rows.");
     }
@@ -190,7 +190,7 @@ public class MyDayViewModelCrossFileContainerTests
         var vm = new MyDayViewModel(_vault, _taskService, _index, _uiState);
         vm.Refresh();
         var container = vm.TodayTasks.Single(t => t.Id == pbi.Id);
-        Assert.AreEqual(2, container.TodaysChildren!.Count, "Both children host the container before removal.");
+        Assert.HasCount(2, container.TodaysChildren!, "Both children host the container before removal.");
 
         vm.RemoveFromMyDayCommand.Execute(container);
 

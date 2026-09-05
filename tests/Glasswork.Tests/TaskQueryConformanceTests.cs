@@ -8,7 +8,7 @@ namespace Glasswork.Tests;
 [TestClass]
 public sealed class TaskQueryConformanceTests
 {
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_MyDaySelectionUsesExplicitQueryTime(string adapter)
@@ -36,7 +36,7 @@ public sealed class TaskQueryConformanceTests
             result.Tasks.Select(task => task.Id).ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_MyDaySelectionAppliesDismissalsOptionsAndStableOrdering(string adapter)
@@ -89,7 +89,7 @@ public sealed class TaskQueryConformanceTests
         Assert.AreEqual("Included subtask", result.Tasks[0].Subtasks?.Single().Text);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_RelationSelectionFiltersTypedStructureAndBuildsOrderedReadBasis(string adapter)
@@ -155,7 +155,7 @@ public sealed class TaskQueryConformanceTests
             result.ReadBasis.Select(task => task.Id).ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_InvalidRelationshipsReturnDeterministicDiagnosticsAndNoPartialResult(string adapter)
@@ -180,7 +180,7 @@ public sealed class TaskQueryConformanceTests
             new RelationTaskSelection()));
 
         Assert.IsFalse(result.IsSuccess);
-        Assert.AreEqual(0, result.Tasks.Count);
+        Assert.IsEmpty(result.Tasks);
         CollectionAssert.AreEqual(
             new[]
             {
@@ -192,7 +192,7 @@ public sealed class TaskQueryConformanceTests
                 $"{diagnostic.Code}:{diagnostic.TaskId}:{diagnostic.RelatedTaskId}").ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_SelectedFieldsDistinguishOmittedFromProjectedNull(string adapter)
@@ -229,7 +229,7 @@ public sealed class TaskQueryConformanceTests
         Assert.IsNull(item.Due);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_SelectedSubtasksProjectionIncludesSearchableNotes(string adapter)
@@ -258,7 +258,7 @@ public sealed class TaskQueryConformanceTests
         Assert.AreEqual("Coordinate the special-keyword migration.", subtask.Notes);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_SizeProjectionCarriesRawTaskAndSubtaskSize(string adapter)
@@ -286,7 +286,7 @@ public sealed class TaskQueryConformanceTests
         Assert.AreEqual("deep", result.Tasks.Single().Subtasks?.Single().Size);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_ListSelectionComputesActionabilityAndBacklinkCounts(string adapter)
@@ -324,7 +324,7 @@ public sealed class TaskQueryConformanceTests
         Assert.IsFalse(item.InMyDayToday);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_BacklinkThatPredatesTaskIsVisibleWithoutManualIndexRebuild(string adapter)
@@ -434,7 +434,7 @@ public sealed class TaskQueryConformanceTests
         Assert.AreEqual(2.5, item.UrgencyScore);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_PreservesRawLegacyStatusMetadataWithoutInventingTypedValues(string adapter)
@@ -469,7 +469,7 @@ public sealed class TaskQueryConformanceTests
         Assert.IsNull(items["malformed-blocked"].BlockedFromStatus);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_AllOrderingsUseOrdinalTaskIdAsFinalTieBreaker(string adapter)
@@ -489,7 +489,7 @@ public sealed class TaskQueryConformanceTests
             result.Tasks.Select(task => task.Id).ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_CursorRejectsChangedQuerySemantics(string adapter)
@@ -512,7 +512,7 @@ public sealed class TaskQueryConformanceTests
         Assert.AreEqual(TaskQueryDiagnosticCode.InvalidCursor, mismatched.Diagnostics.Single().Code);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_ContinuationReadsANewCoherentSnapshot(string adapter)
@@ -535,7 +535,7 @@ public sealed class TaskQueryConformanceTests
         CollectionAssert.AreEqual(new[] { "b", "c" }, second.Tasks.Select(task => task.Id).ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_PropagatesResourceRevisionFromTheAcquiredSnapshot(string adapter)
@@ -553,7 +553,7 @@ public sealed class TaskQueryConformanceTests
             result.Tasks.Single().ResourceRevision);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_MyDaySelectionPreservesPbiPromotionRules(string adapter)
@@ -592,7 +592,7 @@ public sealed class TaskQueryConformanceTests
         Assert.AreEqual(1, result.Tasks.Single().Subtasks?.Count);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_BacklogSelectionOrdersReadyThenUrgencyThenCreatedThenId(string adapter)
@@ -637,7 +637,7 @@ public sealed class TaskQueryConformanceTests
             result.Tasks.Select(task => task.Id).ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_BacklogStatusesSelectionPreservesMixedSavedViewStatuses(string adapter)
@@ -686,7 +686,7 @@ public sealed class TaskQueryConformanceTests
             result.Tasks.Select(task => task.Id).ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_EmptyBacklogStatusesSelectionIncludesAllStatuses(string adapter)
@@ -715,7 +715,7 @@ public sealed class TaskQueryConformanceTests
             result.Tasks.Select(task => task.Id).ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("warm")]
     [DataRow("fresh")]
     public void Execute_CompletedWorkUsesHalfOpenWindowAndDeterministicOrdering(string adapter)

@@ -184,8 +184,8 @@ public class ArtifactWatcherServiceTests
 
         Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "At least one event must fire");
         Thread.Sleep(500); // allow any duplicate debounced tick to arrive
-        Assert.IsTrue(count >= 1, "At least one event must fire");
-        Assert.IsTrue(count <= 2, $"Burst must coalesce — got {count} events");
+        Assert.IsGreaterThanOrEqualTo(1, count, "At least one event must fire");
+        Assert.IsLessThanOrEqualTo(2, count, $"Burst must coalesce — got {count} events");
     }
 
     [TestMethod]

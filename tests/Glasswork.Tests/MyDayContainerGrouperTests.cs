@@ -45,10 +45,10 @@ public class MyDayContainerGrouperTests
 
         var rows = MyDayContainerGrouper.Group(promoted, Index(pbi, child), Today);
 
-        Assert.AreEqual(1, rows.Count, "The PBI container should be the only top-level row.");
+        Assert.HasCount(1, rows, "The PBI container should be the only top-level row.");
         Assert.AreEqual("epic", rows[0].Id, "The PBI should be the top-level container host.");
         Assert.IsNotNull(rows[0].TodaysChildren, "The container must carry its nested children.");
-        Assert.AreEqual(1, rows[0].TodaysChildren!.Count);
+        Assert.HasCount(1, rows[0].TodaysChildren!);
         Assert.AreEqual("child", rows[0].TodaysChildren![0].Id);
         Assert.IsFalse(rows.Any(r => r.Id == "child"),
             "The grouped child must not also appear as a standalone top-level row.");

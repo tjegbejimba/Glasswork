@@ -46,7 +46,7 @@ public class McpLoggerTests
         tools.ListTasks();
 
         var lines = sink.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
-        Assert.AreEqual(1, lines.Length, "Exactly one log line per tool call.");
+        Assert.HasCount(1, lines, "Exactly one log line per tool call.");
         Assert.IsTrue(IsValidJson(lines[0]), "Log line must be valid JSON.");
     }
 
@@ -68,7 +68,7 @@ public class McpLoggerTests
         Assert.AreEqual("list_tasks", tool.GetString());
 
         Assert.IsTrue(root.TryGetProperty("duration_ms", out var dur), "Must have 'duration_ms'.");
-        Assert.IsTrue(dur.GetInt64() >= 0);
+        Assert.IsGreaterThanOrEqualTo(0, dur.GetInt64());
 
         Assert.IsTrue(root.TryGetProperty("result", out var result), "Must have 'result'.");
         Assert.AreEqual("ok", result.GetString());
@@ -139,7 +139,7 @@ public class McpLoggerTests
         Assert.IsTrue(File.Exists(logPath), "mcp.log must be created when GLASSWORK_MCP_LOG=1.");
 
         var lines = File.ReadAllLines(logPath);
-        Assert.AreEqual(1, lines.Length);
+        Assert.HasCount(1, lines);
         Assert.IsTrue(IsValidJson(lines[0]));
     }
 
@@ -165,7 +165,7 @@ public class McpLoggerTests
 
         var logPath = Path.Combine(_vaultDir, ".glasswork", "mcp.log");
         var lines = File.ReadAllLines(logPath);
-        Assert.AreEqual(3, lines.Length, "Each call must append one line.");
+        Assert.HasCount(3, lines, "Each call must append one line.");
     }
 
     // ─────────────────────── Layer 1: file rotation ──────────────────────
@@ -184,15 +184,15 @@ public class McpLoggerTests
             sb.AppendLine(fakeLine);
         File.WriteAllText(logPath, sb.ToString());
 
-        Assert.IsTrue(new FileInfo(logPath).Length > McpLogger.MaxLogFileSizeBytes,
+        Assert.IsGreaterThan(McpLogger.MaxLogFileSizeBytes, new FileInfo(logPath).Length,
             "Pre-condition: file must exceed the cap before rotation.");
 
         McpLogger.RotateIfNeeded(logPath);
 
         var remaining = File.ReadAllLines(logPath);
-        Assert.IsTrue(remaining.Length < lineCount,
+        Assert.IsLessThan(lineCount, remaining.Length,
             "After rotation, fewer lines must remain.");
-        Assert.IsTrue(remaining.Length >= lineCount / 2 - 1,
+        Assert.IsGreaterThanOrEqualTo(lineCount / 2 - 1, remaining.Length,
             "Roughly the second half of lines should be kept.");
     }
 
@@ -214,7 +214,7 @@ public class McpLoggerTests
         tools.ListTasks(); // triggers rotation + appends new entry
 
         var sizeAfter = new FileInfo(logPath).Length;
-        Assert.IsTrue(sizeAfter < McpLogger.MaxLogFileSizeBytes * 2,
+        Assert.IsLessThan(McpLogger.MaxLogFileSizeBytes * 2, sizeAfter,
             "File size after rotation must be well below 2x the cap.");
     }
 
@@ -311,7 +311,7 @@ public class McpLoggerTests
 
         var phases = JsonDocument.Parse(sink.ToString().Trim()).RootElement.GetProperty("phases");
         foreach (var phase in phases.EnumerateObject())
-            Assert.IsTrue(phase.Value.GetInt64() >= 0, $"Phase '{phase.Name}' must be >= 0 ms.");
+            Assert.IsGreaterThanOrEqualTo(0, phase.Value.GetInt64(), $"Phase '{phase.Name}' must be >= 0 ms.");
     }
 
     [TestMethod]
@@ -424,7 +424,7 @@ public class McpLoggerTests
             "Logger must not recreate .glasswork under a deleted vault.");
 
         // Stderr leg still works — the file sink is what we gated, not stderr.
-        Assert.IsTrue(sink.Length > 0, "Stderr line must still be emitted even when vault is gone.");
+        Assert.IsGreaterThan(0, sink.Length, "Stderr line must still be emitted even when vault is gone.");
     }
 
     [TestMethod]
@@ -451,7 +451,7 @@ public class McpLoggerTests
             }
         });
 
-        Assert.AreEqual(0, exceptions.Count,
+        Assert.IsEmpty(exceptions,
             $"EmitEvent must not throw under concurrent load. First error: {exceptions.FirstOrDefault()?.Message}");
 
         var logPath = Path.Combine(_vaultDir, ".glasswork", "mcp.log");
@@ -460,7 +460,7 @@ public class McpLoggerTests
         // Every line that was written must be a complete JSON object — no
         // interleaved/torn writes from a missing lock.
         var lines = File.ReadAllLines(logPath);
-        Assert.IsTrue(lines.Length > 0, "Some lines should have made it to disk.");
+        Assert.IsNotEmpty(lines, "Some lines should have made it to disk.");
         foreach (var line in lines)
         {
             Assert.IsTrue(IsValidJson(line), $"Torn write detected — invalid JSON line: {line}");

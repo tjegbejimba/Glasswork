@@ -1,5 +1,10 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Glasswork.CanvasHost.Tests;
 
@@ -13,9 +18,145 @@ namespace Glasswork.CanvasHost.Tests;
 /// </summary>
 internal static class CanvasHostTestSupport
 {
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan HealthExitObservationTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan TeardownTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
+    private static readonly object CurrentGate = new();
+    private static readonly string LocalDiagnosticsNonce = Guid.NewGuid().ToString("N");
+    private static TestResources? _current;
+
+    public sealed record RequestDiagnostic(string Method, string Path);
+
+    public sealed record ResponseDiagnostic(
+        int StatusCode,
+        string? ContentType,
+        int BodyLength,
+        bool IsWhitespaceOnly,
+        bool IsValidUtf8,
+        string Sha256,
+        string StructuralPreview);
+
+    public sealed record CanvasHostDiagnostic(
+        string Code,
+        RequestDiagnostic? Request,
+        ResponseDiagnostic? Response,
+        ProcessDiagnostic? Process = null,
+        string? SecondaryFailure = null);
+
+    public sealed record StreamDiagnostic(
+        IReadOnlyList<string> Lines,
+        int StoredBytes,
+        bool Truncated);
+
+    public sealed record ProcessDiagnostic(
+        int ProcessId,
+        bool HasExited,
+        int? ExitCode,
+        StreamDiagnostic StandardOutput,
+        StreamDiagnostic StandardError);
+
+    public sealed class CanvasHostTestFailureException : Exception
+    {
+        public CanvasHostTestFailureException(CanvasHostDiagnostic diagnostic)
+            : base(FormatMessage(diagnostic))
+        {
+            Code = diagnostic.Code;
+            Diagnostic = diagnostic;
+        }
+
+        public string Code { get; }
+        public CanvasHostDiagnostic Diagnostic { get; }
+
+        private static string FormatMessage(CanvasHostDiagnostic diagnostic)
+        {
+            var request = diagnostic.Request is null
+                ? "unknown request"
+                : $"{diagnostic.Request.Method} {diagnostic.Request.Path}";
+            var response = diagnostic.Response is null
+                ? "no response metadata"
+                : $"HTTP {diagnostic.Response.StatusCode}, content-type '{diagnostic.Response.ContentType ?? "<none>"}', {diagnostic.Response.BodyLength} bytes";
+            return $"{diagnostic.Code}: {request} returned {response}.";
+        }
+    }
+
+    public sealed class JsonResponseResult(HttpStatusCode statusCode, JsonDocument body) : IDisposable
+    {
+        public HttpStatusCode StatusCode { get; } = statusCode;
+        public JsonDocument Body { get; } = body;
+
+        public void Dispose() => Body.Dispose();
+    }
+
+    public static void BeginTest(TestContext testContext)
+    {
+        lock (CurrentGate)
+        {
+            if (_current is not null)
+                throw new InvalidOperationException("A CanvasHost test resource registry is already active.");
+            _current = new TestResources(testContext);
+        }
+    }
+
+    public static string ResetDiagnosticsDirectory()
+    {
+        var root = DiagnosticsRoot();
+        ResetDiagnosticsDirectory(root);
+        return root;
+    }
+
+    internal static void ResetDiagnosticsDirectory(string root)
+    {
+        try
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw CreateCleanupFailure(new(
+                "GWCH_TEMP_CLEANUP_FAILED",
+                null,
+                null,
+                null,
+                $"Stale diagnostics could not be removed before the test run ({error.GetType().Name})."));
+        }
+    }
+
+    public static async Task EndTestAsync(TestContext testContext)
+    {
+        TestResources? resources;
+        lock (CurrentGate)
+        {
+            resources = _current;
+            _current = null;
+        }
+        if (resources is null) return;
+
+        var cleanupFailures = await resources.CleanupAsync();
+        var testFailed = testContext.CurrentTestOutcome != UnitTestOutcome.Passed;
+        if (testFailed || cleanupFailures.Count > 0)
+        {
+            var diagnostic = resources.LastDiagnostic ?? new CanvasHostDiagnostic(
+                cleanupFailures.Count > 0 ? cleanupFailures[0].Code : "GWCH_TEST_FAILURE_CONTEXT",
+                null,
+                null,
+                resources.ProcessSnapshot());
+            diagnostic = CombinePrimaryAndCleanup(diagnostic, cleanupFailures);
+            if (diagnostic.Process is null)
+                diagnostic = diagnostic with { Process = resources.ProcessSnapshot() };
+            resources.WriteDiagnostic(diagnostic);
+        }
+
+        if (!testFailed && cleanupFailures.Count > 0)
+            throw cleanupFailures[0];
+    }
+
     public static string CreateVault()
     {
         var root = Path.Combine(Path.GetTempPath(), "glasswork-canvas-" + Guid.NewGuid().ToString("N"));
+        Current()?.TrackDirectory(root);
         var todo = Path.Combine(root, "wiki", "todo");
         Directory.CreateDirectory(todo);
         File.WriteAllText(Path.Combine(todo, "demo.md"), """
@@ -87,46 +228,357 @@ created: 2026-09-02{links}
     /// thread-pool timing rather than responding synchronously to a request.
     /// </summary>
     public static async Task<JsonDocument> PollUntilAsync(
-        Func<Task<HttpResponseMessage>> fetch,
+        Func<CancellationToken, Task<JsonResponseResult>> fetch,
         Func<JsonElement, bool> isDone,
         TimeSpan? timeout = null)
     {
-        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        using var deadline = new CancellationTokenSource(timeout ?? RequestTimeout);
         JsonDocument? last = null;
-        while (DateTime.UtcNow < deadline)
+        try
+        {
+            while (true)
+            {
+                last?.Dispose();
+                using var parsed = await fetch(deadline.Token);
+                last = JsonDocument.Parse(parsed.Body.RootElement.GetRawText());
+                if (isDone(last.RootElement)) return last;
+                await Task.Delay(150, deadline.Token);
+            }
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
             last?.Dispose();
-            var response = await fetch();
-            last = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            if (isDone(last.RootElement)) return last;
-            await Task.Delay(150);
+            throw Failure(new(
+                "GWCH_REQUEST_TIMEOUT",
+                null,
+                null,
+                Current()?.ProcessSnapshot(),
+                "The overall poll deadline elapsed."));
         }
-        return last ?? throw new InvalidOperationException("PollUntilAsync never fetched a response.");
+    }
+
+    public static async Task<JsonResponseResult> ReadJsonResponseAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken = default)
+    {
+        var content = response.Content is null
+            ? []
+            : await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var request = RequestDiagnosticFrom(response.RequestMessage);
+        var responseDiagnostic = ResponseDiagnosticFrom(response, content);
+
+        if (content.Length == 0 || responseDiagnostic.IsWhitespaceOnly)
+        {
+            throw Failure(new(
+                "GWCH_HTTP_EMPTY_BODY",
+                request,
+                responseDiagnostic,
+                Current()?.ProcessSnapshot()));
+        }
+
+        if (!IsJsonContentType(response.Content?.Headers.ContentType?.MediaType))
+        {
+            throw Failure(new(
+                "GWCH_HTTP_CONTENT_TYPE",
+                request,
+                responseDiagnostic,
+                Current()?.ProcessSnapshot()));
+        }
+
+        try
+        {
+            return new JsonResponseResult(response.StatusCode, JsonDocument.Parse(content));
+        }
+        catch (JsonException)
+        {
+            throw Failure(new(
+                "GWCH_HTTP_MALFORMED_JSON",
+                request,
+                responseDiagnostic,
+                Current()?.ProcessSnapshot()));
+        }
+    }
+
+    public static async Task<JsonResponseResult> SendJsonAsync(
+        HttpClient client,
+        HttpMethod method,
+        string uri,
+        HttpContent? content = null,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout ?? RequestTimeout);
+        using var request = new HttpRequestMessage(method, uri) { Content = content };
+        try
+        {
+            using var response = await client.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                deadline.Token);
+            return await ReadJsonResponseAsync(response, deadline.Token);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            var process = Current()?.ProcessSnapshot();
+            var code = process?.HasExited == true ? "GWCH_HOST_EXITED" : "GWCH_REQUEST_TIMEOUT";
+            throw Failure(new(
+                code,
+                RequestDiagnosticFrom(request),
+                null,
+                process));
+        }
+    }
+
+    public static Task<JsonResponseResult> GetJsonAsync(
+        HttpClient client,
+        string uri,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default) =>
+        SendJsonAsync(client, HttpMethod.Get, uri, timeout: timeout, cancellationToken: cancellationToken);
+
+    public static Task<JsonResponseResult> PostJsonAsync(
+        HttpClient client,
+        string uri,
+        object? payload = null,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default) =>
+        SendJsonAsync(
+            client,
+            HttpMethod.Post,
+            uri,
+            payload is null ? null : JsonContent.Create(payload),
+            timeout,
+            cancellationToken);
+
+    public static async Task AssertJsonSuccessAsync(Task<JsonResponseResult> responseTask)
+    {
+        using var parsed = await responseTask;
+        Assert.AreEqual(
+            HttpStatusCode.OK,
+            parsed.StatusCode,
+            "The JSON setup request must succeed.");
+    }
+
+    private static RequestDiagnostic? RequestDiagnosticFrom(HttpRequestMessage? request)
+    {
+        if (request is null) return null;
+        var path = request.RequestUri?.IsAbsoluteUri == true
+            ? request.RequestUri.AbsolutePath
+            : request.RequestUri?.OriginalString.Split('?', 2)[0] ?? "<unknown>";
+        return new RequestDiagnostic(request.Method.Method, path);
+    }
+
+    private static ResponseDiagnostic ResponseDiagnosticFrom(
+        HttpResponseMessage response,
+        byte[] content)
+    {
+        string text;
+        var validUtf8 = true;
+        try
+        {
+            text = new UTF8Encoding(false, true).GetString(content);
+        }
+        catch (DecoderFallbackException)
+        {
+            validUtf8 = false;
+            text = Encoding.UTF8.GetString(content);
+        }
+
+        return new ResponseDiagnostic(
+            (int)response.StatusCode,
+            response.Content?.Headers.ContentType?.MediaType,
+            content.Length,
+            string.IsNullOrWhiteSpace(text),
+            validUtf8,
+            Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant(),
+            StructuralPreview(text, 512));
+    }
+
+    private static bool IsJsonContentType(string? mediaType) =>
+        mediaType is not null &&
+        (mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase) ||
+         mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase));
+
+    private static string StructuralPreview(string text, int maxLength)
+    {
+        var result = new StringBuilder(Math.Min(text.Length, maxLength));
+        var inString = false;
+        var escaped = false;
+        var redactedRun = false;
+
+        foreach (var character in text)
+        {
+            if (result.Length >= maxLength) break;
+
+            if (inString)
+            {
+                if (escaped)
+                {
+                    escaped = false;
+                    if (!redactedRun)
+                    {
+                        result.Append("<redacted>");
+                        redactedRun = true;
+                    }
+                    continue;
+                }
+
+                if (character == '\\')
+                {
+                    escaped = true;
+                    continue;
+                }
+
+                if (character == '"')
+                {
+                    result.Append('"');
+                    inString = false;
+                    redactedRun = false;
+                    continue;
+                }
+
+                if (!redactedRun)
+                {
+                    result.Append("<redacted>");
+                    redactedRun = true;
+                }
+                continue;
+            }
+
+            if (character == '"')
+            {
+                result.Append(character);
+                inString = true;
+                redactedRun = false;
+            }
+            else if (char.IsWhiteSpace(character) || character is '{' or '}' or '[' or ']' or ':' or ',')
+            {
+                result.Append(character);
+                redactedRun = false;
+            }
+            else if (!redactedRun)
+            {
+                result.Append("<value>");
+                redactedRun = true;
+            }
+        }
+
+        if (text.Length > maxLength) result.Append("<truncated>");
+        return result.ToString();
+    }
+
+    internal static string ScrubDiagnosticText(
+        string value,
+        IEnumerable<string> secrets,
+        IEnumerable<string> paths)
+    {
+        var scrubbed = value;
+        foreach (var secret in secrets.Where(secret => !string.IsNullOrEmpty(secret)))
+            scrubbed = scrubbed.Replace(secret, "<token>", StringComparison.Ordinal);
+        foreach (var path in paths.OrderByDescending(path => path.Length))
+            scrubbed = scrubbed.Replace(path, "<test-path>", StringComparison.OrdinalIgnoreCase);
+        return Regex.Replace(
+            scrubbed,
+            @"(?i)\b[A-Z]:\\[^\r\n]+",
+            "<absolute-path>");
     }
 
     public static HttpClient AuthorizedClient(string token)
     {
-        // A default HttpClient pools and reuses keep-alive connections across
-        // requests. Against a freshly spawned host under CI-level resource
-        // pressure (slow process startup/teardown, GC pauses), the server can
-        // close a pooled connection at almost the same instant the client
-        // tries to reuse it for the next sequential request in a test — a
-        // well-known race that surfaces as a successful-looking request
-        // returning a completely empty response body (a bare "The input does
-        // not contain any JSON tokens" JsonException), never a connection
-        // error the caller could retry on. Disabling pooling (a fresh
-        // connection per request) removes the whole race class; these are
-        // low-volume black-box boundary tests, not a throughput benchmark.
-        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero };
-        var client = new HttpClient(handler);
+        // Keep each low-volume boundary request isolated. This is a harness
+        // policy, not a diagnosed explanation for any observed failure.
+        var handler = new DiagnosticHttpHandler(
+            new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.Zero });
+        var client = new HttpClient(handler) { Timeout = RequestTimeout };
         client.DefaultRequestHeaders.Add("X-Glasswork-Canvas-Token", token);
+        Current()?.TrackSecret(token);
         return client;
     }
 
-    public static string NewUiStatePath() =>
-        Path.Combine(Path.GetTempPath(), $"glasswork-canvas-ui-state-{Guid.NewGuid():N}.json");
+    public static string NewUiStatePath()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"glasswork-canvas-ui-state-{Guid.NewGuid():N}.json");
+        Current()?.TrackFile(path);
+        return path;
+    }
 
-    public static async Task<RunningHost> StartHost(string? vault, string sessionId, string token, string? uiStatePath = null, string? currentStatePath = null)
+    private static CanvasHostTestFailureException Failure(CanvasHostDiagnostic diagnostic)
+    {
+        Current()?.RecordDiagnostic(diagnostic);
+        return new CanvasHostTestFailureException(diagnostic);
+    }
+
+    private static CanvasHostTestFailureException CreateCleanupFailure(CanvasHostDiagnostic diagnostic) =>
+        new(diagnostic);
+
+    internal static CanvasHostDiagnostic CombinePrimaryAndCleanup(
+        CanvasHostDiagnostic primary,
+        IReadOnlyList<CanvasHostTestFailureException> cleanupFailures)
+    {
+        if (cleanupFailures.Count == 0) return primary;
+        var cleanup = string.Join("; ", cleanupFailures.Select(failure =>
+            $"{failure.Code}: {failure.Diagnostic.SecondaryFailure ?? failure.Message}"));
+        return primary with
+        {
+            SecondaryFailure = string.IsNullOrWhiteSpace(primary.SecondaryFailure)
+                ? cleanup
+                : $"{primary.SecondaryFailure}; {cleanup}",
+        };
+    }
+
+    private static TestResources? Current()
+    {
+        lock (CurrentGate) return _current;
+    }
+
+    private static string DiagnosticsRoot() =>
+        DiagnosticsRoot(
+            Environment.GetEnvironmentVariable("GITHUB_RUN_ID"),
+            Environment.GetEnvironmentVariable("GITHUB_RUN_ATTEMPT"),
+            Environment.ProcessId);
+
+    internal static string DiagnosticsRoot(string? runId, string? runAttempt, int processId)
+    {
+        var hasRunId = !string.IsNullOrEmpty(runId);
+        var hasRunAttempt = !string.IsNullOrEmpty(runAttempt);
+        string generation;
+        if (!hasRunId && !hasRunAttempt)
+        {
+            generation = $"local-{processId}-{LocalDiagnosticsNonce}";
+        }
+        else if (!IsNumericPathSegment(runId, 32) || !IsNumericPathSegment(runAttempt, 8))
+        {
+            throw CreateCleanupFailure(new(
+                "GWCH_TEMP_CLEANUP_FAILED",
+                null,
+                null,
+                null,
+                "The hosted diagnostics identity is incomplete, malformed, or exceeds its bound."));
+        }
+        else
+        {
+            generation = $"{runId}-{runAttempt}";
+        }
+
+        return Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..", "..",
+            "TestResults", "canvas-host", "diagnostics", generation));
+    }
+
+    private static bool IsNumericPathSegment(string? value, int maximumLength) =>
+        !string.IsNullOrEmpty(value) &&
+        value.Length <= maximumLength &&
+        value.All(char.IsAsciiDigit);
+
+    public static async Task<RunningHost> StartHost(
+        string? vault,
+        string sessionId,
+        string token,
+        string? uiStatePath = null,
+        string? currentStatePath = null,
+        Func<RunningHost, HttpClient, CancellationToken, Task<JsonResponseResult>>? healthProbe = null)
     {
         // Every spawned test host gets its own isolated UI State file unless
         // a caller explicitly shares one (e.g. persistence/cold-restore
@@ -134,6 +586,10 @@ created: 2026-09-02{links}
         // developer machine's %LocalAppData%\Glasswork\ui-state.json now
         // that the Session Task Set persists (see issue #557).
         uiStatePath ??= NewUiStatePath();
+        Current()?.TrackFile(uiStatePath);
+        if (currentStatePath is not null) Current()?.TrackFile(currentStatePath);
+        if (vault is not null) Current()?.TrackDirectory(vault);
+        Current()?.TrackSecret(token);
         var hostDll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "tools", "Glasswork.CanvasHost", "bin", "Debug", "net10.0", "Glasswork.CanvasHost.dll"));
         var dotnet = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "dotnet.exe");
         var arguments = $"\"{hostDll}\" --session-id {sessionId} --token {token} --ui-state-path \"{uiStatePath}\"";
@@ -151,45 +607,419 @@ created: 2026-09-02{links}
         };
         if (vault is not null) startInfo.Environment["GLASSWORK_VAULT"] = vault;
         else startInfo.Environment.Remove("GLASSWORK_VAULT");
-        var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start canvas host.");
-        while (await process.StandardOutput.ReadLineAsync() is { } line)
+        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        var stdout = new BoundedTextCapture();
+        var stderr = new BoundedTextCapture();
+        var ready = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        process.OutputDataReceived += (_, eventArgs) =>
+        {
+            if (eventArgs.Data is null)
+            {
+                stdout.Complete();
+                return;
+            }
+            stdout.Add(eventArgs.Data);
+            try
+            {
+                using var document = JsonDocument.Parse(eventArgs.Data);
+                var root = document.RootElement;
+                if (root.TryGetProperty("ready", out var isReady) &&
+                    isReady.ValueKind == JsonValueKind.True &&
+                    root.TryGetProperty("url", out var url) &&
+                    !string.IsNullOrWhiteSpace(url.GetString()))
+                {
+                    ready.TrySetResult(url.GetString()!);
+                }
+            }
+            catch (JsonException)
+            {
+                // Non-readiness output remains available in the bounded capture.
+            }
+        };
+        process.ErrorDataReceived += (_, eventArgs) =>
+        {
+            if (eventArgs.Data is null) stderr.Complete();
+            else stderr.Add(eventArgs.Data);
+        };
+
+        if (!process.Start())
+            throw new InvalidOperationException("Failed to start canvas host.");
+
+        var host = new RunningHost(process, stdout, stderr);
+        Current()?.TrackHost(host);
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        var exitTask = process.WaitForExitAsync();
+        var completed = await Task.WhenAny(ready.Task, exitTask, Task.Delay(StartupTimeout));
+        if (completed == ready.Task)
+        {
+            host.Url = await ready.Task;
+            try
+            {
+                using var client = AuthorizedClient(token);
+                using var healthDeadline = new CancellationTokenSource(RequestTimeout);
+                using var health = healthProbe is null
+                    ? await GetJsonAsync(client, $"{host.Url}/health", cancellationToken: healthDeadline.Token)
+                    : await healthProbe(host, client, healthDeadline.Token);
+                if (health.StatusCode != HttpStatusCode.OK ||
+                    !health.Body.RootElement.TryGetProperty("ok", out var ok) ||
+                    ok.ValueKind != JsonValueKind.True)
+                {
+                    throw Failure(new(
+                        "GWCH_HOST_EXITED",
+                        new RequestDiagnostic("GET", "/health"),
+                        null,
+                        host.Snapshot()));
+                }
+                return host;
+            }
+            catch (Exception error)
+            {
+                var processDiagnostic = host.Snapshot();
+                if (!processDiagnostic.HasExited &&
+                    await Task.WhenAny(exitTask, Task.Delay(HealthExitObservationTimeout)) == exitTask)
+                {
+                    await exitTask;
+                    processDiagnostic = host.Snapshot();
+                }
+                await host.StopAsync();
+                if (processDiagnostic.HasExited)
+                {
+                    var diagnosticFailure = error as CanvasHostTestFailureException;
+                    var secondary = diagnosticFailure is null
+                        ? error.GetType().Name
+                        : $"{diagnosticFailure.Code}: {diagnosticFailure.Diagnostic.SecondaryFailure ?? diagnosticFailure.Message}";
+                    var reclassified = new CanvasHostDiagnostic(
+                        "GWCH_HOST_EXITED",
+                        diagnosticFailure?.Diagnostic.Request ?? new RequestDiagnostic("GET", "/health"),
+                        diagnosticFailure?.Diagnostic.Response,
+                        processDiagnostic,
+                        $"The readiness record was emitted, then the host exited during the bounded health check ({secondary}).");
+                    Current()?.ReclassifyDiagnostic(diagnosticFailure?.Diagnostic, reclassified);
+                    throw new CanvasHostTestFailureException(reclassified);
+                }
+                if (error is CanvasHostTestFailureException boundedFailure)
+                {
+                    throw Failure(boundedFailure.Diagnostic with
+                    {
+                        Process = processDiagnostic,
+                        SecondaryFailure = "The readiness record was emitted, but the bounded health check failed.",
+                    });
+                }
+                throw;
+            }
+        }
+
+        var code = process.HasExited ? "GWCH_HOST_EXITED" : "GWCH_STARTUP_TIMEOUT";
+        var diagnostic = new CanvasHostDiagnostic(code, null, null, host.Snapshot());
+        await host.StopAsync();
+        throw Failure(diagnostic);
+    }
+
+    public sealed class RunningHost(
+        Process process,
+        BoundedTextCapture stdout,
+        BoundedTextCapture stderr) : IAsyncDisposable
+    {
+        private int _stopped;
+        private ProcessDiagnostic? _lastSnapshot;
+        private readonly Func<Task<CanvasHostTestFailureException?>>? _stopForTesting;
+
+        public Process Process { get; } = process;
+        public string Url { get; internal set; } = string.Empty;
+        public CanvasHostTestFailureException? CleanupFailure { get; private set; }
+
+        private RunningHost(Func<Task<CanvasHostTestFailureException?>> stopForTesting)
+            : this(Process.GetCurrentProcess(), new BoundedTextCapture(), new BoundedTextCapture())
+        {
+            _stopForTesting = stopForTesting;
+        }
+
+        internal static RunningHost CreateForTesting(
+            Func<Task<CanvasHostTestFailureException?>> stopForTesting) =>
+            new(stopForTesting);
+
+        internal ProcessDiagnostic Snapshot()
+        {
+            if (_lastSnapshot is not null) return _lastSnapshot;
+            var exited = Process.HasExited;
+            return new ProcessDiagnostic(
+                Process.Id,
+                exited,
+                exited ? Process.ExitCode : null,
+                stdout.Snapshot(),
+                stderr.Snapshot());
+        }
+
+        internal async Task StopAsync()
+        {
+            if (Interlocked.Exchange(ref _stopped, 1) != 0) return;
+            if (_stopForTesting is not null)
+            {
+                CleanupFailure = await _stopForTesting();
+                return;
+            }
+            try
+            {
+                if (!Process.HasExited)
+                    Process.Kill(entireProcessTree: true);
+
+                var exit = Process.WaitForExitAsync();
+                if (await Task.WhenAny(exit, Task.Delay(TeardownTimeout)) != exit)
+                {
+                    CleanupFailure = CreateCleanupFailure(new(
+                        "GWCH_TEARDOWN_TIMEOUT",
+                        null,
+                        null,
+                        Snapshot()));
+                    return;
+                }
+
+                try { Process.CancelOutputRead(); } catch (InvalidOperationException) { }
+                try { Process.CancelErrorRead(); } catch (InvalidOperationException) { }
+                stdout.Complete();
+                stderr.Complete();
+                var pumps = Task.WhenAll(stdout.Completion, stderr.Completion);
+                if (await Task.WhenAny(pumps, Task.Delay(TeardownTimeout)) != pumps)
+                {
+                    CleanupFailure = CreateCleanupFailure(new(
+                        "GWCH_TEARDOWN_TIMEOUT",
+                        null,
+                        null,
+                        Snapshot(),
+                        "The host exited, but one or both output pumps did not complete."));
+                }
+            }
+            catch (Exception error)
+            {
+                CleanupFailure = CreateCleanupFailure(new(
+                    "GWCH_TEARDOWN_TIMEOUT",
+                    null,
+                    null,
+                    Snapshot(),
+                    error.GetType().Name));
+            }
+            finally
+            {
+                try { _lastSnapshot = Snapshot(); } catch (InvalidOperationException) { }
+                Process.Dispose();
+            }
+        }
+
+        public async ValueTask DisposeAsync() => await StopAsync();
+    }
+
+    internal sealed class BoundedTextCapture
+    {
+        private const int MaximumBytes = 64 * 1024;
+        private const int MaximumLines = 256;
+        private const int MaximumCharactersPerLine = 4 * 1024;
+        private readonly object _gate = new();
+        private readonly Queue<(string Text, int Bytes)> _lines = new();
+        private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _storedBytes;
+        private bool _truncated;
+
+        public Task Completion => _completion.Task;
+
+        public void Add(string line)
+        {
+            var bounded = line.Length > MaximumCharactersPerLine
+                ? line[..MaximumCharactersPerLine] + "<line-truncated>"
+                : line;
+            var bytes = Encoding.UTF8.GetByteCount(bounded);
+            lock (_gate)
+            {
+                while (_lines.Count > 0 &&
+                       (_lines.Count >= MaximumLines || _storedBytes + bytes > MaximumBytes))
+                {
+                    var removed = _lines.Dequeue();
+                    _storedBytes -= removed.Bytes;
+                    _truncated = true;
+                }
+
+                if (bytes > MaximumBytes)
+                {
+                    bounded = bounded[..Math.Min(bounded.Length, MaximumCharactersPerLine)];
+                    bytes = Encoding.UTF8.GetByteCount(bounded);
+                    _truncated = true;
+                }
+                _lines.Enqueue((bounded, bytes));
+                _storedBytes += bytes;
+            }
+        }
+
+        public void Complete() => _completion.TrySetResult();
+
+        public StreamDiagnostic Snapshot()
+        {
+            lock (_gate)
+            {
+                return new StreamDiagnostic(
+                    _lines.Select(line => line.Text).ToArray(),
+                    _storedBytes,
+                    _truncated);
+            }
+        }
+    }
+
+    private sealed class DiagnosticHttpHandler(HttpMessageHandler innerHandler)
+        : DelegatingHandler(innerHandler)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
         {
             try
             {
-                var ready = JsonDocument.Parse(line).RootElement;
-                if (ready.TryGetProperty("ready", out var isReady) && isReady.GetBoolean())
-                    return new RunningHost(process, ready.GetProperty("url").GetString()!);
+                return await base.SendAsync(request, cancellationToken);
             }
-            catch (JsonException) { }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                var process = Current()?.ProcessSnapshot();
+                var code = process?.HasExited == true ? "GWCH_HOST_EXITED" : "GWCH_REQUEST_TIMEOUT";
+                throw Failure(new(
+                    code,
+                    RequestDiagnosticFrom(request),
+                    null,
+                    process));
+            }
         }
-
-        var error = await process.StandardError.ReadToEndAsync();
-        process.Dispose();
-        throw new InvalidOperationException($"Canvas host did not start: {error}");
     }
 
-    public sealed class RunningHost(Process process, string url) : IAsyncDisposable
+    private sealed class TestResources(TestContext testContext)
     {
-        public Process Process { get; } = process;
-        public string Url { get; } = url;
+        private readonly HashSet<string> _files = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _directories = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _secrets = new(StringComparer.Ordinal);
+        private readonly List<RunningHost> _hosts = [];
 
-        public async ValueTask DisposeAsync()
+        public CanvasHostDiagnostic? LastDiagnostic { get; private set; }
+
+        public void TrackFile(string path) => _files.Add(Path.GetFullPath(path));
+        public void TrackDirectory(string path) => _directories.Add(Path.GetFullPath(path));
+        public void TrackSecret(string value)
         {
-            // Kill() only issues termination; it does not block until the
-            // process (and, for entireProcessTree, its children) has actually
-            // exited. Without awaiting WaitForExitAsync(), an `await using`
-            // block returns "done" while dotnet.exe is still tearing down,
-            // so the next test's freshly spawned host can start while the
-            // dying one is still consuming CPU/handles — a real source of
-            // CI-only flakiness in these black-box process-spawning tests,
-            // where the shared CI runner has far less headroom than a local
-            // dev machine.
-            if (!Process.HasExited)
+            if (!string.IsNullOrEmpty(value)) _secrets.Add(value);
+        }
+        public void TrackHost(RunningHost host) => _hosts.Add(host);
+        public void RecordDiagnostic(CanvasHostDiagnostic diagnostic) => LastDiagnostic ??= diagnostic;
+        public void ReclassifyDiagnostic(CanvasHostDiagnostic? observed, CanvasHostDiagnostic replacement)
+        {
+            if (LastDiagnostic is null || ReferenceEquals(LastDiagnostic, observed))
+                LastDiagnostic = replacement;
+        }
+
+        public ProcessDiagnostic? ProcessSnapshot() =>
+            _hosts.LastOrDefault()?.Snapshot();
+
+        public async Task<List<CanvasHostTestFailureException>> CleanupAsync()
+        {
+            var failures = new List<CanvasHostTestFailureException>();
+            foreach (var host in _hosts.AsEnumerable().Reverse())
             {
-                Process.Kill(entireProcessTree: true);
-                await Process.WaitForExitAsync();
+                await host.StopAsync();
+                if (host.CleanupFailure is not null) failures.Add(host.CleanupFailure);
             }
-            Process.Dispose();
+
+            var deadline = DateTime.UtcNow + CleanupTimeout;
+            foreach (var file in _files.OrderByDescending(path => path.Length))
+            {
+                if (!await DeleteWithRetryAsync(
+                        () =>
+                        {
+                            if (File.Exists(file)) File.Delete(file);
+                            return !File.Exists(file);
+                        },
+                        deadline))
+                {
+                    failures.Add(CreateCleanupFailure(new(
+                        "GWCH_TEMP_CLEANUP_FAILED",
+                        null,
+                        null,
+                        ProcessSnapshot(),
+                        $"A test-owned file could not be removed: {Path.GetFileName(file)}")));
+                }
+            }
+
+            foreach (var directory in _directories.OrderByDescending(path => path.Length))
+            {
+                if (!await DeleteWithRetryAsync(
+                        () =>
+                        {
+                            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+                            return !Directory.Exists(directory);
+                        },
+                        deadline))
+                {
+                    failures.Add(CreateCleanupFailure(new(
+                        "GWCH_TEMP_CLEANUP_FAILED",
+                        null,
+                        null,
+                        ProcessSnapshot(),
+                        $"A test-owned directory could not be removed: {Path.GetFileName(directory)}")));
+                }
+            }
+            return failures;
+        }
+
+        public void WriteDiagnostic(CanvasHostDiagnostic diagnostic)
+        {
+            var safe = Sanitize(diagnostic);
+            var root = DiagnosticsRoot();
+            Directory.CreateDirectory(root);
+            var className = testContext.FullyQualifiedTestClassName ?? "CanvasHostTest";
+            var testName = testContext.TestName ?? "unknown";
+            var safeName = string.Concat($"{className}.{testName}".Select(character =>
+                Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
+            var path = Path.Combine(root, $"{safeName}-{Guid.NewGuid():N}.json");
+            File.WriteAllText(path, JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1,
+                test = $"{className}.{testName}",
+                timestampUtc = DateTime.UtcNow,
+                diagnostic = safe,
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            testContext.AddResultFile(path);
+        }
+
+        private CanvasHostDiagnostic Sanitize(CanvasHostDiagnostic diagnostic)
+        {
+            string Scrub(string value)
+                => ScrubDiagnosticText(value, _secrets, _files.Concat(_directories));
+
+            StreamDiagnostic ScrubStream(StreamDiagnostic stream) => stream with
+            {
+                Lines = stream.Lines.Select(Scrub).ToArray(),
+            };
+
+            return diagnostic with
+            {
+                SecondaryFailure = diagnostic.SecondaryFailure is null ? null : Scrub(diagnostic.SecondaryFailure),
+                Process = diagnostic.Process is null
+                    ? null
+                    : diagnostic.Process with
+                    {
+                        StandardOutput = ScrubStream(diagnostic.Process.StandardOutput),
+                        StandardError = ScrubStream(diagnostic.Process.StandardError),
+                    },
+            };
+        }
+
+        private static async Task<bool> DeleteWithRetryAsync(Func<bool> delete, DateTime deadline)
+        {
+            while (DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    if (delete()) return true;
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                await Task.Delay(100);
+            }
+            return false;
         }
     }
 }

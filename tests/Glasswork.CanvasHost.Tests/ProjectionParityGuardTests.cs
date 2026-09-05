@@ -20,7 +20,7 @@ namespace Glasswork.CanvasHost.Tests;
 /// fails the build instead of shipping a silently narrower canvas view.
 /// </summary>
 [TestClass]
-public sealed class ProjectionParityGuardTests
+public sealed class ProjectionParityGuardTests : CanvasHostTestBase
 {
     [TestMethod]
     public async Task ApiTask_SerializesEveryTaskDetailProjectionPropertyForCanvas()
@@ -29,9 +29,8 @@ public sealed class ProjectionParityGuardTests
         await using var host = await StartHost(vault, "session-parity", "credential-parity");
         using var client = AuthorizedClient("credential-parity");
 
-        var response = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
-        var body = await response.Content.ReadAsStringAsync();
-        var projectionJson = JsonDocument.Parse(body).RootElement.GetProperty("projection");
+        using var response = await GetJsonAsync(client, $"{host.Url}/api/task?task_id=demo");
+        var projectionJson = response.Body.RootElement.GetProperty("projection");
 
         var propertyNames = typeof(TaskDetailProjection)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)

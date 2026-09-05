@@ -49,7 +49,7 @@ public class IndexServiceApiEquivalenceTests
     {
         // Empty vault
         _index.EnsureLoaded();
-        Assert.AreEqual(_index.Count, _index.Tasks.Count, "Empty vault: Tasks.Count should equal Count");
+        Assert.HasCount(_index.Count, _index.Tasks, "Empty vault: Tasks.Count should equal Count");
 
         // Add some tasks
         var t1 = new GlassworkTask { Id = "task-1", Status = "todo" };
@@ -64,7 +64,7 @@ public class IndexServiceApiEquivalenceTests
         index2.EnsureLoaded();
 
         Assert.AreEqual(3, index2.Count, "Precondition: Count should be 3");
-        Assert.AreEqual(index2.Count, index2.Tasks.Count, "Tasks.Count should equal Count");
+        Assert.HasCount(index2.Count, index2.Tasks, "Tasks.Count should equal Count");
     }
 
     [TestMethod]
@@ -92,14 +92,14 @@ public class IndexServiceApiEquivalenceTests
         var allIds2 = index2.All.Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
         var taskKeys2 = index2.Tasks.Keys.ToHashSet(StringComparer.Ordinal);
 
-        Assert.AreEqual(3, allIds2.Count, "Precondition: should have 3 ids from All");
-        Assert.AreEqual(3, taskKeys2.Count, "Precondition: should have 3 keys from Tasks");
+        Assert.HasCount(3, allIds2, "Precondition: should have 3 ids from All");
+        Assert.HasCount(3, taskKeys2, "Precondition: should have 3 keys from Tasks");
 
         CollectionAssert.AreEquivalent(allIds2.ToList(), taskKeys2.ToList(),
             "Tasks.Keys should equal ids from All");
-        Assert.IsTrue(taskKeys2.Contains("alpha"), "Tasks.Keys should contain alpha");
-        Assert.IsTrue(taskKeys2.Contains("beta"), "Tasks.Keys should contain beta");
-        Assert.IsTrue(taskKeys2.Contains("gamma"), "Tasks.Keys should contain gamma");
+        Assert.Contains("alpha", taskKeys2, "Tasks.Keys should contain alpha");
+        Assert.Contains("beta", taskKeys2, "Tasks.Keys should contain beta");
+        Assert.Contains("gamma", taskKeys2, "Tasks.Keys should contain gamma");
     }
 
     [TestMethod]
@@ -129,8 +129,8 @@ public class IndexServiceApiEquivalenceTests
             "UI-state GC pattern: Tasks.Keys should produce the same live-id set as All.Select");
 
         // Verify the set contains expected ids
-        Assert.IsTrue(liveIdsNew.Contains("one"));
-        Assert.IsTrue(liveIdsNew.Contains("two"));
-        Assert.IsFalse(liveIdsNew.Contains("deleted-task"));
+        Assert.Contains("one", liveIdsNew);
+        Assert.Contains("two", liveIdsNew);
+        Assert.DoesNotContain("deleted-task", liveIdsNew);
     }
 }

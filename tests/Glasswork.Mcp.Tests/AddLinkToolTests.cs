@@ -45,17 +45,17 @@ public class AddLinkToolTests
         // Assert: response shape
         var doc = JsonDocument.Parse(linkJson);
         Assert.AreEqual(taskId, doc.RootElement.GetProperty("task_id").GetString());
-        
+
         var link = doc.RootElement.GetProperty("link");
         Assert.AreEqual("pr", link.GetProperty("type").GetString());
         Assert.AreEqual("https://github.com/owner/repo/pull/123", link.GetProperty("url").GetString());
         Assert.AreEqual("Fix bug", link.GetProperty("title").GetString());
-        
+
         Assert.AreEqual(1, doc.RootElement.GetProperty("total_links").GetInt32());
 
         // Assert: vault file has link in frontmatter
         var task = _vault.Load(taskId);
-        Assert.AreEqual(1, task.Links.Count, "Task must have exactly one link.");
+        Assert.HasCount(1, task.Links, "Task must have exactly one link.");
         Assert.AreEqual("pr", task.Links[0].Type);
         Assert.AreEqual("https://github.com/owner/repo/pull/123", task.Links[0].Value);
         Assert.AreEqual("Fix bug", task.Links[0].Label);
@@ -89,7 +89,7 @@ public class AddLinkToolTests
         // Assert - verify order preserved
         var reloaded = _vault.Load(taskId);
         Assert.IsNotNull(reloaded);
-        Assert.AreEqual(3, reloaded.Links.Count);
+        Assert.HasCount(3, reloaded.Links);
         Assert.AreEqual("pr", reloaded.Links[0].Type);
         Assert.AreEqual("https://pr1", reloaded.Links[0].Value);
         Assert.AreEqual("ado", reloaded.Links[1].Type);
@@ -113,7 +113,7 @@ public class AddLinkToolTests
         // Assert
         Assert.AreEqual(taskId, result.GetProperty("task_id").GetString());
         var linkElement = result.GetProperty("link");
-        Assert.IsFalse(linkElement.TryGetProperty("title", out var titleProp) && 
+        Assert.IsFalse(linkElement.TryGetProperty("title", out var titleProp) &&
                       titleProp.ValueKind != JsonValueKind.Null);
 
         var reloaded = _vault.Load(taskId);

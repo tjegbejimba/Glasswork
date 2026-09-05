@@ -19,7 +19,6 @@ public sealed class ArtifactModelTests
         Assert.AreEqual(@"C:\vault\wiki\todo\task-1.artifacts\plan.md", artifact.Path);
         Assert.AreEqual("Plan", artifact.Title);
         Assert.AreEqual("# Plan content", artifact.Body);
-        Assert.IsNotNull(artifact.ModifiedUtc);
     }
 
     [TestMethod]

@@ -37,6 +37,5 @@ jobs:
         run: dotnet restore src/Glasswork.Core/Glasswork.Core.csproj
 
       - name: Restore Glasswork.Tests (cross-platform)
-        # Tests project references Glasswork.Core only; builds on Linux.
+        # The portable test project references Core plus platform-neutral policies.
         run: dotnet restore tests/Glasswork.Tests/Glasswork.Tests.csproj
-        continue-on-error: true

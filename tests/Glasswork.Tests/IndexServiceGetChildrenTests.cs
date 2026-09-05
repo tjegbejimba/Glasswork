@@ -73,11 +73,11 @@ Other task");
             var children = index.GetChildren("parent-task");
 
             // Assert
-            Assert.AreEqual(2, children.Count, "Should return two children");
+            Assert.HasCount(2, children, "Should return two children");
             Assert.IsTrue(children.Any(c => c.Id == "child-1"), "Should include child-1");
             Assert.IsTrue(children.Any(c => c.Id == "child-2"), "Should include child-2");
             Assert.IsFalse(children.Any(c => c.Id == "other-task"), "Should not include unrelated task");
-            
+
             // Verify sorted by title
             var titles = children.Select(c => c.Title).ToList();
             CollectionAssert.AreEqual(new[] { "Child 1", "Child 2" }, titles, "Should be sorted by title");
@@ -167,7 +167,7 @@ Parent task");
             var children = index.GetChildren("parent-task");
 
             // Assert
-            Assert.AreEqual(0, children.Count, "Should return empty list when no children exist");
+            Assert.IsEmpty(children, "Should return empty list when no children exist");
         }
         finally
         {
@@ -218,7 +218,7 @@ Child task with whitespace in parent");
             var children = index.GetChildren("parent-task");
 
             // Assert
-            Assert.AreEqual(1, children.Count, "Should match parent even with whitespace");
+            Assert.HasCount(1, children, "Should match parent even with whitespace");
             Assert.AreEqual("child-with-space", children[0].Id);
         }
         finally

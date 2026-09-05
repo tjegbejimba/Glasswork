@@ -71,14 +71,14 @@ public class IndexServiceCompatibilityTests
         Assert.AreEqual("New Name", _index.ById("new")!.Title);
 
         // Legacy event: one delta with one add + one remove.
-        Assert.AreEqual(1, legacyDeltas.Count);
+        Assert.HasCount(1, legacyDeltas);
         Assert.AreEqual(1, legacyDeltas[0].Added.Count());
         Assert.AreEqual(1, legacyDeltas[0].Removed.Count());
 
         // New event: same single delta carries both lists populated.
-        Assert.AreEqual(1, newDeltas.Count);
-        Assert.AreEqual(1, newDeltas[0].Added.Count);
-        Assert.AreEqual(1, newDeltas[0].Removed.Count);
+        Assert.HasCount(1, newDeltas);
+        Assert.HasCount(1, newDeltas[0].Added);
+        Assert.HasCount(1, newDeltas[0].Removed);
         Assert.AreEqual("old", newDeltas[0].Removed[0]);
         Assert.AreEqual("new", newDeltas[0].Added[0].Id);
     }

@@ -58,7 +58,7 @@ public class IndexRehydrateTests
 
         _index.Rehydrate();
 
-        Assert.AreEqual(0, _changed.Count, "Rehydrate must be a no-op when disk already matches the in-memory store.");
+        Assert.IsEmpty(_changed, "Rehydrate must be a no-op when disk already matches the in-memory store.");
         Assert.AreEqual(2, _index.Count);
     }
 
@@ -87,8 +87,8 @@ public class IndexRehydrateTests
 
         // Exactly one Changed delta, carrying the task in Changed with the fresh due.
         var delta = _changed.Single();
-        Assert.AreEqual(0, delta.Added.Count);
-        Assert.AreEqual(0, delta.Removed.Count);
+        Assert.IsEmpty(delta.Added);
+        Assert.IsEmpty(delta.Removed);
         var changedTask = delta.Changed.Single();
         Assert.AreEqual("t", changedTask.Id);
         Assert.AreEqual(future.Date, changedTask.Due!.Value.Date);
@@ -111,8 +111,8 @@ public class IndexRehydrateTests
         Assert.IsNotNull(_index.ById("new"));
         var delta = _changed.Single();
         Assert.AreEqual("new", delta.Added.Single().Id);
-        Assert.AreEqual(0, delta.Changed.Count);
-        Assert.AreEqual(0, delta.Removed.Count);
+        Assert.IsEmpty(delta.Changed);
+        Assert.IsEmpty(delta.Removed);
     }
 
     // ── Removed ────────────────────────────────────────────────────────────
@@ -132,8 +132,8 @@ public class IndexRehydrateTests
         Assert.IsNull(_index.ById("b"));
         var delta = _changed.Single();
         Assert.AreEqual("b", delta.Removed.Single());
-        Assert.AreEqual(0, delta.Added.Count);
-        Assert.AreEqual(0, delta.Changed.Count);
+        Assert.IsEmpty(delta.Added);
+        Assert.IsEmpty(delta.Changed);
     }
 
     // ── Bulk drift (the sprint-import shape) ───────────────────────────────
@@ -230,7 +230,7 @@ public class IndexRehydrateTests
 
         Assert.IsNotNull(_index.ById("t"), "an unparseable-but-present file must keep its prior snapshot, not vanish.");
         Assert.AreEqual(DueUrgency.Future, _index.ById("t")!.DueUrgency, "prior (valid) snapshot must be retained intact.");
-        Assert.AreEqual(0, _changed.Count, "a present-but-unparseable file must emit no delta (no spurious Removed).");
+        Assert.IsEmpty(_changed, "a present-but-unparseable file must emit no delta (no spurious Removed).");
         Assert.AreEqual(1, convergence, "a kept present-but-unparseable file must request one bounded follow-up.");
     }
 
@@ -290,7 +290,7 @@ public class IndexRehydrateTests
 
         Assert.AreEqual(DueUrgency.Future, seam.ById("t")!.DueUrgency, "stale snapshot must not clobber the newer in-memory value.");
         Assert.AreEqual(future.Date, seam.ById("t")!.Due!.Value.Date);
-        Assert.AreEqual(0, seamChanges.Count, "a skipped stale entry must emit no delta.");
+        Assert.IsEmpty(seamChanges, "a skipped stale entry must emit no delta.");
     }
 
     // Finding 3 (MEDIUM): TOCTOU. A file written to disk + store AFTER the unlocked

@@ -102,7 +102,7 @@ public class VisualVerificationScenarioTests
 
         Assert.AreEqual("backlog smoke", scenario.Name);
         Assert.AreEqual("glasswork://backlog", scenario.StartUri);
-        Assert.AreEqual(1, scenario.Tasks.Count);
+        Assert.HasCount(1, scenario.Tasks);
         Assert.AreEqual("verify-backlog-task", scenario.Tasks[0].Id);
         CollectionAssert.AreEqual(
             new[] { "concepts/async-callbacks" },
@@ -481,5 +481,29 @@ public class VisualVerificationScenarioTests
 
         Assert.ThrowsExactly<FormatException>(() =>
             VisualVerificationScenario.FromJson(json));
+    }
+
+    [TestMethod]
+    [DataRow("capture")]
+    [DataRow(" CAPTURE ")]
+    public void FromJson_ActionAndDeclaredCaptureNamesCollideAfterSanitizing_Throws(string actionType)
+    {
+        var json = $$"""
+        {
+          "name": "capture collision",
+          "actions": [
+            {
+              "type": "{{actionType}}",
+              "name": "same:name"
+            }
+          ],
+          "captures": [{ "name": "same?name" }]
+        }
+        """;
+
+        var exception = Assert.ThrowsExactly<FormatException>(
+            () => VisualVerificationScenario.FromJson(json));
+
+        StringAssert.Contains(exception.Message, "unique output filename");
     }
 }

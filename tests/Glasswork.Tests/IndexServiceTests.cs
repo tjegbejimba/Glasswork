@@ -45,10 +45,10 @@ public class IndexServiceTests
         IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
-        Assert.IsTrue(content.Contains("Alpha"), "Index should contain task Alpha");
-        Assert.IsTrue(content.Contains("Beta"), "Index should contain task Beta");
-        Assert.IsTrue(content.Contains("## In Progress"), "Index should have In Progress section");
-        Assert.IsTrue(content.Contains("## Todo"), "Index should have Todo section");
+        Assert.Contains("Alpha", content, "Index should contain task Alpha");
+        Assert.Contains("Beta", content, "Index should contain task Beta");
+        Assert.Contains("## In Progress", content, "Index should have In Progress section");
+        Assert.Contains("## Todo", content, "Index should have Todo section");
     }
 
     [TestMethod]
@@ -71,8 +71,8 @@ public class IndexServiceTests
         IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
-        Assert.IsTrue(content.Contains("Today Task"), "Today file should contain My Day task");
-        Assert.IsFalse(content.Contains("Not Today"), "Today file should not contain non-My Day task");
+        Assert.Contains("Today Task", content, "Today file should contain My Day task");
+        Assert.DoesNotContain("Not Today", content, "Today file should not contain non-My Day task");
     }
 
     [TestMethod]
@@ -81,7 +81,7 @@ public class IndexServiceTests
         IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var content = File.ReadAllText(Path.Combine(_tempDir, "_today.md"));
-        Assert.IsTrue(content.Contains("No tasks picked for today yet"));
+        Assert.Contains("No tasks picked for today yet", content);
     }
 
     [TestMethod]
@@ -95,7 +95,7 @@ public class IndexServiceTests
 
         IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
         var before = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
-        Assert.IsTrue(before.Contains("Wrapped Task"), "Pre-move sanity: completed task should appear in Done (Recent).");
+        Assert.Contains("Wrapped Task", before, "Pre-move sanity: completed task should appear in Done (Recent).");
 
         // Simulate the wrap-up move: relocate wrapped-task.md into done/ subfolder.
         var doneDir = Path.Combine(_tempDir, "done");
@@ -113,7 +113,7 @@ public class IndexServiceTests
         IndexMarkdownWriter.WriteCurrent(_index, _tempDir);
 
         var after = File.ReadAllText(Path.Combine(_tempDir, "_index.md"));
-        Assert.IsFalse(after.Contains("Wrapped Task"), "Tasks moved to done/ subfolder must not appear in _index.md.");
-        Assert.IsTrue(after.Contains("Active Task"), "Active task should still appear after the move.");
+        Assert.DoesNotContain("Wrapped Task", after, "Tasks moved to done/ subfolder must not appear in _index.md.");
+        Assert.Contains("Active Task", after, "Active task should still appear after the move.");
     }
 }

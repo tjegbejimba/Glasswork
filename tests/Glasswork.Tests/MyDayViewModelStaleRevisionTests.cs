@@ -357,7 +357,7 @@ public class MyDayViewModelStaleRevisionTests
 
         var vm = CreateViewModel();
         vm.Refresh();
-        Assert.AreEqual(2, vm.Suggestions.Count, "Precondition: both tasks are suggestions.");
+        Assert.HasCount(2, vm.Suggestions, "Precondition: both tasks are suggestions.");
 
         WriteExternally(conflicting.Id, $"""
             id: {conflicting.Id}
@@ -399,7 +399,7 @@ public class MyDayViewModelStaleRevisionTests
         var vm = CreateViewModel();
         vm.Refresh();
         var container = vm.TodayTasks.Single(t => t.Id == pbi.Id);
-        Assert.AreEqual(2, container.TodaysChildren!.Count,
+        Assert.HasCount(2, container.TodaysChildren!,
             "Precondition: both children are nested under the container.");
 
         WriteExternally(conflictingChild.Id, $"""
@@ -664,7 +664,7 @@ public class MyDayViewModelStaleRevisionTests
         var vm = CreateViewModel();
         vm.Refresh();
         var container = vm.TodayTasks.Single(t => t.Id == epic.Id);
-        Assert.AreEqual(2, container.TodaysChildren.Count, "Precondition: both children are in Today.");
+        Assert.HasCount(2, container.TodaysChildren!, "Precondition: both children are in Today.");
 
         WriteExternally(stale.Id, $"""
             id: {stale.Id}
@@ -789,4 +789,3 @@ public class MyDayViewModelStaleRevisionTests
         }
     }
 }
-
