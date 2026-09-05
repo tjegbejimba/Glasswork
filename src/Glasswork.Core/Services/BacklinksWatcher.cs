@@ -40,6 +40,8 @@ public sealed class BacklinksWatcher : IDisposable
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly ConcurrentDictionary<string, Debouncer> _debouncers =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<BufferedBacklinkChange>> _scheduledChanges =
+        new(StringComparer.OrdinalIgnoreCase);
     private bool _bufferingInitialChanges;
     private bool _overflowedDuringInitialScan;
     private bool _liveRecoveryActive;
@@ -176,41 +178,25 @@ public sealed class BacklinksWatcher : IDisposable
     private void OnFileEvent(object sender, FileSystemEventArgs e)
     {
         if (IsExcluded(e.FullPath)) return;
-        if (TryBuffer(new BufferedBacklinkChange(
-                BacklinkChangeKind.Update,
-                null,
-                e.FullPath)))
-        {
-            return;
-        }
-        if (IsOwnProcessWrite(e.FullPath)) return;
-        Schedule(
+        ScheduleOrBuffer(
             new BufferedBacklinkChange(
                 BacklinkChangeKind.Update,
                 null,
                 e.FullPath),
             e.FullPath,
-            () => _index.UpdateForFile(_vaultRoot, e.FullPath));
+            () => IsOwnProcessWrite(e.FullPath));
     }
 
     private void OnDeleted(object sender, FileSystemEventArgs e)
     {
         if (IsExcluded(e.FullPath)) return;
-        if (TryBuffer(new BufferedBacklinkChange(
-                BacklinkChangeKind.Delete,
-                e.FullPath,
-                null)))
-        {
-            return;
-        }
-        if (IsOwnProcessWrite(e.FullPath)) return;
-        Schedule(
+        ScheduleOrBuffer(
             new BufferedBacklinkChange(
                 BacklinkChangeKind.Delete,
                 e.FullPath,
                 null),
             e.FullPath,
-            () => _index.RemoveForFile(e.FullPath));
+            () => IsOwnProcessWrite(e.FullPath));
     }
 
     private void OnRenamed(object sender, RenamedEventArgs e)
@@ -222,21 +208,13 @@ public sealed class BacklinksWatcher : IDisposable
         var newExcluded = IsExcluded(newPath);
         var oldExcluded = IsExcluded(oldPath);
         if (newExcluded && oldExcluded) return;
-        if (TryBuffer(new BufferedBacklinkChange(
-                BacklinkChangeKind.Rename,
-                oldPath,
-                newPath)))
-        {
-            return;
-        }
-        if (IsOwnProcessWrite(newPath) || IsOwnProcessWrite(oldPath)) return;
-        Schedule(
+        ScheduleOrBuffer(
             new BufferedBacklinkChange(
                 BacklinkChangeKind.Rename,
                 oldPath,
                 newPath),
             newPath,
-            () => _index.Rename(_vaultRoot, oldPath, newPath));
+            () => IsOwnProcessWrite(newPath) || IsOwnProcessWrite(oldPath));
     }
 
     private void OnWatcherError(object sender, ErrorEventArgs e)
@@ -342,17 +320,6 @@ public sealed class BacklinksWatcher : IDisposable
         }
     }
 
-    private bool TryBuffer(BufferedBacklinkChange change)
-    {
-        lock (_handoffGate)
-        {
-            if (!_bufferingInitialChanges)
-                return false;
-            BufferChangeLocked(change);
-            return true;
-        }
-    }
-
     private IReadOnlyCollection<string> Apply(BufferedBacklinkChange change) =>
         change.Kind switch
         {
@@ -372,10 +339,10 @@ public sealed class BacklinksWatcher : IDisposable
             BacklinksChanged?.Invoke(this, new BacklinksChangedEventArgs(affected));
     }
 
-    private void Schedule(
+    private void ScheduleOrBuffer(
         BufferedBacklinkChange change,
         string key,
-        Func<IReadOnlyCollection<string>> apply)
+        Func<bool> shouldSuppress)
     {
         Debouncer debouncer;
         long epoch;
@@ -388,13 +355,21 @@ public sealed class BacklinksWatcher : IDisposable
                 BufferChangeLocked(change);
                 return;
             }
+            if (shouldSuppress())
+                return;
 
             epoch = _mutationEpoch;
+            if (!_scheduledChanges.TryGetValue(key, out var scheduled))
+            {
+                scheduled = [];
+                _scheduledChanges[key] = scheduled;
+            }
+            scheduled.Add(change);
             debouncer = _debouncers.GetOrAdd(
                 key,
                 _ => new Debouncer(_quietPeriod, () =>
                 {
-                    IReadOnlyCollection<string> affected;
+                    var affected = new HashSet<string>(StringComparer.Ordinal);
                     lock (_handoffGate)
                     {
                         if (_disposed
@@ -404,8 +379,17 @@ public sealed class BacklinksWatcher : IDisposable
                             return;
                         }
 
-                        try { affected = apply(); }
-                        catch { return; }
+                        if (!_scheduledChanges.Remove(key, out var batch))
+                            return;
+                        try
+                        {
+                            foreach (var pending in batch)
+                                affected.UnionWith(Apply(pending));
+                        }
+                        catch
+                        {
+                            return;
+                        }
                     }
                     RaiseBacklinksChanged(affected);
                 }));
@@ -439,6 +423,7 @@ public sealed class BacklinksWatcher : IDisposable
             _mutationEpoch++;
             debouncers = _debouncers.Values.ToArray();
             _debouncers.Clear();
+            _scheduledChanges.Clear();
         }
 
         _lifetimeCancellation.Cancel();
@@ -453,6 +438,7 @@ public sealed class BacklinksWatcher : IDisposable
         _mutationEpoch++;
         var staleDebouncers = _debouncers.Values.ToArray();
         _debouncers.Clear();
+        _scheduledChanges.Clear();
         _bufferedChanges.Clear();
         _bufferingInitialChanges = true;
         return staleDebouncers;
