@@ -98,6 +98,7 @@ internal sealed class VaultServiceBundle : IDisposable
             var vault = new VaultService(vaultPath, selfWrites);
             var artifacts = new FileSystemArtifactStore(resolvedPaths.VaultRoot);
             var obsidianLauncher = new ObsidianLauncher(resolvedPaths.VaultRoot);
+            var backlinkIndex = new BacklinkIndex();
 
             var taskChanges = new StartupTaskChangeBuffer();
             watcher = new FileWatcherService(vaultPath, selfWrites);
@@ -105,24 +106,26 @@ internal sealed class VaultServiceBundle : IDisposable
             watcher.Overflowed += taskChanges.OnOverflowed;
             watcher.Start();
 
-            using (var trace = performance.BeginSpan("vault.v1_migration"))
-            {
-                try { trace.SetCount("migrated_task_count", vault.MigrateAllToV2()); }
-                catch (Exception)
-                {
-                    trace.SetOutcome("error");
-                    throw;
-                }
-            }
+            var mutations = new ResourceMutationService(
+                vaultPath,
+                vault,
+                backlinkIndex: backlinkIndex);
+            mutations.BacklinksChanged += (sender, args) =>
+                onBacklinksChanged(sender, args);
 
-            cancellationToken.ThrowIfCancellationRequested();
-            var index = new IndexService(vault);
-            using (var trace = performance.BeginSpan("vault.index_hydration"))
+            IndexStartupHydrationResult ready;
+            using (var trace = performance.BeginSpan("vault.task_startup_hydration"))
             {
                 try
                 {
-                    index.EnsureLoaded();
-                    trace.SetCount("task_count", index.Count);
+                    ready = IndexService.CreateHydratedForStartupAsync(
+                            vault,
+                            cancellationToken)
+                        .GetAwaiter()
+                        .GetResult();
+                    trace.SetCount("task_count", ready.TaskCount);
+                    trace.SetCount("migrated_task_count", ready.MigratedTaskCount);
+                    trace.SetCount("examined_file_count", ready.ExaminedFileCount);
                 }
                 catch
                 {
@@ -130,6 +133,7 @@ internal sealed class VaultServiceBundle : IDisposable
                     throw;
                 }
             }
+            var index = ready.Index;
 
             overflowRehydrateDebouncer = new Debouncer(
                 TimeSpan.FromMilliseconds(500),
@@ -167,9 +171,7 @@ internal sealed class VaultServiceBundle : IDisposable
                     index.ConvergencePending -= handler;
                 }
             }
-
             cancellationToken.ThrowIfCancellationRequested();
-            var backlinkIndex = new BacklinkIndex();
             using (var trace = performance.BeginSpan("vault.backlink_index_build"))
             {
                 try { backlinkIndex.Build(resolvedPaths.VaultRoot); }
@@ -180,13 +182,6 @@ internal sealed class VaultServiceBundle : IDisposable
                         $"Backlink index build failed: {ex.Message}");
                 }
             }
-
-            var mutations = new ResourceMutationService(
-                vaultPath,
-                vault,
-                backlinkIndex: backlinkIndex);
-            mutations.BacklinksChanged += (sender, args) =>
-                onBacklinksChanged(sender, args);
 
             var tasks = new TaskService(vault, index);
             var taskQuery = new WarmIndexTaskQuery(index, backlinkIndex);
@@ -223,7 +218,7 @@ internal sealed class VaultServiceBundle : IDisposable
             backlinksWatcher.Start();
 
             cancellationToken.ThrowIfCancellationRequested();
-            initializeTrace.SetCount("task_count", index.Count);
+            initializeTrace.SetCount("task_count", ready.TaskCount);
             return new VaultServiceBundle(
                 resolvedPaths.VaultRoot,
                 selfWrites,

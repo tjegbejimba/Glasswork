@@ -66,9 +66,8 @@ The trace never records Vault paths, task IDs, titles, task prose, or search tex
 |---|---|
 | `vault.services_initialize` | Complete vault-dependent service initialization, including the nested phases below |
 | `vault.backlink_index_build` | Recursive backlink index construction |
-| `vault.v1_migration` | V1-to-V2 task migration scan; includes `migrated_task_count` |
+| `vault.task_startup_hydration` | Single-pass managed recovery, V1 migration, final-byte parsing, Resource Revision calculation, and atomic Index seed; includes `task_count`, `migrated_task_count`, and `examined_file_count` |
 | `vault.my_day_pin_migration` | Date-scoped My Day pin migration |
-| `vault.index_hydration` | Initial task parsing and in-memory Index hydration; includes `task_count` |
 | `app.window_first_frame` | Loading-shell milestone at the first composition callback after the main window is activated; Vault-dependent initialization starts only after this callback |
 | `app.tasks_ready` | Milestone after one coherent Vault service generation is published and the initial Task page is constructed; supplemental Backlink/Research readiness is separate |
 | `my_day.refresh_data` | My Day query, grouping, and collection reconciliation; excludes later WinUI layout and painting |
