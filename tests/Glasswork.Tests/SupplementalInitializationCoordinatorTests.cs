@@ -735,6 +735,105 @@ public sealed class SupplementalInitializationCoordinatorTests
 
     [TestMethod]
     [Timeout(5000, CooperativeCancellation = true)]
+    public async Task BacklinkOverflowDuringRecoveryNotificationRunsAnotherReconciliation()
+    {
+        var pagePath = Path.Combine(_vaultRoot, "wiki", "concepts", "repeat-overflow.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(pagePath)!);
+        File.WriteAllText(pagePath, "[[before-overflow]]");
+        var backlinks = new BacklinkIndex();
+        using var research = new FileSystemResearchCatalog(_vaultRoot);
+        using var coordinator = new SupplementalInitializationCoordinator(
+            generation: 23,
+            _vaultRoot,
+            backlinks,
+            research,
+            quietPeriod: TimeSpan.FromMilliseconds(10));
+        await coordinator.StartAsync();
+        using var secondRecovery = new ManualResetEventSlim(false);
+        var injectedSecondOverflow = 0;
+        coordinator.BacklinksChanged += (_, args) =>
+        {
+            if (args.AffectedTaskIds.Contains("second-overflow"))
+            {
+                secondRecovery.Set();
+                return;
+            }
+
+            if (args.AffectedTaskIds.Contains("first-overflow")
+                && Interlocked.CompareExchange(
+                    ref injectedSecondOverflow,
+                    1,
+                    0) == 0)
+            {
+                coordinator.BacklinksWatcher.Stop();
+                File.WriteAllText(pagePath, "[[second-overflow]]");
+                coordinator.BacklinksWatcher.HandleWatcherError(
+                    new InternalBufferOverflowException("Injected second overflow."));
+                coordinator.BacklinksWatcher.Start();
+            }
+        };
+
+        coordinator.BacklinksWatcher.Stop();
+        File.WriteAllText(pagePath, "[[first-overflow]]");
+        coordinator.BacklinksWatcher.HandleWatcherError(
+            new InternalBufferOverflowException("Injected first overflow."));
+        coordinator.BacklinksWatcher.Start();
+
+        Assert.IsTrue(
+            secondRecovery.Wait(TimeSpan.FromSeconds(2)),
+            "An overflow raised synchronously during recovery publication must schedule another reconciliation.");
+        Assert.IsEmpty(backlinks.GetBacklinks("first-overflow"));
+        Assert.HasCount(1, backlinks.GetBacklinks("second-overflow"));
+    }
+
+    [TestMethod]
+    [Timeout(5000, CooperativeCancellation = true)]
+    public async Task BacklinkOverflowInvalidatesQueuedPreRecoveryMutation()
+    {
+        var pagePath = Path.Combine(_vaultRoot, "wiki", "concepts", "stale-debounce.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(pagePath)!);
+        File.WriteAllText(pagePath, "[[recreated-after-overflow]]");
+        var backlinks = new BacklinkIndex();
+        using var research = new FileSystemResearchCatalog(_vaultRoot);
+        using var coordinator = new SupplementalInitializationCoordinator(
+            generation: 24,
+            _vaultRoot,
+            backlinks,
+            research,
+            quietPeriod: TimeSpan.FromMilliseconds(500));
+        await coordinator.StartAsync();
+        using var deleteScheduled = new ManualResetEventSlim(false);
+        using var recovered = new ManualResetEventSlim(false);
+        coordinator.BacklinksWatcher.ChangeScheduledHook = path =>
+        {
+            if (string.Equals(path, pagePath, StringComparison.OrdinalIgnoreCase))
+                deleteScheduled.Set();
+        };
+        coordinator.BacklinksChanged += (_, args) =>
+        {
+            if (args.AffectedTaskIds.Contains("recreated-after-overflow"))
+                recovered.Set();
+        };
+
+        File.Delete(pagePath);
+        Assert.IsTrue(
+            deleteScheduled.Wait(TimeSpan.FromSeconds(2)),
+            "The delete must be queued before overflow recovery starts.");
+        coordinator.BacklinksWatcher.Stop();
+        File.WriteAllText(pagePath, "[[recreated-after-overflow]]");
+        coordinator.BacklinksWatcher.HandleWatcherError(
+            new InternalBufferOverflowException("Injected overflow."));
+
+        Assert.IsTrue(recovered.Wait(TimeSpan.FromSeconds(2)));
+        await Task.Delay(700);
+        Assert.HasCount(
+            1,
+            backlinks.GetBacklinks("recreated-after-overflow"),
+            "A mutation queued before recovery must not run against the reconciled snapshot.");
+    }
+
+    [TestMethod]
+    [Timeout(5000, CooperativeCancellation = true)]
     public async Task TryCaptureResearch_DuringLiveRefreshReturnsPriorSnapshotWithoutBlocking()
     {
         var topicPath = Path.Combine(
@@ -818,6 +917,60 @@ public sealed class SupplementalInitializationCoordinatorTests
                     SupplementalComponent.Research,
                 },
                 readyComponents);
+        }
+    }
+
+    [TestMethod]
+    [Timeout(5000, CooperativeCancellation = true)]
+    public async Task Dispose_SuppressesReadyNotificationAlreadyWaitingForDelivery()
+    {
+        using var readyPublished = new ManualResetEventSlim(false);
+        using var releaseReady = new ManualResetEventSlim(false);
+        var backlinks = new BacklinkIndex();
+        using var research = new FileSystemResearchCatalog(_vaultRoot);
+        var coordinator = new SupplementalInitializationCoordinator(
+            generation: 25,
+            _vaultRoot,
+            backlinks,
+            research);
+        var observed = new List<SupplementalInitializationStatus>();
+        coordinator.BeforeStateChangedHook = args =>
+        {
+            if (args.Component == SupplementalComponent.Backlinks
+                && args.Current.Status == SupplementalInitializationStatus.Ready)
+            {
+                readyPublished.Set();
+                releaseReady.Wait();
+            }
+        };
+        coordinator.StateChanged += (_, args) =>
+        {
+            if (args.Component == SupplementalComponent.Backlinks)
+            {
+                lock (observed)
+                    observed.Add(args.Current.Status);
+            }
+        };
+
+        var completion = coordinator.StartAsync();
+        Assert.IsTrue(readyPublished.Wait(TimeSpan.FromSeconds(2)));
+        coordinator.Dispose();
+        releaseReady.Set();
+        await completion;
+
+        lock (observed)
+        {
+            Assert.AreEqual(
+                SupplementalInitializationStatus.Disposed,
+                observed[^1]);
+            Assert.IsFalse(
+                observed.SkipWhile(status =>
+                        status != SupplementalInitializationStatus.Disposed)
+                    .Skip(1)
+                    .Any(status =>
+                        status is SupplementalInitializationStatus.Loading
+                            or SupplementalInitializationStatus.Ready),
+                "No stale Loading or Ready notification may follow Disposed.");
         }
     }
 

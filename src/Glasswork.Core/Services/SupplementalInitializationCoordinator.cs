@@ -57,6 +57,7 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
     private readonly BacklinksWatcher _backlinksWatcher;
     private readonly IPerformanceTracer _performanceTracer;
     private readonly object _lifecycleGate = new();
+    private readonly object _notificationGate = new();
     private SupplementalReadinessSnapshot _readiness;
     private CancellationTokenSource? _backlinksCancellation;
     private CancellationTokenSource? _researchCancellation;
@@ -64,6 +65,12 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
     private Task _researchTask = Task.CompletedTask;
     private bool _disposed;
     private bool _resourcesDisposed;
+
+    internal Action<SupplementalInitializationChangedEventArgs>? BeforeStateChangedHook
+    {
+        get;
+        set;
+    }
 
     public SupplementalInitializationCoordinator(
         long generation,
@@ -451,8 +458,16 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
     private void RaiseStateChanged(
         SupplementalInitializationChangedEventArgs? change)
     {
-        if (change is not null)
+        if (change is null)
+            return;
+
+        BeforeStateChangedHook?.Invoke(change);
+        lock (_notificationGate)
+        {
+            if (GetState(Readiness, change.Component) != change.Current)
+                return;
             StateChanged?.Invoke(this, change);
+        }
     }
 
     private async Task<SupplementalReadinessSnapshot> CompleteAsync(
@@ -489,16 +504,15 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
 
     private void OnBacklinksChanged(object? sender, BacklinksChangedEventArgs e)
     {
-        lock (_lifecycleGate)
+        lock (_notificationGate)
         {
-            if (_disposed
-                || Readiness.Backlinks.Status
-                    != SupplementalInitializationStatus.Ready)
+            if (Readiness.Backlinks.Status
+                != SupplementalInitializationStatus.Ready)
             {
                 return;
             }
+            BacklinksChanged?.Invoke(this, e);
         }
-        BacklinksChanged?.Invoke(this, e);
     }
 
     private sealed record AttemptLease(

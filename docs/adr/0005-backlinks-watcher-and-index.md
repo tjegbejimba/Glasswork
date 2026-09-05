@@ -126,12 +126,18 @@ unchanged.
 If either watcher reports an overflow during hydration, the incomplete buffered
 delta set is discarded and one full reconciliation runs before Ready. A
 steady-state Backlink overflow uses the same bounded rebuild and emits a broad
-affected-ID notification after publication.
+affected-ID notification after publication. Mutations queued before the
+overflow are epoch-fenced so they cannot overwrite the reconciled snapshot,
+and an overflow observed while that broad notification is being delivered
+requests another reconciliation rather than being dropped.
 
 Cancellation and disposal never wait for a held scan. Disposal publishes
 `Disposed`, cancels active attempts, and defers watcher/catalog cleanup until
 active callbacks finish. Attempt numbers prevent cancelled, retried, disposed,
 or prior-Vault completions from publishing over the current generation.
+State notifications are serialized and revalidated against the current
+immutable state before delivery, so a delayed Loading or Ready notification
+cannot follow Disposed.
 
 ### Why refresh-section-only, never reload the task model
 
