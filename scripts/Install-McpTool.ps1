@@ -7,6 +7,83 @@
 
 . (Join-Path $PSScriptRoot "Validate-McpReleasePublication.ps1")
 
+function Resolve-McpGitHubCliPath {
+    $command = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -ne $command) {
+        return $command.Source
+    }
+
+    if (-not $IsWindows) {
+        return $null
+    }
+
+    $candidates = @(
+        [Environment]::ExpandEnvironmentVariables("%ProgramFiles%\GitHub CLI\gh.exe"),
+        [Environment]::ExpandEnvironmentVariables("%ProgramFiles(x86)%\GitHub CLI\gh.exe"),
+        [Environment]::ExpandEnvironmentVariables("%LOCALAPPDATA%\Microsoft\WinGet\Links\gh.exe"),
+        [Environment]::ExpandEnvironmentVariables("%LOCALAPPDATA%\Programs\GitHub CLI\gh.exe")
+    )
+    $candidates | Where-Object { Test-Path $_ -PathType Leaf } | Select-Object -First 1
+}
+
+function Invoke-McpGitHubApi {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ApiPath,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Headers
+    )
+
+    try {
+        return Invoke-RestMethod -Uri $Uri -Headers $Headers
+    }
+    catch {
+        $statusCode = if ($null -ne $_.Exception.Response) {
+            [int]$_.Exception.Response.StatusCode
+        }
+        elseif ($null -ne $_.Exception.StatusCode) {
+            [int]$_.Exception.StatusCode
+        }
+        if ($statusCode -ne [int][System.Net.HttpStatusCode]::Forbidden) {
+            throw
+        }
+
+        $ghPath = Resolve-McpGitHubCliPath
+        if ([string]::IsNullOrWhiteSpace($ghPath)) {
+            throw
+        }
+
+        $stderrPath = Join-Path ([IO.Path]::GetTempPath()) "glasswork-gh-$([Guid]::NewGuid().ToString('N')).log"
+        try {
+            $output = @(& $ghPath api --hostname github.com $ApiPath 2> $stderrPath)
+            if ($LASTEXITCODE -ne 0) {
+                $details = if (Test-Path $stderrPath -PathType Leaf) {
+                    (Get-Content $stderrPath -Raw).Trim()
+                }
+                else {
+                    ""
+                }
+                throw "GitHub API rate limit exceeded and authenticated GitHub CLI fallback failed. $details"
+            }
+
+            try {
+                return ($output -join "`n") | ConvertFrom-Json
+            }
+            catch {
+                throw "Authenticated GitHub CLI returned invalid release metadata. $($_.Exception.Message)"
+            }
+        }
+        finally {
+            Remove-Item $stderrPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Get-McpPublishedMetadata {
     param(
         [Parameter(Mandatory = $true)]
@@ -23,7 +100,10 @@ function Get-McpPublishedMetadata {
     }
     $tagName = "mcp-v$Version"
     $releaseUrl = "https://api.github.com/repos/tjegbejimba/Glasswork/releases/tags/$tagName"
-    $release = Invoke-RestMethod -Uri $releaseUrl -Headers $headers
+    $release = Invoke-McpGitHubApi `
+        -Uri $releaseUrl `
+        -ApiPath "repos/tjegbejimba/Glasswork/releases/tags/$tagName" `
+        -Headers $headers
     if ($release.tag_name -ne $tagName -or $release.draft -or $release.prerelease) {
         throw "MCP GitHub Release '$tagName' is not a published stable release."
     }
@@ -37,13 +117,18 @@ function Get-McpPublishedMetadata {
     }
 
     $refUrl = "https://api.github.com/repos/tjegbejimba/Glasswork/git/ref/tags/mcp-v$Version"
-    $ref = Invoke-RestMethod -Uri $refUrl -Headers $headers
+    $ref = Invoke-McpGitHubApi `
+        -Uri $refUrl `
+        -ApiPath "repos/tjegbejimba/Glasswork/git/ref/tags/mcp-v$Version" `
+        -Headers $headers
     if ($ref.object.type -ne "tag") {
         throw "MCP publication tag '$tagName' must be annotated."
     }
 
-    $tag = Invoke-RestMethod `
-        -Uri "https://api.github.com/repos/tjegbejimba/Glasswork/git/tags/$($ref.object.sha)" `
+    $tagUrl = "https://api.github.com/repos/tjegbejimba/Glasswork/git/tags/$($ref.object.sha)"
+    $tag = Invoke-McpGitHubApi `
+        -Uri $tagUrl `
+        -ApiPath "repos/tjegbejimba/Glasswork/git/tags/$($ref.object.sha)" `
         -Headers $headers
     if ($tag.object.type -ne "commit") {
         throw "MCP publication tag '$tagName' does not target a commit."

@@ -231,6 +231,132 @@ Describe "Get-McpInstallPackage" {
 }
 
 Describe "Get-McpPublishedMetadata" {
+    It "uses GH_TOKEN for authenticated release metadata requests" {
+        $revision = "b" * 40
+        $sha256 = "c" * 64
+        $previousToken = $env:GH_TOKEN
+        $env:GH_TOKEN = "test-token"
+        try {
+            Mock Invoke-RestMethod {
+                param($Uri, $Headers)
+                if ($Headers.Authorization -ne "Bearer test-token") {
+                    throw [System.Net.Http.HttpRequestException]::new(
+                        "Response status code does not indicate success: 403 (rate limit exceeded).")
+                }
+                if ($Uri -like "*/releases/tags/*") {
+                    return [pscustomobject]@{
+                        tag_name = "mcp-v0.11.0"
+                        draft = $false
+                        prerelease = $false
+                        assets = @(
+                            [pscustomobject]@{
+                                name = "glasswork-mcp.0.11.0.nupkg"
+                                browser_download_url = "https://github.test/package"
+                            },
+                            [pscustomobject]@{
+                                name = "glasswork-mcp.0.11.0.nupkg.sha256"
+                                browser_download_url = "https://github.test/checksum"
+                            })
+                    }
+                }
+                if ($Uri -like "*/git/ref/tags/*") {
+                    return [pscustomobject]@{
+                        object = [pscustomobject]@{ type = "tag"; sha = ("d" * 40) }
+                    }
+                }
+                return [pscustomobject]@{
+                    message = "version: 0.11.0`ncommit: $revision`nsha256: $sha256"
+                    object = [pscustomobject]@{ type = "commit"; sha = $revision }
+                }
+            }
+
+            $metadata = Get-McpPublishedMetadata -Version "0.11.0"
+
+            $metadata.SourceRevision | Should -Be $revision
+            Should -Invoke Invoke-RestMethod -Times 3 -Exactly
+        }
+        finally {
+            $env:GH_TOKEN = $previousToken
+        }
+    }
+
+    It "falls back to the authenticated GitHub CLI when anonymous API requests are rate limited" {
+        $revision = "b" * 40
+        $sha256 = "c" * 64
+        $previousToken = $env:GH_TOKEN
+        $previousPath = $env:PATH
+        $previousLog = $env:GLASSWORK_GH_TEST_LOG
+        $fakeGhDirectory = Join-Path $TestDrive "fake-gh"
+        $fakeGhScript = Join-Path $fakeGhDirectory "gh.ps1"
+        $fakeGhCommand = Join-Path $fakeGhDirectory "gh.cmd"
+        $ghLog = Join-Path $TestDrive "gh-calls.txt"
+        New-Item -ItemType Directory -Path $fakeGhDirectory | Out-Null
+        @'
+param($Path)
+[Console]::Error.WriteLine("diagnostic output that must not corrupt stdout")
+if ($Path -like "repos/*/releases/tags/*") {
+    @{
+        tag_name = "mcp-v0.11.0"
+        draft = $false
+        prerelease = $false
+        assets = @(
+            @{
+                name = "glasswork-mcp.0.11.0.nupkg"
+                browser_download_url = "https://github.test/package"
+            },
+            @{
+                name = "glasswork-mcp.0.11.0.nupkg.sha256"
+                browser_download_url = "https://github.test/checksum"
+            })
+    } | ConvertTo-Json -Compress -Depth 5
+    exit 0
+}
+if ($Path -like "repos/*/git/ref/tags/*") {
+    @{ object = @{ type = "tag"; sha = ("d" * 40) } } |
+        ConvertTo-Json -Compress -Depth 5
+    exit 0
+}
+@{
+    message = "version: 0.11.0`ncommit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`nsha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    object = @{
+        type = "commit"
+        sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+} | ConvertTo-Json -Compress -Depth 5
+'@ | Set-Content $fakeGhScript
+        @"
+@echo off
+echo %*>>"%GLASSWORK_GH_TEST_LOG%"
+pwsh -NoProfile -File "%~dp0gh.ps1" "%4"
+"@ |
+            Set-Content $fakeGhCommand
+        $env:GH_TOKEN = $null
+        $env:GLASSWORK_GH_TEST_LOG = $ghLog
+        $env:PATH = "$fakeGhDirectory$([IO.Path]::PathSeparator)$previousPath"
+        try {
+            Mock Invoke-RestMethod {
+                throw [System.Net.Http.HttpRequestException]::new(
+                    "Response status code does not indicate success: 403 (rate limit exceeded).",
+                    $null,
+                    [System.Net.HttpStatusCode]::Forbidden)
+            }
+
+            $metadata = Get-McpPublishedMetadata -Version "0.11.0"
+
+            $metadata.SourceRevision | Should -Be $revision
+            $calls = @(Get-Content $ghLog)
+            $calls | Should -HaveCount 3
+            $calls | ForEach-Object {
+                $_ | Should -Match '^api --hostname github\.com repos/'
+            }
+        }
+        finally {
+            $env:GH_TOKEN = $previousToken
+            $env:PATH = $previousPath
+            $env:GLASSWORK_GH_TEST_LOG = $previousLog
+        }
+    }
+
     It "anchors GitHub Release assets to annotated tag checksum metadata" {
         $revision = "b" * 40
         $sha256 = "c" * 64
