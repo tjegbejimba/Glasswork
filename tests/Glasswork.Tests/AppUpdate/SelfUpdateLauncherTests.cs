@@ -252,12 +252,17 @@ public class SelfUpdateLauncherTests
         // Arrange
         var launcher = new SelfUpdateLauncher();
         var resolver = new FakeExecutableResolver();
+        var repoPath = Path.Combine(Path.GetTempPath(), "repo");
+        var installExePath = Path.Combine(
+            Path.GetTempPath(),
+            "install",
+            "glasswork.exe");
 
         // Act
         var plan = launcher.CreatePlan(
             isUpdateAvailable: true,
-            repoPath: @"C:\repo",
-            installExePath: @"C:\install\glasswork.exe",
+            repoPath: repoPath,
+            installExePath: installExePath,
             processId: 1234,
             executableResolver: resolver,
             directoryExists: _ => true);
@@ -266,13 +271,15 @@ public class SelfUpdateLauncherTests
         var args = plan.ProcessSpec!.ArgumentList;
         Assert.HasCount(8, args);
         Assert.AreEqual("-File", args[0]);
-        Assert.AreEqual(@"C:\repo\scripts\self-update.ps1", args[1]);
+        Assert.AreEqual(
+            Path.Combine(repoPath, "scripts", "self-update.ps1"),
+            args[1]);
         Assert.AreEqual("-AppProcessId", args[2]);
         Assert.AreEqual("1234", args[3]);
         Assert.AreEqual("-RepoPath", args[4]);
-        Assert.AreEqual(@"C:\repo", args[5]);
+        Assert.AreEqual(repoPath, args[5]);
         Assert.AreEqual("-InstallExePath", args[6]);
-        Assert.AreEqual(@"C:\install\glasswork.exe", args[7]);
+        Assert.AreEqual(installExePath, args[7]);
     }
 
     [TestMethod]

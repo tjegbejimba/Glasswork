@@ -57,19 +57,39 @@ public sealed class ArtifactCommitPolicyTests
     [TestMethod]
     public void IsCommitted_PathWithDirectory_UsesBaseName()
     {
-        Assert.IsTrue(ArtifactCommitPolicy.IsCommitted(@"C:\vault\wiki\todo\task-1.artifacts\plan.md"));
-        Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(@"C:\vault\wiki\todo\task-1.artifacts\.hidden"));
-        Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(@"C:\vault\wiki\todo\task-1.artifacts\data.tmp"));
+        var artifactDirectory = Path.Combine(
+            "vault",
+            "wiki",
+            "todo",
+            "task-1.artifacts");
+
+        Assert.IsTrue(ArtifactCommitPolicy.IsCommitted(
+            Path.Combine(artifactDirectory, "plan.md")));
+        Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(
+            Path.Combine(artifactDirectory, ".hidden")));
+        Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(
+            Path.Combine(artifactDirectory, "data.tmp")));
     }
 
     [TestMethod]
-    public void IsCommitted_HiddenAttributeFile_ReturnsFalse()
+    public void IsCommitted_HiddenFile_UsesPlatformSemantics()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), "test-hidden-artifact.md");
+        var fileName = OperatingSystem.IsWindows()
+            ? $"test-hidden-artifact-{Guid.NewGuid():N}.md"
+            : $".test-hidden-artifact-{Guid.NewGuid():N}.md";
+        var tempPath = Path.Combine(Path.GetTempPath(), fileName);
+
         try
         {
             File.WriteAllText(tempPath, "test content");
-            File.SetAttributes(tempPath, FileAttributes.Hidden);
+
+            if (OperatingSystem.IsWindows())
+            {
+                File.SetAttributes(tempPath, FileAttributes.Hidden);
+                Assert.IsTrue(
+                    File.GetAttributes(tempPath).HasFlag(FileAttributes.Hidden));
+            }
+
             Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(tempPath));
         }
         finally
@@ -83,14 +103,29 @@ public sealed class ArtifactCommitPolicyTests
     }
 
     [TestMethod]
-    public void IsCommitted_SystemAttributeFile_ReturnsFalse()
+    public void IsCommitted_SystemAttribute_UsesPlatformSemantics()
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), "test-system-artifact.md");
+        var tempPath = Path.Combine(
+            Path.GetTempPath(),
+            $"test-system-artifact-{Guid.NewGuid():N}.md");
+
         try
         {
             File.WriteAllText(tempPath, "test content");
-            File.SetAttributes(tempPath, FileAttributes.System);
-            Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(tempPath));
+
+            if (OperatingSystem.IsWindows())
+            {
+                File.SetAttributes(tempPath, FileAttributes.System);
+                Assert.IsTrue(
+                    File.GetAttributes(tempPath).HasFlag(FileAttributes.System));
+                Assert.IsFalse(ArtifactCommitPolicy.IsCommitted(tempPath));
+            }
+            else
+            {
+                Assert.IsFalse(
+                    File.GetAttributes(tempPath).HasFlag(FileAttributes.System));
+                Assert.IsTrue(ArtifactCommitPolicy.IsCommitted(tempPath));
+            }
         }
         finally
         {

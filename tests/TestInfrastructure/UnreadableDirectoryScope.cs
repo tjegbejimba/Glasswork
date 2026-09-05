@@ -7,32 +7,41 @@ namespace Glasswork.TestInfrastructure;
 internal sealed class UnreadableDirectoryScope : IDisposable
 {
     private readonly DirectoryInfo _directory;
-    private readonly FileSystemAccessRule? _windowsDenyRule;
+    private readonly string? _windowsAccessSddl;
     private readonly UnixFileMode? _unixMode;
     private readonly string _sentinelPath;
 
     private UnreadableDirectoryScope(
         DirectoryInfo directory,
-        FileSystemAccessRule? windowsDenyRule,
+        string? windowsAccessSddl,
         UnixFileMode? unixMode,
         string sentinelPath)
     {
         _directory = directory;
-        _windowsDenyRule = windowsDenyRule;
+        _windowsAccessSddl = windowsAccessSddl;
         _unixMode = unixMode;
         _sentinelPath = sentinelPath;
     }
 
     public static UnreadableDirectoryScope Create(string path)
     {
+        return Create(path, EnsureUnreadable);
+    }
+
+    internal static UnreadableDirectoryScope Create(
+        string path,
+        Action<string> ensureUnreadable)
+    {
         var directory = Directory.CreateDirectory(path);
         return OperatingSystem.IsWindows()
-            ? CreateWindows(directory)
-            : CreateUnix(directory);
+            ? CreateWindows(directory, ensureUnreadable)
+            : CreateUnix(directory, ensureUnreadable);
     }
 
     [SupportedOSPlatform("windows")]
-    private static UnreadableDirectoryScope CreateWindows(DirectoryInfo directory)
+    private static UnreadableDirectoryScope CreateWindows(
+        DirectoryInfo directory,
+        Action<string> ensureUnreadable)
     {
         var identity = WindowsIdentity.GetCurrent().User
             ?? throw new InvalidOperationException("The current Windows user has no SID.");
@@ -40,7 +49,9 @@ internal sealed class UnreadableDirectoryScope : IDisposable
             identity,
             FileSystemRights.ListDirectory,
             AccessControlType.Deny);
-        var security = directory.GetAccessControl();
+        var security = directory.GetAccessControl(AccessControlSections.Access);
+        var originalAccessSddl = security.GetSecurityDescriptorSddlForm(
+            AccessControlSections.Access);
         security.AddAccessRule(denyRule);
         var sentinelPath = CreateSentinel(directory.FullName);
 
@@ -48,11 +59,11 @@ internal sealed class UnreadableDirectoryScope : IDisposable
         try
         {
             directory.SetAccessControl(security);
-            EnsureUnreadable(directory.FullName);
+            ensureUnreadable(directory.FullName);
             succeeded = true;
             return new UnreadableDirectoryScope(
                 directory,
-                denyRule,
+                originalAccessSddl,
                 null,
                 sentinelPath);
         }
@@ -60,14 +71,16 @@ internal sealed class UnreadableDirectoryScope : IDisposable
         {
             if (!succeeded)
             {
-                RestoreWindows(directory, denyRule);
+                RestoreWindows(directory, originalAccessSddl);
                 File.Delete(sentinelPath);
             }
         }
     }
 
     [UnsupportedOSPlatform("windows")]
-    private static UnreadableDirectoryScope CreateUnix(DirectoryInfo directory)
+    private static UnreadableDirectoryScope CreateUnix(
+        DirectoryInfo directory,
+        Action<string> ensureUnreadable)
     {
         var mode = File.GetUnixFileMode(directory.FullName);
         var sentinelPath = CreateSentinel(directory.FullName);
@@ -76,7 +89,7 @@ internal sealed class UnreadableDirectoryScope : IDisposable
         try
         {
             File.SetUnixFileMode(directory.FullName, UnixFileMode.None);
-            EnsureUnreadable(directory.FullName);
+            ensureUnreadable(directory.FullName);
             succeeded = true;
             return new UnreadableDirectoryScope(
                 directory,
@@ -120,9 +133,9 @@ internal sealed class UnreadableDirectoryScope : IDisposable
 
     public void Dispose()
     {
-        if (OperatingSystem.IsWindows() && _windowsDenyRule is not null)
+        if (OperatingSystem.IsWindows() && _windowsAccessSddl is not null)
         {
-            RestoreWindows(_directory, _windowsDenyRule);
+            RestoreWindows(_directory, _windowsAccessSddl);
         }
         else if (!OperatingSystem.IsWindows() && _unixMode.HasValue)
         {
@@ -135,10 +148,12 @@ internal sealed class UnreadableDirectoryScope : IDisposable
     [SupportedOSPlatform("windows")]
     private static void RestoreWindows(
         DirectoryInfo directory,
-        FileSystemAccessRule denyRule)
+        string accessSddl)
     {
-        var security = directory.GetAccessControl();
-        security.RemoveAccessRuleSpecific(denyRule);
+        var security = new DirectorySecurity();
+        security.SetSecurityDescriptorSddlForm(
+            accessSddl,
+            AccessControlSections.Access);
         directory.SetAccessControl(security);
     }
 }
