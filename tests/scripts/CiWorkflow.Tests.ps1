@@ -256,18 +256,97 @@ Describe "CI workflow" {
     }
 
     It "uploads Pester and Canvas Host evidence after producer failure" {
+        $uploadReferenceCount = 0
+        foreach ($line in $script:WindowsJob) {
+            if ($line.TrimStart().StartsWith("#", [System.StringComparison]::Ordinal)) {
+                continue
+            }
+
+            $uploadReferenceCount += [regex]::Matches(
+                $line,
+                'actions/upload-artifact@').Count
+        }
+        $uploadReferenceCount | Should -Be 2
+        $artifactUploads = @($script:WindowsSteps | Where-Object {
+            ($_.Lines -join "`n") -match '(?m)^\s{8}[''"]?uses[''"]?\s*:\s*[''"]?actions/upload-artifact@'
+        })
+        $artifactUploads.Count | Should -Be 2
+        $artifactUploads[0].Name | Should -Be "Upload script test results"
+        $artifactUploads[1].Name | Should -Be "Upload Canvas Host test diagnostics"
+
         $pesterUpload = Get-CiStep -Steps $script:WindowsSteps -Name "Upload script test results"
         $pesterBlock = $pesterUpload.Lines -join "`n"
-        $pesterBlock | Should -Match '(?m)^        if: always\(\)$'
-        $pesterBlock | Should -Match '(?m)^          path: TestResults\\pester\\script-tests\.xml$'
-        $pesterBlock | Should -Match '(?m)^          if-no-files-found: warn$'
+        $pesterLines = @($pesterUpload.Lines | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        })
+        $pesterLines.Count | Should -Be 7
+        $pesterLines[0] | Should -Be "        if: always()"
+        $pesterLines[1] | Should -Be "        uses: actions/upload-artifact@v4"
+        $pesterLines[2] | Should -Be "        with:"
+        $pesterLines[3] | Should -Be '          name: ci-pester-results-${{ github.run_attempt }}'
+        $pesterLines[4] | Should -Be '          path: TestResults\pester\script-tests.xml'
+        $pesterLines[5] | Should -Be "          if-no-files-found: warn"
+        $pesterLines[6] | Should -Be "          retention-days: 14"
         $pesterBlock | Should -Not -Match 'continue-on-error'
 
-        $canvasUpload = Get-CiStep -Steps $script:WindowsSteps -Name "Upload Canvas Host test diagnostics"
+        $canvasUploads = @($script:WindowsSteps | Where-Object {
+            $block = $_.Lines -join "`n"
+            $block -match '(?m)^        uses: actions/upload-artifact@v4$' -and
+                $block -match '(?i)canvas-host'
+        })
+        $canvasUploads.Count | Should -Be 1
+        $canvasUpload = $canvasUploads[0]
+        $canvasUpload.Name | Should -Be "Upload Canvas Host test diagnostics"
         $canvasBlock = $canvasUpload.Lines -join "`n"
-        $canvasBlock | Should -Match '(?m)^        if: always\(\)$'
-        $canvasBlock | Should -Match '(?m)^          path: TestResults\\canvas-host$'
-        $canvasBlock | Should -Match '(?m)^          if-no-files-found: ignore$'
+        @($canvasUpload.Lines | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        }).Count | Should -Be 9
+        $stepKeys = @($canvasUpload.Lines | ForEach-Object {
+            if ($_ -match '^\s{8}[''"]?([a-zA-Z][a-zA-Z0-9-]*)[''"]?\s*:') {
+                $Matches[1]
+            }
+        })
+        $stepKeys.Count | Should -Be 3
+        $stepKeys[0] | Should -Be "if"
+        $stepKeys[1] | Should -Be "uses"
+        $stepKeys[2] | Should -Be "with"
+
+        $withKeys = @($canvasUpload.Lines | ForEach-Object {
+            if ($_ -match '^\s{10}[''"]?([a-zA-Z][a-zA-Z0-9-]*)[''"]?\s*:') {
+                $Matches[1]
+            }
+        })
+        $withKeys.Count | Should -Be 4
+        $withKeys[0] | Should -Be "name"
+        $withKeys[1] | Should -Be "path"
+        $withKeys[2] | Should -Be "if-no-files-found"
+        $withKeys[3] | Should -Be "retention-days"
+
+        $canvasUpload.Lines[0] | Should -Be "        if: always()"
+        $canvasUpload.Lines[1] | Should -Be "        uses: actions/upload-artifact@v4"
+        $canvasUpload.Lines[2] | Should -Be "        with:"
+        $canvasUpload.Lines[3] | Should -Be '          name: ci-canvas-host-results-${{ github.run_attempt }}'
+        $canvasUpload.Lines[4] | Should -Be "          path: |"
+        $pathIndex = [array]::IndexOf($canvasUpload.Lines, "          path: |")
+        $canvasPaths = [System.Collections.Generic.List[string]]::new()
+        for ($index = $pathIndex + 1; $index -lt $canvasUpload.Lines.Count; $index++) {
+            $line = $canvasUpload.Lines[$index]
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                continue
+            }
+
+            $indent = $line.Length - $line.TrimStart().Length
+            if ($indent -le 10) {
+                break
+            }
+
+            $canvasPaths.Add($line.Substring(12))
+        }
+        $canvasPaths.Count | Should -Be 2
+        $canvasPaths[0] | Should -Be 'TestResults\canvas-host\canvas-host.trx'
+        $canvasPaths[1] | Should -Be 'TestResults\canvas-host\diagnostics\${{ github.run_id }}-${{ github.run_attempt }}\*.json'
+        $canvasUpload.Lines[$pathIndex + 3] | Should -Be "          if-no-files-found: ignore"
+        $canvasUpload.Lines[$pathIndex + 4] | Should -Be "          retention-days: 14"
         $canvasBlock | Should -Not -Match 'continue-on-error'
 
         $canvasTest = Get-CiRunBody -Step (

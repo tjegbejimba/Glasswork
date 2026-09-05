@@ -33,20 +33,48 @@ Run the suite with:
 --logger "trx;LogFileName=canvas-host.trx" --results-directory TestResults\canvas-host
 ```
 
+GitHub Actions uploads must use:
+
+```text
+TestResults\canvas-host\canvas-host.trx
+TestResults\canvas-host\diagnostics\${{ github.run_id }}-${{ github.run_attempt }}\*.json
+```
+
 The producer writes:
 
 - `TestResults\canvas-host\canvas-host.trx`
-- `TestResults\canvas-host\diagnostics\*.json` on completed test failures
+- `TestResults\canvas-host\diagnostics\<run-id>-<run-attempt>\*.json`
+  on completed GitHub Actions test failures
 
 A completed passing run may have no diagnostics. Build/discovery failure or a
 crashed/external-terminated test runner can leave either output absent, so
 artifact upload must use `if: always()` and tolerate missing files without
 masking the test step's result.
 
+Each GitHub Actions attempt writes to the generation derived from
+`GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT`; local runs use
+`local-<test-process-id>-<invocation-guid>`. Hosted identity components must
+both be present, numeric, and bounded (32 characters for the run ID and 8 for
+the attempt). An incomplete or malformed hosted identity fails closed rather
+than falling back to a local path. The assembly log prints the selected
+diagnostics directory.
+Uploads must select only the current GitHub generation. Assembly initialization
+removes that generation before any test executes. If it cannot be removed,
+initialization fails closed with `GWCH_TEMP_CLEANUP_FAILED`; it does not
+continue and risk treating evidence from an earlier invocation in the same
+generation as current. That pre-test failure may leave no new TRX or diagnostic
+JSON, so upload still warns on missing files without masking the authoritative
+test-step failure.
+
 Diagnostics never include raw response bodies, authorization headers, command
 arguments, environment dictionaries, tokens, or unredacted temporary Vault/UI
 State paths. Host streams are sanitized and bounded by bytes, lines, and line
 length.
+
+After a readiness record, a failed health probe allows up to one bounded second
+for a spontaneous process exit to become observable before teardown can kill
+the host. An observed exit is classified as `GWCH_HOST_EXITED`, including when
+the inner request first reported a timeout.
 
 ## Flake policy
 

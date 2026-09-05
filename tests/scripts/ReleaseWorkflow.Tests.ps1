@@ -43,7 +43,9 @@ Describe "Release workflow" {
         $workflow | Should -Match "(?s)Upload canvas host test diagnostics.*?if: always\(\)"
         $workflow | Should -Match "canvas-host-test-diagnostics"
         $workflow | Should -Match "TestResults\\canvas-host\\canvas-host\.trx"
-        $workflow | Should -Match "TestResults\\canvas-host\\diagnostics\\\*\.json"
+        $workflow | Should -Match '(?m)^[ \t]+TestResults\\canvas-host\\diagnostics\\\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}\\\*\.json[ \t]*\r?$'
+        $workflow | Should -Not -Match "TestResults\\canvas-host\\diagnostics\\\*\.json"
+        $workflow | Should -Not -Match "TestResults\\canvas-host\\diagnostics\\\*\*"
         $workflow | Should -Match "New-ReleasePackage"
         $workflow | Should -Match "Resolve-AppPublicationState"
         $workflow | Should -Match "ResumeDraft"

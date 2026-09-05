@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using static Glasswork.CanvasHost.Tests.CanvasHostTestSupport;
 
 namespace Glasswork.CanvasHost.Tests;
@@ -54,7 +53,7 @@ public sealed class CanvasPairedScenarioTests : CanvasHostTestBase
         AddTask(vault, "long-content", longTitle);
         await using var host = await StartHost(vault, "session-canvas-long", "credential-canvas-long");
         using var client = AuthorizedClient("credential-canvas-long");
-        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "long-content" } }));
+        await AssertJsonSuccessAsync(PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "long-content" } }));
 
         var response = await client.GetAsync($"{host.Url}/canvas?task_id=long-content");
         var html = await response.Content.ReadAsStringAsync();

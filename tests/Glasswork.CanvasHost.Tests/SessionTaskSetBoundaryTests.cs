@@ -1,6 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
-using System.Text.Json;
 using static Glasswork.CanvasHost.Tests.CanvasHostTestSupport;
 
 namespace Glasswork.CanvasHost.Tests;
@@ -25,11 +23,11 @@ public sealed class SessionTaskSetBoundaryTests : CanvasHostTestBase
         using var client = AuthorizedClient("credential-load");
 
         // First load establishes recency order [demo, second].
-        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo", "second" } }));
+        await AssertJsonSuccessAsync(PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo", "second" } }));
         // Second load re-loads "demo" (dedup: it must move back to the front)
         // and adds "third"; the last successfully loaded id ("third") is selected.
-        var response = await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "third", "demo" } });
-        using var body = (await ReadJsonResponseAsync(response)).Body;
+        using var response = await PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "third", "demo" } });
+        var body = response.Body;
         var members = body.RootElement.GetProperty("members");
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
@@ -51,10 +49,11 @@ public sealed class SessionTaskSetBoundaryTests : CanvasHostTestBase
         await using var host = await StartHost(vault, "session-status", "credential-status");
         using var client = AuthorizedClient("credential-status");
 
-        var response = await client.PostAsJsonAsync(
+        using var response = await PostJsonAsync(
+            client,
             $"{host.Url}/api/tasks/load",
             new { taskIds = new[] { "demo", "t-in-progress", "t-blocked", "t-done", "t-cancelled" } });
-        using var body = (await ReadJsonResponseAsync(response)).Body;
+        var body = response.Body;
         var members = body.RootElement.GetProperty("members");
         var blockedMember = members.EnumerateArray().Single(m => m.GetProperty("taskId").GetString() == "t-blocked");
 
@@ -81,15 +80,15 @@ public sealed class SessionTaskSetBoundaryTests : CanvasHostTestBase
         using var client = AuthorizedClient("credential-limit");
 
         // Fill the canvas to exactly the 20-member limit first.
-        var fill = await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = ids });
+        using var fill = await PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = ids });
         AddTask(vault, "overflow", "Overflow task");
-        var overflow = await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "overflow" } });
-        var after = await client.GetAsync($"{host.Url}/api/tasks");
-        using var afterBody = (await ReadJsonResponseAsync(after)).Body;
+        using var overflow = await PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "overflow" } });
+        using var after = await GetJsonAsync(client, $"{host.Url}/api/tasks");
+        var afterBody = after.Body;
 
         Assert.AreEqual(HttpStatusCode.OK, fill.StatusCode);
         Assert.AreEqual(HttpStatusCode.Conflict, overflow.StatusCode, "a load that would exceed the 20-Task limit must fail visibly");
-        using var overflowBody = (await ReadJsonResponseAsync(overflow)).Body;
+        var overflowBody = overflow.Body;
         Assert.AreEqual("limit_exceeded", overflowBody.RootElement.GetProperty("code").GetString());
         Assert.AreEqual(20, afterBody.RootElement.GetProperty("members").GetArrayLength(), "a rejected load must not evict or partially add members");
         Assert.IsFalse(afterBody.RootElement.GetProperty("members").EnumerateArray().Any(m => m.GetProperty("taskId").GetString() == "overflow"), "the rejected Task must not appear in membership");
@@ -103,21 +102,19 @@ public sealed class SessionTaskSetBoundaryTests : CanvasHostTestBase
         AddTask(vault, "third", "Third task");
         await using var host = await StartHost(vault, "session-select", "credential-select");
         using var client = AuthorizedClient("credential-select");
-        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo", "second", "third" } }));
+        await AssertJsonSuccessAsync(PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo", "second", "third" } }));
         // Recency order after loading in this sequence is [third, second, demo] (most to least recent).
 
         // Selecting the least-recent member is a view action only.
-        var selectResponse = await client.PostAsJsonAsync($"{host.Url}/api/tasks/select", new { taskId = "demo" });
-        using var selectJson = await ReadJsonResponseAsync(selectResponse);
-        var selectBody = selectJson.Body;
+        using var selectResponse = await PostJsonAsync(client, $"{host.Url}/api/tasks/select", new { taskId = "demo" });
+        var selectBody = selectResponse.Body;
         var orderAfterSelect = selectBody.RootElement.GetProperty("members").EnumerateArray().Select(m => m.GetProperty("taskId").GetString()).ToArray();
 
         // Removing the selected (least-recent) member selects the member that
         // was immediately more recent than it — "second" is the next
         // most-recent Task after "demo" in the [third, second, demo] order.
-        var unloadResponse = await client.PostAsJsonAsync($"{host.Url}/api/tasks/unload", new { taskId = "demo" });
-        using var unloadJson = await ReadJsonResponseAsync(unloadResponse);
-        var unloadBody = unloadJson.Body;
+        using var unloadResponse = await PostJsonAsync(client, $"{host.Url}/api/tasks/unload", new { taskId = "demo" });
+        var unloadBody = unloadResponse.Body;
 
         Assert.AreEqual(HttpStatusCode.OK, selectResponse.StatusCode);
         Assert.AreEqual("demo", selectBody.RootElement.GetProperty("selectedTaskId").GetString());
@@ -133,14 +130,14 @@ public sealed class SessionTaskSetBoundaryTests : CanvasHostTestBase
         var vault = CreateVault();
         await using var host = await StartHost(vault, "session-empty", "credential-empty");
         using var client = AuthorizedClient("credential-empty");
-        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } }));
+        await AssertJsonSuccessAsync(PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } }));
 
-        var unloadResponse = await client.PostAsJsonAsync($"{host.Url}/api/tasks/unload", new { taskId = "demo" });
-        using var unloadBody = (await ReadJsonResponseAsync(unloadResponse)).Body;
+        using var unloadResponse = await PostJsonAsync(client, $"{host.Url}/api/tasks/unload", new { taskId = "demo" });
+        var unloadBody = unloadResponse.Body;
 
-        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } }));
-        var clearResponse = await client.PostAsync($"{host.Url}/api/tasks/clear", null);
-        using var clearBody = (await ReadJsonResponseAsync(clearResponse)).Body;
+        await AssertJsonSuccessAsync(PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } }));
+        using var clearResponse = await PostJsonAsync(client, $"{host.Url}/api/tasks/clear");
+        var clearBody = clearResponse.Body;
         var taskFile = Path.Combine(vault, "wiki", "todo", "demo.md");
         var contentAfterClear = await File.ReadAllTextAsync(taskFile);
 
@@ -161,14 +158,12 @@ public sealed class SessionTaskSetBoundaryTests : CanvasHostTestBase
         using var client = AuthorizedClient("credential-unavailable");
 
         // Loading a non-existent id must retain it as an unavailable member, not reject the batch.
-        var loadResponse = await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "vanishing", "missing-id" } });
-        using var loadJson = await ReadJsonResponseAsync(loadResponse);
-        var loadBody = loadJson.Body;
+        using var loadResponse = await PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "vanishing", "missing-id" } });
+        var loadBody = loadResponse.Body;
 
         File.Delete(Path.Combine(vault, "wiki", "todo", "vanishing.md"));
-        var refreshResponse = await client.PostAsync($"{host.Url}/api/tasks/refresh-all", null);
-        using var refreshJson = await ReadJsonResponseAsync(refreshResponse);
-        var refreshBody = refreshJson.Body;
+        using var refreshResponse = await PostJsonAsync(client, $"{host.Url}/api/tasks/refresh-all");
+        var refreshBody = refreshResponse.Body;
         var refreshedMembers = refreshBody.RootElement.GetProperty("members").EnumerateArray().ToDictionary(m => m.GetProperty("taskId").GetString()!, m => m);
 
         Assert.AreEqual(HttpStatusCode.OK, loadResponse.StatusCode);
@@ -185,9 +180,9 @@ public sealed class SessionTaskSetBoundaryTests : CanvasHostTestBase
         await using var host = await StartHost(vault, "session-lazy", "credential-lazy");
         using var client = AuthorizedClient("credential-lazy");
 
-        await AssertJsonSuccessAsync(client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } }));
-        var response = await client.GetAsync($"{host.Url}/canvas-state");
-        using var body = (await ReadJsonResponseAsync(response)).Body;
+        await AssertJsonSuccessAsync(PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = new[] { "demo" } }));
+        using var response = await GetJsonAsync(client, $"{host.Url}/canvas-state");
+        var body = response.Body;
         var memberJson = body.RootElement.GetProperty("members")[0].ToString();
 
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
@@ -243,17 +238,17 @@ public sealed class SessionTaskSetBoundaryTests : CanvasHostTestBase
         using var client = AuthorizedClient("credential-back-compat");
 
         // The pre-existing stateless detail endpoint must be untouched by the Session Task Set.
-        var legacyDetail = await client.GetAsync($"{host.Url}/api/task?task_id=demo");
-        var canvasState = await client.GetAsync($"{host.Url}/canvas-state");
+        using var legacyDetail = await GetJsonAsync(client, $"{host.Url}/api/task?task_id=demo");
+        using var canvasState = await GetJsonAsync(client, $"{host.Url}/canvas-state");
         // Visiting /canvas with the singular task_id shorthand must load and select that Task.
         var canvasVisit = await client.GetAsync($"{host.Url}/canvas?task_id=demo");
-        var stateAfterVisit = await client.GetAsync($"{host.Url}/canvas-state");
-        using var afterVisitBody = (await ReadJsonResponseAsync(stateAfterVisit)).Body;
+        using var stateAfterVisit = await GetJsonAsync(client, $"{host.Url}/canvas-state");
+        var afterVisitBody = stateAfterVisit.Body;
 
         Assert.AreEqual(HttpStatusCode.OK, legacyDetail.StatusCode);
-        using var legacyDetailBody = (await ReadJsonResponseAsync(legacyDetail)).Body;
+        var legacyDetailBody = legacyDetail.Body;
         Assert.AreEqual("task", legacyDetailBody.RootElement.GetProperty("kind").GetString());
-        using var beforeVisitBody = (await ReadJsonResponseAsync(canvasState)).Body;
+        var beforeVisitBody = canvasState.Body;
         Assert.AreEqual(0, beforeVisitBody.RootElement.GetProperty("members").GetArrayLength(), "the canvas starts with no members until something loads");
         Assert.AreEqual(HttpStatusCode.OK, canvasVisit.StatusCode);
         Assert.AreEqual("demo", afterVisitBody.RootElement.GetProperty("selectedTaskId").GetString(), "singular task_id remains a compatible shorthand that loads and selects the Task");

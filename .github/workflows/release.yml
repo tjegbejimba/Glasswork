@@ -169,7 +169,7 @@ jobs:
           name: canvas-host-test-diagnostics
           path: |
             TestResults\canvas-host\canvas-host.trx
-            TestResults\canvas-host\diagnostics\*.json
+            TestResults\canvas-host\diagnostics\${{ github.run_id }}-${{ github.run_attempt }}\*.json
           if-no-files-found: warn
 
       - name: Publish Windows update package

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -19,9 +20,11 @@ internal static class CanvasHostTestSupport
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan HealthExitObservationTimeout = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan TeardownTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
     private static readonly object CurrentGate = new();
+    private static readonly string LocalDiagnosticsNonce = Guid.NewGuid().ToString("N");
     private static TestResources? _current;
 
     public sealed record RequestDiagnostic(string Method, string Path);
@@ -96,11 +99,29 @@ internal static class CanvasHostTestSupport
         }
     }
 
-    public static void ResetDiagnosticsDirectory()
+    public static string ResetDiagnosticsDirectory()
     {
         var root = DiagnosticsRoot();
-        if (Directory.Exists(root))
-            Directory.Delete(root, recursive: true);
+        ResetDiagnosticsDirectory(root);
+        return root;
+    }
+
+    internal static void ResetDiagnosticsDirectory(string root)
+    {
+        try
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw CreateCleanupFailure(new(
+                "GWCH_TEMP_CLEANUP_FAILED",
+                null,
+                null,
+                null,
+                $"Stale diagnostics could not be removed before the test run ({error.GetType().Name})."));
+        }
     }
 
     public static async Task EndTestAsync(TestContext testContext)
@@ -121,10 +142,8 @@ internal static class CanvasHostTestSupport
                 cleanupFailures.Count > 0 ? cleanupFailures[0].Code : "GWCH_TEST_FAILURE_CONTEXT",
                 null,
                 null,
-                resources.ProcessSnapshot(),
-                cleanupFailures.Count > 0
-                    ? string.Join("; ", cleanupFailures.Select(f => f.Message))
-                    : null);
+                resources.ProcessSnapshot());
+            diagnostic = CombinePrimaryAndCleanup(diagnostic, cleanupFailures);
             if (diagnostic.Process is null)
                 diagnostic = diagnostic with { Process = resources.ProcessSnapshot() };
             resources.WriteDiagnostic(diagnostic);
@@ -209,7 +228,7 @@ created: 2026-09-02{links}
     /// thread-pool timing rather than responding synchronously to a request.
     /// </summary>
     public static async Task<JsonDocument> PollUntilAsync(
-        Func<CancellationToken, Task<HttpResponseMessage>> fetch,
+        Func<CancellationToken, Task<JsonResponseResult>> fetch,
         Func<JsonElement, bool> isDone,
         TimeSpan? timeout = null)
     {
@@ -220,8 +239,7 @@ created: 2026-09-02{links}
             while (true)
             {
                 last?.Dispose();
-                using var response = await fetch(deadline.Token);
-                using var parsed = await ReadJsonResponseAsync(response, deadline.Token);
+                using var parsed = await fetch(deadline.Token);
                 last = JsonDocument.Parse(parsed.Body.RootElement.GetRawText());
                 if (isDone(last.RootElement)) return last;
                 await Task.Delay(150, deadline.Token);
@@ -312,14 +330,34 @@ created: 2026-09-02{links}
         }
     }
 
-    public static async Task AssertJsonSuccessAsync(Task<HttpResponseMessage> responseTask)
+    public static Task<JsonResponseResult> GetJsonAsync(
+        HttpClient client,
+        string uri,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default) =>
+        SendJsonAsync(client, HttpMethod.Get, uri, timeout: timeout, cancellationToken: cancellationToken);
+
+    public static Task<JsonResponseResult> PostJsonAsync(
+        HttpClient client,
+        string uri,
+        object? payload = null,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default) =>
+        SendJsonAsync(
+            client,
+            HttpMethod.Post,
+            uri,
+            payload is null ? null : JsonContent.Create(payload),
+            timeout,
+            cancellationToken);
+
+    public static async Task AssertJsonSuccessAsync(Task<JsonResponseResult> responseTask)
     {
-        using var response = await responseTask;
-        using var parsed = await ReadJsonResponseAsync(response);
+        using var parsed = await responseTask;
         Assert.AreEqual(
             HttpStatusCode.OK,
             parsed.StatusCode,
-            $"Setup request {response.RequestMessage?.Method} {response.RequestMessage?.RequestUri?.AbsolutePath} must succeed.");
+            "The JSON setup request must succeed.");
     }
 
     private static RequestDiagnostic? RequestDiagnosticFrom(HttpRequestMessage? request)
@@ -471,18 +509,76 @@ created: 2026-09-02{links}
         return new CanvasHostTestFailureException(diagnostic);
     }
 
+    private static CanvasHostTestFailureException CreateCleanupFailure(CanvasHostDiagnostic diagnostic) =>
+        new(diagnostic);
+
+    internal static CanvasHostDiagnostic CombinePrimaryAndCleanup(
+        CanvasHostDiagnostic primary,
+        IReadOnlyList<CanvasHostTestFailureException> cleanupFailures)
+    {
+        if (cleanupFailures.Count == 0) return primary;
+        var cleanup = string.Join("; ", cleanupFailures.Select(failure =>
+            $"{failure.Code}: {failure.Diagnostic.SecondaryFailure ?? failure.Message}"));
+        return primary with
+        {
+            SecondaryFailure = string.IsNullOrWhiteSpace(primary.SecondaryFailure)
+                ? cleanup
+                : $"{primary.SecondaryFailure}; {cleanup}",
+        };
+    }
+
     private static TestResources? Current()
     {
         lock (CurrentGate) return _current;
     }
 
     private static string DiagnosticsRoot() =>
-        Path.GetFullPath(Path.Combine(
+        DiagnosticsRoot(
+            Environment.GetEnvironmentVariable("GITHUB_RUN_ID"),
+            Environment.GetEnvironmentVariable("GITHUB_RUN_ATTEMPT"),
+            Environment.ProcessId);
+
+    internal static string DiagnosticsRoot(string? runId, string? runAttempt, int processId)
+    {
+        var hasRunId = !string.IsNullOrEmpty(runId);
+        var hasRunAttempt = !string.IsNullOrEmpty(runAttempt);
+        string generation;
+        if (!hasRunId && !hasRunAttempt)
+        {
+            generation = $"local-{processId}-{LocalDiagnosticsNonce}";
+        }
+        else if (!IsNumericPathSegment(runId, 32) || !IsNumericPathSegment(runAttempt, 8))
+        {
+            throw CreateCleanupFailure(new(
+                "GWCH_TEMP_CLEANUP_FAILED",
+                null,
+                null,
+                null,
+                "The hosted diagnostics identity is incomplete, malformed, or exceeds its bound."));
+        }
+        else
+        {
+            generation = $"{runId}-{runAttempt}";
+        }
+
+        return Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
             "..", "..", "..", "..", "..",
-            "TestResults", "canvas-host", "diagnostics"));
+            "TestResults", "canvas-host", "diagnostics", generation));
+    }
 
-    public static async Task<RunningHost> StartHost(string? vault, string sessionId, string token, string? uiStatePath = null, string? currentStatePath = null)
+    private static bool IsNumericPathSegment(string? value, int maximumLength) =>
+        !string.IsNullOrEmpty(value) &&
+        value.Length <= maximumLength &&
+        value.All(char.IsAsciiDigit);
+
+    public static async Task<RunningHost> StartHost(
+        string? vault,
+        string sessionId,
+        string token,
+        string? uiStatePath = null,
+        string? currentStatePath = null,
+        Func<RunningHost, HttpClient, CancellationToken, Task<JsonResponseResult>>? healthProbe = null)
     {
         // Every spawned test host gets its own isolated UI State file unless
         // a caller explicitly shares one (e.g. persistence/cold-restore
@@ -562,16 +658,18 @@ created: 2026-09-02{links}
             try
             {
                 using var client = AuthorizedClient(token);
-                using var response = await client.GetAsync($"{host.Url}/health");
-                using var health = await ReadJsonResponseAsync(response);
+                using var healthDeadline = new CancellationTokenSource(RequestTimeout);
+                using var health = healthProbe is null
+                    ? await GetJsonAsync(client, $"{host.Url}/health", cancellationToken: healthDeadline.Token)
+                    : await healthProbe(host, client, healthDeadline.Token);
                 if (health.StatusCode != HttpStatusCode.OK ||
                     !health.Body.RootElement.TryGetProperty("ok", out var ok) ||
                     ok.ValueKind != JsonValueKind.True)
                 {
                     throw Failure(new(
                         "GWCH_HOST_EXITED",
-                        RequestDiagnosticFrom(response.RequestMessage),
-                        ResponseDiagnosticFrom(response, await response.Content.ReadAsByteArrayAsync()),
+                        new RequestDiagnostic("GET", "/health"),
+                        null,
                         host.Snapshot()));
                 }
                 return host;
@@ -579,10 +677,31 @@ created: 2026-09-02{links}
             catch (Exception error)
             {
                 var processDiagnostic = host.Snapshot();
-                await host.StopAsync();
-                if (error is CanvasHostTestFailureException diagnosticFailure)
+                if (!processDiagnostic.HasExited &&
+                    await Task.WhenAny(exitTask, Task.Delay(HealthExitObservationTimeout)) == exitTask)
                 {
-                    throw Failure(diagnosticFailure.Diagnostic with
+                    await exitTask;
+                    processDiagnostic = host.Snapshot();
+                }
+                await host.StopAsync();
+                if (processDiagnostic.HasExited)
+                {
+                    var diagnosticFailure = error as CanvasHostTestFailureException;
+                    var secondary = diagnosticFailure is null
+                        ? error.GetType().Name
+                        : $"{diagnosticFailure.Code}: {diagnosticFailure.Diagnostic.SecondaryFailure ?? diagnosticFailure.Message}";
+                    var reclassified = new CanvasHostDiagnostic(
+                        "GWCH_HOST_EXITED",
+                        diagnosticFailure?.Diagnostic.Request ?? new RequestDiagnostic("GET", "/health"),
+                        diagnosticFailure?.Diagnostic.Response,
+                        processDiagnostic,
+                        $"The readiness record was emitted, then the host exited during the bounded health check ({secondary}).");
+                    Current()?.ReclassifyDiagnostic(diagnosticFailure?.Diagnostic, reclassified);
+                    throw new CanvasHostTestFailureException(reclassified);
+                }
+                if (error is CanvasHostTestFailureException boundedFailure)
+                {
+                    throw Failure(boundedFailure.Diagnostic with
                     {
                         Process = processDiagnostic,
                         SecondaryFailure = "The readiness record was emitted, but the bounded health check failed.",
@@ -605,10 +724,21 @@ created: 2026-09-02{links}
     {
         private int _stopped;
         private ProcessDiagnostic? _lastSnapshot;
+        private readonly Func<Task<CanvasHostTestFailureException?>>? _stopForTesting;
 
         public Process Process { get; } = process;
         public string Url { get; internal set; } = string.Empty;
         public CanvasHostTestFailureException? CleanupFailure { get; private set; }
+
+        private RunningHost(Func<Task<CanvasHostTestFailureException?>> stopForTesting)
+            : this(Process.GetCurrentProcess(), new BoundedTextCapture(), new BoundedTextCapture())
+        {
+            _stopForTesting = stopForTesting;
+        }
+
+        internal static RunningHost CreateForTesting(
+            Func<Task<CanvasHostTestFailureException?>> stopForTesting) =>
+            new(stopForTesting);
 
         internal ProcessDiagnostic Snapshot()
         {
@@ -625,6 +755,11 @@ created: 2026-09-02{links}
         internal async Task StopAsync()
         {
             if (Interlocked.Exchange(ref _stopped, 1) != 0) return;
+            if (_stopForTesting is not null)
+            {
+                CleanupFailure = await _stopForTesting();
+                return;
+            }
             try
             {
                 if (!Process.HasExited)
@@ -633,7 +768,7 @@ created: 2026-09-02{links}
                 var exit = Process.WaitForExitAsync();
                 if (await Task.WhenAny(exit, Task.Delay(TeardownTimeout)) != exit)
                 {
-                    CleanupFailure = Failure(new(
+                    CleanupFailure = CreateCleanupFailure(new(
                         "GWCH_TEARDOWN_TIMEOUT",
                         null,
                         null,
@@ -648,7 +783,7 @@ created: 2026-09-02{links}
                 var pumps = Task.WhenAll(stdout.Completion, stderr.Completion);
                 if (await Task.WhenAny(pumps, Task.Delay(TeardownTimeout)) != pumps)
                 {
-                    CleanupFailure = Failure(new(
+                    CleanupFailure = CreateCleanupFailure(new(
                         "GWCH_TEARDOWN_TIMEOUT",
                         null,
                         null,
@@ -658,7 +793,7 @@ created: 2026-09-02{links}
             }
             catch (Exception error)
             {
-                CleanupFailure = Failure(new(
+                CleanupFailure = CreateCleanupFailure(new(
                     "GWCH_TEARDOWN_TIMEOUT",
                     null,
                     null,
@@ -769,7 +904,12 @@ created: 2026-09-02{links}
             if (!string.IsNullOrEmpty(value)) _secrets.Add(value);
         }
         public void TrackHost(RunningHost host) => _hosts.Add(host);
-        public void RecordDiagnostic(CanvasHostDiagnostic diagnostic) => LastDiagnostic = diagnostic;
+        public void RecordDiagnostic(CanvasHostDiagnostic diagnostic) => LastDiagnostic ??= diagnostic;
+        public void ReclassifyDiagnostic(CanvasHostDiagnostic? observed, CanvasHostDiagnostic replacement)
+        {
+            if (LastDiagnostic is null || ReferenceEquals(LastDiagnostic, observed))
+                LastDiagnostic = replacement;
+        }
 
         public ProcessDiagnostic? ProcessSnapshot() =>
             _hosts.LastOrDefault()?.Snapshot();
@@ -794,7 +934,7 @@ created: 2026-09-02{links}
                         },
                         deadline))
                 {
-                    failures.Add(Failure(new(
+                    failures.Add(CreateCleanupFailure(new(
                         "GWCH_TEMP_CLEANUP_FAILED",
                         null,
                         null,
@@ -813,7 +953,7 @@ created: 2026-09-02{links}
                         },
                         deadline))
                 {
-                    failures.Add(Failure(new(
+                    failures.Add(CreateCleanupFailure(new(
                         "GWCH_TEMP_CLEANUP_FAILED",
                         null,
                         null,

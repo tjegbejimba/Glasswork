@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
 using static Glasswork.CanvasHost.Tests.CanvasHostTestSupport;
 
@@ -42,13 +41,13 @@ public sealed class PerformanceBoundaryTests : CanvasHostTestBase
         await using var host = await StartHost(vault, "session-perf", "credential-perf");
         using var client = AuthorizedClient("credential-perf");
 
-        var load = await client.PostAsJsonAsync($"{host.Url}/api/tasks/load", new { taskIds = ids });
+        using var load = await PostJsonAsync(client, $"{host.Url}/api/tasks/load", new { taskIds = ids });
         Assert.AreEqual(HttpStatusCode.OK, load.StatusCode);
 
-        async Task AssertRespondsWithin(string description, Func<Task<HttpResponseMessage>> action)
+        async Task AssertRespondsWithin(string description, Func<Task<JsonResponseResult>> action)
         {
             var stopwatch = Stopwatch.StartNew();
-            var response = await action();
+            using var response = await action();
             stopwatch.Stop();
             Assert.AreEqual(HttpStatusCode.OK, response.StatusCode, description);
             Assert.IsLessThan(
@@ -57,13 +56,13 @@ public sealed class PerformanceBoundaryTests : CanvasHostTestBase
                 $"{description} took {stopwatch.Elapsed} for a full 20-member rail, exceeding the {ResponsivenessBound} responsiveness bound.");
         }
 
-        await AssertRespondsWithin("selecting a rail member", () => client.PostAsJsonAsync($"{host.Url}/api/tasks/select", new { taskId = "perf-10" }));
-        await AssertRespondsWithin("fetching canvas-state", () => client.GetAsync($"{host.Url}/canvas-state"));
-        await AssertRespondsWithin("refreshing the selected member", () => client.PostAsync($"{host.Url}/api/tasks/refresh-selected", null));
-        await AssertRespondsWithin("refreshing all members", () => client.PostAsync($"{host.Url}/api/tasks/refresh-all", null));
+        await AssertRespondsWithin("selecting a rail member", () => PostJsonAsync(client, $"{host.Url}/api/tasks/select", new { taskId = "perf-10" }));
+        await AssertRespondsWithin("fetching canvas-state", () => GetJsonAsync(client, $"{host.Url}/canvas-state"));
+        await AssertRespondsWithin("refreshing the selected member", () => PostJsonAsync(client, $"{host.Url}/api/tasks/refresh-selected"));
+        await AssertRespondsWithin("refreshing all members", () => PostJsonAsync(client, $"{host.Url}/api/tasks/refresh-all"));
 
-        var finalState = await client.GetAsync($"{host.Url}/api/tasks");
-        using var body = (await ReadJsonResponseAsync(finalState)).Body;
+        using var finalState = await GetJsonAsync(client, $"{host.Url}/api/tasks");
+        var body = finalState.Body;
         Assert.AreEqual(20, body.RootElement.GetProperty("members").GetArrayLength(), "the full rail must remain intact after the responsiveness pass");
     }
 }

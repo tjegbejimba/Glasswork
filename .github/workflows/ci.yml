@@ -153,7 +153,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ci-canvas-host-results-${{ github.run_attempt }}
-          path: TestResults\canvas-host
+          path: |
+            TestResults\canvas-host\canvas-host.trx
+            TestResults\canvas-host\diagnostics\${{ github.run_id }}-${{ github.run_attempt }}\*.json
           if-no-files-found: ignore
           retention-days: 14
 

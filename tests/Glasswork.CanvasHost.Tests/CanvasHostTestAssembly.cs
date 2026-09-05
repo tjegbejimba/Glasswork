@@ -4,6 +4,9 @@ namespace Glasswork.CanvasHost.Tests;
 public sealed class CanvasHostTestAssembly
 {
     [AssemblyInitialize]
-    public static void Initialize(TestContext _) =>
-        CanvasHostTestSupport.ResetDiagnosticsDirectory();
+    public static void Initialize(TestContext testContext)
+    {
+        var diagnosticsRoot = CanvasHostTestSupport.ResetDiagnosticsDirectory();
+        testContext.WriteLine($"CanvasHost diagnostics output: {diagnosticsRoot}");
+    }
 }
