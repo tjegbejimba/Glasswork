@@ -880,6 +880,69 @@ public sealed class SupplementalInitializationCoordinatorTests
 
     [TestMethod]
     [Timeout(5000, CooperativeCancellation = true)]
+    public async Task BacklinkRecoveryFailureHandlerCanRetryBeforeAnotherOverflow()
+    {
+        var pagePath = Path.Combine(_vaultRoot, "wiki", "concepts", "retry-overflow.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(pagePath)!);
+        File.WriteAllText(pagePath, "[[before-retry]]");
+        var backlinks = new BacklinkIndex();
+        using var research = new FileSystemResearchCatalog(_vaultRoot);
+        using var coordinator = new SupplementalInitializationCoordinator(
+            generation: 27,
+            _vaultRoot,
+            backlinks,
+            research,
+            quietPeriod: TimeSpan.FromMilliseconds(10));
+        await coordinator.StartAsync();
+        using var recovered = new ManualResetEventSlim(false);
+        var retryReachedReady = false;
+        var injected = 0;
+        coordinator.BacklinksChanged += (_, args) =>
+        {
+            if (args.AffectedTaskIds.Contains("after-retry-overflow"))
+                recovered.Set();
+        };
+        coordinator.StateChanged += (_, args) =>
+        {
+            if (args.Component != SupplementalComponent.Backlinks
+                || args.Current.Status != SupplementalInitializationStatus.Failed
+                || Interlocked.CompareExchange(ref injected, 1, 0) != 0)
+            {
+                return;
+            }
+
+            backlinks.BeforeBuildHook = null;
+            _ = coordinator.RetryAsync(SupplementalComponent.Backlinks);
+            retryReachedReady = SpinWait.SpinUntil(
+                () => coordinator.Readiness.Backlinks.Status
+                    == SupplementalInitializationStatus.Ready,
+                TimeSpan.FromSeconds(2));
+            coordinator.BacklinksWatcher.Stop();
+            File.WriteAllText(pagePath, "[[after-retry-overflow]]");
+            coordinator.BacklinksWatcher.HandleWatcherError(
+                new InternalBufferOverflowException(
+                    "Injected overflow after immediate retry."));
+            coordinator.BacklinksWatcher.Start();
+        };
+        backlinks.BeforeBuildHook = _ =>
+            throw new IOException("Injected live recovery failure.");
+
+        coordinator.BacklinksWatcher.HandleWatcherError(
+            new InternalBufferOverflowException("Injected first overflow."));
+
+        Assert.IsTrue(
+            recovered.Wait(TimeSpan.FromSeconds(2)),
+            "A new overflow after an immediate retry must own a recovery pass.");
+        Assert.IsTrue(retryReachedReady);
+        Assert.AreEqual(
+            SupplementalInitializationStatus.Ready,
+            coordinator.Readiness.Backlinks.Status);
+        Assert.IsEmpty(backlinks.GetBacklinks("before-retry"));
+        Assert.HasCount(1, backlinks.GetBacklinks("after-retry-overflow"));
+    }
+
+    [TestMethod]
+    [Timeout(5000, CooperativeCancellation = true)]
     public async Task TryCaptureResearch_DuringLiveRefreshReturnsPriorSnapshotWithoutBlocking()
     {
         var topicPath = Path.Combine(

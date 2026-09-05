@@ -259,6 +259,7 @@ public sealed class BacklinksWatcher : IDisposable
 
     private void RecoverFromOverflow(long recoveryGeneration)
     {
+        Exception? recoveryFailure = null;
         CancellationToken token;
         try
         {
@@ -307,9 +308,7 @@ public sealed class BacklinksWatcher : IDisposable
             System.Diagnostics.Debug.WriteLine(
                 $"BacklinksWatcher overflow recovery failed: {ex}");
             AbortInitialScan();
-            RecoveryFailed?.Invoke(
-                this,
-                new BacklinkRecoveryFailedEventArgs(ex));
+            recoveryFailure = ex;
         }
         finally
         {
@@ -321,6 +320,13 @@ public sealed class BacklinksWatcher : IDisposable
                     _overflowRecoveryPending = false;
                 }
             }
+        }
+
+        if (recoveryFailure is not null)
+        {
+            RecoveryFailed?.Invoke(
+                this,
+                new BacklinkRecoveryFailedEventArgs(recoveryFailure));
         }
     }
 
