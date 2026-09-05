@@ -59,6 +59,77 @@ public sealed class VisualVerificationMergeEvidenceTests
     }
 
     [TestMethod]
+    public void CaptureLaunchBundle_IncludesCanvasRetryExecutableStagedUnderLaunchRoot()
+    {
+        var retryHost = Path.Combine(
+            _root,
+            "VisualVerification",
+            "canvas-retry-bundle",
+            "host",
+            "9.9.9",
+            "Glasswork.CanvasHost.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(retryHost)!);
+        File.WriteAllText(retryHost, "canvas host");
+
+        var manifest = VisualVerificationMergeEvidence.CaptureLaunchBundle(_root);
+
+        CollectionAssert.Contains(
+            manifest.Files.Select(file => file.Path).ToArray(),
+            "VisualVerification/canvas-retry-bundle/host/9.9.9/Glasswork.CanvasHost.exe");
+    }
+
+    [TestMethod]
+    public void CaptureVerifiedAuxiliaryBundle_BindsInstalledCopy()
+    {
+        var source = Path.Combine(_root, "source");
+        var installed = Path.Combine(_root, "installed");
+        Directory.CreateDirectory(source);
+        Directory.CreateDirectory(installed);
+        File.WriteAllText(Path.Combine(source, "Glasswork.CanvasHost.exe"), "canvas host");
+        File.WriteAllText(Path.Combine(source, "Glasswork.CanvasHost.dll"), "managed host");
+        File.Copy(
+            Path.Combine(source, "Glasswork.CanvasHost.exe"),
+            Path.Combine(installed, "Glasswork.CanvasHost.exe"));
+        File.Copy(
+            Path.Combine(source, "Glasswork.CanvasHost.dll"),
+            Path.Combine(installed, "Glasswork.CanvasHost.dll"));
+        var expected = VisualVerificationMergeEvidence.CaptureLaunchBundle(source);
+
+        var installedFiles = VisualVerificationMergeEvidence.CaptureVerifiedAuxiliaryBundle(
+            expected,
+            installed,
+            "canvas-extension-retry-installed/host/9.9.9");
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "canvas-extension-retry-installed/host/9.9.9/Glasswork.CanvasHost.dll",
+                "canvas-extension-retry-installed/host/9.9.9/Glasswork.CanvasHost.exe",
+            },
+            installedFiles.Select(file => file.Path).ToArray());
+    }
+
+    [TestMethod]
+    public void CaptureVerifiedAuxiliaryBundle_WhenInstalledCopyChanges_Throws()
+    {
+        var source = Path.Combine(_root, "source");
+        var installed = Path.Combine(_root, "installed");
+        Directory.CreateDirectory(source);
+        Directory.CreateDirectory(installed);
+        File.WriteAllText(Path.Combine(source, "Glasswork.CanvasHost.exe"), "expected");
+        File.WriteAllText(Path.Combine(installed, "Glasswork.CanvasHost.exe"), "modified");
+        var expected = VisualVerificationMergeEvidence.CaptureLaunchBundle(source);
+
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(
+            () => VisualVerificationMergeEvidence.CaptureVerifiedAuxiliaryBundle(
+                expected,
+                installed,
+                "canvas-extension-retry-installed/host/9.9.9"));
+
+        StringAssert.Contains(exception.Message, "installed auxiliary bundle");
+    }
+
+    [TestMethod]
     public void EnsureSourceUnchanged_WhenScenarioChanges_Throws()
     {
         var before = new VisualVerificationSourceSnapshot(

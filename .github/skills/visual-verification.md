@@ -65,7 +65,8 @@ pwsh -File scripts\invoke-visual-verification.ps1 `
   -MergeEvidence
 ```
 
-`-MergeEvidence` requires a clean committed checkout, rejects `-NoBuild`, builds
+Pass an explicit `-OutDir` with `-MergeEvidence`. Strict mode requires a clean
+committed checkout, rejects `-NoBuild`, builds
 an immutable temporary source snapshot of the recorded commit into isolated
 output/intermediate directories, and launches that fresh output. `result.json`
 retains its existing execution fields and adds a versioned `Evidence` object
@@ -77,8 +78,12 @@ containing:
 
 The runner records the source and launch bundle before execution and checks them
 again after the app exits. A source, scenario, git-status, or launch-file change
-aborts the run. Strict failures write `failure.json` and do not leave a
-success-shaped `result.json`.
+aborts the run. Once the output directory is initialized, strict failures write
+`failure.json` and remove `result.json`, including wrapper failures before the
+runner starts. Unsafe or locked evidence paths abort before launch; if cleanup
+or failure reporting cannot complete, the command reports that error instead.
+Use a fresh output directory in that case. Retained older files are not evidence
+of the failed invocation.
 
 The hashes identify the exact artifacts that were rendered from the stable
 reviewed checkout. They are merge audit evidence, not independent cryptographic

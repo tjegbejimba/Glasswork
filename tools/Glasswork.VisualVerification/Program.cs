@@ -89,6 +89,7 @@ internal static partial class VisualVerificationRunner
                 failureStage = "build";
                 string appExe;
                 string? launchRoot = null;
+                PreparedCanvasRetryBundle? preparedCanvasRetryBundle = null;
                 if (options.MergeEvidence)
                 {
                     var artifactsRoot = Path.Combine(workDir, "artifacts");
@@ -114,6 +115,17 @@ internal static partial class VisualVerificationRunner
                         ?? throw new FileNotFoundException(
                             $"Fresh merge-evidence build did not produce Glasswork.exe under {artifactsRoot}.");
                     launchRoot = Path.GetDirectoryName(appExe)!;
+                    if (scenario.CanvasExtensionState?.RetryBundleAvailable == true)
+                    {
+                        preparedCanvasRetryBundle =
+                            await MaterializeCanvasExtensionRetryBundleAsync(
+                                buildSourceRoot,
+                                Path.Combine(
+                                    launchRoot,
+                                    "VisualVerification",
+                                    "canvas-retry-bundle"),
+                                Path.Combine(workDir, "canvas-retry-artifacts"));
+                    }
                     launchBefore = VisualVerificationMergeEvidence.CaptureLaunchBundle(launchRoot);
                 }
                 else
@@ -136,7 +148,13 @@ internal static partial class VisualVerificationRunner
                 }
 
                 failureStage = "verification";
-                var result = await RunScenarioAsync(scenario, options, appExe, workDir);
+                var scenarioRun = await RunScenarioAsync(
+                    scenario,
+                    options,
+                    appExe,
+                    workDir,
+                    preparedCanvasRetryBundle);
+                var result = scenarioRun.Result;
                 if (options.MergeEvidence)
                 {
                     failureStage = "postflight";
@@ -151,7 +169,8 @@ internal static partial class VisualVerificationRunner
                         Evidence = CreateEvidence(
                             sourceBefore!,
                             launchBefore!,
-                            result.Captures),
+                            result.Captures,
+                            scenarioRun.AuxiliaryOutputs),
                     };
                 }
 
@@ -194,7 +213,8 @@ internal static partial class VisualVerificationRunner
     private static VerificationEvidence CreateEvidence(
         VisualVerificationSourceSnapshot source,
         VisualVerificationLaunchBundle launchBundle,
-        IReadOnlyList<CaptureResult> captures) =>
+        IReadOnlyList<CaptureResult> captures,
+        IReadOnlyList<VisualVerificationEvidenceFile> auxiliaryOutputs) =>
         new(
             1,
             new EvidenceSource(
@@ -207,7 +227,8 @@ internal static partial class VisualVerificationRunner
                 "x64",
                 "net10.0-windows10.0.26100.0",
                 launchBundle.Sha256,
-                launchBundle.Files),
+                launchBundle.Files,
+                auxiliaryOutputs),
             captures
                 .Select(capture => new VisualVerificationEvidenceFile(
                     Path.GetFileName(capture.Path),
@@ -231,11 +252,12 @@ internal static partial class VisualVerificationRunner
         return sourceRoot;
     }
 
-    private static async Task<VerificationResult> RunScenarioAsync(
+    private static async Task<ScenarioRunResult> RunScenarioAsync(
         VisualVerificationScenario scenario,
         RunnerOptions options,
         string appExe,
-        string workDir)
+        string workDir,
+        PreparedCanvasRetryBundle? preparedCanvasRetryBundle)
     {
         var vaultRoot = Path.Combine(workDir, "Vault");
         var todoPath = Path.Combine(vaultRoot, "wiki", "todo");
@@ -250,9 +272,16 @@ internal static partial class VisualVerificationRunner
             wayfinderFixturePath,
             JsonSerializer.Serialize(scenario.WayfinderIssues));
         var canvasExtensionsRoot = MaterializeCanvasExtensionState(scenario, workDir);
-        var canvasRetrySourcePath = scenario.CanvasExtensionState?.RetryBundleAvailable == true
-            ? await MaterializeCanvasExtensionRetryBundleAsync(options, workDir)
-            : null;
+        var canvasRetrySourcePath = preparedCanvasRetryBundle?.SourcePath;
+        if (canvasRetrySourcePath is null
+            && scenario.CanvasExtensionState?.RetryBundleAvailable == true)
+        {
+            var developmentRetryBundle = await MaterializeCanvasExtensionRetryBundleAsync(
+                options.RepoRoot,
+                Path.Combine(workDir, "canvas-retry-bundle"),
+                Path.Combine(workDir, "canvas-retry-artifacts"));
+            canvasRetrySourcePath = developmentRetryBundle.SourcePath;
+        }
         var initialUiState = new Dictionary<string, object?>
         {
             ["app.theme"] = scenario.Theme,
@@ -334,16 +363,33 @@ internal static partial class VisualVerificationRunner
                 captures.Add(new CaptureResult(capture.Name, path, imageStats.Width, imageStats.Height, imageStats.UniqueSampledColors));
             }
 
-            return new VerificationResult(
-                scenario.Name,
-                options.OutDir,
-                process.Id,
-                vaultRoot,
-                uiStatePath,
-                instanceKey,
-                captures,
-                inspection?.InspectionPath,
-                inspection?.SuggestedScenarioPath);
+            IReadOnlyList<VisualVerificationEvidenceFile> auxiliaryOutputs = [];
+            if (options.MergeEvidence && preparedCanvasRetryBundle is not null)
+            {
+                var installedHostRoot = Path.Combine(
+                    canvasExtensionsRoot!,
+                    Glasswork.Core.AppUpdate.CanvasExtensionHealthReader.ExtensionName,
+                    "host",
+                    preparedCanvasRetryBundle.Version);
+                auxiliaryOutputs =
+                    VisualVerificationMergeEvidence.CaptureVerifiedAuxiliaryBundle(
+                        preparedCanvasRetryBundle.HostBundle,
+                        installedHostRoot,
+                        $"canvas-extension-retry-installed/host/{preparedCanvasRetryBundle.Version}");
+            }
+
+            return new ScenarioRunResult(
+                new VerificationResult(
+                    scenario.Name,
+                    options.OutDir,
+                    process.Id,
+                    vaultRoot,
+                    uiStatePath,
+                    instanceKey,
+                    captures,
+                    inspection?.InspectionPath,
+                    inspection?.SuggestedScenarioPath),
+                auxiliaryOutputs);
         }
         finally
         {
@@ -534,23 +580,40 @@ internal static partial class VisualVerificationRunner
     /// Settings' Retry button and observe a genuine transition to a healthy
     /// state, not just a seeded static fixture.
     /// </summary>
-    private static async Task<string> MaterializeCanvasExtensionRetryBundleAsync(RunnerOptions options, string workDir)
+    private static async Task<PreparedCanvasRetryBundle> MaterializeCanvasExtensionRetryBundleAsync(
+        string sourceRoot,
+        string bundle,
+        string artifactsRoot)
     {
         const string version = "9.9.9";
         const string sourceRevision = "ffffffffffffffffffffffffffffffffffffffff";
-        var bundle = Path.Combine(workDir, "canvas-retry-bundle");
         var versionDirectory = Path.Combine(bundle, "host", version);
         Directory.CreateDirectory(bundle);
         await File.WriteAllTextAsync(
             Path.Combine(bundle, "extension.mjs"),
             "// visual-verification fixture adapter (not exercised)");
 
-        var canvasHostProject = Path.Combine(options.RepoRoot, "tools", "Glasswork.CanvasHost", "Glasswork.CanvasHost.csproj");
+        var canvasHostProject = Path.Combine(
+            sourceRoot,
+            "tools",
+            "Glasswork.CanvasHost",
+            "Glasswork.CanvasHost.csproj");
         await RunProcessAsync(
             "dotnet",
-            $"publish \"{canvasHostProject}\" --configuration Release --self-contained --runtime win-x64 " +
-            $"--output \"{versionDirectory}\" -p:Version={version} -p:RepositoryCommit={sourceRevision} --nologo --verbosity quiet",
-            options.RepoRoot);
+            [
+                "publish",
+                canvasHostProject,
+                "--configuration", "Release",
+                "--self-contained",
+                "--runtime", "win-x64",
+                "--artifacts-path", artifactsRoot,
+                "--output", versionDirectory,
+                $"-p:Version={version}",
+                $"-p:RepositoryCommit={sourceRevision}",
+                "--nologo",
+                "--verbosity", "quiet",
+            ],
+            sourceRoot);
 
         await File.WriteAllTextAsync(Path.Combine(bundle, "host", "active.txt"), version);
         var hostExe = Path.Combine(versionDirectory, "Glasswork.CanvasHost.exe");
@@ -559,7 +622,10 @@ internal static partial class VisualVerificationRunner
             Path.Combine(bundle, "manifest.json"),
             JsonSerializer.Serialize(new { version, sourceRevision, sha256 }));
 
-        return bundle;
+        return new PreparedCanvasRetryBundle(
+            bundle,
+            version,
+            VisualVerificationMergeEvidence.CaptureLaunchBundle(versionDirectory));
     }
 
     private static Process LaunchApp(
@@ -2611,6 +2677,16 @@ internal sealed record EvidenceBuild(
     string Platform,
     string TargetFramework,
     string LaunchManifestSha256,
-    IReadOnlyList<VisualVerificationEvidenceFile> Outputs);
+    IReadOnlyList<VisualVerificationEvidenceFile> Outputs,
+    IReadOnlyList<VisualVerificationEvidenceFile> AuxiliaryOutputs);
 
 internal sealed record VerificationFailure(bool Success, string Stage, string Message);
+
+internal sealed record PreparedCanvasRetryBundle(
+    string SourcePath,
+    string Version,
+    VisualVerificationLaunchBundle HostBundle);
+
+internal sealed record ScenarioRunResult(
+    VerificationResult Result,
+    IReadOnlyList<VisualVerificationEvidenceFile> AuxiliaryOutputs);

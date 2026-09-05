@@ -102,6 +102,26 @@ public static class VisualVerificationMergeEvidence
         }
     }
 
+    public static IReadOnlyList<VisualVerificationEvidenceFile> CaptureVerifiedAuxiliaryBundle(
+        VisualVerificationLaunchBundle expected,
+        string installedRoot,
+        string evidencePathPrefix)
+    {
+        var installed = CaptureLaunchBundle(installedRoot);
+        if (expected.Sha256 != installed.Sha256)
+        {
+            throw new InvalidOperationException(
+                "The installed auxiliary bundle does not match the archived source bundle.");
+        }
+
+        var prefix = evidencePathPrefix.Trim().TrimEnd('/');
+        return installed.Files
+            .Select(file => new VisualVerificationEvidenceFile(
+                $"{prefix}/{file.Path}",
+                file.Sha256))
+            .ToArray();
+    }
+
     public static string HashFile(string path)
     {
         using var stream = File.OpenRead(path);
