@@ -7,6 +7,12 @@
   launches Glasswork with verification-only environment variables, optionally
   drives UI Automation actions, captures named screenshots, and writes result.json.
 
+  With -MergeEvidence, the runner requires a clean committed checkout and a
+  repository-owned scenario, rejects -NoBuild, builds an immutable snapshot of
+  that commit into an isolated temporary output tree, and binds result.json to
+  the unchanged source, scenario, launched files, and screenshots. Normal
+  verification keeps its existing iterative development behavior.
+
 .EXAMPLE
   pwsh -File scripts\invoke-visual-verification.ps1 -Scenario scripts\visual-verification\backlog-smoke.json
 #>
@@ -19,7 +25,9 @@ param(
 
     [switch]$NoBuild,
 
-    [switch]$KeepWorkingDirectory
+    [switch]$KeepWorkingDirectory,
+
+    [switch]$MergeEvidence
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +50,9 @@ if ($NoBuild) {
 }
 if ($KeepWorkingDirectory) {
     $runnerArgs += '--keep-working-directory'
+}
+if ($MergeEvidence) {
+    $runnerArgs += '--merge-evidence'
 }
 
 & dotnet @runnerArgs

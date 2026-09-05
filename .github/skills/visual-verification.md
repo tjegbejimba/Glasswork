@@ -52,6 +52,66 @@ is screenshotted and killed.
   **Add or update a scenario that covers the behavior you changed**, then view
   the captured PNG(s) under the printed output directory.
 
+### Merge evidence
+
+Ordinary verification is intentionally flexible: it supports dirty worktrees,
+scratch scenarios outside the repository, and `-NoBuild`. Before merge, run the
+applicable committed scenario in strict merge-evidence mode:
+
+```powershell
+pwsh -File scripts\invoke-visual-verification.ps1 `
+  -Scenario scripts\visual-verification\backlog-smoke.json `
+  -OutDir "$env:TEMP\glasswork-merge-evidence" `
+  -MergeEvidence
+```
+
+`-MergeEvidence` requires a clean committed checkout, rejects `-NoBuild`, builds
+an immutable temporary source snapshot of the recorded commit into isolated
+output/intermediate directories, and launches that fresh output. `result.json`
+retains its existing execution fields and adds a versioned `Evidence` object
+containing:
+
+- the exact commit, tree, repository-relative scenario ID, and scenario SHA-256;
+- a sorted manifest and SHA-256 for every file in the exact launch directory;
+- the SHA-256 of every captured PNG.
+
+The runner records the source and launch bundle before execution and checks them
+again after the app exits. A source, scenario, git-status, or launch-file change
+aborts the run. Strict failures write `failure.json` and do not leave a
+success-shaped `result.json`.
+
+The hashes identify the exact artifacts that were rendered from the stable
+reviewed checkout. They are merge audit evidence, not independent cryptographic
+build provenance.
+
+Attach `result.json` and every PNG to the pull request (or provide durable
+links), record the exact source SHA, and state who inspected every image and
+whether it passed. Any change to the PR head invalidates the evidence and
+requires a new strict run.
+
+`verify-app.ps1` remains a useful generic development smoke test. In the initial
+contract it is not strict merge evidence; add a minimal committed scenario for
+a merge-bound startup or wiring change.
+
+### Paired Task Detail Projection evidence
+
+A semantic `TaskDetailProjection` change requires both renderers:
+
+1. Run `task-detail-projection-parity.json` (or the applicable committed native
+  scenario) in merge-evidence mode and inspect its WinUI PNG.
+2. Start the real `Glasswork.CanvasHost` with an isolated fixture carrying the
+  same projection semantics, open its loopback canvas URL in a real browser,
+  wait for the expected Task title and section landmarks, and capture the
+  rendered browser pixels.
+3. Record the same source SHA, fixture identity, viewport, light/dark preference,
+  canvas PNG name/hash, and inspector outcome in the PR.
+
+Manual local browser capture is acceptable. An HTTP response, HTML source
+assertion, or `CanvasHost` unit test is not a substitute for the browser-rendered
+PNG. Existing `ProjectionParityGuardTests` and `CanvasPairedScenarioTests` remain
+the semantic contract; compare labels, hierarchy, values, and states, not pixels
+or identical layout.
+
 ---
 
 ## 2. Scenario schema (cheat-sheet)
@@ -207,4 +267,7 @@ deterministic because the committed scenario is hand-finalized, not model-driven
 [ ] New/changed behavior has a committed scenario under scripts\visual-verification\
 [ ] New selectors discovered via grep or inspect-app.ps1; added AutomationIds where missing
 [ ] Cloud/Linux: flagged UI work for local re-verification in the PR description
+[ ] Before merge: ran the committed scenario with -MergeEvidence at the current PR head
+[ ] Attached result.json and every PNG; recorded an explicit inspection outcome
+[ ] Semantic Task Detail Projection change: attached an actual paired CanvasHost browser PNG
 ```

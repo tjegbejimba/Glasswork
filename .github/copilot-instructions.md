@@ -189,6 +189,14 @@ inside Ubuntu.
    Linux agents cannot run this** — they must flag UI-touching work for local
    re-verification before merge.
 
+   Before merge, attach visual evidence for the exact current PR head using the
+   committed behavior-specific scenario and `invoke-visual-verification.ps1
+   -MergeEvidence`: include `result.json`, every captured PNG, and an explicit
+   human or agent inspection outcome. Any later head change invalidates that
+   evidence. Semantic Task Detail Projection changes also require an actual
+   browser-rendered CanvasHost PNG with equivalent semantics/hierarchy; pixel
+   equality is not required.
+
    > **Skill:** the step-by-step playbook for this rule — verifying changes,
    > writing scenarios, and discovering/scaffolding `AutomationId` selectors by
    > inspecting the live UI Automation tree (`scripts\inspect-app.ps1`) — lives

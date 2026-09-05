@@ -314,7 +314,7 @@ public sealed partial class VisualVerificationScenario
                     throw new FormatException("assert-ui-state-json value must be valid JSON.", ex);
                 }
             }
-            if (action.Type.Equals("capture", StringComparison.OrdinalIgnoreCase)
+            if (action.Type.Trim().Equals("capture", StringComparison.OrdinalIgnoreCase)
                 && string.IsNullOrWhiteSpace(action.Name))
             {
                 throw new FormatException("capture requires name.");
@@ -326,6 +326,8 @@ public sealed partial class VisualVerificationScenario
             if (string.IsNullOrWhiteSpace(capture.Name))
                 throw new FormatException("Every scenario capture requires a non-empty name.");
         }
+
+        VisualVerificationMergeEvidence.EnsureUniqueCaptureNames(this);
     }
 
     private static bool IsUrlShapedReference(string reference) =>

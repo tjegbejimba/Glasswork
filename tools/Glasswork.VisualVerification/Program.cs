@@ -4,12 +4,12 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.IO.Compression;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Automation;
@@ -34,27 +34,137 @@ internal static partial class VisualVerificationRunner
         // the inspection catalog's bounds would not line up with the screenshot.
         EnsureDpiAware();
 
+        RunnerOptions? options = null;
+        var failureStage = "preflight";
         try
         {
-            var options = RunnerOptions.Parse(args);
-            var scenario = VisualVerificationScenario.FromFile(options.ScenarioPath);
+            options = RunnerOptions.Parse(args);
             Directory.CreateDirectory(options.OutDir);
-
-            if (!options.NoBuild)
-                await RunProcessAsync("dotnet", $"build \"{Path.Combine(options.RepoRoot, AppRelativePath)}\" -c Debug -p:Platform=x64 --nologo -v quiet -tl:off", options.RepoRoot);
-
-            var appExe = Path.Combine(options.RepoRoot, AppExeRelativePath);
-            if (!File.Exists(appExe))
-                throw new FileNotFoundException($"Glasswork dev executable not found. Build first or remove --no-build. Expected: {appExe}", appExe);
+            if (options.MergeEvidence)
+            {
+                File.Delete(Path.Combine(options.OutDir, "result.json"));
+                File.Delete(Path.Combine(options.OutDir, "failure.json"));
+                if (options.NoBuild)
+                    throw new FormatException("--no-build cannot be used with --merge-evidence.");
+            }
 
             var workDir = Path.Combine(Path.GetTempPath(), "glasswork-visual-work-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(workDir);
 
             try
             {
+                VisualVerificationSourceSnapshot? sourceBefore = null;
+                VisualVerificationLaunchBundle? launchBefore = null;
+                VisualVerificationScenario scenario;
+                var buildSourceRoot = options.RepoRoot;
+                if (options.MergeEvidence)
+                {
+                    sourceBefore = VisualVerificationMergeEvidence.CaptureSourceSnapshot(
+                        options.RepoRoot,
+                        options.ScenarioPath);
+                    if (!string.IsNullOrEmpty(sourceBefore.Status))
+                    {
+                        throw new InvalidOperationException(
+                            "Merge evidence requires a clean repository checkout.");
+                    }
+
+                    buildSourceRoot = await MaterializeSourceSnapshotAsync(
+                        options.RepoRoot,
+                        sourceBefore.Commit,
+                        workDir);
+                    var snapshotScenarioPath = Path.Combine(
+                        buildSourceRoot,
+                        sourceBefore.ScenarioId.Replace('/', Path.DirectorySeparatorChar));
+                    if (VisualVerificationMergeEvidence.HashFile(snapshotScenarioPath)
+                        != sourceBefore.ScenarioSha256)
+                    {
+                        throw new InvalidOperationException(
+                            "The committed scenario does not match the reviewed checkout.");
+                    }
+                    scenario = VisualVerificationScenario.FromFile(snapshotScenarioPath);
+                }
+                else
+                    scenario = VisualVerificationScenario.FromFile(options.ScenarioPath);
+
+                failureStage = "build";
+                string appExe;
+                string? launchRoot = null;
+                if (options.MergeEvidence)
+                {
+                    var artifactsRoot = Path.Combine(workDir, "artifacts");
+                    await RunProcessAsync(
+                        "dotnet",
+                        [
+                            "build",
+                            Path.Combine(buildSourceRoot, AppRelativePath),
+                            "-c", "Debug",
+                            "-p:Platform=x64",
+                            "--artifacts-path", artifactsRoot,
+                            "--nologo",
+                            "-v", "quiet",
+                            "-tl:off",
+                        ],
+                        buildSourceRoot);
+                    appExe = Directory
+                        .EnumerateFiles(
+                            artifactsRoot,
+                            "Glasswork.exe",
+                            System.IO.SearchOption.AllDirectories)
+                        .SingleOrDefault()
+                        ?? throw new FileNotFoundException(
+                            $"Fresh merge-evidence build did not produce Glasswork.exe under {artifactsRoot}.");
+                    launchRoot = Path.GetDirectoryName(appExe)!;
+                    launchBefore = VisualVerificationMergeEvidence.CaptureLaunchBundle(launchRoot);
+                }
+                else
+                {
+                    if (!options.NoBuild)
+                    {
+                        await RunProcessAsync(
+                            "dotnet",
+                            $"build \"{Path.Combine(options.RepoRoot, AppRelativePath)}\" -c Debug -p:Platform=x64 --nologo -v quiet -tl:off",
+                            options.RepoRoot);
+                    }
+
+                    appExe = Path.Combine(options.RepoRoot, AppExeRelativePath);
+                    if (!File.Exists(appExe))
+                    {
+                        throw new FileNotFoundException(
+                            $"Glasswork dev executable not found. Build first or remove --no-build. Expected: {appExe}",
+                            appExe);
+                    }
+                }
+
+                failureStage = "verification";
                 var result = await RunScenarioAsync(scenario, options, appExe, workDir);
+                if (options.MergeEvidence)
+                {
+                    failureStage = "postflight";
+                    var sourceAfter = VisualVerificationMergeEvidence.CaptureSourceSnapshot(
+                        options.RepoRoot,
+                        options.ScenarioPath);
+                    VisualVerificationMergeEvidence.EnsureSourceUnchanged(sourceBefore!, sourceAfter);
+                    var launchAfter = VisualVerificationMergeEvidence.CaptureLaunchBundle(launchRoot!);
+                    VisualVerificationMergeEvidence.EnsureLaunchBundleUnchanged(launchBefore!, launchAfter);
+                    result = result with
+                    {
+                        Evidence = CreateEvidence(
+                            sourceBefore!,
+                            launchBefore!,
+                            result.Captures),
+                    };
+                }
+
                 var resultPath = Path.Combine(options.OutDir, "result.json");
-                File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                File.WriteAllText(
+                    resultPath,
+                    JsonSerializer.Serialize(
+                        result,
+                        new JsonSerializerOptions
+                        {
+                            WriteIndented = true,
+                            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+                        }));
                 Console.WriteLine(resultPath);
                 return 0;
             }
@@ -66,9 +176,59 @@ internal static partial class VisualVerificationRunner
         }
         catch (Exception ex)
         {
+            if (options?.MergeEvidence == true)
+            {
+                Directory.CreateDirectory(options.OutDir);
+                File.Delete(Path.Combine(options.OutDir, "result.json"));
+                File.WriteAllText(
+                    Path.Combine(options.OutDir, "failure.json"),
+                    JsonSerializer.Serialize(
+                        new VerificationFailure(false, failureStage, ex.Message),
+                        new JsonSerializerOptions { WriteIndented = true }));
+            }
             Console.Error.WriteLine(ex.Message);
             return 1;
         }
+    }
+
+    private static VerificationEvidence CreateEvidence(
+        VisualVerificationSourceSnapshot source,
+        VisualVerificationLaunchBundle launchBundle,
+        IReadOnlyList<CaptureResult> captures) =>
+        new(
+            1,
+            new EvidenceSource(
+                source.Commit,
+                source.Tree,
+                source.ScenarioId,
+                source.ScenarioSha256),
+            new EvidenceBuild(
+                "Debug",
+                "x64",
+                "net10.0-windows10.0.26100.0",
+                launchBundle.Sha256,
+                launchBundle.Files),
+            captures
+                .Select(capture => new VisualVerificationEvidenceFile(
+                    Path.GetFileName(capture.Path),
+                    VisualVerificationMergeEvidence.HashFile(capture.Path)))
+                .ToArray());
+
+    private static async Task<string> MaterializeSourceSnapshotAsync(
+        string repositoryRoot,
+        string commit,
+        string workDir)
+    {
+        var archivePath = Path.Combine(workDir, "source.zip");
+        var sourceRoot = Path.Combine(workDir, "source");
+        await RunProcessAsync(
+            "git",
+            ["archive", "--format=zip", $"--output={archivePath}", commit],
+            repositoryRoot);
+        Directory.CreateDirectory(sourceRoot);
+        ZipFile.ExtractToDirectory(archivePath, sourceRoot);
+        File.Delete(archivePath);
+        return sourceRoot;
     }
 
     private static async Task<VerificationResult> RunScenarioAsync(
@@ -120,6 +280,7 @@ internal static partial class VisualVerificationRunner
             var hwnd = WaitForWindow(process, TimeSpan.FromSeconds(scenario.LaunchTimeoutSeconds));
             ResizeWindow(hwnd, scenario.WindowWidth, scenario.WindowHeight);
             await Task.Delay(scenario.InitialWaitMilliseconds);
+            var captures = new List<CaptureResult>();
 
             foreach (var action in scenario.Actions)
             {
@@ -134,7 +295,8 @@ internal static partial class VisualVerificationRunner
                         captureRequestPath,
                         captureOutputPath,
                         process.Id,
-                        action);
+                        action,
+                        captures);
                 }
                 catch (Exception ex)
                 {
@@ -154,7 +316,6 @@ internal static partial class VisualVerificationRunner
                     captureOutputPath)
                 : null;
 
-            var captures = new List<CaptureResult>();
             foreach (var capture in scenario.Captures)
             {
                 if (capture.WaitMilliseconds > 0)
@@ -472,7 +633,8 @@ internal static partial class VisualVerificationRunner
         string captureRequestPath,
         string captureOutputPath,
         int processId,
-        VisualVerificationAction action)
+        VisualVerificationAction action,
+        ICollection<CaptureResult> captures)
     {
         switch (action.Type.Trim().ToLowerInvariant())
         {
@@ -556,6 +718,13 @@ internal static partial class VisualVerificationRunner
                 var imageStats = AnalyzeImage(path);
                 if (imageStats.UniqueSampledColors <= 1)
                     throw new InvalidOperationException($"Capture '{action.Name}' appears blank or uniform: {path}");
+                captures.Add(
+                    new CaptureResult(
+                        action.Name!,
+                        path,
+                        imageStats.Width,
+                        imageStats.Height,
+                        imageStats.UniqueSampledColors));
                 return;
             }
             case "assert-single-selection":
@@ -1994,6 +2163,30 @@ internal static partial class VisualVerificationRunner
             throw new InvalidOperationException($"{fileName} exited with {process.ExitCode}.\n{stdout}\n{stderr}");
     }
 
+    private static async Task RunProcessAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory)
+    {
+        var psi = new ProcessStartInfo(fileName)
+        {
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+        };
+        foreach (var argument in arguments)
+            psi.ArgumentList.Add(argument);
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException($"Failed to start {fileName}.");
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"{fileName} exited with {process.ExitCode}.\n{stdout}\n{stderr}");
+    }
+
     private static void CaptureThroughApp(
         string requestPath,
         string outputPath,
@@ -2178,10 +2371,7 @@ internal static partial class VisualVerificationRunner
     }
 
     private static string SanitizeFileName(string value) =>
-        InvalidFileNameCharsRegex().Replace(value.Trim(), "-");
-
-    [GeneratedRegex(@"[\\/:*?""<>|]+")]
-    private static partial Regex InvalidFileNameCharsRegex();
+        VisualVerificationMergeEvidence.NormalizeCaptureFileName(value);
 
     private static void EnsureDpiAware()
     {
@@ -2298,7 +2488,8 @@ internal sealed record RunnerOptions(
     string OutDir,
     bool NoBuild,
     bool KeepWorkingDirectory,
-    bool Inspect)
+    bool Inspect,
+    bool MergeEvidence)
 {
     public static RunnerOptions Parse(string[] args)
     {
@@ -2308,6 +2499,7 @@ internal sealed record RunnerOptions(
         var noBuild = false;
         var keepWorkingDir = false;
         var inspect = false;
+        var mergeEvidence = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -2331,13 +2523,16 @@ internal sealed record RunnerOptions(
                 case "--inspect":
                     inspect = true;
                     break;
+                case "--merge-evidence":
+                    mergeEvidence = true;
+                    break;
                 default:
                     throw new FormatException($"Unknown argument '{args[i]}'.");
             }
         }
 
         if (string.IsNullOrWhiteSpace(scenario))
-            throw new FormatException("Usage: Glasswork.VisualVerification --scenario <path> [--repo-root <path>] [--out-dir <path>] [--no-build] [--inspect]");
+            throw new FormatException("Usage: Glasswork.VisualVerification --scenario <path> [--repo-root <path>] [--out-dir <path>] [--no-build] [--inspect] [--merge-evidence]");
 
         repoRoot ??= FindRepoRoot(Environment.CurrentDirectory);
         outDir ??= Path.Combine(
@@ -2350,7 +2545,8 @@ internal sealed record RunnerOptions(
             Path.GetFullPath(outDir),
             noBuild,
             keepWorkingDir,
-            inspect);
+            inspect,
+            mergeEvidence);
     }
 
     private static string RequireValue(string[] args, ref int index, string name)
@@ -2384,7 +2580,8 @@ internal sealed record VerificationResult(
     string InstanceKey,
     IReadOnlyList<CaptureResult> Captures,
     string? InspectionPath = null,
-    string? SuggestedScenarioPath = null);
+    string? SuggestedScenarioPath = null,
+    VerificationEvidence? Evidence = null);
 
 internal sealed record InspectionPaths(string InspectionPath, string SuggestedScenarioPath);
 
@@ -2396,3 +2593,24 @@ internal sealed record CaptureResult(
     int UniqueSampledColors);
 
 internal sealed record ImageStats(int Width, int Height, int UniqueSampledColors);
+
+internal sealed record VerificationEvidence(
+    int SchemaVersion,
+    EvidenceSource Source,
+    EvidenceBuild Build,
+    IReadOnlyList<VisualVerificationEvidenceFile> Captures);
+
+internal sealed record EvidenceSource(
+    string Commit,
+    string Tree,
+    string ScenarioId,
+    string ScenarioSha256);
+
+internal sealed record EvidenceBuild(
+    string Configuration,
+    string Platform,
+    string TargetFramework,
+    string LaunchManifestSha256,
+    IReadOnlyList<VisualVerificationEvidenceFile> Outputs);
+
+internal sealed record VerificationFailure(bool Success, string Stage, string Message);

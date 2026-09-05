@@ -482,4 +482,28 @@ public class VisualVerificationScenarioTests
         Assert.ThrowsExactly<FormatException>(() =>
             VisualVerificationScenario.FromJson(json));
     }
+
+    [TestMethod]
+    [DataRow("capture")]
+    [DataRow(" CAPTURE ")]
+    public void FromJson_ActionAndDeclaredCaptureNamesCollideAfterSanitizing_Throws(string actionType)
+    {
+        var json = $$"""
+        {
+          "name": "capture collision",
+          "actions": [
+            {
+              "type": "{{actionType}}",
+              "name": "same:name"
+            }
+          ],
+          "captures": [{ "name": "same?name" }]
+        }
+        """;
+
+        var exception = Assert.ThrowsExactly<FormatException>(
+            () => VisualVerificationScenario.FromJson(json));
+
+        StringAssert.Contains(exception.Message, "unique output filename");
+    }
 }
