@@ -25,7 +25,7 @@ The Backlinks feature surfaces those incoming wiki references on TaskDetail (PRD
 **Option 3.** Three tightly-scoped components, all in `Glasswork.Core`:
 
 - **`IBacklinkIndex`** — pure in-memory index keyed by task id. `Build(vaultRoot)` does a full recursive scan; `UpdateForFile`/`RemoveForFile`/`Rename` apply incremental updates and return the affected task ids. No I/O outside the supplied vault root, no UI dependencies, no persistence.
-- **`BacklinksWatcher`** — its own `FileSystemWatcher` rooted at the vault, recursive, `*.md` filter, `wiki/todo/` excluded. Debounces (~250ms) per-file, applies the matching index call, and raises `BacklinksChanged(affectedTaskIds)`. Does **not** reload the task model.
+- **`BacklinksWatcher`** — its own `FileSystemWatcher` rooted at the vault, recursive, `*.md` filter, `wiki/todo/` excluded. Debounces changes into one globally ordered quiet-period batch, applies the matching index calls, and raises `BacklinksChanged(affectedTaskIds)`. Does **not** reload the task model.
 - **TaskDetail glue** — subscribes to the App-level `BacklinksChangedExternally` event and refreshes only the Backlinks section (and only when the open task is in the affected set).
 
 ### Why a separate watcher pipeline
@@ -138,9 +138,9 @@ Cancellation and disposal never wait for a held scan. Disposal publishes
 `Disposed`, cancels active attempts, and defers watcher/catalog cleanup until
 active callbacks finish. Attempt numbers prevent cancelled, retried, disposed,
 or prior-Vault completions from publishing over the current generation.
-State notifications are serialized and revalidated against the current
-immutable state before delivery, so a delayed Loading or Ready notification
-cannot follow Disposed.
+State notifications are queued without recursive delivery and revalidated
+against the current immutable state before each subscriber, so a delayed or
+reentrant Loading/Ready notification cannot follow Disposed.
 
 ### Why refresh-section-only, never reload the task model
 

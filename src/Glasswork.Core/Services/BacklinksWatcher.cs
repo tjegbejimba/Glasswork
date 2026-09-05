@@ -28,6 +28,7 @@ namespace Glasswork.Core.Services;
 public sealed class BacklinksWatcher : IDisposable
 {
     private static readonly TimeSpan DefaultQuietPeriod = TimeSpan.FromMilliseconds(250);
+    private const string GlobalDebouncerKey = "vault";
 
     private readonly FileSystemWatcher _watcher;
     private readonly TimeSpan _quietPeriod;
@@ -40,8 +41,7 @@ public sealed class BacklinksWatcher : IDisposable
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly ConcurrentDictionary<string, Debouncer> _debouncers =
         new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, List<BufferedBacklinkChange>> _scheduledChanges =
-        new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<BufferedBacklinkChange> _scheduledChanges = [];
     private bool _bufferingInitialChanges;
     private bool _overflowedDuringInitialScan;
     private bool _liveRecoveryActive;
@@ -202,10 +202,13 @@ public sealed class BacklinksWatcher : IDisposable
 
     private void OnRenamed(object sender, RenamedEventArgs e)
     {
-        // Rename = delete(old) + update(new). Use the new path as the debounce
-        // key so a sequence of rapid renames still collapses to one tick.
-        var newPath = e.FullPath;
-        var oldPath = e.OldFullPath;
+        HandleRenamed(e.OldFullPath, e.FullPath);
+    }
+
+    internal void HandleRenamed(string oldPath, string newPath)
+    {
+        // Rename = delete(old) + update(new). The global batch preserves the
+        // observed order of rename chains across different destination paths.
         var newExcluded = IsExcluded(newPath);
         var oldExcluded = IsExcluded(oldPath);
         if (newExcluded && oldExcluded) return;
@@ -369,14 +372,9 @@ public sealed class BacklinksWatcher : IDisposable
                 return;
 
             epoch = _mutationEpoch;
-            if (!_scheduledChanges.TryGetValue(key, out var scheduled))
-            {
-                scheduled = [];
-                _scheduledChanges[key] = scheduled;
-            }
-            scheduled.Add(change);
+            _scheduledChanges.Add(change);
             debouncer = _debouncers.GetOrAdd(
-                key,
+                GlobalDebouncerKey,
                 _ => new Debouncer(_quietPeriod, () =>
                 {
                     var affected = new HashSet<string>(StringComparer.Ordinal);
@@ -389,8 +387,10 @@ public sealed class BacklinksWatcher : IDisposable
                             return;
                         }
 
-                        if (!_scheduledChanges.Remove(key, out var batch))
+                        if (_scheduledChanges.Count == 0)
                             return;
+                        var batch = _scheduledChanges.ToArray();
+                        _scheduledChanges.Clear();
                         try
                         {
                             foreach (var pending in batch)

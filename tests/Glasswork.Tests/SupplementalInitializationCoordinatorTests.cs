@@ -943,6 +943,43 @@ public sealed class SupplementalInitializationCoordinatorTests
 
     [TestMethod]
     [Timeout(5000, CooperativeCancellation = true)]
+    public async Task BacklinkRenameChainIsAppliedInObservedOrder()
+    {
+        var firstPath = Path.Combine(_vaultRoot, "wiki", "concepts", "first.md");
+        var secondPath = Path.Combine(_vaultRoot, "wiki", "concepts", "second.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(firstPath)!);
+        File.WriteAllText(firstPath, "[[rename-chain]]");
+        var backlinks = new BacklinkIndex();
+        using var research = new FileSystemResearchCatalog(_vaultRoot);
+        using var coordinator = new SupplementalInitializationCoordinator(
+            generation: 28,
+            _vaultRoot,
+            backlinks,
+            research,
+            quietPeriod: TimeSpan.FromMilliseconds(10));
+        await coordinator.StartAsync();
+        using var changed = new ManualResetEventSlim(false);
+        coordinator.BacklinksChanged += (_, args) =>
+        {
+            if (args.AffectedTaskIds.Contains("rename-chain"))
+                changed.Set();
+        };
+
+        coordinator.BacklinksWatcher.Stop();
+        File.Move(firstPath, secondPath);
+        File.Move(secondPath, firstPath);
+        coordinator.BacklinksWatcher.HandleRenamed(firstPath, secondPath);
+        coordinator.BacklinksWatcher.HandleRenamed(secondPath, firstPath);
+
+        Assert.IsTrue(changed.Wait(TimeSpan.FromSeconds(2)));
+        Assert.AreEqual(
+            firstPath,
+            backlinks.GetBacklinks("rename-chain").Single().LinkingPagePath,
+            ignoreCase: true);
+    }
+
+    [TestMethod]
+    [Timeout(5000, CooperativeCancellation = true)]
     public async Task TryCaptureResearch_DuringLiveRefreshReturnsPriorSnapshotWithoutBlocking()
     {
         var topicPath = Path.Combine(
@@ -1080,6 +1117,49 @@ public sealed class SupplementalInitializationCoordinatorTests
                         status is SupplementalInitializationStatus.Loading
                             or SupplementalInitializationStatus.Ready),
                 "No stale Loading or Ready notification may follow Disposed.");
+        }
+    }
+
+    [TestMethod]
+    [Timeout(5000, CooperativeCancellation = true)]
+    public async Task StateChanged_RevalidatesBetweenReentrantSubscribers()
+    {
+        var backlinks = new BacklinkIndex();
+        using var research = new FileSystemResearchCatalog(_vaultRoot);
+        var coordinator = new SupplementalInitializationCoordinator(
+            generation: 29,
+            _vaultRoot,
+            backlinks,
+            research);
+        var secondSubscriberStates = new List<SupplementalInitializationStatus>();
+        coordinator.StateChanged += (_, args) =>
+        {
+            if (args.Component == SupplementalComponent.Backlinks
+                && args.Current.Status == SupplementalInitializationStatus.Ready)
+            {
+                coordinator.Dispose();
+            }
+        };
+        coordinator.StateChanged += (_, args) =>
+        {
+            if (args.Component == SupplementalComponent.Backlinks)
+            {
+                lock (secondSubscriberStates)
+                    secondSubscriberStates.Add(args.Current.Status);
+            }
+        };
+
+        await coordinator.StartAsync();
+
+        lock (secondSubscriberStates)
+        {
+            CollectionAssert.DoesNotContain(
+                secondSubscriberStates,
+                SupplementalInitializationStatus.Ready,
+                "A later subscriber must not receive stale Ready after an earlier subscriber disposes.");
+            Assert.AreEqual(
+                SupplementalInitializationStatus.Disposed,
+                secondSubscriberStates[^1]);
         }
     }
 

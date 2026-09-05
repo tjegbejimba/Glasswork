@@ -58,6 +58,8 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
     private readonly IPerformanceTracer _performanceTracer;
     private readonly object _lifecycleGate = new();
     private readonly object _notificationGate = new();
+    private readonly Queue<SupplementalInitializationChangedEventArgs>
+        _pendingStateNotifications = [];
     private SupplementalReadinessSnapshot _readiness;
     private CancellationTokenSource? _backlinksCancellation;
     private CancellationTokenSource? _researchCancellation;
@@ -65,6 +67,7 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
     private Task _researchTask = Task.CompletedTask;
     private bool _disposed;
     private bool _resourcesDisposed;
+    private bool _deliveringStateNotifications;
 
     internal Action<SupplementalInitializationChangedEventArgs>? BeforeStateChangedHook
     {
@@ -467,7 +470,55 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
         {
             if (GetState(Readiness, change.Component) != change.Current)
                 return;
-            StateChanged?.Invoke(this, change);
+            _pendingStateNotifications.Enqueue(change);
+            if (_deliveringStateNotifications)
+                return;
+            _deliveringStateNotifications = true;
+        }
+
+        var completedNormally = false;
+        try
+        {
+            while (true)
+            {
+                SupplementalInitializationChangedEventArgs next;
+                Delegate[] subscribers;
+                lock (_notificationGate)
+                {
+                    while (_pendingStateNotifications.TryPeek(out var pending)
+                           && GetState(Readiness, pending.Component)
+                               != pending.Current)
+                    {
+                        _pendingStateNotifications.Dequeue();
+                    }
+                    if (!_pendingStateNotifications.TryDequeue(out next!))
+                    {
+                        _deliveringStateNotifications = false;
+                        completedNormally = true;
+                        return;
+                    }
+                    subscribers = StateChanged?.GetInvocationList() ?? [];
+                }
+
+                foreach (var subscriber in subscribers)
+                {
+                    lock (_notificationGate)
+                    {
+                        if (GetState(Readiness, next.Component) != next.Current)
+                            break;
+                    }
+                    ((EventHandler<SupplementalInitializationChangedEventArgs>)
+                        subscriber)(this, next);
+                }
+            }
+        }
+        finally
+        {
+            if (!completedNormally)
+            {
+                lock (_notificationGate)
+                    _deliveringStateNotifications = false;
+            }
         }
     }
 
@@ -506,14 +557,18 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
 
     private void OnBacklinksChanged(object? sender, BacklinksChangedEventArgs e)
     {
-        lock (_notificationGate)
+        var subscribers = BacklinksChanged?.GetInvocationList() ?? [];
+        foreach (var subscriber in subscribers)
         {
-            if (Readiness.Backlinks.Status
-                != SupplementalInitializationStatus.Ready)
+            lock (_notificationGate)
             {
-                return;
+                if (Readiness.Backlinks.Status
+                    != SupplementalInitializationStatus.Ready)
+                {
+                    return;
+                }
             }
-            BacklinksChanged?.Invoke(this, e);
+            ((EventHandler<BacklinksChangedEventArgs>)subscriber)(this, e);
         }
     }
 
