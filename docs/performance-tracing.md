@@ -69,7 +69,8 @@ The trace never records Vault paths, task IDs, titles, task prose, or search tex
 | `vault.v1_migration` | V1-to-V2 task migration scan; includes `migrated_task_count` |
 | `vault.my_day_pin_migration` | Date-scoped My Day pin migration |
 | `vault.index_hydration` | Initial task parsing and in-memory Index hydration; includes `task_count` |
-| `app.window_first_frame` | Milestone at the first composition callback after the handler is registered during main-window startup |
+| `app.window_first_frame` | Loading-shell milestone at the first composition callback after the main window is activated; Vault-dependent initialization starts only after this callback |
+| `app.tasks_ready` | Milestone after one coherent Vault service generation is published and the initial Task page is constructed; supplemental Backlink/Research readiness is separate |
 | `my_day.refresh_data` | My Day query, grouping, and collection reconciliation; excludes later WinUI layout and painting |
 | `my_day.initial_render` | First My Day navigation through its first post-refresh composition callback, once per page instance |
 | `backlog.refresh_data` | Backlog filtering, sorting, grouping, and collection mutation; excludes later ListView/board layout and scroll restoration |

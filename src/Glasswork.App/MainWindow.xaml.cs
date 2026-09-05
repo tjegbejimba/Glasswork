@@ -3,6 +3,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -33,11 +35,21 @@ public sealed partial class MainWindow : Window
     private bool _titleBarPaneToggleWasVisible;
     private bool _titleBarBackWasVisible;
     private AccessibilityView _shellContentAccessibilityView;
+    private readonly bool _launchPlanner;
+    private readonly TaskCompletionSource<bool> _firstFrameRendered =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private EventHandler<TasksChangedEventArgs>? _tasksChangedHandler;
+    private bool _plannerLaunched;
+    private bool _isReady;
+    private bool _closed;
+
+    internal event EventHandler? StartupRetryRequested;
+    internal bool IsStartupReady => _isReady;
 
     public MainWindow(string? verificationStartPage = null)
     {
-        var launchPlanner = verificationStartPage == "planner";
-        _suppressSelectionNavigation = launchPlanner;
+        _launchPlanner = verificationStartPage == "planner";
+        _suppressSelectionNavigation = true;
         InitializeComponent();
 
         ExtendsContentIntoTitleBar = true;
@@ -48,43 +60,13 @@ public sealed partial class MainWindow : Window
         var icoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
         AppWindow.SetIcon(icoPath);
 
-        // Planner is intentionally reachable only from the isolated visual-verification
-        // launch option. It is absent from normal navigation and protocol routing.
-        if (launchPlanner)
-        {
-            NavView.SelectedItem = null;
-            NavFrame.Navigate(typeof(PlannerPage));
-        }
-        else
-        {
-            // Land on My Day. The XAML IsSelected="True" sets the chrome state but does not
-            // reliably navigate the Frame on first launch — be explicit.
-            NavFrame.Navigate(typeof(MyDayPage));
-        }
-
         // Update-available announce surface: badge the built-in Settings nav item whenever
         // App.Updater reports an update is available (issue #241). SettingsItem isn't
         // available until the NavigationView template applies, so initialise on Loaded.
         // ResultChanged covers the fire-and-forget startup check landing after construction.
-        NavView.Loaded += (_, _) =>
-        {
-            RefreshUpdateBadge();
-            if (launchPlanner)
-            {
-                NavView.SelectedItem = null;
-                if (NavFrame.Content is not PlannerPage)
-                {
-                    NavFrame.Navigate(typeof(PlannerPage));
-                    NavFrame.BackStack.Clear();
-                }
-                _suppressSelectionNavigation = false;
-            }
-        };
+        NavView.Loaded += (_, _) => RefreshUpdateBadge();
         App.Updater.ResultChanged += OnUpdaterResultChanged;
         App.McpUpdater.ResultChanged += OnUpdaterResultChanged;
-
-        // Status bar: vault path + task count + watcher dot + last-reload time.
-        InitStatusBar();
 
         // Mouse XButton1 (back) / XButton2 (forward) → frame navigation.
         // PointerPressed on the root content captures clicks anywhere in the window.
@@ -93,25 +75,32 @@ public sealed partial class MainWindow : Window
             root.PointerPressed += Root_PointerPressed;
         }
 
-        if (App.Performance.IsEnabled)
+        _firstFrameHandler = (_, _) =>
         {
-            _firstFrameHandler = (_, _) =>
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _firstFrameHandler;
+            _firstFrameHandler = null;
+            if (!_closed)
             {
-                Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _firstFrameHandler;
-                _firstFrameHandler = null;
                 App.Performance.EmitMilestone("app.window_first_frame");
-            };
-            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += _firstFrameHandler;
-        }
+                _firstFrameRendered.TrySetResult(true);
+            }
+        };
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += _firstFrameHandler;
 
         // Flush ui-state on shutdown to close the rapid-exit data-loss window (ADR 0014).
         Closed += (_, _) =>
         {
+            _closed = true;
+            _isReady = false;
+            _firstFrameRendered.TrySetCanceled();
+            DetachIndex();
             if (_firstFrameHandler is not null)
             {
                 Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _firstFrameHandler;
                 _firstFrameHandler = null;
             }
+            App.Updater.ResultChanged -= OnUpdaterResultChanged;
+            App.McpUpdater.ResultChanged -= OnUpdaterResultChanged;
 
             if (App.UiState is AutoSavingUiStateService autoSaving)
             {
@@ -121,6 +110,96 @@ public sealed partial class MainWindow : Window
 
             App.Performance.Dispose();
         };
+    }
+
+    internal Task WaitForFirstFrameAsync(CancellationToken cancellationToken) =>
+        _firstFrameRendered.Task.WaitAsync(cancellationToken);
+
+    internal void PrepareForStartup()
+    {
+        if (_closed)
+            return;
+
+        _isReady = false;
+        _suppressSelectionNavigation = true;
+        DetachIndex();
+        NavFrame.Content = null;
+        NavFrame.BackStack.Clear();
+        DeepLinkErrorBar.IsOpen = false;
+        ReadyShell.Visibility = Visibility.Collapsed;
+        StartupErrorPanel.Visibility = Visibility.Collapsed;
+        StartupLoadingPanel.Visibility = Visibility.Visible;
+        StartupRetryButton.IsEnabled = true;
+        AppTitleBar.IsPaneToggleButtonVisible = false;
+        AppTitleBar.IsBackButtonVisible = false;
+    }
+
+    internal void ShowStartupFailure()
+    {
+        if (_closed)
+            return;
+
+        _isReady = false;
+        StartupLoadingPanel.Visibility = Visibility.Collapsed;
+        ReadyShell.Visibility = Visibility.Collapsed;
+        StartupErrorPanel.Visibility = Visibility.Visible;
+        StartupRetryButton.IsEnabled = true;
+        StartupRetryButton.Focus(FocusState.Programmatic);
+    }
+
+    internal void CompleteStartup()
+    {
+        if (_closed)
+            return;
+
+        DetachIndex();
+        _tasksChangedHandler = (_, _) =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_isReady)
+                    return;
+                RefreshTaskCount();
+                UpdateLastReload();
+            });
+        };
+        App.Index.TasksChanged += _tasksChangedHandler;
+
+        _isReady = true;
+        StartupLoadingPanel.Visibility = Visibility.Collapsed;
+        StartupErrorPanel.Visibility = Visibility.Collapsed;
+        ReadyShell.Visibility = Visibility.Visible;
+        AppTitleBar.IsPaneToggleButtonVisible = true;
+        RefreshStatusBar();
+
+        if (_launchPlanner && !_plannerLaunched)
+        {
+            _plannerLaunched = true;
+            NavView.SelectedItem = null;
+            NavFrame.Navigate(typeof(PlannerPage));
+        }
+        else
+        {
+            SelectNavigationItem(NavMyDay);
+            NavFrame.Navigate(typeof(MyDayPage));
+        }
+        NavFrame.BackStack.Clear();
+        _suppressSelectionNavigation = false;
+    }
+
+    private void DetachIndex()
+    {
+        if (_tasksChangedHandler is null)
+            return;
+        if (App.Index is not null)
+            App.Index.TasksChanged -= _tasksChangedHandler;
+        _tasksChangedHandler = null;
+    }
+
+    private void StartupRetryButton_Click(object sender, RoutedEventArgs e)
+    {
+        StartupRetryButton.IsEnabled = false;
+        StartupRetryRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void Root_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
@@ -215,24 +294,13 @@ public sealed partial class MainWindow : Window
         return false;
     }
 
-    private void InitStatusBar()
-    {
-        RefreshStatusBar();
-        App.Index.TasksChanged += (_, _) =>
-        {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                RefreshTaskCount();
-                UpdateLastReload();
-            });
-        };
-    }
-
     /// <summary>
     /// Refreshes all status bar elements. Call after a vault switch.
     /// </summary>
     internal void RefreshStatusBar()
     {
+        if (!_isReady)
+            return;
         StatusVaultText.Text = string.IsNullOrWhiteSpace(App.VaultRoot) ? "(no vault)" : App.VaultRoot;
         var ver = System.Reflection.Assembly.GetExecutingAssembly()
             .GetName().Version;
@@ -269,14 +337,14 @@ public sealed partial class MainWindow : Window
 
     private void TitleBar_PaneToggleRequested(TitleBar sender, object args)
     {
-        if (_modalFocusTarget is not null)
+        if (!_isReady || _modalFocusTarget is not null)
             return;
         NavView.IsPaneOpen = !NavView.IsPaneOpen;
     }
 
     private void TitleBar_BackRequested(TitleBar sender, object args)
     {
-        if (_modalFocusTarget is not null)
+        if (!_isReady || _modalFocusTarget is not null)
             return;
         NavFrame.GoBack();
     }
@@ -286,7 +354,7 @@ public sealed partial class MainWindow : Window
         // Suppress the selection-driven navigation while NavigateToSettingsUpdates() is
         // syncing chrome — it navigates directly with a parameter and must not be clobbered
         // by a second, parameter-less navigation from this handler.
-        if (_suppressSelectionNavigation) return;
+        if (!_isReady || _suppressSelectionNavigation) return;
 
         // Selection-driven nav still handles the "click a different section" case where
         // SelectedItem actually changed. The ItemInvoked handler covers re-clicking the
@@ -296,6 +364,8 @@ public sealed partial class MainWindow : Window
 
     private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
+        if (!_isReady)
+            return;
         // ItemInvoked fires on every click — including clicks on the already-selected item.
         // SelectionChanged covers the "selection actually changed" path; this covers the
         // "user wants to go back to this section from a child page" path.
@@ -445,11 +515,14 @@ public sealed partial class MainWindow : Window
     /// </summary>
     public void NavigateTo(GlassworkUri uri)
     {
-        DispatcherQueue.TryEnqueue(() => NavigateToCore(uri));
+        DispatcherQueue.TryEnqueue(() => TryNavigateTo(uri));
     }
 
-    private void NavigateToCore(GlassworkUri uri)
+    internal bool TryNavigateTo(GlassworkUri uri)
     {
+        if (!_isReady)
+            return false;
+
         switch (uri)
         {
             case GlassworkUri.Task t:
@@ -459,7 +532,7 @@ public sealed partial class MainWindow : Window
                     DeepLinkErrorBar.Title = "Task not found";
                     DeepLinkErrorBar.Message = $"No task with id \"{t.TaskId}\" was found in the vault.";
                     DeepLinkErrorBar.IsOpen = true;
-                    return;
+                    return true;
                 }
                 DeepLinkErrorBar.IsOpen = false;
                 NavFrame.Navigate(typeof(TaskDetailPage), task);
@@ -496,7 +569,7 @@ public sealed partial class MainWindow : Window
                     DeepLinkErrorBar.Message =
                         $"No opted-in Research Topic with id \"{research.TopicId}\" was found in the vault.";
                     DeepLinkErrorBar.IsOpen = true;
-                    return;
+                    return true;
                 }
 
                 DeepLinkErrorBar.IsOpen = false;
@@ -507,6 +580,7 @@ public sealed partial class MainWindow : Window
                 NavFrame.BackStack.Clear();
                 break;
         }
+        return true;
     }
 
     private void SelectNavigationItem(NavigationViewItem item)

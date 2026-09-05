@@ -7,6 +7,30 @@ namespace Glasswork.Tests;
 public class VisualVerificationScenarioTests
 {
     [TestMethod]
+    public void FromJson_LoadsDeterministicStartupControls()
+    {
+        const string json = """
+        {
+          "name": "startup loading",
+          "holdStartup": true,
+          "failStartupAttempts": 1,
+          "actions": [
+            { "type": "release-startup" }
+          ],
+          "captures": [
+            { "name": "startup" }
+          ]
+        }
+        """;
+
+        var scenario = VisualVerificationScenario.FromJson(json);
+
+        Assert.IsTrue(scenario.HoldStartup);
+        Assert.AreEqual(1, scenario.FailStartupAttempts);
+        Assert.AreEqual("release-startup", scenario.Actions.Single().Type);
+    }
+
+    [TestMethod]
     public void FromJson_LoadsPlannerProfileHiddenStartAndRecoveryActions()
     {
         const string json = """

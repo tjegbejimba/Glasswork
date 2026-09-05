@@ -10,7 +10,9 @@ public sealed record VerificationLaunchOptions(
     string InstanceKey,
     bool SkipProtocolRegistration,
     bool SkipUpdateCheck,
-    string? StartPage = null)
+    string? StartPage = null,
+    string? StartupGatePath = null,
+    int FailStartupAttempts = 0)
 {
     public const string VaultPathVariable = "GLASSWORK_VERIFY_VAULT_PATH";
     public const string UiStatePathVariable = "GLASSWORK_VERIFY_UI_STATE_PATH";
@@ -20,6 +22,8 @@ public sealed record VerificationLaunchOptions(
     public const string CaptureRequestPathVariable = "GLASSWORK_VERIFY_CAPTURE_REQUEST";
     public const string CaptureOutputPathVariable = "GLASSWORK_VERIFY_CAPTURE_OUTPUT";
     public const string StartPageVariable = "GLASSWORK_VERIFY_START_PAGE";
+    public const string StartupGatePathVariable = "GLASSWORK_VERIFY_STARTUP_GATE_PATH";
+    public const string FailStartupAttemptsVariable = "GLASSWORK_VERIFY_FAIL_STARTUP_ATTEMPTS";
 
     public bool IsVerificationRun =>
         !string.IsNullOrWhiteSpace(VaultPath) ||
@@ -27,7 +31,9 @@ public sealed record VerificationLaunchOptions(
         !string.IsNullOrWhiteSpace(InstanceKey) && InstanceKey != "main" ||
         SkipProtocolRegistration ||
         SkipUpdateCheck ||
-        StartPage is not null;
+        StartPage is not null ||
+        StartupGatePath is not null ||
+        FailStartupAttempts > 0;
 
     public static VerificationLaunchOptions FromProcessEnvironment() =>
         FromEnvironment(ToStringDictionary(Environment.GetEnvironmentVariables()));
@@ -38,6 +44,10 @@ public sealed record VerificationLaunchOptions(
         var uiStatePath = Read(environment, UiStatePathVariable);
         var instanceKey = Read(environment, InstanceKeyVariable) ?? "main";
         var startPage = Read(environment, StartPageVariable);
+        var startupGatePath = Read(environment, StartupGatePathVariable);
+        var failStartupAttempts = ReadNonNegativeInt(
+            environment,
+            FailStartupAttemptsVariable);
         if (startPage is not null && startPage != "planner")
             throw new FormatException($"Unsupported verification start page '{startPage}'.");
         if (startPage == "planner"
@@ -57,6 +67,14 @@ public sealed record VerificationLaunchOptions(
             !string.IsNullOrWhiteSpace(uiStatePath) ||
             instanceKey != "main" ||
             startPage is not null;
+        if ((startupGatePath is not null || failStartupAttempts > 0)
+            && (string.IsNullOrWhiteSpace(vaultPath)
+                || string.IsNullOrWhiteSpace(uiStatePath)
+                || instanceKey == "main"))
+        {
+            throw new FormatException(
+                "Startup verification controls require isolated Vault, UI state, and instance paths.");
+        }
 
         return new VerificationLaunchOptions(
             vaultPath,
@@ -64,7 +82,9 @@ public sealed record VerificationLaunchOptions(
             instanceKey,
             explicitSkipProtocol || isVerificationRun,
             explicitSkipUpdate || isVerificationRun,
-            startPage);
+            startPage,
+            startupGatePath,
+            failStartupAttempts);
     }
 
     private static string? Read(IReadOnlyDictionary<string, string?> environment, string key)
@@ -89,6 +109,18 @@ public sealed record VerificationLaunchOptions(
                (value == "1" ||
                 value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
                 value.Equals("yes", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static int ReadNonNegativeInt(
+        IReadOnlyDictionary<string, string?> environment,
+        string key)
+    {
+        var value = Read(environment, key);
+        if (value is null)
+            return 0;
+        if (!int.TryParse(value, out var parsed) || parsed < 0)
+            throw new FormatException($"{key} must be a non-negative integer.");
+        return parsed;
     }
 
     private static Dictionary<string, string?> ToStringDictionary(IDictionary source)
