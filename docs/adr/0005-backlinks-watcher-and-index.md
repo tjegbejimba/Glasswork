@@ -1,6 +1,9 @@
 # ADR 0005: Backlinks index and watcher pipeline
 
 **Status**: Accepted
+**Amended**: 2026-09-04 — Backlink and Research hydration now run as
+generation-scoped supplemental initialization with explicit readiness,
+failure, cancellation, retry, and lossless watcher handoff.
 **Amended**: 2026-08-16 — guarded Hard deletion and the live Research Catalog
 now observe precise writes outside `wiki/todo/`; the historical disjoint-write
 assumption below is superseded by the same-process/cross-process rules in these
@@ -73,15 +76,73 @@ coordinator's full TTL. Malformed or unreadable refreshes preserve the last
 valid Topic snapshot and attach a dated diagnostic until a valid replacement
 arrives.
 
+### Supplemental initialization and readiness
+
+Backlink and Research hydration are supplemental: neither is part of the
+required Task-readiness boundary and neither may delay first-window creation.
+`SupplementalInitializationCoordinator` starts both scans independently on
+worker threads while preserving the stable `BacklinkIndex` and
+`FileSystemResearchCatalog` instances used by existing consumers.
+
+Each component publishes an immutable state:
+
+- `Pending` — no attempt has started.
+- `Loading` — a scan plus watcher handoff is in progress.
+- `Ready` — a complete snapshot has been published and watcher changes observed
+  during the scan have been reconciled.
+- `Failed` — initialization did not publish an empty success; the error is
+  available to the caller and the component may be retried independently.
+- `Cancelled` / `Disposed` — late work from that attempt cannot publish.
+
+Readiness reads are lock-free. Research callers use
+`TryCaptureResearch(queryDate, out snapshot)` while the supplemental boundary
+is active; it never enters the catalog scan lock and returns `false` until a
+Ready snapshot exists for that freshness date. Existing synchronous
+`IResearchCatalog.Capture` and `IBacklinkIndex.Build` contracts remain for
+stateless or non-UI consumers.
+
+`StateChanged` is raised after the immutable state is published. Completion
+notifications arrive on a worker thread, so Presentation generation-checks and
+dispatches them. A Ready transition is emitted even for a genuinely empty
+snapshot; Presentation uses that transition to refresh Backlink-dependent
+counts/ranking and Research surfaces rather than interpreting Pending as zero.
+
+### Lossless scan-to-watcher handoff
+
+The Backlink watcher is enabled before the baseline scan. Create, update,
+delete, and rename events are buffered while the scan runs, then replayed
+against the atomically published baseline before Ready. During this handoff,
+same-process writes are buffered too: the normal suppression rule assumes the
+mutation module already refreshed a live index, which is not safe while the
+baseline snapshot is still private. Steady-state suppression remains unchanged,
+so same-process writes do not echo and marker-only cross-process writes remain
+visible.
+
+Research likewise enables its watcher before hydration and drains queued paths
+before Ready. Its published snapshot is replaced atomically and remains live as
+later watcher batches arrive; malformed-page last-valid-snapshot behavior is
+unchanged.
+
+If either watcher reports an overflow during hydration, the incomplete buffered
+delta set is discarded and one full reconciliation runs before Ready. A
+steady-state Backlink overflow uses the same bounded rebuild and emits a broad
+affected-ID notification after publication.
+
+Cancellation and disposal never wait for a held scan. Disposal publishes
+`Disposed`, cancels active attempts, and defers watcher/catalog cleanup until
+active callbacks finish. Attempt numbers prevent cancelled, retried, disposed,
+or prior-Vault completions from publishing over the current generation.
+
 ### Why refresh-section-only, never reload the task model
 
 A backlinking edit happens on a wiki page that is **not** the open task. Reloading the task model in response would clobber any unsaved Notes the user is typing on the open task. The artifact pipeline made the same call (ADR pattern, not yet a numbered ADR); backlinks reuses it. The contract: a backlink change refreshes the Backlinks section in place; everything else on the page is untouched.
 
 ### Why in-memory rather than persisted
 
-- The full scan of a ~10k-file vault completes well under the PRD's 2s soft target on cold start.
+- The index remains reconstructible from the Vault without a persisted cache.
 - A persisted index introduces staleness (vault edits made while Glasswork was closed) and a migration surface (schema changes).
-- The cost of "rescan on every launch" is paid once per session and is not user-visible behind the existing splash flow.
+- The cost of "rescan on every launch" is paid once per session as supplemental
+  background work and is no longer on the first-window or required Task path.
 - If the scan ever stops being fast enough, persistence can be added behind the same `IBacklinkIndex` interface without touching the watcher or the UI.
 
 ## Alternatives considered
@@ -109,7 +170,9 @@ Rejected — would make every task-open touch the entire vault, pushing latency 
 
 ### Bad / accepted trade-offs
 
-- Cold-start does pay the full scan cost. **Mitigation**: scan is wrapped in try/catch and runs synchronously during `App.OnLaunched`; failures degrade to "no backlinks shown" rather than blocking startup.
+- Each launch still pays the full scan cost in background work. Until Ready,
+  Backlink-dependent counts/ranking and Research content are explicitly
+  unavailable rather than represented as final empty results.
 - Independent Task, Artifact, Backlink, and Research pipelines mean four
   `FileSystemWatcher` handles open against the vault. On Windows this is cheap;
   on a constrained system it is something to be aware of.

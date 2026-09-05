@@ -30,11 +30,23 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
     private Dictionary<string, HashSet<string>> _fileToTaskIds =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public void Build(string vaultRoot)
+    internal Action<CancellationToken>? BeforeBuildHook { get; set; }
+    internal Action<CancellationToken>? AfterScanBeforePublishHook { get; set; }
+
+    public void Build(string vaultRoot) =>
+        Build(vaultRoot, CancellationToken.None);
+
+    internal void Build(string vaultRoot, CancellationToken cancellationToken)
     {
-        var (byTask, byFile) = ScanVault(vaultRoot);
+        cancellationToken.ThrowIfCancellationRequested();
+        BeforeBuildHook?.Invoke(cancellationToken);
+        var (byTask, byFile) = ScanVault(vaultRoot, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        AfterScanBeforePublishHook?.Invoke(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_lock)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _byTaskId = byTask;
             _fileToTaskIds = byFile;
         }
@@ -67,6 +79,12 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
             }
             return counts;
         }
+    }
+
+    internal IReadOnlyCollection<string> SnapshotIndexedTaskIds()
+    {
+        lock (_lock)
+            return _byTaskId.Keys.ToArray();
     }
 
     public IReadOnlyCollection<string> UpdateForFile(string vaultRoot, string filePath)
@@ -191,7 +209,7 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
     }
 
     private static (Dictionary<string, List<Backlink>> ByTask, Dictionary<string, HashSet<string>> ByFile)
-        ScanVault(string vaultRoot)
+        ScanVault(string vaultRoot, CancellationToken cancellationToken)
     {
         var byTask = new Dictionary<string, List<Backlink>>(StringComparer.Ordinal);
         var byFile = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
@@ -203,6 +221,7 @@ public sealed partial class BacklinkIndex : IBacklinkIndex
 
         foreach (var file in Directory.EnumerateFiles(vaultRoot, "*.md", SearchOption.AllDirectories))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (IsUnderPrefix(file, todoPrefix)) continue;
             var perFile = new Dictionary<string, List<Backlink>>(StringComparer.Ordinal);
             ProcessFile(file, vaultRoot, perFile);

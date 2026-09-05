@@ -65,6 +65,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     private readonly Debouncer _refreshDebouncer;
     private readonly FileSystemWatcher _watcher;
     private ResearchCatalogSnapshot _snapshot = EmptySnapshot();
+    private PublishedResearchSnapshot? _publishedSnapshot;
     private ResearchSessionContext? _preparedSessionContext;
     private bool _initialized;
     private bool _disposed;
@@ -77,6 +78,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     internal Action? BeforeOptInRollbackPreparationHook { get; set; }
     internal Action? BeforeOptInRollbackReplaceHook { get; set; }
     internal Action? BeforeContextFileReplaceHook { get; set; }
+    internal Action<CancellationToken>? BeforeHydrateHook { get; set; }
+    internal Action<CancellationToken>? AfterHydrateScanBeforePublishHook { get; set; }
+    internal Action? PendingPathScheduledHook { get; set; }
+    internal Action<CancellationToken>? BeforeApplyPendingHook { get; set; }
 
     public FileSystemResearchCatalog(
         string vaultRoot,
@@ -153,9 +158,52 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             else if (!IsWatching)
                 Hydrate(queryDate);
             else
-                _snapshot = BuildSnapshot(queryDate, _snapshot);
+                SetSnapshot(queryDate, BuildSnapshot(queryDate, _snapshot));
 
             return _snapshot;
+        }
+    }
+
+    internal bool TryCapturePublished(
+        DateOnly queryDate,
+        out ResearchCatalogSnapshot snapshot)
+    {
+        var published = Volatile.Read(ref _publishedSnapshot);
+        if (published is not null && published.QueryDate == queryDate)
+        {
+            snapshot = published.Snapshot;
+            return true;
+        }
+
+        snapshot = default!;
+        return false;
+    }
+
+    internal ResearchCatalogSnapshot Initialize(CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Hydrate(_today(), cancellationToken);
+            return _snapshot;
+        }
+    }
+
+    internal void CompleteInitialHydration(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ApplyPendingPaths();
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_pendingGate)
+            {
+                if (_pendingPaths.Count == 0
+                    && Volatile.Read(ref _recoveryPending) == 0)
+                {
+                    return;
+                }
+            }
         }
     }
 
@@ -497,7 +545,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 var before = _snapshot;
                 var read = ReadPage(fullPath, relativePath, queryDate, _pagesByPath);
                 ApplyReadResult(read, relativePath, _pagesByPath, _diagnosticsByPath);
-                _snapshot = BuildSnapshot(queryDate, before);
+                SetSnapshot(queryDate, BuildSnapshot(queryDate, before));
                 var topic = _snapshot.Topics.SingleOrDefault(candidate =>
                     string.Equals(candidate.Id, optedInId, StringComparison.OrdinalIgnoreCase));
                 return topic is null
@@ -862,7 +910,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             var before = _snapshot;
             var read = ReadPage(fullPath, topic.VaultRelativePath, queryDate, _pagesByPath);
             ApplyReadResult(read, topic.VaultRelativePath, _pagesByPath, _diagnosticsByPath);
-            _snapshot = BuildSnapshot(queryDate, before);
+            SetSnapshot(queryDate, BuildSnapshot(queryDate, before));
             if (string.Equals(
                     _preparedSessionContext?.TopicId,
                     topic.Id,
@@ -892,15 +940,19 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             _watcher.EnableRaisingEvents = false;
     }
 
-    private void Hydrate(DateOnly queryDate)
+    private void Hydrate(
+        DateOnly queryDate,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        BeforeHydrateHook?.Invoke(cancellationToken);
         var wikiRoot = Path.Combine(_vaultRoot, "wiki");
         if (!Directory.Exists(wikiRoot))
         {
             _pagesByPath.Clear();
             _referencesByPath.Clear();
             _diagnosticsByPath.Clear();
-            _snapshot = EmptySnapshot();
+            SetSnapshot(queryDate, EmptySnapshot());
             _initialized = true;
             return;
         }
@@ -917,16 +969,14 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     AttributesToSkip = FileAttributes.ReparsePoint,
                 });
         }
-        catch (IOException)
+        catch (IOException) when (_initialized)
         {
-            _snapshot = BuildSnapshot(queryDate, _snapshot);
-            _initialized = true;
+            SetSnapshot(queryDate, BuildSnapshot(queryDate, _snapshot));
             return;
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException) when (_initialized)
         {
-            _snapshot = BuildSnapshot(queryDate, _snapshot);
-            _initialized = true;
+            SetSnapshot(queryDate, BuildSnapshot(queryDate, _snapshot));
             return;
         }
 
@@ -946,6 +996,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
         foreach (var filePath in filePaths)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!TryGetWikiRelativePath(filePath, out var relativePath))
                 continue;
 
@@ -975,6 +1026,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             MarkReferenceMissing(nextReferences, removedPath);
         }
 
+        AfterHydrateScanBeforePublishHook?.Invoke(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         if (coherent)
         {
             ReplaceContents(_pagesByPath, nextPages);
@@ -986,7 +1039,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             ReplaceContents(_diagnosticsByPath, nextDiagnostics);
         }
 
-        _snapshot = BuildSnapshot(queryDate, _snapshot);
+        SetSnapshot(queryDate, BuildSnapshot(queryDate, _snapshot));
         _initialized = true;
     }
 
@@ -1004,6 +1057,11 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     }
 
     private void OnWatcherError(object sender, ErrorEventArgs e)
+    {
+        HandleWatcherError(e.GetException());
+    }
+
+    internal void HandleWatcherError(Exception? exception)
     {
         Interlocked.Exchange(ref _recoveryPending, 1);
         _refreshDebouncer.Trigger();
@@ -1025,6 +1083,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 _pendingPaths[fullPath] = origin;
             }
         }
+        PendingPathScheduledHook?.Invoke();
         _refreshDebouncer.Trigger();
     }
 
@@ -1032,6 +1091,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     {
         lock (_processingGate)
         {
+            BeforeApplyPendingHook?.Invoke(CancellationToken.None);
             ResearchTopicsChangedEventArgs? change;
             ResearchChangeLogsChangedEventArgs? changeLogChange;
             var queryDate = _today();
@@ -1138,11 +1198,13 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                         _diagnosticsByPath.Remove(missingPath);
                     }
 
-                    _snapshot = BuildSnapshot(queryDate, before);
+                    SetSnapshot(queryDate, BuildSnapshot(queryDate, before));
                 }
 
                 if (!isRecovery && logTopicIds.Count > 0)
-                    _snapshot = RefreshChangeLogs(_snapshot, logTopicIds);
+                    SetSnapshot(
+                        queryDate,
+                        RefreshChangeLogs(_snapshot, logTopicIds));
                 var origin = ResolveOrigin(pending, isRecovery);
                 change = CreateChange(before, _snapshot, priorTopicIds, origin);
                 changeLogChange = CreateChangeLogChange(
@@ -3624,6 +3686,16 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             Array.Empty<ResearchPageCandidate>(),
             Array.Empty<ResearchCatalogDiagnostic>());
 
+    private void SetSnapshot(
+        DateOnly queryDate,
+        ResearchCatalogSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+        Volatile.Write(
+            ref _publishedSnapshot,
+            new PublishedResearchSnapshot(queryDate, snapshot));
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -3679,6 +3751,10 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         public List<string>? Sources { get; set; }
         public object? Glasswork { get; set; }
     }
+
+    private sealed record PublishedResearchSnapshot(
+        DateOnly QueryDate,
+        ResearchCatalogSnapshot Snapshot);
 
     private sealed record WikiPageCandidate(
         string Id,
