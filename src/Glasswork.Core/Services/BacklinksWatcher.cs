@@ -54,6 +54,7 @@ public sealed class BacklinksWatcher : IDisposable
     internal Action<string>? ChangeScheduledHook { get; set; }
 
     public event EventHandler<BacklinksChangedEventArgs>? BacklinksChanged;
+    internal event EventHandler<BacklinkRecoveryFailedEventArgs>? RecoveryFailed;
 
     public BacklinksWatcher(string vaultRoot, IBacklinkIndex index)
         : this(vaultRoot, index, null, DefaultQuietPeriod) { }
@@ -306,6 +307,9 @@ public sealed class BacklinksWatcher : IDisposable
             System.Diagnostics.Debug.WriteLine(
                 $"BacklinksWatcher overflow recovery failed: {ex}");
             AbortInitialScan();
+            RecoveryFailed?.Invoke(
+                this,
+                new BacklinkRecoveryFailedEventArgs(ex));
         }
         finally
         {
@@ -468,6 +472,12 @@ public sealed class BacklinksWatcher : IDisposable
         Delete,
         Rename,
     }
+}
+
+internal sealed class BacklinkRecoveryFailedEventArgs(Exception exception)
+    : EventArgs
+{
+    public Exception Exception { get; } = exception;
 }
 
 public sealed class BacklinksChangedEventArgs : EventArgs

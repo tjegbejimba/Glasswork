@@ -130,6 +130,9 @@ affected-ID notification after publication. Mutations queued before the
 overflow are epoch-fenced so they cannot overwrite the reconciled snapshot,
 and an overflow observed while that broad notification is being delivered
 requests another reconciliation rather than being dropped.
+If a live reconciliation fails, the watcher stops and the Backlink component
+transitions from Ready to Failed so Presentation can expose the existing retry
+path instead of continuing to present a stale index as healthy.
 
 Cancellation and disposal never wait for a held scan. Disposal publishes
 `Disposed`, cancels active attempts, and defers watcher/catalog cleanup until

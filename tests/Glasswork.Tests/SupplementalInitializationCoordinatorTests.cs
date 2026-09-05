@@ -834,6 +834,52 @@ public sealed class SupplementalInitializationCoordinatorTests
 
     [TestMethod]
     [Timeout(5000, CooperativeCancellation = true)]
+    public async Task BacklinkOverflowRecoveryFailureTransitionsToFailedAndCanRetry()
+    {
+        var backlinks = new BacklinkIndex();
+        using var research = new FileSystemResearchCatalog(_vaultRoot);
+        using var coordinator = new SupplementalInitializationCoordinator(
+            generation: 26,
+            _vaultRoot,
+            backlinks,
+            research);
+        await coordinator.StartAsync();
+        using var failed = new ManualResetEventSlim(false);
+        coordinator.StateChanged += (_, args) =>
+        {
+            if (args.Component == SupplementalComponent.Backlinks
+                && args.Current.Status == SupplementalInitializationStatus.Failed)
+            {
+                failed.Set();
+            }
+        };
+        backlinks.BeforeBuildHook = _ =>
+            throw new IOException("Injected live recovery failure.");
+
+        coordinator.BacklinksWatcher.HandleWatcherError(
+            new InternalBufferOverflowException("Injected overflow."));
+
+        Assert.IsTrue(
+            failed.Wait(TimeSpan.FromSeconds(2)),
+            "A disabled watcher must not remain represented as Ready.");
+        Assert.AreEqual(
+            SupplementalInitializationStatus.Failed,
+            coordinator.Readiness.Backlinks.Status);
+        StringAssert.Contains(
+            coordinator.Readiness.Backlinks.ErrorMessage,
+            "Injected live recovery failure");
+        Assert.IsFalse(coordinator.BacklinksWatcher.IsWatching);
+
+        backlinks.BeforeBuildHook = null;
+        var retried = await coordinator.RetryAsync(SupplementalComponent.Backlinks);
+
+        Assert.AreEqual(SupplementalInitializationStatus.Ready, retried.Status);
+        Assert.AreEqual(2, retried.Attempt);
+        Assert.IsTrue(coordinator.BacklinksWatcher.IsWatching);
+    }
+
+    [TestMethod]
+    [Timeout(5000, CooperativeCancellation = true)]
     public async Task TryCaptureResearch_DuringLiveRefreshReturnsPriorSnapshotWithoutBlocking()
     {
         var topicPath = Path.Combine(

@@ -92,6 +92,7 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
             selfWrites,
             quietPeriod ?? TimeSpan.FromMilliseconds(250));
         _backlinksWatcher.BacklinksChanged += OnBacklinksChanged;
+        _backlinksWatcher.RecoveryFailed += OnBacklinkRecoveryFailed;
         _performanceTracer = performanceTracer ?? PerformanceTracer.Disabled;
         var pending = new SupplementalInitializationState(
             SupplementalInitializationStatus.Pending,
@@ -496,6 +497,7 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
         }
 
         _backlinksWatcher.BacklinksChanged -= OnBacklinksChanged;
+        _backlinksWatcher.RecoveryFailed -= OnBacklinkRecoveryFailed;
         _backlinksWatcher.Dispose();
         _research.Dispose();
         _backlinksCancellation?.Dispose();
@@ -513,6 +515,28 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
             }
             BacklinksChanged?.Invoke(this, e);
         }
+    }
+
+    private void OnBacklinkRecoveryFailed(
+        object? sender,
+        BacklinkRecoveryFailedEventArgs e)
+    {
+        SupplementalInitializationChangedEventArgs? change = null;
+        lock (_lifecycleGate)
+        {
+            if (!_disposed
+                && Readiness.Backlinks.Status
+                    == SupplementalInitializationStatus.Ready)
+            {
+                change = SetStateLocked(
+                    SupplementalComponent.Backlinks,
+                    new SupplementalInitializationState(
+                        SupplementalInitializationStatus.Failed,
+                        Readiness.Backlinks.Attempt,
+                        e.Exception.Message));
+            }
+        }
+        RaiseStateChanged(change);
     }
 
     private sealed record AttemptLease(
