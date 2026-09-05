@@ -50,6 +50,8 @@ public sealed class SupplementalInitializationChangedEventArgs : EventArgs
 
 public sealed class SupplementalInitializationCoordinator : IDisposable
 {
+    private static readonly AsyncLocal<int> StateCallbackDepth = new();
+
     private readonly long _generation;
     private readonly string _vaultRoot;
     private readonly BacklinkIndex _backlinks;
@@ -68,12 +70,15 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
     private bool _disposed;
     private bool _resourcesDisposed;
     private bool _deliveringStateNotifications;
+    private int _activeStateCallbacks;
 
     internal Action<SupplementalInitializationChangedEventArgs>? BeforeStateChangedHook
     {
         get;
         set;
     }
+    internal Action<SupplementalInitializationChangedEventArgs>?
+        BeforeStateSubscriberHook { get; set; }
 
     public SupplementalInitializationCoordinator(
         long generation,
@@ -446,6 +451,7 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
         SupplementalComponent component,
         SupplementalInitializationState state)
     {
+        WaitForStateCallbacksLocked();
         var previousSnapshot = Readiness;
         var previous = GetState(previousSnapshot, component);
         var currentSnapshot = component == SupplementalComponent.Backlinks
@@ -502,13 +508,29 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
 
                 foreach (var subscriber in subscribers)
                 {
-                    lock (_notificationGate)
+                    lock (_lifecycleGate)
                     {
                         if (GetState(Readiness, next.Component) != next.Current)
                             break;
+                        _activeStateCallbacks++;
                     }
-                    ((EventHandler<SupplementalInitializationChangedEventArgs>)
-                        subscriber)(this, next);
+
+                    try
+                    {
+                        StateCallbackDepth.Value++;
+                        BeforeStateSubscriberHook?.Invoke(next);
+                        ((EventHandler<SupplementalInitializationChangedEventArgs>)
+                            subscriber)(this, next);
+                    }
+                    finally
+                    {
+                        StateCallbackDepth.Value--;
+                        lock (_lifecycleGate)
+                        {
+                            _activeStateCallbacks--;
+                            Monitor.PulseAll(_lifecycleGate);
+                        }
+                    }
                 }
             }
         }
@@ -536,6 +558,12 @@ public sealed class SupplementalInitializationCoordinator : IDisposable
     {
         await task.ConfigureAwait(false);
         return GetState(Readiness, component);
+    }
+
+    private void WaitForStateCallbacksLocked()
+    {
+        while (_activeStateCallbacks > 0 && StateCallbackDepth.Value == 0)
+            Monitor.Wait(_lifecycleGate);
     }
 
     private void DisposeResources()

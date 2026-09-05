@@ -1163,6 +1163,55 @@ public sealed class SupplementalInitializationCoordinatorTests
         }
     }
 
+    [TestMethod]
+    [Timeout(5000, CooperativeCancellation = true)]
+    public async Task StateChanged_CallbackStartsBeforeConcurrentDisposeCanPublish()
+    {
+        using var readyValidated = new ManualResetEventSlim(false);
+        using var releaseCallback = new ManualResetEventSlim(false);
+        using var callbackStarted = new ManualResetEventSlim(false);
+        var backlinks = new BacklinkIndex();
+        using var research = new FileSystemResearchCatalog(_vaultRoot);
+        var coordinator = new SupplementalInitializationCoordinator(
+            generation: 30,
+            _vaultRoot,
+            backlinks,
+            research);
+        coordinator.BeforeStateSubscriberHook = args =>
+        {
+            if (args.Component == SupplementalComponent.Backlinks
+                && args.Current.Status == SupplementalInitializationStatus.Ready)
+            {
+                readyValidated.Set();
+                releaseCallback.Wait();
+            }
+        };
+        coordinator.StateChanged += (_, args) =>
+        {
+            if (args.Component == SupplementalComponent.Backlinks
+                && args.Current.Status == SupplementalInitializationStatus.Ready)
+            {
+                callbackStarted.Set();
+                Thread.Sleep(50);
+            }
+        };
+
+        var completion = coordinator.StartAsync();
+        Assert.IsTrue(readyValidated.Wait(TimeSpan.FromSeconds(2)));
+        var dispose = Task.Run(() => coordinator.Dispose());
+        Assert.IsFalse(
+            dispose.Wait(TimeSpan.FromMilliseconds(100)),
+            "Dispose must wait until the validated callback has begun.");
+        releaseCallback.Set();
+
+        await dispose;
+        await completion;
+        Assert.IsTrue(callbackStarted.IsSet);
+        Assert.AreEqual(
+            SupplementalInitializationStatus.Disposed,
+            coordinator.Readiness.Backlinks.Status);
+    }
+
     private static void WriteResearchTopic(string path, string title) =>
         File.WriteAllText(
             path,
