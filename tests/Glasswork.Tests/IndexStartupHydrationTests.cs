@@ -54,6 +54,34 @@ public class IndexStartupHydrationTests
     }
 
     [TestMethod]
+    public async Task CreateHydratedForStartupAsync_EliminatesLegacySecondReadPass()
+    {
+        var writer = new VaultService(_tempDir);
+        writer.Save(new GlassworkTask { Id = "alpha", Title = "Alpha" });
+        writer.Save(new GlassworkTask { Id = "beta", Title = "Beta" });
+
+        var legacyReads = 0;
+        var legacyVault = new VaultService(_tempDir)
+        {
+            BeforeTaskFileReadHook = _ => Interlocked.Increment(ref legacyReads),
+        };
+        _ = legacyVault.MigrateAllToV2();
+        var legacyIndex = new IndexService(legacyVault);
+        legacyIndex.EnsureLoaded();
+
+        var startupReads = 0;
+        var startupResult = await IndexService.CreateHydratedForStartupAsync(
+            new VaultService(_tempDir)
+            {
+                BeforeTaskFileReadHook = _ => Interlocked.Increment(ref startupReads),
+            });
+
+        Assert.AreEqual(4, legacyReads, "Legacy startup reads both unchanged Tasks twice.");
+        Assert.AreEqual(2, startupReads, "Single-pass startup reads both unchanged Tasks once.");
+        Assert.AreEqual(legacyIndex.Count, startupResult.TaskCount);
+    }
+
+    [TestMethod]
     public async Task CreateHydratedForStartupAsync_MixedVault_SeedsFinalMigratedBytes()
     {
         var writer = new VaultService(_tempDir);

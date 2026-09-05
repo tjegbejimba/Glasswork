@@ -193,6 +193,7 @@ public class VaultService
         {
             try
             {
+                NotifyBeforeTaskFileRead(file);
                 var bytes = File.ReadAllBytes(file);
                 var content = Encoding.UTF8.GetString(bytes);
                 var task = _parser.Parse(content);
@@ -874,7 +875,11 @@ public class VaultService
         foreach (var path in Directory.EnumerateFiles(_vaultPath, "*.md", SearchOption.TopDirectoryOnly))
         {
             string original;
-            try { original = File.ReadAllText(path); }
+            try
+            {
+                NotifyBeforeTaskFileRead(path);
+                original = File.ReadAllText(path);
+            }
             catch { continue; }
 
             string migratedContent;
