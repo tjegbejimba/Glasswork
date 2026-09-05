@@ -265,8 +265,11 @@ internal static partial class VisualVerificationRunner
         var captureRequestPath = Path.Combine(workDir, "capture.request");
         var captureOutputPath = Path.Combine(workDir, "capture.png");
         var startupReleasePath = Path.Combine(workDir, "startup.release");
+        var supplementalReleasePath = Path.Combine(workDir, "supplemental.release");
         var performanceTracePath =
-            scenario.HoldStartup || scenario.FailStartupAttempts > 0
+            scenario.HoldStartup
+                || scenario.HoldSupplemental
+                || scenario.FailStartupAttempts > 0
                 ? Path.Combine(options.OutDir, "startup-performance.jsonl")
                 : null;
         var wayfinderFixturePath = Path.Combine(workDir, "wayfinder-fixture.json");
@@ -306,6 +309,7 @@ internal static partial class VisualVerificationRunner
             captureRequestPath,
             captureOutputPath,
             scenario.HoldStartup ? startupReleasePath : null,
+            scenario.HoldSupplemental ? supplementalReleasePath : null,
             scenario.FailStartupAttempts,
             performanceTracePath,
             wayfinderFixturePath,
@@ -332,6 +336,7 @@ internal static partial class VisualVerificationRunner
                         captureRequestPath,
                         captureOutputPath,
                         startupReleasePath,
+                        supplementalReleasePath,
                         process.Id,
                         action,
                         captures);
@@ -647,6 +652,7 @@ internal static partial class VisualVerificationRunner
         string captureRequestPath,
         string captureOutputPath,
         string? startupGatePath,
+        string? supplementalGatePath,
         int failStartupAttempts,
         string? performanceTracePath,
         string wayfinderFixturePath,
@@ -671,6 +677,11 @@ internal static partial class VisualVerificationRunner
         psi.Environment[VerificationLaunchOptions.CaptureOutputPathVariable] = captureOutputPath;
         if (startupGatePath is not null)
             psi.Environment[VerificationLaunchOptions.StartupGatePathVariable] = startupGatePath;
+        if (supplementalGatePath is not null)
+        {
+            psi.Environment[VerificationLaunchOptions.SupplementalGatePathVariable] =
+                supplementalGatePath;
+        }
         if (failStartupAttempts > 0)
         {
             psi.Environment[VerificationLaunchOptions.FailStartupAttemptsVariable] =
@@ -723,6 +734,7 @@ internal static partial class VisualVerificationRunner
         string captureRequestPath,
         string captureOutputPath,
         string startupReleasePath,
+        string supplementalReleasePath,
         int processId,
         VisualVerificationAction action,
         ICollection<CaptureResult> captures)
@@ -820,6 +832,9 @@ internal static partial class VisualVerificationRunner
             }
             case "release-startup":
                 File.WriteAllText(startupReleasePath, "release");
+                return;
+            case "release-supplemental":
+                File.WriteAllText(supplementalReleasePath, "release");
                 return;
             case "assert-single-selection":
                 AssertSingleSelection(WaitForElement(hwnd, action));

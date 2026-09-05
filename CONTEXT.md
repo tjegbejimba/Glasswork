@@ -119,6 +119,13 @@ them into the ready Index, and then switches atomically to live delivery so
 noncooperating Obsidian/agent writes cannot fall between the startup snapshot
 and watcher hookup.
 
+Backlink and Research hydration are supplemental to Task readiness. Their
+generation-scoped coordinator starts after Tasks are usable, exposes explicit
+Pending/Loading/Ready/Failed states, and preserves lossless watcher handoff.
+Presentation must show that supplemental values are unavailable until Ready,
+refresh dependent sections on the Ready transition, and never synchronously
+enter an in-progress Research scan from the UI thread. See ADR 0005.
+
 Both paths emit a single typed `TasksChanged` delta carrying `Old` + `New`
 snapshots per affected task, so filtered views (My Day, Backlog) can detect
 removal-from-set as well as add and replace. Every query method returns

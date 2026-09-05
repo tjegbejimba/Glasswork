@@ -78,10 +78,15 @@ public class VerificationLaunchOptionsTests
                 [VerificationLaunchOptions.UiStatePathVariable] = @"C:\tmp\glasswork-ui-state.json",
                 [VerificationLaunchOptions.InstanceKeyVariable] = "visual-startup",
                 [VerificationLaunchOptions.StartupGatePathVariable] = @"C:\tmp\startup.release",
+                [VerificationLaunchOptions.SupplementalGatePathVariable] =
+                    @"C:\tmp\supplemental.release",
                 [VerificationLaunchOptions.FailStartupAttemptsVariable] = "1",
             });
 
         Assert.AreEqual(@"C:\tmp\startup.release", options.StartupGatePath);
+        Assert.AreEqual(
+            @"C:\tmp\supplemental.release",
+            options.SupplementalGatePath);
         Assert.AreEqual(1, options.FailStartupAttempts);
     }
 }

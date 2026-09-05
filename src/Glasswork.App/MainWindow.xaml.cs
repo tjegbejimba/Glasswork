@@ -126,6 +126,7 @@ public sealed partial class MainWindow : Window
         NavFrame.Content = null;
         NavFrame.BackStack.Clear();
         DeepLinkErrorBar.IsOpen = false;
+        SupplementalStatusBar.IsOpen = false;
         ReadyShell.Visibility = Visibility.Collapsed;
         StartupErrorPanel.Visibility = Visibility.Collapsed;
         StartupLoadingPanel.Visibility = Visibility.Visible;
@@ -171,6 +172,7 @@ public sealed partial class MainWindow : Window
         ReadyShell.Visibility = Visibility.Visible;
         AppTitleBar.IsPaneToggleButtonVisible = true;
         RefreshStatusBar();
+        UpdateSupplementalReadiness(App.Supplemental.Readiness);
 
         if (_launchPlanner && !_plannerLaunched)
         {
@@ -200,6 +202,67 @@ public sealed partial class MainWindow : Window
     {
         StartupRetryButton.IsEnabled = false;
         StartupRetryRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SupplementalRetryButton_Click(object sender, RoutedEventArgs e)
+    {
+        SupplementalRetryButton.IsEnabled = false;
+        (Application.Current as App)?.RetryFailedSupplementalInitialization();
+    }
+
+    internal void UpdateSupplementalReadiness(
+        SupplementalReadinessSnapshot readiness)
+    {
+        if (!_isReady || _closed)
+            return;
+
+        var backlinks = readiness.Backlinks.Status;
+        var research = readiness.Research.Status;
+        var backlinksReady = backlinks == SupplementalInitializationStatus.Ready;
+        var researchReady = research == SupplementalInitializationStatus.Ready;
+        NavResearch.IsEnabled = researchReady;
+
+        if (backlinksReady && researchReady)
+        {
+            SupplementalStatusBar.IsOpen = false;
+            SupplementalRetryButton.Visibility = Visibility.Collapsed;
+            SupplementalRetryButton.IsEnabled = true;
+            return;
+        }
+
+        var failed = backlinks == SupplementalInitializationStatus.Failed
+            || research == SupplementalInitializationStatus.Failed;
+        SupplementalStatusBar.Severity = failed
+            ? InfoBarSeverity.Warning
+            : InfoBarSeverity.Informational;
+        SupplementalStatusBar.Title = failed
+            ? "Some background data couldn’t load"
+            : "Finishing background data";
+        SupplementalStatusBar.Message = DescribeSupplementalReadiness(
+            backlinksReady,
+            researchReady,
+            failed);
+        SupplementalRetryButton.Visibility = failed
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SupplementalRetryButton.IsEnabled = true;
+        SupplementalStatusBar.IsOpen = true;
+    }
+
+    private static string DescribeSupplementalReadiness(
+        bool backlinksReady,
+        bool researchReady,
+        bool failed)
+    {
+        var unavailable = !backlinksReady && !researchReady
+            ? "Backlinks and Research"
+            : backlinksReady
+                ? "Research"
+                : "Backlinks";
+        var verb = backlinksReady ? "is" : "are";
+        return failed
+            ? $"{unavailable} {verb} unavailable. Tasks remain usable; try loading the background data again."
+            : $"{unavailable} {verb} still loading. Tasks are ready to use.";
     }
 
     private void Root_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
@@ -413,7 +476,11 @@ public sealed partial class MainWindow : Window
                 NavigateToTopLevel(typeof(WorkLogPage));
                 break;
             case "research":
-                NavigateToTopLevel(typeof(ResearchPage));
+                if (App.Supplemental.Readiness.Research.Status
+                    == SupplementalInitializationStatus.Ready)
+                {
+                    NavigateToTopLevel(typeof(ResearchPage));
+                }
                 break;
             case "feedback":
                 ShowFeedbackDialog();
@@ -515,7 +582,8 @@ public sealed partial class MainWindow : Window
     /// </summary>
     public void NavigateTo(GlassworkUri uri)
     {
-        DispatcherQueue.TryEnqueue(() => TryNavigateTo(uri));
+        DispatcherQueue.TryEnqueue(() =>
+            (Application.Current as App)?.HandleProtocolNavigation(uri));
     }
 
     internal bool TryNavigateTo(GlassworkUri uri)
@@ -551,14 +619,28 @@ public sealed partial class MainWindow : Window
                 break;
 
             case GlassworkUri.ResearchLibrary:
+                if (App.Supplemental.Readiness.Research.Status
+                    != SupplementalInitializationStatus.Ready)
+                {
+                    return false;
+                }
                 DeepLinkErrorBar.IsOpen = false;
                 SelectNavigationItem(NavResearch);
                 NavigateToTopLevel(typeof(ResearchPage));
                 break;
 
             case GlassworkUri.ResearchTopic research:
-                var snapshot = App.Research.Capture(
-                    DateOnly.FromDateTime(DateTime.Today));
+                if (!App.TryCaptureResearch(
+                        DateOnly.FromDateTime(DateTime.Today),
+                        out var snapshot))
+                {
+                    if (App.Supplemental.Readiness.Research.Status
+                        == SupplementalInitializationStatus.Ready)
+                    {
+                        (Application.Current as App)?.RefreshResearchSnapshot();
+                    }
+                    return false;
+                }
                 var topic = snapshot.Topics.FirstOrDefault(candidate =>
                     string.Equals(candidate.Id, research.TopicId, StringComparison.OrdinalIgnoreCase));
                 if (topic is null)

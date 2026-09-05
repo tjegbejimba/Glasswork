@@ -12,6 +12,7 @@ public sealed record VerificationLaunchOptions(
     bool SkipUpdateCheck,
     string? StartPage = null,
     string? StartupGatePath = null,
+    string? SupplementalGatePath = null,
     int FailStartupAttempts = 0)
 {
     public const string VaultPathVariable = "GLASSWORK_VERIFY_VAULT_PATH";
@@ -23,6 +24,8 @@ public sealed record VerificationLaunchOptions(
     public const string CaptureOutputPathVariable = "GLASSWORK_VERIFY_CAPTURE_OUTPUT";
     public const string StartPageVariable = "GLASSWORK_VERIFY_START_PAGE";
     public const string StartupGatePathVariable = "GLASSWORK_VERIFY_STARTUP_GATE_PATH";
+    public const string SupplementalGatePathVariable =
+        "GLASSWORK_VERIFY_SUPPLEMENTAL_GATE_PATH";
     public const string FailStartupAttemptsVariable = "GLASSWORK_VERIFY_FAIL_STARTUP_ATTEMPTS";
 
     public bool IsVerificationRun =>
@@ -33,6 +36,7 @@ public sealed record VerificationLaunchOptions(
         SkipUpdateCheck ||
         StartPage is not null ||
         StartupGatePath is not null ||
+        SupplementalGatePath is not null ||
         FailStartupAttempts > 0;
 
     public static VerificationLaunchOptions FromProcessEnvironment() =>
@@ -45,6 +49,7 @@ public sealed record VerificationLaunchOptions(
         var instanceKey = Read(environment, InstanceKeyVariable) ?? "main";
         var startPage = Read(environment, StartPageVariable);
         var startupGatePath = Read(environment, StartupGatePathVariable);
+        var supplementalGatePath = Read(environment, SupplementalGatePathVariable);
         var failStartupAttempts = ReadNonNegativeInt(
             environment,
             FailStartupAttemptsVariable);
@@ -67,7 +72,9 @@ public sealed record VerificationLaunchOptions(
             !string.IsNullOrWhiteSpace(uiStatePath) ||
             instanceKey != "main" ||
             startPage is not null;
-        if ((startupGatePath is not null || failStartupAttempts > 0)
+        if ((startupGatePath is not null
+                || supplementalGatePath is not null
+                || failStartupAttempts > 0)
             && (string.IsNullOrWhiteSpace(vaultPath)
                 || string.IsNullOrWhiteSpace(uiStatePath)
                 || instanceKey == "main"))
@@ -84,6 +91,7 @@ public sealed record VerificationLaunchOptions(
             explicitSkipUpdate || isVerificationRun,
             startPage,
             startupGatePath,
+            supplementalGatePath,
             failStartupAttempts);
     }
 

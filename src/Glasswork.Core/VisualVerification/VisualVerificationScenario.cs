@@ -26,6 +26,7 @@ public sealed partial class VisualVerificationScenario
     public int LaunchTimeoutSeconds { get; init; } = 20;
     public int InitialWaitMilliseconds { get; init; } = 800;
     public bool HoldStartup { get; init; }
+    public bool HoldSupplemental { get; init; }
     public int FailStartupAttempts { get; init; }
     public string Theme { get; init; } = "system";
     public int? WindowWidth { get; init; }

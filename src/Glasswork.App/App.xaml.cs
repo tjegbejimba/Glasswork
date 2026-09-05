@@ -64,7 +64,7 @@ public partial class App : Application
     public static FileWatcherService? Watcher { get; private set; }
     public static ArtifactWatcherService? ArtifactsWatcher { get; private set; }
     public static IBacklinkIndex BacklinkIndex { get; private set; } = null!;
-    public static BacklinksWatcher? BacklinksWatcher { get; private set; }
+    public static SupplementalInitializationCoordinator Supplemental { get; private set; } = null!;
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; private set; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
@@ -172,6 +172,8 @@ public partial class App : Application
     /// marshal to the dispatcher before touching UI.
     /// </summary>
     public static event EventHandler<BacklinksChangedEventArgs>? BacklinksChangedExternally;
+    public static event EventHandler<SupplementalInitializationChangedEventArgs>?
+        SupplementalInitializationChanged;
 
     [DllImport("shell32.dll", SetLastError = true)]
     private static extern void SetCurrentProcessExplicitAppUserModelID(
@@ -358,6 +360,7 @@ public partial class App : Application
             candidate = await Task.Run(
                 () => VaultServiceBundle.Build(
                     configuredVaultPath,
+                    attempt.Generation,
                     _uiStateImpl,
                     Performance,
                     (sender, args) =>
@@ -374,7 +377,8 @@ public partial class App : Application
                 return;
             }
 
-            PublishServices(candidate);
+            var published = candidate;
+            PublishServices(published);
             candidate = null;
 
             if (string.IsNullOrWhiteSpace(_launchOptions.VaultPath))
@@ -394,6 +398,9 @@ public partial class App : Application
             mainWindow.CompleteStartup();
             Performance.EmitMilestone("app.tasks_ready");
             _startup.DrainNavigation(attempt, mainWindow.TryNavigateTo);
+            published.Supplemental.StateChanged += (_, args) =>
+                OnSupplementalInitializationChanged(attempt, published, args);
+            _ = StartSupplementalInitializationAsync(attempt, published);
         }
         catch (OperationCanceledException) when (
             attempt.CancellationToken.IsCancellationRequested
@@ -432,10 +439,112 @@ public partial class App : Application
         Tasks = services.Tasks;
         TaskDetailProjection = services.TaskDetailProjection;
         Research = services.Research;
+        Supplemental = services.Supplemental;
         IndexMarkdownWriter = services.IndexMarkdownWriter;
         Watcher = services.Watcher;
         ArtifactsWatcher = services.ArtifactsWatcher;
-        BacklinksWatcher = services.BacklinksWatcher;
+    }
+
+    public static bool TryCaptureResearch(
+        DateOnly queryDate,
+        out ResearchCatalogSnapshot snapshot)
+    {
+        if (Supplemental is not null)
+            return Supplemental.TryCaptureResearch(queryDate, out snapshot);
+
+        snapshot = default!;
+        return false;
+    }
+
+    private async Task StartSupplementalInitializationAsync(
+        StartupAttempt attempt,
+        VaultServiceBundle services)
+    {
+        try
+        {
+            while (_launchOptions.SupplementalGatePath is not null
+                && !File.Exists(_launchOptions.SupplementalGatePath))
+            {
+                await Task.Delay(25, attempt.CancellationToken);
+            }
+
+            if (!_startup.IsCurrent(attempt) || _isClosing)
+                return;
+
+            await services.Supplemental
+                .StartAsync(attempt.CancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            attempt.CancellationToken.IsCancellationRequested
+            || !_startup.IsCurrent(attempt)
+            || _isClosing)
+        {
+        }
+        catch (ObjectDisposedException) when (!_startup.IsCurrent(attempt) || _isClosing)
+        {
+        }
+    }
+
+    private void OnSupplementalInitializationChanged(
+        StartupAttempt attempt,
+        VaultServiceBundle services,
+        SupplementalInitializationChangedEventArgs args)
+    {
+        if (args.Generation != attempt.Generation
+            || !_startup.IsCurrent(attempt)
+            || _isClosing
+            || _window is not MainWindow mainWindow)
+        {
+            return;
+        }
+
+        mainWindow.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_startup.IsCurrent(attempt) || _isClosing)
+                return;
+
+            var readiness = services.Supplemental.Readiness;
+            mainWindow.UpdateSupplementalReadiness(readiness);
+            SupplementalInitializationChanged?.Invoke(
+                services.Supplemental,
+                args);
+
+            if (args.Current.Status == SupplementalInitializationStatus.Ready)
+            {
+                Performance.EmitMilestone(
+                    args.Component == SupplementalComponent.Backlinks
+                        ? "app.backlinks_ready"
+                        : "app.research_ready");
+                _startup.DrainNavigation(attempt, mainWindow.TryNavigateTo);
+            }
+        });
+    }
+
+    internal void RetryFailedSupplementalInitialization()
+    {
+        var supplemental = Supplemental;
+        if (supplemental is null)
+            return;
+
+        var readiness = supplemental.Readiness;
+        if (readiness.Backlinks.Status == SupplementalInitializationStatus.Failed)
+            _ = supplemental.RetryAsync(SupplementalComponent.Backlinks);
+        if (readiness.Research.Status == SupplementalInitializationStatus.Failed)
+            _ = supplemental.RetryAsync(SupplementalComponent.Research);
+    }
+
+    internal void RefreshResearchSnapshot()
+    {
+        var supplemental = Supplemental;
+        if (supplemental is null
+            || supplemental.Readiness.Research.Status
+                != SupplementalInitializationStatus.Ready)
+        {
+            return;
+        }
+
+        _ = supplemental.RetryAsync(SupplementalComponent.Research);
     }
 
     private void OnStartupRetryRequested(object? sender, EventArgs args) =>
@@ -583,14 +692,22 @@ public partial class App : Application
 
         var app = Current as App;
         var window = app?._window;
-        window?.DispatcherQueue.TryEnqueue(() =>
+        if (app is null)
+            return;
+        if (window is null)
+        {
+            app._startup.EnqueueNavigation(uri);
+            return;
+        }
+
+        window.DispatcherQueue.TryEnqueue(() =>
         {
             window.Activate();
-            app!.HandleProtocolNavigation(uri);
+            app.HandleProtocolNavigation(uri);
         });
     }
 
-    private void HandleProtocolNavigation(GlassworkUri uri)
+    internal void HandleProtocolNavigation(GlassworkUri uri)
     {
         if (_isClosing || _window is not MainWindow mainWindow)
             return;
@@ -600,7 +717,8 @@ public partial class App : Application
             return;
         }
 
-        mainWindow.TryNavigateTo(uri);
+        if (!mainWindow.TryNavigateTo(uri))
+            _startup.EnqueueNavigation(uri);
     }
 
     /// <summary>

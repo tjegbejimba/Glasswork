@@ -13,9 +13,11 @@ public class VisualVerificationScenarioTests
         {
           "name": "startup loading",
           "holdStartup": true,
+          "holdSupplemental": true,
           "failStartupAttempts": 1,
           "actions": [
-            { "type": "release-startup" }
+            { "type": "release-startup" },
+            { "type": "release-supplemental" }
           ],
           "captures": [
             { "name": "startup" }
@@ -26,8 +28,10 @@ public class VisualVerificationScenarioTests
         var scenario = VisualVerificationScenario.FromJson(json);
 
         Assert.IsTrue(scenario.HoldStartup);
+        Assert.IsTrue(scenario.HoldSupplemental);
         Assert.AreEqual(1, scenario.FailStartupAttempts);
-        Assert.AreEqual("release-startup", scenario.Actions.Single().Type);
+        Assert.AreEqual("release-startup", scenario.Actions[0].Type);
+        Assert.AreEqual("release-supplemental", scenario.Actions[1].Type);
     }
 
     [TestMethod]

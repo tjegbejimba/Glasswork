@@ -1,0 +1,78 @@
+{
+  "name": "Startup delayed supplemental indexes",
+  "startUri": "glasswork://research/startup-supplemental",
+  "holdSupplemental": true,
+  "launchTimeoutSeconds": 5,
+  "initialWaitMilliseconds": 500,
+  "windowWidth": 1000,
+  "windowHeight": 700,
+  "tasks": [
+    {
+      "id": "supplemental-ready-task",
+      "title": "Tasks are ready first",
+      "status": "todo",
+      "myDay": "today"
+    }
+  ],
+  "wikiPages": [
+    {
+      "relativePath": "concepts/startup-supplemental.md",
+      "id": "startup-supplemental",
+      "title": "Startup supplemental",
+      "type": "concept",
+      "confidence": "high",
+      "updated": "2026-09-04",
+      "optedIn": true,
+      "markdown": "# Startup supplemental\n\nBackground content for [[supplemental-ready-task]]."
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "MyDayTodayHeader",
+      "timeoutMilliseconds": 4000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "SupplementalStatusBar",
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "type": "assert-disabled",
+      "automationId": "NavResearch"
+    },
+    {
+      "type": "capture",
+      "name": "tasks-ready-supplemental-loading"
+    },
+    {
+      "type": "release-supplemental"
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 2500
+    },
+    {
+      "type": "assert-enabled",
+      "automationId": "NavResearch"
+    },
+    {
+      "type": "assert-hidden",
+      "automationId": "SupplementalStatusBar"
+    },
+    {
+      "type": "wait-for",
+      "name": "Startup supplemental",
+      "timeoutMilliseconds": 5000
+    },
+    {
+      "type": "capture",
+      "name": "supplemental-ready"
+    }
+  ],
+  "captures": [
+    {
+      "name": "supplemental-final"
+    }
+  ]
+}

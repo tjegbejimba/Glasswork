@@ -64,12 +64,15 @@ The trace never records Vault paths, task IDs, titles, task prose, or search tex
 
 | Event | Measurement |
 |---|---|
-| `vault.services_initialize` | Complete vault-dependent service initialization, including the nested phases below |
-| `vault.backlink_index_build` | Recursive backlink index construction |
+| `vault.services_initialize` | Required Task-service initialization through coherent publication; supplemental scans are separate |
+| `vault.backlink_index_hydrate` | Supplemental recursive Backlink index hydration |
+| `vault.research_catalog_hydrate` | Supplemental Research Catalog hydration |
 | `vault.task_startup_hydration` | Single-pass managed recovery, V1 migration, final-byte parsing, Resource Revision calculation, and atomic Index seed; includes `task_count`, `migrated_task_count`, and `examined_file_count` |
 | `vault.my_day_pin_migration` | Date-scoped My Day pin migration |
 | `app.window_first_frame` | Loading-shell milestone at the first composition callback after the main window is activated; Vault-dependent initialization starts only after this callback |
 | `app.tasks_ready` | Milestone after one coherent Vault service generation is published and the initial Task page is constructed; supplemental Backlink/Research readiness is separate |
+| `app.backlinks_ready` | Milestone after the supplemental Backlink snapshot and lossless watcher handoff are ready |
+| `app.research_ready` | Milestone after the supplemental Research snapshot and lossless watcher handoff are ready |
 | `my_day.refresh_data` | My Day query, grouping, and collection reconciliation; excludes later WinUI layout and painting |
 | `my_day.initial_render` | First My Day navigation through its first post-refresh composition callback, once per page instance |
 | `backlog.refresh_data` | Backlog filtering, sorting, grouping, and collection mutation; excludes later ListView/board layout and scroll restoration |

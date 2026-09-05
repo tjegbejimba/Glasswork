@@ -143,13 +143,29 @@
                             </NavigationViewItem>
                         </NavigationView.FooterMenuItems>
                         <Grid RowDefinitions="Auto,*">
-                            <InfoBar x:Name="DeepLinkErrorBar"
-                                     Grid.Row="0"
-                                     AutomationProperties.AutomationId="DeepLinkErrorBar"
-                                     IsOpen="False"
-                                     IsClosable="True"
-                                     Severity="Warning"
-                                     Margin="8,8,8,0" />
+                            <StackPanel Grid.Row="0">
+                                <InfoBar x:Name="DeepLinkErrorBar"
+                                         AutomationProperties.AutomationId="DeepLinkErrorBar"
+                                         IsOpen="False"
+                                         IsClosable="True"
+                                         Severity="Warning"
+                                         Margin="8,8,8,0" />
+                                <InfoBar x:Name="SupplementalStatusBar"
+                                         AutomationProperties.AutomationId="SupplementalStatusBar"
+                                         IsOpen="False"
+                                         IsClosable="False"
+                                         Severity="Informational"
+                                         Margin="8,8,8,0"
+                                         Title="Finishing background data">
+                                    <InfoBar.ActionButton>
+                                        <Button x:Name="SupplementalRetryButton"
+                                                AutomationProperties.AutomationId="SupplementalRetryButton"
+                                                Click="SupplementalRetryButton_Click"
+                                                Content="Try again"
+                                                Visibility="Collapsed" />
+                                    </InfoBar.ActionButton>
+                                </InfoBar>
+                            </StackPanel>
                             <Frame x:Name="NavFrame" Grid.Row="1" AutomationProperties.AutomationId="ContentFrame">
                                 <Frame.ContentTransitions>
                                     <TransitionCollection>

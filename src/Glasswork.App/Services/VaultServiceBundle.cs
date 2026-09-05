@@ -28,10 +28,10 @@ internal sealed class VaultServiceBundle : IDisposable
         TaskService tasks,
         TaskDetailProjectionService taskDetailProjection,
         FileSystemResearchCatalog research,
+        SupplementalInitializationCoordinator supplemental,
         IndexMarkdownWriter indexMarkdownWriter,
         FileWatcherService watcher,
         ArtifactWatcherService artifactsWatcher,
-        BacklinksWatcher backlinksWatcher,
         Debouncer overflowRehydrateDebouncer,
         Debouncer convergenceRehydrateDebouncer)
     {
@@ -47,10 +47,10 @@ internal sealed class VaultServiceBundle : IDisposable
         Tasks = tasks;
         TaskDetailProjection = taskDetailProjection;
         Research = research;
+        Supplemental = supplemental;
         IndexMarkdownWriter = indexMarkdownWriter;
         Watcher = watcher;
         ArtifactsWatcher = artifactsWatcher;
-        BacklinksWatcher = backlinksWatcher;
         _overflowRehydrateDebouncer = overflowRehydrateDebouncer;
         _convergenceRehydrateDebouncer = convergenceRehydrateDebouncer;
     }
@@ -67,13 +67,14 @@ internal sealed class VaultServiceBundle : IDisposable
     public TaskService Tasks { get; }
     public TaskDetailProjectionService TaskDetailProjection { get; }
     public FileSystemResearchCatalog Research { get; }
+    public SupplementalInitializationCoordinator Supplemental { get; }
     public IndexMarkdownWriter IndexMarkdownWriter { get; }
     public FileWatcherService Watcher { get; }
     public ArtifactWatcherService ArtifactsWatcher { get; }
-    public BacklinksWatcher BacklinksWatcher { get; }
 
     public static VaultServiceBundle Build(
         string configuredVaultPath,
+        long generation,
         JsonFileUiStateService uiState,
         IPerformanceTracer performance,
         Action<object?, BacklinksChangedEventArgs> onBacklinksChanged,
@@ -82,8 +83,8 @@ internal sealed class VaultServiceBundle : IDisposable
     {
         FileWatcherService? watcher = null;
         ArtifactWatcherService? artifactsWatcher = null;
-        BacklinksWatcher? backlinksWatcher = null;
         FileSystemResearchCatalog? research = null;
+        SupplementalInitializationCoordinator? supplemental = null;
         IndexMarkdownWriter? indexMarkdownWriter = null;
         Debouncer? overflowRehydrateDebouncer = null;
         Debouncer? convergenceRehydrateDebouncer = null;
@@ -111,7 +112,13 @@ internal sealed class VaultServiceBundle : IDisposable
                 vault,
                 backlinkIndex: backlinkIndex);
             mutations.BacklinksChanged += (sender, args) =>
-                onBacklinksChanged(sender, args);
+            {
+                if (supplemental?.Readiness.Backlinks.Status
+                    == SupplementalInitializationStatus.Ready)
+                {
+                    onBacklinksChanged(sender, args);
+                }
+            };
 
             IndexStartupHydrationResult ready;
             using (var trace = performance.BeginSpan("vault.task_startup_hydration"))
@@ -171,18 +178,6 @@ internal sealed class VaultServiceBundle : IDisposable
                     index.ConvergencePending -= handler;
                 }
             }
-            cancellationToken.ThrowIfCancellationRequested();
-            using (var trace = performance.BeginSpan("vault.backlink_index_build"))
-            {
-                try { backlinkIndex.Build(resolvedPaths.VaultRoot); }
-                catch (Exception ex)
-                {
-                    trace.SetOutcome("error");
-                    System.Diagnostics.Debug.WriteLine(
-                        $"Backlink index build failed: {ex.Message}");
-                }
-            }
-
             var tasks = new TaskService(vault, index);
             var taskQuery = new WarmIndexTaskQuery(index, backlinkIndex);
             var taskDetailProjection = new TaskDetailProjectionService(
@@ -197,8 +192,15 @@ internal sealed class VaultServiceBundle : IDisposable
                 taskIndex: index,
                 taskService: tasks,
                 wayfinderGateway: WayfinderGatewayFactory.Create());
-            research.Start();
-            _ = research.Capture(DateOnly.FromDateTime(DateTime.Today));
+            supplemental = new SupplementalInitializationCoordinator(
+                generation,
+                resolvedPaths.VaultRoot,
+                backlinkIndex,
+                research,
+                selfWrites,
+                performanceTracer: performance);
+            supplemental.BacklinksChanged += (sender, args) =>
+                onBacklinksChanged(sender, args);
 
             indexMarkdownWriter = new IndexMarkdownWriter(index, vaultPath);
             GarbageCollectUiState(uiState, index);
@@ -207,15 +209,6 @@ internal sealed class VaultServiceBundle : IDisposable
             artifactsWatcher.ArtifactChanged += (sender, args) =>
                 onArtifactChanged(sender, args);
             artifactsWatcher.Start();
-
-            backlinksWatcher = new BacklinksWatcher(
-                resolvedPaths.VaultRoot,
-                backlinkIndex,
-                selfWrites,
-                TimeSpan.FromMilliseconds(250));
-            backlinksWatcher.BacklinksChanged += (sender, args) =>
-                onBacklinksChanged(sender, args);
-            backlinksWatcher.Start();
 
             cancellationToken.ThrowIfCancellationRequested();
             initializeTrace.SetCount("task_count", ready.TaskCount);
@@ -232,20 +225,21 @@ internal sealed class VaultServiceBundle : IDisposable
                 tasks,
                 taskDetailProjection,
                 research,
+                supplemental,
                 indexMarkdownWriter,
                 watcher,
                 artifactsWatcher,
-                backlinksWatcher,
                 overflowRehydrateDebouncer,
                 convergenceRehydrateDebouncer);
         }
         catch
         {
             initializeTrace.SetOutcome("error");
-            backlinksWatcher?.Dispose();
             artifactsWatcher?.Dispose();
             watcher?.Dispose();
-            research?.Dispose();
+            supplemental?.Dispose();
+            if (supplemental is null)
+                research?.Dispose();
             indexMarkdownWriter?.Dispose();
             overflowRehydrateDebouncer?.Dispose();
             convergenceRehydrateDebouncer?.Dispose();
@@ -279,10 +273,9 @@ internal sealed class VaultServiceBundle : IDisposable
         if (_disposed)
             return;
         _disposed = true;
-        BacklinksWatcher.Dispose();
+        Supplemental.Dispose();
         ArtifactsWatcher.Dispose();
         Watcher.Dispose();
-        Research.Dispose();
         IndexMarkdownWriter.Dispose();
         _overflowRehydrateDebouncer.Dispose();
         _convergenceRehydrateDebouncer.Dispose();
