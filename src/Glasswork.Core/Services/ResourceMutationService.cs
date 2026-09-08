@@ -130,6 +130,126 @@ public sealed partial class ResourceMutationService
         _vault.AttachMutationService(this);
     }
 
+    internal TResult CreateStartupSnapshot<TResult>(
+        Func<VaultStartupSnapshot, TResult> createResult,
+        CancellationToken cancellationToken)
+    {
+        var representedWrites = new HashSet<string>(StringComparer.Ordinal);
+        TResult result;
+        try
+        {
+            using (VaultScopedCoordinator.EnterExclusive(_vaultPath))
+            {
+                representedWrites.UnionWith(RecoverUnsafe());
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var tasks = new List<GlassworkTask>();
+                var examinedFileCount = 0;
+                var migratedTaskCount = 0;
+                var migrator = new MigrationService();
+                var utf8 = new UTF8Encoding(
+                    encoderShouldEmitUTF8Identifier: false,
+                    throwOnInvalidBytes: true);
+                foreach (var path in Directory.GetFiles(_vaultPath, "*.md")
+                    .Where(path => !Path.GetFileName(path).StartsWith('_'))
+                    .OrderBy(path => path, StringComparer.Ordinal))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    examinedFileCount++;
+                    byte[] originalBytes;
+                    try
+                    {
+                        _vault.NotifyBeforeTaskFileRead(path);
+                        originalBytes = File.ReadAllBytes(path);
+                    }
+                    catch (Exception ex) when (
+                        ex is IOException
+                            or UnauthorizedAccessException)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"Failed to read startup Task candidate {path}: {ex.Message}");
+                        continue;
+                    }
+
+                    var taskId = Path.GetFileNameWithoutExtension(path);
+                    byte[] finalBytes;
+                    GlassworkTask task;
+                    try
+                    {
+                        var hasUtf8Preamble = originalBytes.AsSpan().StartsWith(Encoding.UTF8.Preamble);
+                        var originalContent = utf8.GetString(
+                            originalBytes,
+                            hasUtf8Preamble ? Encoding.UTF8.Preamble.Length : 0,
+                            originalBytes.Length - (hasUtf8Preamble ? Encoding.UTF8.Preamble.Length : 0));
+                        task = _parser.Parse(originalContent);
+                        var migratedContent = migrator.MigrateToV2(originalContent);
+                        if (string.Equals(
+                            migratedContent,
+                            originalContent,
+                            StringComparison.Ordinal))
+                        {
+                            finalBytes = originalBytes;
+                        }
+                        else
+                        {
+                            var migratedPayload = utf8.GetBytes(migratedContent);
+                            finalBytes = hasUtf8Preamble
+                                ? Encoding.UTF8.Preamble.ToArray().Concat(migratedPayload).ToArray()
+                                : migratedPayload;
+                        }
+                    }
+                    catch (Exception ex) when (
+                        ex is DecoderFallbackException
+                            or FormatException
+                            or YamlDotNet.Core.YamlException)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"Failed to parse startup Task candidate {path}: {ex.Message}");
+                        continue;
+                    }
+
+                    if (!ReferenceEquals(finalBytes, originalBytes))
+                    {
+                        CommitBytesUnsafe(
+                            taskId,
+                            finalBytes,
+                            representedWrites,
+                            expectedOriginal: originalBytes);
+                        migratedTaskCount++;
+                        var finalOffset = finalBytes.AsSpan().StartsWith(Encoding.UTF8.Preamble)
+                            ? Encoding.UTF8.Preamble.Length
+                            : 0;
+                        task = _parser.Parse(utf8.GetString(
+                            finalBytes,
+                            finalOffset,
+                            finalBytes.Length - finalOffset));
+                    }
+
+                    task.ResourceRevision = Revision(finalBytes);
+                    _vault.RememberManagedBytes(taskId, finalBytes);
+                    if (!string.IsNullOrEmpty(task.Id))
+                        tasks.Add(task);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                result = createResult(new VaultStartupSnapshot(
+                    tasks,
+                    migratedTaskCount,
+                    examinedFileCount));
+            }
+        }
+        finally
+        {
+            _vault.NotifyBeforeStartupNotifications();
+            foreach (var taskId in representedWrites)
+                _vault.NotifyStartupTaskWritten(taskId);
+            foreach (var taskId in DrainRecoveredDeletes())
+                _vault.NotifyStartupTaskDeleted(taskId);
+        }
+
+        return result;
+    }
+
     internal void CommitTask(GlassworkTask task, bool ifAbsent = false)
     {
         ArgumentNullException.ThrowIfNull(task);

@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Glasswork.Core.Diagnostics;
 using Glasswork.Core.Models;
 using Glasswork.Core.Queries;
@@ -25,6 +27,11 @@ public partial class App : Application
     private Window? _window;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _visualCaptureTimer;
     private bool _visualCaptureInProgress;
+    private readonly StartupLifecycleCoordinator<VaultServiceBundle, GlassworkUri>
+        _startup = new();
+    private VerificationLaunchOptions _launchOptions = null!;
+    private string _startupVaultPath = string.Empty;
+    private bool _isClosing;
     private static AppInstance? _mainAppInstance;
     private readonly long _managedStartupTimestamp;
     private static readonly string CrashReportDirectory = Path.Combine(
@@ -57,7 +64,7 @@ public partial class App : Application
     public static FileWatcherService? Watcher { get; private set; }
     public static ArtifactWatcherService? ArtifactsWatcher { get; private set; }
     public static IBacklinkIndex BacklinkIndex { get; private set; } = null!;
-    public static BacklinksWatcher? BacklinksWatcher { get; private set; }
+    public static SupplementalInitializationCoordinator Supplemental { get; private set; } = null!;
     public static ActiveTaskTracker ActiveTask { get; } = new();
     public static SelfWriteCoordinator SelfWrites { get; private set; } = new();
     public static IUiStateService UiState { get; private set; } = null!;
@@ -67,21 +74,6 @@ public partial class App : Application
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
     public static Glasswork.Core.AppUpdate.McpUpdateCheckService McpUpdater { get; private set; } = null!;
     public static IPerformanceTracer Performance { get; private set; } = PerformanceTracer.Disabled;
-
-    // Coalesces a burst of watcher-overflow events into a single full rehydrate.
-    // An OS buffer overflow can fire repeatedly while a bulk write is still in
-    // flight; debouncing lets the disk settle before we re-read the whole vault.
-    private static Glasswork.Core.Services.Debouncer? _overflowRehydrateDebouncer;
-
-    // Finding B (bounded convergence): a rehydrate can legitimately leave an entry
-    // unreconciled — it skipped a value that a concurrent write was mid-applying, or
-    // kept a present-but-unparseable (mid-write) file. Normally the next per-file
-    // watcher event converges it, but in the exact overflow scenario this recovery
-    // exists for, that triggering event may ALSO have been dropped. So when Index
-    // raises ConvergencePending, schedule exactly ONE bounded follow-up rehydrate per
-    // overflow episode — never an unbounded loop on a permanently-corrupt file.
-    private static Glasswork.Core.Services.Debouncer? _convergenceRehydrateDebouncer;
-    private static int _convergenceFollowUpsRemaining;
 
     /// <summary>
     /// Single app-wide owner of the live HTML-preview WebView2 (#324).
@@ -180,6 +172,8 @@ public partial class App : Application
     /// marshal to the dispatcher before touching UI.
     /// </summary>
     public static event EventHandler<BacklinksChangedEventArgs>? BacklinksChangedExternally;
+    public static event EventHandler<SupplementalInitializationChangedEventArgs>?
+        SupplementalInitializationChanged;
 
     [DllImport("shell32.dll", SetLastError = true)]
     private static extern void SetCurrentProcessExplicitAppUserModelID(
@@ -239,6 +233,7 @@ public partial class App : Application
         var currentInstance = AppInstance.GetCurrent();
         var activationArgs = currentInstance.GetActivatedEventArgs();
         var launchOptions = VerificationLaunchOptions.FromProcessEnvironment();
+        _launchOptions = launchOptions;
 
         _mainAppInstance = AppInstance.FindOrRegisterForKey(launchOptions.InstanceKey);
         if (!_mainAppInstance.IsCurrent)
@@ -309,18 +304,6 @@ public partial class App : Application
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 "Wiki");
 
-        InitVaultServices(configuredVaultPath, _uiStateImpl);
-        if (string.IsNullOrWhiteSpace(launchOptions.VaultPath)
-            && !string.IsNullOrWhiteSpace(persistedVaultPath)
-            && !string.Equals(
-                Path.GetFullPath(persistedVaultPath),
-                VaultRoot,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            _uiStateImpl.Set(VaultPathKey, VaultRoot);
-            _uiStateImpl.Save();
-        }
-
         // Register glasswork:// URL scheme for this executable so links work even
         // without MSIX packaging. Idempotent: re-running on every launch is cheap
         // and ensures the path stays correct after the binary is moved.
@@ -328,14 +311,254 @@ public partial class App : Application
             RegisterUrlScheme();
 
         _window = new MainWindow(launchOptions.StartPage);
+        var mainWindow = (MainWindow)_window;
+        mainWindow.StartupRetryRequested += OnStartupRetryRequested;
+        mainWindow.Closed += (_, _) => HandleWindowClosed();
+        mainWindow.PrepareForStartup();
         ApplyTheme(_window);
         _window.Activate();
         StartVisualCaptureBridge(launchOptions);
 
-        // Navigate to the target if the app was cold-started via a glasswork:// URI.
+        // Buffer cold-start protocol navigation until the required Task snapshot is ready.
         var pendingUri = ExtractUri(activationArgs);
-        if (pendingUri is not null && _window is MainWindow mw)
-            mw.NavigateTo(pendingUri);
+        if (pendingUri is not null)
+            _startup.EnqueueNavigation(pendingUri);
+
+        _startupVaultPath = configuredVaultPath;
+        StartVaultInitialization(resetAttempt: true);
+    }
+
+    private void StartVaultInitialization(bool resetAttempt)
+    {
+        if (_isClosing || _window is not MainWindow mainWindow)
+            return;
+
+        mainWindow.PrepareForStartup();
+        var attempt = _startup.BeginAttempt(resetAttempt);
+
+        _ = InitializeVaultGenerationAsync(
+            attempt,
+            _startupVaultPath);
+    }
+
+    private async Task InitializeVaultGenerationAsync(
+        StartupAttempt attempt,
+        string configuredVaultPath)
+    {
+        VaultServiceBundle? candidate = null;
+        try
+        {
+            if (_window is not MainWindow mainWindow)
+                return;
+
+            await mainWindow.WaitForFirstFrameAsync(attempt.CancellationToken);
+            await WaitForVerificationStartupControlAsync(
+                _launchOptions,
+                attempt.Attempt,
+                attempt.CancellationToken);
+
+            candidate = await Task.Run(
+                () => VaultServiceBundle.Build(
+                    configuredVaultPath,
+                    attempt.Generation,
+                    _uiStateImpl,
+                    Performance,
+                    (sender, args) =>
+                        BacklinksChangedExternally?.Invoke(sender, args),
+                    (sender, args) =>
+                        ArtifactChangedExternally?.Invoke(sender, args),
+                    attempt.CancellationToken),
+                CancellationToken.None);
+
+            attempt.CancellationToken.ThrowIfCancellationRequested();
+            if (_isClosing || !_startup.TryPublish(attempt, candidate))
+            {
+                candidate = null;
+                return;
+            }
+
+            var published = candidate;
+            PublishServices(published);
+            candidate = null;
+
+            if (string.IsNullOrWhiteSpace(_launchOptions.VaultPath))
+            {
+                var persistedVaultPath = _uiStateImpl.Get<string>(VaultPathKey);
+                if (!string.IsNullOrWhiteSpace(persistedVaultPath)
+                    && !string.Equals(
+                        Path.GetFullPath(persistedVaultPath),
+                        VaultRoot,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    _uiStateImpl.Set(VaultPathKey, VaultRoot);
+                    _uiStateImpl.Save();
+                }
+            }
+
+            mainWindow.CompleteStartup();
+            Performance.EmitMilestone("app.tasks_ready");
+            _startup.DrainNavigation(attempt, mainWindow.TryNavigateTo);
+            published.Supplemental.StateChanged += (_, args) =>
+                OnSupplementalInitializationChanged(attempt, published, args);
+            _ = StartSupplementalInitializationAsync(attempt, published);
+        }
+        catch (OperationCanceledException) when (
+            attempt.CancellationToken.IsCancellationRequested
+            || !_startup.IsCurrent(attempt)
+            || _isClosing)
+        {
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"Vault startup generation {attempt.Generation} failed: {ex}");
+            if (!_isClosing
+                && _startup.IsCurrent(attempt)
+                && _window is MainWindow mainWindow)
+            {
+                mainWindow.ShowStartupFailure();
+            }
+        }
+        finally
+        {
+            candidate?.Dispose();
+        }
+    }
+
+    private void PublishServices(VaultServiceBundle services)
+    {
+        VaultRoot = services.VaultRoot;
+        SelfWrites = services.SelfWrites;
+        Vault = services.Vault;
+        Artifacts = services.Artifacts;
+        ObsidianLauncher = services.ObsidianLauncher;
+        BacklinkIndex = services.BacklinkIndex;
+        Mutations = services.Mutations;
+        Index = services.Index;
+        TaskQuery = services.TaskQuery;
+        Tasks = services.Tasks;
+        TaskDetailProjection = services.TaskDetailProjection;
+        Research = services.Research;
+        Supplemental = services.Supplemental;
+        IndexMarkdownWriter = services.IndexMarkdownWriter;
+        Watcher = services.Watcher;
+        ArtifactsWatcher = services.ArtifactsWatcher;
+    }
+
+    public static bool TryCaptureResearch(
+        DateOnly queryDate,
+        out ResearchCatalogSnapshot snapshot)
+    {
+        if (Supplemental is not null)
+            return Supplemental.TryCaptureResearch(queryDate, out snapshot);
+
+        snapshot = default!;
+        return false;
+    }
+
+    private async Task StartSupplementalInitializationAsync(
+        StartupAttempt attempt,
+        VaultServiceBundle services)
+    {
+        try
+        {
+            while (_launchOptions.SupplementalGatePath is not null
+                && !File.Exists(_launchOptions.SupplementalGatePath))
+            {
+                await Task.Delay(25, attempt.CancellationToken);
+            }
+
+            if (!_startup.IsCurrent(attempt) || _isClosing)
+                return;
+
+            await services.Supplemental
+                .StartAsync(attempt.CancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            attempt.CancellationToken.IsCancellationRequested
+            || !_startup.IsCurrent(attempt)
+            || _isClosing)
+        {
+        }
+        catch (ObjectDisposedException) when (!_startup.IsCurrent(attempt) || _isClosing)
+        {
+        }
+    }
+
+    private void OnSupplementalInitializationChanged(
+        StartupAttempt attempt,
+        VaultServiceBundle services,
+        SupplementalInitializationChangedEventArgs args)
+    {
+        if (args.Generation != attempt.Generation
+            || !_startup.IsCurrent(attempt)
+            || _isClosing
+            || _window is not MainWindow mainWindow)
+        {
+            return;
+        }
+
+        mainWindow.DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_startup.IsCurrent(attempt) || _isClosing)
+                return;
+
+            var readiness = services.Supplemental.Readiness;
+            mainWindow.UpdateSupplementalReadiness(readiness);
+            SupplementalInitializationChanged?.Invoke(
+                services.Supplemental,
+                args);
+
+            if (args.Current.Status == SupplementalInitializationStatus.Ready)
+            {
+                Performance.EmitMilestone(
+                    args.Component == SupplementalComponent.Backlinks
+                        ? "app.backlinks_ready"
+                        : "app.research_ready");
+                _startup.DrainNavigation(attempt, mainWindow.TryNavigateTo);
+            }
+        });
+    }
+
+    internal void RetryFailedSupplementalInitialization()
+    {
+        var supplemental = Supplemental;
+        if (supplemental is null)
+            return;
+
+        var readiness = supplemental.Readiness;
+        if (readiness.Backlinks.Status == SupplementalInitializationStatus.Failed)
+            _ = supplemental.RetryAsync(SupplementalComponent.Backlinks);
+        if (readiness.Research.Status == SupplementalInitializationStatus.Failed)
+            _ = supplemental.RetryAsync(SupplementalComponent.Research);
+    }
+
+    internal void RefreshResearchSnapshot()
+    {
+        var supplemental = Supplemental;
+        if (supplemental is null
+            || supplemental.Readiness.Research.Status
+                != SupplementalInitializationStatus.Ready)
+        {
+            return;
+        }
+
+        _ = supplemental.RetryAsync(SupplementalComponent.Research);
+    }
+
+    private void OnStartupRetryRequested(object? sender, EventArgs args) =>
+        StartVaultInitialization(resetAttempt: false);
+
+    private void HandleWindowClosed()
+    {
+        if (_isClosing)
+            return;
+        _isClosing = true;
+        _startup.Dispose();
+        _visualCaptureTimer?.Stop();
+        if (_mainAppInstance is not null)
+            _mainAppInstance.Activated -= OnAppInstanceActivated;
     }
 
     private void StartVisualCaptureBridge(VerificationLaunchOptions launchOptions)
@@ -362,7 +585,13 @@ public partial class App : Application
             _visualCaptureInProgress = true;
             try
             {
-                File.Delete(requestPath);
+                try { File.Delete(requestPath); }
+                catch (IOException)
+                {
+                    // The runner may have created the request path but not yet
+                    // released its write handle. Retry on the next timer tick.
+                    return;
+                }
                 await CaptureVisualVerificationFrame(root, outputPath);
             }
             catch (Exception ex)
@@ -375,6 +604,21 @@ public partial class App : Application
             }
         };
         _visualCaptureTimer.Start();
+    }
+
+    private static async System.Threading.Tasks.Task WaitForVerificationStartupControlAsync(
+        VerificationLaunchOptions launchOptions,
+        int attempt,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        if (attempt <= launchOptions.FailStartupAttempts)
+            throw new InvalidOperationException("Verification startup failure.");
+
+        while (launchOptions.StartupGatePath is not null
+            && !File.Exists(launchOptions.StartupGatePath))
+        {
+            await System.Threading.Tasks.Task.Delay(25, cancellationToken);
+        }
     }
 
     private static async System.Threading.Tasks.Task CaptureVisualVerificationFrame(
@@ -415,222 +659,6 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Initialises (or reinitialises) all vault-dependent services for the given path.
-    /// Tears down existing watchers before rebuilding so that switching vaults is safe.
-    /// </summary>
-    /// <param name="configuredVaultPath">
-    /// Absolute path to the Obsidian Vault root, or a legacy Glasswork Task directory.
-    /// </param>
-    /// <param name="uiStateImpl">The already-initialised UI state service, used for GC.</param>
-    private static void InitVaultServices(string configuredVaultPath, JsonFileUiStateService uiStateImpl)
-    {
-        using var initializeTrace = Performance.BeginSpan("vault.services_initialize");
-        try
-        {
-            InitVaultServicesCore(configuredVaultPath, uiStateImpl);
-            initializeTrace.SetCount("task_count", Index.Count);
-        }
-        catch
-        {
-            initializeTrace.SetOutcome("error");
-            throw;
-        }
-    }
-
-    private static void InitVaultServicesCore(string configuredVaultPath, JsonFileUiStateService uiStateImpl)
-    {
-        // Tear down existing watchers (no-op on first launch).
-        Watcher?.Stop();
-        ArtifactsWatcher?.Stop();
-        BacklinksWatcher?.Stop();
-        Research?.Dispose();
-
-        var resolvedPaths = VaultPathResolver.Resolve(configuredVaultPath);
-        var vaultPath = resolvedPaths.TaskDirectory;
-        VaultRoot = resolvedPaths.VaultRoot;
-
-        SelfWrites = new SelfWriteCoordinator(vaultPath);
-        Vault = new VaultService(vaultPath, SelfWrites);
-
-        Artifacts = new FileSystemArtifactStore(VaultRoot);
-        ObsidianLauncher = new ObsidianLauncher(VaultRoot);
-
-        // Backlink index: scans the Obsidian vault for pages outside wiki/todo/
-        // that mention a Glasswork task via [[stem]] / [[stem|alias]].
-        var backlinkIndex = new BacklinkIndex();
-        using (var trace = Performance.BeginSpan("vault.backlink_index_build"))
-        {
-            try { backlinkIndex.Build(VaultRoot); }
-            catch (Exception ex)
-            {
-                trace.SetOutcome("error");
-                System.Diagnostics.Debug.WriteLine($"Backlink index build failed: {ex.Message}");
-            }
-        }
-        BacklinkIndex = backlinkIndex;
-        Mutations = new ResourceMutationService(
-            vaultPath,
-            Vault,
-            backlinkIndex: BacklinkIndex);
-        Mutations.BacklinksChanged += (s, e) =>
-            BacklinksChangedExternally?.Invoke(s, e);
-
-        // One-shot V1 → V2 migration of any pre-existing files. Idempotent: V2 files
-        // are skipped, so re-running on every launch is cheap.
-        // IMPORTANT (issue #184): migration MUST run before Index.EnsureLoaded so the
-        // in-memory aggregate is never seeded with pre-migration parse artefacts.
-        using (var trace = Performance.BeginSpan("vault.v1_migration"))
-        {
-            try { trace.SetCount("migrated_task_count", Vault.MigrateAllToV2()); }
-            catch (Exception ex)
-            {
-                trace.SetOutcome("error");
-                System.Diagnostics.Debug.WriteLine($"V2 migration failed: {ex.Message}");
-            }
-        }
-
-        // In-memory aggregate (issue #184). Subscribe to vault domain events
-        // BEFORE EnsureLoaded so we still capture writes that happen on the seed
-        // pass (defensive — none expected in practice). EnsureLoaded does not
-        // emit TasksChanged: it's a snapshot, not a delta.
-        Index = new IndexService(Vault);
-        using (var trace = Performance.BeginSpan("vault.index_hydration"))
-        {
-            try
-            {
-                Index.EnsureLoaded();
-                trace.SetCount("task_count", Index.Count);
-            }
-            catch
-            {
-                trace.SetOutcome("error");
-                throw;
-            }
-        }
-        TaskQuery = new WarmIndexTaskQuery(Index, BacklinkIndex);
-        Tasks = new TaskService(Vault, Index);
-        TaskDetailProjection = new TaskDetailProjectionService(
-            Vault,
-            Artifacts,
-            BacklinkIndex,
-            Index);
-        Research = new FileSystemResearchCatalog(
-            VaultRoot,
-            selfWrites: SelfWrites,
-            taskVault: Vault,
-            taskIndex: Index,
-            taskService: Tasks,
-            wayfinderGateway: WayfinderGatewayFactory.Create());
-        Research.Start();
-        _ = Research.Capture(DateOnly.FromDateTime(DateTime.Today));
-
-        // Issue #186: the IndexMarkdownWriter is the new owner of _index.md /
-        // _today.md generation. It subscribes to Index.Changed, owns its own
-        // 500ms debouncer, and lands in IndexMarkdownWriter.WriteOnce. The
-        // writer is serialised per vault path so concurrent writes are safe. Dark-launch: identical
-        // observable behaviour as before; this just makes the writer
-        // independently testable on Linux.
-        //
-        // Dispose any predecessor before swapping vaults — InitVaultServices
-        // reruns on vault switch, and a stale writer would keep firing
-        // against the old vault path.
-        IndexMarkdownWriter?.Dispose();
-        IndexMarkdownWriter = new IndexMarkdownWriter(Index, vaultPath);
-
-        // GC stale per-task UI state entries (e.g. collapse overrides for tasks the
-        // user has since deleted from the vault). Cheap: O(state) + one in-memory
-        // index walk (no longer a disk scan, per issue #187). Uses the Tasks
-        // dictionary API from issue #186.
-        try
-        {
-            var liveIds = new System.Collections.Generic.HashSet<string>(
-                Index.Tasks.Keys,
-                StringComparer.Ordinal);
-            uiStateImpl.RemoveKeysNotIn(CollapsedTaskKeyPrefix, liveIds);
-
-            // Also drop dismissed.{date}.{taskId} entries from past days: a My Day
-            // dismissal only ever applies to the day it was created, so stale-dated
-            // keys are dead weight that otherwise accumulate forever (issue: day-view
-            // stale dismissals). Today's and (defensively) future-dated keys are kept.
-            var today = System.DateOnly.FromDateTime(System.DateTime.Today);
-            uiStateImpl.RemoveKeysWhere(k => Glasswork.Core.Services.MyDayDismissals.IsStale(k, today));
-
-            uiStateImpl.Save();
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"UI state GC failed: {ex.Message}");
-        }
-
-        // File watcher: external (Obsidian / agent) edits to task files feed
-        // into Index via the typed event. The Index owns the in-memory aggregate
-        // and emits TasksChanged deltas; pages subscribe to Index.TasksChanged
-        // directly (issue #190 completed the migration).
-        Watcher = new FileWatcherService(vaultPath, SelfWrites);
-        Watcher.TaskFileChange += (_, change) =>
-        {
-            try { Index.OnFileChangedOnDisk(change); }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.OnFileChangedOnDisk failed: {ex.Message}"); }
-        };
-        // When the OS change buffer overflows during a bulk burst of writes (e.g.
-        // an ADO sprint import), the watcher silently drops the queued per-file
-        // events and those tasks' snapshots go stale until restart. Recover by
-        // re-reading the whole vault from disk and emitting deltas for whatever
-        // drifted, so chips converge to the on-disk Due/urgency instead of sticking.
-        // Debounced so a storm of overflow signals collapses into one rehydrate
-        // once the write burst has quieted.
-        _overflowRehydrateDebouncer = new Glasswork.Core.Services.Debouncer(
-            TimeSpan.FromMilliseconds(500),
-            () =>
-            {
-                try { Index.Rehydrate(); }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.Rehydrate after watcher overflow failed: {ex.Message}"); }
-            });
-
-        // The single bounded follow-up pass. Debounced on its own timer so the
-        // repaired/quiesced disk has settled before the second read. Each overflow
-        // episode arms exactly one of these (see _convergenceFollowUpsRemaining).
-        _convergenceRehydrateDebouncer = new Glasswork.Core.Services.Debouncer(
-            TimeSpan.FromMilliseconds(500),
-            () =>
-            {
-                try { Index.Rehydrate(); }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Index.Rehydrate convergence follow-up failed: {ex.Message}"); }
-            });
-
-        // An overflow opens a fresh convergence budget: arm one follow-up, then
-        // kick the primary rehydrate.
-        Watcher.Overflowed += (_, _) =>
-        {
-            System.Threading.Interlocked.Exchange(ref _convergenceFollowUpsRemaining, 1);
-            _overflowRehydrateDebouncer!.Trigger();
-        };
-
-        // A rehydrate that couldn't fully reconcile asks for a follow-up. Spend the
-        // single budgeted pass if one is available; otherwise ignore (bounded — a
-        // permanently-corrupt file can't spin us forever).
-        Index.ConvergencePending += (_, _) =>
-        {
-            if (System.Threading.Interlocked.Exchange(ref _convergenceFollowUpsRemaining, 0) > 0)
-                _convergenceRehydrateDebouncer!.Trigger();
-        };
-        Watcher.Start();
-
-        ArtifactsWatcher = new ArtifactWatcherService(vaultPath);
-        ArtifactsWatcher.ArtifactChanged += (s, e) => ArtifactChangedExternally?.Invoke(s, e);
-        ArtifactsWatcher.Start();
-
-        BacklinksWatcher = new BacklinksWatcher(
-            VaultRoot,
-            BacklinkIndex,
-            SelfWrites,
-            TimeSpan.FromMilliseconds(250));
-        BacklinksWatcher.BacklinksChanged += (s, e) => BacklinksChangedExternally?.Invoke(s, e);
-        BacklinksWatcher.Start();
-
-    }
-
-    /// <summary>
     /// Persists <paramref name="newVaultPath"/> to <see cref="UiState"/>, tears down all
     /// vault-dependent services, and rebuilds them for the new path.
     /// Resets per-task UI state (collapse overrides, etc.) because task IDs are path-relative
@@ -649,8 +677,11 @@ public partial class App : Application
         UiState.RemoveKeysNotIn(CollapsedTaskKeyPrefix, System.Array.Empty<string>());
         UiState.Save();
 
-        // Use the inner concrete service for vault switching (decorator references it).
-        InitVaultServices(resolvedPaths.VaultRoot, _uiStateImpl);
+        if (Current is App app)
+        {
+            app._startupVaultPath = resolvedPaths.VaultRoot;
+            app.StartVaultInitialization(resetAttempt: true);
+        }
     }
 
     private static void OnAppInstanceActivated(object? sender, AppActivationArguments args)
@@ -659,12 +690,35 @@ public partial class App : Application
         var uri = ExtractUri(args);
         if (uri is null) return;
 
-        var window = (Current as App)?._window;
-        window?.DispatcherQueue.TryEnqueue(() =>
+        var app = Current as App;
+        var window = app?._window;
+        if (app is null)
+            return;
+        if (window is null)
+        {
+            app._startup.EnqueueNavigation(uri);
+            return;
+        }
+
+        window.DispatcherQueue.TryEnqueue(() =>
         {
             window.Activate();
-            (window as MainWindow)?.NavigateTo(uri);
+            app.HandleProtocolNavigation(uri);
         });
+    }
+
+    internal void HandleProtocolNavigation(GlassworkUri uri)
+    {
+        if (_isClosing || _window is not MainWindow mainWindow)
+            return;
+        if (!_startup.HasPublishedServices || !mainWindow.IsStartupReady)
+        {
+            _startup.EnqueueNavigation(uri);
+            return;
+        }
+
+        if (!mainWindow.TryNavigateTo(uri))
+            _startup.EnqueueNavigation(uri);
     }
 
     /// <summary>

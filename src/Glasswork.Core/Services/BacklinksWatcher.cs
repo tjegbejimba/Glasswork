@@ -28,6 +28,7 @@ namespace Glasswork.Core.Services;
 public sealed class BacklinksWatcher : IDisposable
 {
     private static readonly TimeSpan DefaultQuietPeriod = TimeSpan.FromMilliseconds(250);
+    private const string GlobalDebouncerKey = "vault";
 
     private readonly FileSystemWatcher _watcher;
     private readonly TimeSpan _quietPeriod;
@@ -35,11 +36,25 @@ public sealed class BacklinksWatcher : IDisposable
     private readonly SelfWriteCoordinator? _selfWrites;
     private readonly string _vaultRoot;
     private readonly string _todoPrefix;
+    private readonly object _handoffGate = new();
+    private readonly List<BufferedBacklinkChange> _bufferedChanges = [];
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly ConcurrentDictionary<string, Debouncer> _debouncers =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<BufferedBacklinkChange> _scheduledChanges = [];
+    private bool _bufferingInitialChanges;
+    private bool _overflowedDuringInitialScan;
+    private bool _liveRecoveryActive;
+    private bool _overflowRecoveryPending;
+    private long _mutationEpoch;
+    private long _recoveryGeneration;
     private bool _disposed;
 
+    internal Action<string>? InitialChangeBufferedHook { get; set; }
+    internal Action<string>? ChangeScheduledHook { get; set; }
+
     public event EventHandler<BacklinksChangedEventArgs>? BacklinksChanged;
+    internal event EventHandler<BacklinkRecoveryFailedEventArgs>? RecoveryFailed;
 
     public BacklinksWatcher(string vaultRoot, IBacklinkIndex index)
         : this(vaultRoot, index, null, DefaultQuietPeriod) { }
@@ -79,49 +94,319 @@ public sealed class BacklinksWatcher : IDisposable
         _watcher.Created += OnFileEvent;
         _watcher.Deleted += OnDeleted;
         _watcher.Renamed += OnRenamed;
+        _watcher.Error += OnWatcherError;
     }
 
     public void Start() => _watcher.EnableRaisingEvents = true;
     public void Stop() => _watcher.EnableRaisingEvents = false;
     public bool IsWatching => _watcher.EnableRaisingEvents;
 
+    internal void StartBufferingInitialChanges()
+    {
+        Debouncer[] staleDebouncers;
+        lock (_handoffGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            staleDebouncers = BeginBufferingLocked();
+            _overflowedDuringInitialScan = false;
+            _overflowRecoveryPending = false;
+            _bufferingInitialChanges = true;
+            _watcher.EnableRaisingEvents = true;
+        }
+        DisposeDebouncers(staleDebouncers);
+    }
+
+    internal void CompleteInitialScan(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            BufferedBacklinkChange[] batch;
+            var rebuild = false;
+            lock (_handoffGate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_overflowedDuringInitialScan)
+                {
+                    _overflowedDuringInitialScan = false;
+                    _bufferedChanges.Clear();
+                    rebuild = true;
+                    batch = [];
+                }
+                else if (_bufferedChanges.Count == 0)
+                {
+                    _bufferingInitialChanges = false;
+                    return;
+                }
+                else
+                {
+                    batch = _bufferedChanges.ToArray();
+                    _bufferedChanges.Clear();
+                }
+            }
+
+            if (rebuild)
+            {
+                if (_index is BacklinkIndex concrete)
+                    concrete.Build(_vaultRoot, cancellationToken);
+                else
+                    _index.Build(_vaultRoot);
+                continue;
+            }
+
+            var affected = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var change in batch)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                affected.UnionWith(Apply(change));
+            }
+            RaiseBacklinksChanged(affected);
+        }
+    }
+
+    internal void AbortInitialScan()
+    {
+        lock (_handoffGate)
+        {
+            _bufferedChanges.Clear();
+            _overflowedDuringInitialScan = false;
+            _bufferingInitialChanges = false;
+            if (!_disposed)
+                _watcher.EnableRaisingEvents = false;
+        }
+    }
+
     private void OnFileEvent(object sender, FileSystemEventArgs e)
     {
-        if (IsExcluded(e.FullPath) || IsOwnProcessWrite(e.FullPath)) return;
-        Schedule(e.FullPath, () => _index.UpdateForFile(_vaultRoot, e.FullPath));
+        if (IsExcluded(e.FullPath)) return;
+        ScheduleOrBuffer(
+            new BufferedBacklinkChange(
+                BacklinkChangeKind.Update,
+                null,
+                e.FullPath),
+            e.FullPath,
+            () => IsOwnProcessWrite(e.FullPath));
     }
 
     private void OnDeleted(object sender, FileSystemEventArgs e)
     {
-        if (IsExcluded(e.FullPath) || IsOwnProcessWrite(e.FullPath)) return;
-        Schedule(e.FullPath, () => _index.RemoveForFile(e.FullPath));
+        if (IsExcluded(e.FullPath)) return;
+        ScheduleOrBuffer(
+            new BufferedBacklinkChange(
+                BacklinkChangeKind.Delete,
+                e.FullPath,
+                null),
+            e.FullPath,
+            () => IsOwnProcessWrite(e.FullPath));
     }
 
     private void OnRenamed(object sender, RenamedEventArgs e)
     {
-        // Rename = delete(old) + update(new). Use the new path as the debounce
-        // key so a sequence of rapid renames still collapses to one tick.
-        var newPath = e.FullPath;
-        var oldPath = e.OldFullPath;
+        HandleRenamed(e.OldFullPath, e.FullPath);
+    }
+
+    internal void HandleRenamed(string oldPath, string newPath)
+    {
+        // Rename = delete(old) + update(new). The global batch preserves the
+        // observed order of rename chains across different destination paths.
         var newExcluded = IsExcluded(newPath);
         var oldExcluded = IsExcluded(oldPath);
         if (newExcluded && oldExcluded) return;
-        if (IsOwnProcessWrite(newPath) || IsOwnProcessWrite(oldPath)) return;
-
-        Schedule(newPath, () => _index.Rename(_vaultRoot, oldPath, newPath));
+        ScheduleOrBuffer(
+            new BufferedBacklinkChange(
+                BacklinkChangeKind.Rename,
+                oldPath,
+                newPath),
+            newPath,
+            () => IsOwnProcessWrite(newPath) || IsOwnProcessWrite(oldPath));
     }
 
-    private void Schedule(string key, Func<IReadOnlyCollection<string>> apply)
+    private void OnWatcherError(object sender, ErrorEventArgs e)
     {
-        var debouncer = _debouncers.GetOrAdd(key, _ => new Debouncer(_quietPeriod, () =>
+        HandleWatcherError(e.GetException());
+    }
+
+    internal void HandleWatcherError(Exception? exception)
+    {
+        var startRecovery = false;
+        long recoveryGeneration = 0;
+        Debouncer[] staleDebouncers = [];
+        lock (_handoffGate)
         {
-            IReadOnlyCollection<string> affected;
-            try { affected = apply(); }
-            catch { return; }
-            if (affected.Count == 0) return;
+            if (_bufferingInitialChanges)
+            {
+                _overflowedDuringInitialScan = true;
+                return;
+            }
+            if (_disposed)
+                return;
+
+            staleDebouncers = BeginBufferingLocked();
+            _overflowedDuringInitialScan = false;
+            if (_liveRecoveryActive)
+            {
+                _overflowRecoveryPending = true;
+            }
+            else
+            {
+                _liveRecoveryActive = true;
+                recoveryGeneration = ++_recoveryGeneration;
+                startRecovery = true;
+            }
+        }
+
+        DisposeDebouncers(staleDebouncers);
+        if (startRecovery)
+            _ = Task.Run(() => RecoverFromOverflow(recoveryGeneration));
+    }
+
+    private void RecoverFromOverflow(long recoveryGeneration)
+    {
+        Exception? recoveryFailure = null;
+        CancellationToken token;
+        try
+        {
+            token = _lifetimeCancellation.Token;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        try
+        {
+            while (true)
+            {
+                var affected = new HashSet<string>(
+                    _index is BacklinkIndex before
+                        ? before.SnapshotIndexedTaskIds()
+                        : Array.Empty<string>(),
+                    StringComparer.Ordinal);
+                if (_index is BacklinkIndex concrete)
+                    concrete.Build(_vaultRoot, token);
+                else
+                    _index.Build(_vaultRoot);
+                CompleteInitialScan(token);
+                if (_index is BacklinkIndex after)
+                    affected.UnionWith(after.SnapshotIndexedTaskIds());
+                RaiseBacklinksChanged(affected);
+
+                lock (_handoffGate)
+                {
+                    if (!_overflowRecoveryPending)
+                    {
+                        _liveRecoveryActive = false;
+                        return;
+                    }
+
+                    _overflowRecoveryPending = false;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"BacklinksWatcher overflow recovery failed: {ex}");
+            AbortInitialScan();
+            recoveryFailure = ex;
+        }
+        finally
+        {
+            lock (_handoffGate)
+            {
+                if (_recoveryGeneration == recoveryGeneration)
+                {
+                    _liveRecoveryActive = false;
+                    _overflowRecoveryPending = false;
+                }
+            }
+        }
+
+        if (recoveryFailure is not null)
+        {
+            RecoveryFailed?.Invoke(
+                this,
+                new BacklinkRecoveryFailedEventArgs(recoveryFailure));
+        }
+    }
+
+    private IReadOnlyCollection<string> Apply(BufferedBacklinkChange change) =>
+        change.Kind switch
+        {
+            BacklinkChangeKind.Update when change.NewPath is not null =>
+                _index.UpdateForFile(_vaultRoot, change.NewPath),
+            BacklinkChangeKind.Delete when change.OldPath is not null =>
+                _index.RemoveForFile(change.OldPath),
+            BacklinkChangeKind.Rename
+                when change.OldPath is not null && change.NewPath is not null =>
+                _index.Rename(_vaultRoot, change.OldPath, change.NewPath),
+            _ => Array.Empty<string>(),
+        };
+
+    private void RaiseBacklinksChanged(IReadOnlyCollection<string> affected)
+    {
+        if (affected.Count > 0)
             BacklinksChanged?.Invoke(this, new BacklinksChangedEventArgs(affected));
-        }));
+    }
+
+    private void ScheduleOrBuffer(
+        BufferedBacklinkChange change,
+        string key,
+        Func<bool> shouldSuppress)
+    {
+        Debouncer debouncer;
+        long epoch;
+        lock (_handoffGate)
+        {
+            if (_disposed)
+                return;
+            if (_bufferingInitialChanges)
+            {
+                BufferChangeLocked(change);
+                return;
+            }
+            if (shouldSuppress())
+                return;
+
+            epoch = _mutationEpoch;
+            _scheduledChanges.Add(change);
+            debouncer = _debouncers.GetOrAdd(
+                GlobalDebouncerKey,
+                _ => new Debouncer(_quietPeriod, () =>
+                {
+                    var affected = new HashSet<string>(StringComparer.Ordinal);
+                    lock (_handoffGate)
+                    {
+                        if (_disposed
+                            || _bufferingInitialChanges
+                            || epoch != _mutationEpoch)
+                        {
+                            return;
+                        }
+
+                        if (_scheduledChanges.Count == 0)
+                            return;
+                        var batch = _scheduledChanges.ToArray();
+                        _scheduledChanges.Clear();
+                        try
+                        {
+                            foreach (var pending in batch)
+                                affected.UnionWith(Apply(pending));
+                        }
+                        catch
+                        {
+                            return;
+                        }
+                    }
+                    RaiseBacklinksChanged(affected);
+                }));
+        }
+
         debouncer.Trigger();
+        ChangeScheduledHook?.Invoke(key);
     }
 
     private bool IsExcluded(string fullPath)
@@ -139,13 +424,66 @@ public sealed class BacklinksWatcher : IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        Debouncer[] debouncers;
+        lock (_handoffGate)
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            _mutationEpoch++;
+            debouncers = _debouncers.Values.ToArray();
+            _debouncers.Clear();
+            _scheduledChanges.Clear();
+        }
+
+        _lifetimeCancellation.Cancel();
         _watcher.Dispose();
-        foreach (var d in _debouncers.Values) d.Dispose();
-        _debouncers.Clear();
+        DisposeDebouncers(debouncers);
+        _lifetimeCancellation.Dispose();
         GC.SuppressFinalize(this);
     }
+
+    private Debouncer[] BeginBufferingLocked()
+    {
+        _mutationEpoch++;
+        var staleDebouncers = _debouncers.Values.ToArray();
+        _debouncers.Clear();
+        _scheduledChanges.Clear();
+        _bufferedChanges.Clear();
+        _bufferingInitialChanges = true;
+        return staleDebouncers;
+    }
+
+    private void BufferChangeLocked(BufferedBacklinkChange change)
+    {
+        _bufferedChanges.Add(change);
+        InitialChangeBufferedHook?.Invoke(
+            change.NewPath ?? change.OldPath ?? string.Empty);
+    }
+
+    private static void DisposeDebouncers(IEnumerable<Debouncer> debouncers)
+    {
+        foreach (var debouncer in debouncers)
+            debouncer.Dispose();
+    }
+
+    private sealed record BufferedBacklinkChange(
+        BacklinkChangeKind Kind,
+        string? OldPath,
+        string? NewPath);
+
+    private enum BacklinkChangeKind
+    {
+        Update,
+        Delete,
+        Rename,
+    }
+}
+
+internal sealed class BacklinkRecoveryFailedEventArgs(Exception exception)
+    : EventArgs
+{
+    public Exception Exception { get; } = exception;
 }
 
 public sealed class BacklinksChangedEventArgs : EventArgs

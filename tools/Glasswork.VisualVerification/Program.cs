@@ -264,6 +264,14 @@ internal static partial class VisualVerificationRunner
         var uiStatePath = Path.Combine(workDir, "ui-state.json");
         var captureRequestPath = Path.Combine(workDir, "capture.request");
         var captureOutputPath = Path.Combine(workDir, "capture.png");
+        var startupReleasePath = Path.Combine(workDir, "startup.release");
+        var supplementalReleasePath = Path.Combine(workDir, "supplemental.release");
+        var performanceTracePath =
+            scenario.HoldStartup
+                || scenario.HoldSupplemental
+                || scenario.FailStartupAttempts > 0
+                ? Path.Combine(options.OutDir, "startup-performance.jsonl")
+                : null;
         var wayfinderFixturePath = Path.Combine(workDir, "wayfinder-fixture.json");
         Directory.CreateDirectory(todoPath);
 
@@ -300,6 +308,10 @@ internal static partial class VisualVerificationRunner
             instanceKey,
             captureRequestPath,
             captureOutputPath,
+            scenario.HoldStartup ? startupReleasePath : null,
+            scenario.HoldSupplemental ? supplementalReleasePath : null,
+            scenario.FailStartupAttempts,
+            performanceTracePath,
             wayfinderFixturePath,
             canvasExtensionsRoot,
             canvasRetrySourcePath);
@@ -323,6 +335,8 @@ internal static partial class VisualVerificationRunner
                         options.OutDir,
                         captureRequestPath,
                         captureOutputPath,
+                        startupReleasePath,
+                        supplementalReleasePath,
                         process.Id,
                         action,
                         captures);
@@ -637,6 +651,10 @@ internal static partial class VisualVerificationRunner
         string instanceKey,
         string captureRequestPath,
         string captureOutputPath,
+        string? startupGatePath,
+        string? supplementalGatePath,
+        int failStartupAttempts,
+        string? performanceTracePath,
         string wayfinderFixturePath,
         string? canvasExtensionsRoot,
         string? canvasRetrySourcePath)
@@ -657,6 +675,23 @@ internal static partial class VisualVerificationRunner
         psi.Environment[VerificationLaunchOptions.SkipUpdateCheckVariable] = "1";
         psi.Environment[VerificationLaunchOptions.CaptureRequestPathVariable] = captureRequestPath;
         psi.Environment[VerificationLaunchOptions.CaptureOutputPathVariable] = captureOutputPath;
+        if (startupGatePath is not null)
+            psi.Environment[VerificationLaunchOptions.StartupGatePathVariable] = startupGatePath;
+        if (supplementalGatePath is not null)
+        {
+            psi.Environment[VerificationLaunchOptions.SupplementalGatePathVariable] =
+                supplementalGatePath;
+        }
+        if (failStartupAttempts > 0)
+        {
+            psi.Environment[VerificationLaunchOptions.FailStartupAttemptsVariable] =
+                failStartupAttempts.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        if (performanceTracePath is not null)
+        {
+            psi.Environment[PerformanceTracer.EnabledVariable] = "1";
+            psi.Environment[PerformanceTracer.PathVariable] = performanceTracePath;
+        }
         if (startPage is not null)
             psi.Environment[VerificationLaunchOptions.StartPageVariable] = startPage;
         psi.Environment["GLASSWORK_VISUAL_WAYFINDER_FIXTURE"] = wayfinderFixturePath;
@@ -698,6 +733,8 @@ internal static partial class VisualVerificationRunner
         string outDir,
         string captureRequestPath,
         string captureOutputPath,
+        string startupReleasePath,
+        string supplementalReleasePath,
         int processId,
         VisualVerificationAction action,
         ICollection<CaptureResult> captures)
@@ -793,6 +830,12 @@ internal static partial class VisualVerificationRunner
                         imageStats.UniqueSampledColors));
                 return;
             }
+            case "release-startup":
+                File.WriteAllText(startupReleasePath, "release");
+                return;
+            case "release-supplemental":
+                File.WriteAllText(supplementalReleasePath, "release");
+                return;
             case "assert-single-selection":
                 AssertSingleSelection(WaitForElement(hwnd, action));
                 return;

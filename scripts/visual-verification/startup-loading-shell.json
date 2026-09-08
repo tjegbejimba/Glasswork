@@ -1,0 +1,44 @@
+{
+  "name": "Startup loading shell",
+  "holdStartup": true,
+  "launchTimeoutSeconds": 3,
+  "initialWaitMilliseconds": 500,
+  "windowWidth": 1000,
+  "windowHeight": 700,
+  "tasks": [
+    {
+      "id": "startup-ready-task",
+      "title": "Startup ready task",
+      "status": "todo",
+      "myDay": "today"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "StartupLoadingText",
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "type": "capture",
+      "name": "startup-loading"
+    },
+    {
+      "type": "release-startup"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "MyDayTodayHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "startup-ready"
+    }
+  ],
+  "captures": [
+    {
+      "name": "startup-final"
+    }
+  ]
+}

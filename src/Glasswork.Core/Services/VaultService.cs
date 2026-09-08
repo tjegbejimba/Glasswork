@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Glasswork.Core.Models;
 
@@ -26,6 +27,9 @@ public class VaultService
     private readonly object _mutationGate = new();
 
     internal Action? AfterCreatedTaskQuarantineHook { get; set; }
+    internal Action<string>? BeforeTaskFileReadHook { get; set; }
+    internal Action? BeforeStartupIndexSubscriptionHook { get; set; }
+    internal Action? BeforeStartupNotificationsHook { get; set; }
 
     public VaultService(string vaultPath) : this(vaultPath, null) { }
 
@@ -56,13 +60,7 @@ public class VaultService
     public event EventHandler<string>? TaskDeleted;
 
     private void RaiseTaskWritten(string taskId)
-    {
-        try { TaskWritten?.Invoke(this, taskId); }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"TaskWritten subscriber threw for {taskId}: {ex}");
-        }
-    }
+        => RaiseTaskWritten(taskId, alreadyRepresentedByStartupSnapshot: false);
 
     internal void RegisterManagedRecovery(Func<IReadOnlyList<string>> recovery)
     {
@@ -91,6 +89,20 @@ public class VaultService
 
     internal void NotifyTaskWritten(string taskId) => RaiseTaskWritten(taskId);
     internal void NotifyTaskDeleted(string taskId) => RaiseTaskDeleted(taskId);
+    internal void NotifyStartupTaskWritten(string taskId) =>
+        RaiseTaskWritten(taskId, alreadyRepresentedByStartupSnapshot: true);
+    internal void NotifyStartupTaskDeleted(string taskId) =>
+        RaiseTaskDeleted(taskId, alreadyRepresentedByStartupSnapshot: true);
+    internal bool IsAlreadyRepresentedStartupNotification =>
+        _alreadyRepresentedStartupNotification.Value;
+    internal void NotifyBeforeTaskFileRead(string path) =>
+        BeforeTaskFileReadHook?.Invoke(path);
+    internal void NotifyBeforeStartupIndexSubscription() =>
+        BeforeStartupIndexSubscriptionHook?.Invoke();
+    internal void NotifyBeforeStartupNotifications() =>
+        BeforeStartupNotificationsHook?.Invoke();
+
+    private readonly AsyncLocal<bool> _alreadyRepresentedStartupNotification = new();
 
     internal void AttachMutationService(ResourceMutationService mutations)
     {
@@ -112,13 +124,47 @@ public class VaultService
             return _mutations ??= new ResourceMutationService(_vaultPath, this);
     }
 
-    private void RaiseTaskDeleted(string taskId)
+    private void RaiseTaskDeleted(
+        string taskId,
+        bool alreadyRepresentedByStartupSnapshot = false)
     {
+        var prior = _alreadyRepresentedStartupNotification.Value;
+        _alreadyRepresentedStartupNotification.Value = alreadyRepresentedByStartupSnapshot;
         try { TaskDeleted?.Invoke(this, taskId); }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"TaskDeleted subscriber threw for {taskId}: {ex}");
         }
+        finally
+        {
+            _alreadyRepresentedStartupNotification.Value = prior;
+        }
+    }
+
+    private void RaiseTaskWritten(
+        string taskId,
+        bool alreadyRepresentedByStartupSnapshot)
+    {
+        var prior = _alreadyRepresentedStartupNotification.Value;
+        _alreadyRepresentedStartupNotification.Value = alreadyRepresentedByStartupSnapshot;
+        try { TaskWritten?.Invoke(this, taskId); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"TaskWritten subscriber threw for {taskId}: {ex}");
+        }
+        finally
+        {
+            _alreadyRepresentedStartupNotification.Value = prior;
+        }
+    }
+
+    internal TResult CreateStartupSnapshot<TResult>(
+        Func<VaultStartupSnapshot, TResult> createResult,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(createResult);
+        cancellationToken.ThrowIfCancellationRequested();
+        return EnsureMutations().CreateStartupSnapshot(createResult, cancellationToken);
     }
 
     /// <summary>
@@ -147,11 +193,12 @@ public class VaultService
         {
             try
             {
+                NotifyBeforeTaskFileRead(file);
                 var bytes = File.ReadAllBytes(file);
                 var content = Encoding.UTF8.GetString(bytes);
                 var task = _parser.Parse(content);
                 task.ResourceRevision = ResourceMutationService.Revision(bytes);
-                _lastReadBytes[Path.GetFileNameWithoutExtension(file)] = bytes;
+                _lastReadBytes[Path.GetFileNameWithoutExtension(file)] = bytes.ToArray();
                 tasks.Add(task);
             }
             catch (Exception ex)
@@ -173,10 +220,11 @@ public class VaultService
         var filePath = GetFilePath(taskId);
         if (!File.Exists(filePath)) return null;
 
+        NotifyBeforeTaskFileRead(filePath);
         var bytes = File.ReadAllBytes(filePath);
         var task = _parser.Parse(Encoding.UTF8.GetString(bytes));
         task.ResourceRevision = ResourceMutationService.Revision(bytes);
-        _lastReadBytes[taskId] = bytes;
+        _lastReadBytes[taskId] = bytes.ToArray();
         return task;
     }
 
@@ -188,7 +236,7 @@ public class VaultService
         RunManagedRecovery();
         using var lease = VaultScopedCoordinator.EnterShared(_vaultPath);
         if (_lastReadBytes.TryGetValue(taskId, out var bytes))
-            return bytes;
+            return bytes.ToArray();
 
         var filePath = GetFilePath(taskId);
         return File.ReadAllBytes(filePath);
@@ -827,7 +875,11 @@ public class VaultService
         foreach (var path in Directory.EnumerateFiles(_vaultPath, "*.md", SearchOption.TopDirectoryOnly))
         {
             string original;
-            try { original = File.ReadAllText(path); }
+            try
+            {
+                NotifyBeforeTaskFileRead(path);
+                original = File.ReadAllText(path);
+            }
             catch { continue; }
 
             string migratedContent;
@@ -948,10 +1000,10 @@ public class VaultService
     }
 
     internal byte[]? TryGetCachedReadBytes(string taskId) =>
-        _lastReadBytes.TryGetValue(taskId, out var bytes) ? bytes : null;
+        _lastReadBytes.TryGetValue(taskId, out var bytes) ? bytes.ToArray() : null;
 
     internal void RememberManagedBytes(string taskId, byte[] bytes) =>
-        _lastReadBytes[taskId] = bytes;
+        _lastReadBytes[taskId] = bytes.ToArray();
 
     internal void ForgetManagedBytes(string taskId) =>
         _lastReadBytes.TryRemove(taskId, out _);

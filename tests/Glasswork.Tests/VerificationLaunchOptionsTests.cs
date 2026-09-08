@@ -67,4 +67,26 @@ public class VerificationLaunchOptionsTests
         Assert.IsTrue(options.SkipProtocolRegistration);
         Assert.IsTrue(options.SkipUpdateCheck);
     }
+
+    [TestMethod]
+    public void FromEnvironment_WhenStartupControlsAreIsolated_LoadsDeterministicGate()
+    {
+        var options = VerificationLaunchOptions.FromEnvironment(
+            new Dictionary<string, string?>
+            {
+                [VerificationLaunchOptions.VaultPathVariable] = @"C:\tmp\glasswork-vault",
+                [VerificationLaunchOptions.UiStatePathVariable] = @"C:\tmp\glasswork-ui-state.json",
+                [VerificationLaunchOptions.InstanceKeyVariable] = "visual-startup",
+                [VerificationLaunchOptions.StartupGatePathVariable] = @"C:\tmp\startup.release",
+                [VerificationLaunchOptions.SupplementalGatePathVariable] =
+                    @"C:\tmp\supplemental.release",
+                [VerificationLaunchOptions.FailStartupAttemptsVariable] = "1",
+            });
+
+        Assert.AreEqual(@"C:\tmp\startup.release", options.StartupGatePath);
+        Assert.AreEqual(
+            @"C:\tmp\supplemental.release",
+            options.SupplementalGatePath);
+        Assert.AreEqual(1, options.FailStartupAttempts);
+    }
 }

@@ -134,11 +134,6 @@ public sealed partial class SettingsPage : Page
         }
 
         App.SwitchVault(chosenPath);
-        RefreshVaultInfo();
-
-        // Update the status bar vault path text.
-        if (App.MainWindow is MainWindow mw)
-            mw.RefreshStatusBar();
     }
 
     // ── Appearance ───────────────────────────────────────────────────────────

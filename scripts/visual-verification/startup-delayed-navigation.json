@@ -1,0 +1,36 @@
+{
+  "name": "Startup delayed navigation",
+  "startUri": "glasswork://backlog",
+  "holdStartup": true,
+  "launchTimeoutSeconds": 3,
+  "initialWaitMilliseconds": 500,
+  "windowWidth": 1000,
+  "windowHeight": 700,
+  "tasks": [
+    {
+      "id": "startup-backlog-task",
+      "title": "Startup backlog task",
+      "status": "todo"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "StartupLoadingText",
+      "timeoutMilliseconds": 2000
+    },
+    {
+      "type": "release-startup"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "BacklogHeader",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "startup-delayed-backlog"
+    }
+  ]
+}

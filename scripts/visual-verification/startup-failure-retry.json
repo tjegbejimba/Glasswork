@@ -1,0 +1,45 @@
+{
+  "name": "Startup failure retry",
+  "failStartupAttempts": 1,
+  "launchTimeoutSeconds": 5,
+  "initialWaitMilliseconds": 500,
+  "windowWidth": 1000,
+  "windowHeight": 700,
+  "tasks": [
+    {
+      "id": "startup-retry-task",
+      "title": "Startup retry task",
+      "status": "todo",
+      "myDay": "today"
+    }
+  ],
+  "actions": [
+    {
+      "type": "wait-for",
+      "automationId": "StartupErrorText",
+      "timeoutMilliseconds": 5000
+    },
+    {
+      "type": "capture",
+      "name": "startup-error"
+    },
+    {
+      "type": "invoke",
+      "automationId": "StartupRetryButton"
+    },
+    {
+      "type": "wait-for",
+      "automationId": "MyDayTodayHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "startup-retry-ready"
+    }
+  ],
+  "captures": [
+    {
+      "name": "startup-retry-final"
+    }
+  ]
+}

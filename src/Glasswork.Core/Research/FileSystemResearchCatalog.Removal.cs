@@ -278,7 +278,7 @@ public sealed partial class FileSystemResearchCatalog
                 topic.VaultRelativePath,
                 _pagesByPath,
                 _diagnosticsByPath);
-            _snapshot = BuildSnapshot(queryDate, before);
+            SetSnapshot(queryDate, BuildSnapshot(queryDate, before));
             RaiseChange(CreateChange(
                 before,
                 _snapshot,

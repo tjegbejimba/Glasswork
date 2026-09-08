@@ -101,8 +101,11 @@ The in-memory shape of a task and its subtasks. Pure C# in
 
 ### 3. Index
 
-In-memory aggregate over all tasks. Hydrated once at startup from
-`VaultService.LoadAll()`; kept fresh thereafter via two parallel channels:
+In-memory aggregate over all tasks. Hydrated once at startup through
+`IndexService.CreateHydratedForStartupAsync(Vault)`, which performs managed
+recovery, V1 migration, final-byte parsing/Resource Revision calculation, and
+atomic Index seeding in one Vault pass; kept fresh thereafter via two parallel
+channels:
 
 - **Same-process writes** → `VaultService.TaskWritten` / `TaskDeleted` domain
   events.
@@ -110,6 +113,18 @@ In-memory aggregate over all tasks. Hydrated once at startup from
   routed to `IndexService.OnFileChangedOnDisk`, which re-parses just the
   affected file and replaces that one entry. Parse failures keep the prior
   snapshot intact so partial in-flight writes don't blow away valid state.
+
+App composition buffers Task watcher changes before the startup pass, replays
+them into the ready Index, and then switches atomically to live delivery so
+noncooperating Obsidian/agent writes cannot fall between the startup snapshot
+and watcher hookup.
+
+Backlink and Research hydration are supplemental to Task readiness. Their
+generation-scoped coordinator starts after Tasks are usable, exposes explicit
+Pending/Loading/Ready/Failed states, and preserves lossless watcher handoff.
+Presentation must show that supplemental values are unavailable until Ready,
+refresh dependent sections on the Ready transition, and never synchronously
+enter an in-progress Research scan from the UI thread. See ADR 0005.
 
 Both paths emit a single typed `TasksChanged` delta carrying `Old` + `New`
 snapshots per affected task, so filtered views (My Day, Backlog) can detect

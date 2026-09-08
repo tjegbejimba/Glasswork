@@ -93,6 +93,7 @@ public sealed partial class MyDayPage : Page
         // Subscribe before the first refresh so the fire-and-forget startup update check
         // can't land in the gap between reading the cache and wiring the handler (#241).
         App.Updater.ResultChanged += OnUpdaterResultChanged;
+        App.SupplementalInitializationChanged += OnSupplementalInitializationChanged;
         RefreshUpdateHint();
 
         if (!_initialRenderMeasured && App.Performance.IsEnabled)
@@ -130,6 +131,7 @@ public sealed partial class MyDayPage : Page
     {
         base.OnNavigatedFrom(e);
         App.Updater.ResultChanged -= OnUpdaterResultChanged;
+        App.SupplementalInitializationChanged -= OnSupplementalInitializationChanged;
         App.Index.Changed -= OnIndexChanged;
 
         CancelInitialRenderMeasurement();
@@ -138,6 +140,17 @@ public sealed partial class MyDayPage : Page
     private void OnIndexChanged(object? sender, Glasswork.Core.Services.TasksChanged e)
     {
         DispatcherQueue.TryEnqueue(Refresh);
+    }
+
+    private void OnSupplementalInitializationChanged(
+        object? sender,
+        SupplementalInitializationChangedEventArgs e)
+    {
+        if (e.Component == SupplementalComponent.Backlinks
+            && e.Current.Status == SupplementalInitializationStatus.Ready)
+        {
+            DispatcherQueue.TryEnqueue(Refresh);
+        }
     }
 
     private void CancelInitialRenderMeasurement()

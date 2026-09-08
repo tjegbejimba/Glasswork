@@ -65,6 +65,7 @@ public sealed partial class TaskDetailPage : Page
         base.OnNavigatedTo(e);
         _isNavigated = true;
         App.ObsidianLauncher.NotInstalled += OnObsidianNotInstalled;
+        App.SupplementalInitializationChanged += OnSupplementalInitializationChanged;
         if (e.Parameter is TaskDetailNavigation nav)
         {
             // Navigated from My Day's "flagged subtasks" section — display the parent task
@@ -724,16 +725,21 @@ public sealed partial class TaskDetailPage : Page
         if (normalizedTopicSlug.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
             normalizedTopicSlug = normalizedTopicSlug[..^3];
         var topicPath = "wiki/" + normalizedTopicSlug.Trim('/') + ".md";
-        var researchTopic = App.Research.Capture().Topics.FirstOrDefault(topic =>
-            string.Equals(
-                topic.VaultRelativePath,
-                topicPath,
-                StringComparison.OrdinalIgnoreCase));
-        if (researchTopic is not null)
+        if (App.TryCaptureResearch(
+                DateOnly.FromDateTime(DateTime.Today),
+                out var researchSnapshot))
         {
-            (App.MainWindow as MainWindow)?.NavigateTo(
-                new GlassworkUri.ResearchTopic(researchTopic.Id));
-            return;
+            var researchTopic = researchSnapshot.Topics.FirstOrDefault(topic =>
+                string.Equals(
+                    topic.VaultRelativePath,
+                    topicPath,
+                    StringComparison.OrdinalIgnoreCase));
+            if (researchTopic is not null)
+            {
+                (App.MainWindow as MainWindow)?.NavigateTo(
+                    new GlassworkUri.ResearchTopic(researchTopic.Id));
+                return;
+            }
         }
         var wikiRoot = Path.GetDirectoryName(App.Vault.VaultPath) ?? App.Vault.VaultPath;
         var absolutePath = Path.Combine(wikiRoot, link.Slug.Replace('/', Path.DirectorySeparatorChar));
@@ -756,6 +762,7 @@ public sealed partial class TaskDetailPage : Page
         }
         App.ArtifactChangedExternally -= OnArtifactChangedExternally;
         App.BacklinksChangedExternally -= OnBacklinksChangedExternally;
+        App.SupplementalInitializationChanged -= OnSupplementalInitializationChanged;
         App.ObsidianLauncher.NotInstalled -= OnObsidianNotInstalled;
         App.HtmlPreview.ReleaseAll();
         App.ActiveTask.Clear();
@@ -885,6 +892,24 @@ public sealed partial class TaskDetailPage : Page
         var id = Task?.Id;
         if (string.IsNullOrEmpty(id)) return;
         if (!e.AffectedTaskIds.Contains(id, StringComparer.Ordinal)) return;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            RefreshRelationshipProjection();
+            BindChildren(DetailProjection.DirectChildren);
+            BindBacklinks(DetailProjection.Backlinks);
+        });
+    }
+
+    private void OnSupplementalInitializationChanged(
+        object? sender,
+        SupplementalInitializationChangedEventArgs e)
+    {
+        if (e.Component != SupplementalComponent.Backlinks
+            || e.Current.Status != SupplementalInitializationStatus.Ready)
+        {
+            return;
+        }
+
         DispatcherQueue.TryEnqueue(() =>
         {
             RefreshRelationshipProjection();

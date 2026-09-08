@@ -291,6 +291,7 @@ public sealed partial class BacklogPage : Page
         Refresh();
         // Issue #188: Subscribe to Index.Changed for auto-refresh, with UI-thread marshalling
         App.Index.Changed += OnIndexChanged;
+        App.SupplementalInitializationChanged += OnSupplementalInitializationChanged;
         // Clear undo state when navigating to the page
         ClearUndoState();
     }
@@ -300,6 +301,7 @@ public sealed partial class BacklogPage : Page
         base.OnNavigatedFrom(e);
         // Issue #188: Unsubscribe from Index.Changed
         App.Index.Changed -= OnIndexChanged;
+        App.SupplementalInitializationChanged -= OnSupplementalInitializationChanged;
         // Clear undo state when navigating away
         ClearUndoState();
     }
@@ -310,6 +312,17 @@ public sealed partial class BacklogPage : Page
         // Marshal to UI thread before calling Refresh() to avoid RPC_E_WRONG_THREAD on
         // ObservableCollection mutations.
         DispatcherQueue.TryEnqueue(Refresh);
+    }
+
+    private void OnSupplementalInitializationChanged(
+        object? sender,
+        SupplementalInitializationChangedEventArgs e)
+    {
+        if (e.Component == SupplementalComponent.Backlinks
+            && e.Current.Status == SupplementalInitializationStatus.Ready)
+        {
+            DispatcherQueue.TryEnqueue(Refresh);
+        }
     }
 
     private void Refresh()
