@@ -223,12 +223,11 @@ jobs:
           $ErrorActionPreference = "Stop"
           $tag = "mcp-v$env:MCP_VERSION"
           $notesPath = "artifacts\mcp-release-notes.md"
-          @(
-              "# glasswork-mcp v$env:MCP_VERSION",
-              "",
-              "This release publishes the independently versioned Glasswork MCP global tool.",
-              "See src/Glasswork.Mcp/CHANGELOG.md at commit $env:SOURCE_REVISION for changes."
-          ) -join "`n" | Set-Content $notesPath
+          . .\scripts\Validate-McpReleasePublication.ps1
+          Get-McpReleaseChangelogEntry `
+              -ChangelogPath "src\Glasswork.Mcp\CHANGELOG.md" `
+              -Version $env:MCP_VERSION |
+              Set-Content -Path $notesPath -NoNewline
 
           if ($env:PUBLICATION_STATE -ne "ResumeDraft") {
               $createArgs = @(
