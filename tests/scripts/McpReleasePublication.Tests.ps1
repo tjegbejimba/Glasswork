@@ -100,6 +100,91 @@ Describe "Test-McpReleasePublicationInputs" {
     }
 }
 
+Describe "Get-McpReleaseChangelogEntry" {
+    It "extracts only the requested version's changelog entry" {
+        $changelogPath = Join-Path $TestDrive "CHANGELOG.md"
+        @"
+# Changelog — glasswork-mcp
+
+## [0.12.0] — 2026-08-20
+
+- Newer work.
+
+---
+
+## [0.11.0] — 2026-08-19
+
+- Released work.
+
+---
+
+## [0.10.0] — 2026-08-01
+
+- Older work.
+"@ | Set-Content $changelogPath
+
+        $entry = Get-McpReleaseChangelogEntry -ChangelogPath $changelogPath -Version "0.11.0"
+
+        $entry | Should -Be @"
+## [0.11.0] — 2026-08-19
+
+- Released work.
+"@
+    }
+
+    It "rejects a changelog without the requested version entry" {
+        $changelogPath = Join-Path $TestDrive "CHANGELOG.md"
+        "## [0.12.0] — 2026-08-20" | Set-Content $changelogPath
+
+        {
+            Get-McpReleaseChangelogEntry -ChangelogPath $changelogPath -Version "0.11.0"
+        } | Should -Throw "*does not contain a release entry*"
+    }
+
+    It "stops at the next release heading when entries have no separator" {
+        $changelogPath = Join-Path $TestDrive "CHANGELOG.md"
+        @"
+## [0.11.0] — 2026-08-19
+
+- Released work.
+
+## [0.10.0] — 2026-08-01
+
+- Older work.
+"@ | Set-Content $changelogPath
+
+        $entry = Get-McpReleaseChangelogEntry -ChangelogPath $changelogPath -Version "0.11.0"
+
+        $entry | Should -Be @"
+## [0.11.0] — 2026-08-19
+
+- Released work.
+"@
+    }
+
+    It "preserves a thematic break within the requested release entry" {
+        $changelogPath = Join-Path $TestDrive "CHANGELOG.md"
+        @"
+## [0.11.0] — 2026-08-19
+
+- Released work.
+
+---
+
+Additional release context.
+
+## [0.10.0] — 2026-08-01
+
+- Older work.
+"@ | Set-Content $changelogPath
+
+        $entry = Get-McpReleaseChangelogEntry -ChangelogPath $changelogPath -Version "0.11.0"
+
+        $entry | Should -Match "---"
+        $entry | Should -Match "Additional release context\."
+    }
+}
+
 Describe "Resolve-McpPublicationState" {
     It "returns New when neither the GitHub Release nor MCP tag exists" {
         Resolve-McpPublicationState `

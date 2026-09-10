@@ -52,6 +52,31 @@ function Test-McpReleasePublicationInputs {
     }
 }
 
+function Get-McpReleaseChangelogEntry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ChangelogPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    if (-not (Test-Path $ChangelogPath -PathType Leaf)) {
+        throw "Glasswork MCP changelog not found: $ChangelogPath"
+    }
+
+    $changelog = Get-Content $ChangelogPath -Raw
+    $escapedVersion = [regex]::Escape($Version)
+    $entry = [regex]::Match(
+        $changelog,
+        "(?ms)^(?<entry>## \[$escapedVersion\] — \d{4}-\d{2}-\d{2}\s*\r?\n.*?)(?=^---[ \t]*\r?\n(?:\r?\n)*(?=## \[)|^## \[|\z)")
+    if (-not $entry.Success) {
+        throw "Glasswork MCP changelog does not contain a release entry for '$Version'."
+    }
+
+    return $entry.Groups["entry"].Value.TrimEnd()
+}
+
 function Resolve-McpPublicationState {
     param(
         [Parameter(Mandatory = $true)]
