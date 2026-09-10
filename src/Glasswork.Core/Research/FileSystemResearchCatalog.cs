@@ -62,6 +62,13 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, WayfinderProjectionState> _wayfinderByReference =
         new(StringComparer.OrdinalIgnoreCase);
+    // Paths whose page vanished but whose identity is held for one more quiet
+    // period rather than published as removed immediately. This bridges a
+    // rename that a debounce batch observes only as a bare Deleted event
+    // (see PendingRemoval doc comment on the reconciliation race it fixes).
+    private readonly Dictionary<string, PendingRemoval> _pendingRemovalsByPath =
+        new(StringComparer.OrdinalIgnoreCase);
+    private int _removalSweepPending;
     private readonly Debouncer _refreshDebouncer;
     private readonly FileSystemWatcher _watcher;
     private ResearchCatalogSnapshot _snapshot = EmptySnapshot();
@@ -1055,6 +1062,31 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         HandleWatcherError(e.GetException());
     }
 
+    /// <summary>
+    /// Schedules the same reconciliation path a real watcher event would
+    /// (see <see cref="OnFileChanged"/>), without depending on the OS/runtime
+    /// watcher backend to deliver or pair events a particular way. Used by
+    /// tests to force a rename to reconcile across two independent debounce
+    /// batches deterministically — reproducing what Linux inotify does
+    /// nondeterministically when it fails to correlate a move's Deleted/
+    /// Created pair within its delivery window — without depending on real
+    /// OS timing.
+    /// </summary>
+    internal void SimulateExternalFileEvent(string fullPath) =>
+        Schedule(fullPath, ClassifyOrigin(fullPath));
+
+    /// <summary>
+    /// Forces exactly one reconciliation pass over whatever is currently
+    /// pending (including expired grace-window removals), synchronously and
+    /// independent of the real debounce timer. Lets tests control debounce
+    /// batch boundaries deterministically instead of racing real time.
+    /// </summary>
+    internal void ProcessPendingPathsForTest()
+    {
+        Interlocked.Exchange(ref _removalSweepPending, 1);
+        ApplyPendingPaths();
+    }
+
     internal void HandleWatcherError(Exception? exception)
     {
         Interlocked.Exchange(ref _recoveryPending, 1);
@@ -1096,7 +1128,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 _pendingPaths.Clear();
             }
             var isRecovery = Interlocked.Exchange(ref _recoveryPending, 0) == 1;
-            if (pending.Length == 0 && !isRecovery)
+            var isRemovalSweep = Interlocked.Exchange(ref _removalSweepPending, 0) == 1;
+            if (pending.Length == 0 && !isRecovery && !isRemovalSweep)
                 return;
 
             lock (_gate)
@@ -1127,13 +1160,21 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     priorTopicIds.UnionWith(before.Topics.Select(topic => topic.Id));
                     logTopicIds.UnionWith(before.Topics.Select(topic => topic.Id));
                     Hydrate(queryDate);
+                    // A full rehydrate is authoritative: drop any tentative
+                    // removals rather than let a stale grace-window entry
+                    // second-guess the fresh scan.
+                    _pendingRemovalsByPath.Clear();
                 }
                 else if (catalogPending.Length > 0)
                 {
-                    var missingPaths = pendingPaths
-                        .Where(path => !File.Exists(path))
-                        .Select(ToRelativePath)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var missingOrigins = new Dictionary<string, ResearchCatalogChangeOrigin>(
+                        StringComparer.OrdinalIgnoreCase);
+                    foreach (var pair in catalogPending)
+                    {
+                        if (!File.Exists(pair.Key))
+                            missingOrigins[ToRelativePath(pair.Key)] = pair.Value;
+                    }
+                    var missingPaths = missingOrigins.Keys;
 
                     foreach (var fullPath in pendingPaths.Where(File.Exists))
                     {
@@ -1175,6 +1216,30 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                             {
                                 _pagesByPath.Remove(renamedFrom);
                                 _diagnosticsByPath.Remove(renamedFrom);
+                                _pendingRemovalsByPath.Remove(renamedFrom);
+                            }
+                            else
+                            {
+                                // The old path may already have vanished in an
+                                // earlier debounce batch — e.g. a Linux
+                                // inotify move that arrived as unpaired
+                                // Deleted/Created events. Reunite it with its
+                                // held identity instead of leaving a stale
+                                // entry to finalize as an unrelated removal.
+                                var reunitedFrom = _pendingRemovalsByPath
+                                    .Where(candidate => string.Equals(
+                                        candidate.Value.Id,
+                                        page.Id,
+                                        StringComparison.OrdinalIgnoreCase))
+                                    .Select(candidate => candidate.Key)
+                                    .FirstOrDefault();
+                                if (reunitedFrom is not null)
+                                {
+                                    _pagesByPath.Remove(reunitedFrom);
+                                    _diagnosticsByPath.Remove(reunitedFrom);
+                                    MarkReferenceMissing(_referencesByPath, reunitedFrom);
+                                    _pendingRemovalsByPath.Remove(reunitedFrom);
+                                }
                             }
                         }
 
@@ -1185,13 +1250,44 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                             _diagnosticsByPath);
                     }
 
+                    var now = DateTime.UtcNow;
+                    var deferredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var missingPath in missingPaths)
                     {
+                        if (_pagesByPath.TryGetValue(missingPath, out var missingPage))
+                        {
+                            // Hold this identity for one more quiet period
+                            // instead of publishing it as gone immediately.
+                            // If a paired Created event for a rename is still
+                            // in flight it will reunite with this entry above;
+                            // otherwise FinalizeExpiredRemovals durably
+                            // removes it once the grace period elapses.
+                            _pendingRemovalsByPath[missingPath] = new PendingRemoval(
+                                missingPage.Id,
+                                missingOrigins[missingPath],
+                                now + _quietPeriod);
+                            ScheduleRemovalSweep(_quietPeriod);
+                            deferredIds.Add(missingPage.Id);
+                            continue;
+                        }
+
                         _pagesByPath.Remove(missingPath);
                         MarkReferenceMissing(_referencesByPath, missingPath);
                         _diagnosticsByPath.Remove(missingPath);
                     }
+                    // Nothing observable changed for a deferred identity yet
+                    // (it is deliberately still present), so this batch must
+                    // not force a notification for it — only a real change
+                    // (found again this batch, or finalized later) should.
+                    priorTopicIds.ExceptWith(deferredIds);
 
+                    SetSnapshot(queryDate, BuildSnapshot(queryDate, before));
+                }
+
+                var (finalizedIds, finalizedOrigins) = FinalizeExpiredRemovals(DateTime.UtcNow);
+                if (finalizedIds.Count > 0)
+                {
+                    priorTopicIds.UnionWith(finalizedIds);
                     SetSnapshot(queryDate, BuildSnapshot(queryDate, before));
                 }
 
@@ -1199,7 +1295,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     SetSnapshot(
                         queryDate,
                         RefreshChangeLogs(_snapshot, logTopicIds));
-                var origin = ResolveOrigin(pending, isRecovery);
+                var origin = ResolveOrigin(pending, finalizedOrigins, isRecovery);
                 change = CreateChange(before, _snapshot, priorTopicIds, origin);
                 changeLogChange = CreateChangeLogChange(
                     before,
@@ -1212,6 +1308,62 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             if (changeLogChange is not null)
                 ChangeLogsChanged?.Invoke(this, changeLogChange);
         }
+    }
+
+    /// <summary>
+    /// Removes any tentatively-missing identities whose grace period has
+    /// elapsed without a paired Created event reuniting them (see
+    /// <see cref="PendingRemoval"/>). Must be called with <see cref="_gate"/>
+    /// held.
+    /// </summary>
+    private (HashSet<string> Ids, List<ResearchCatalogChangeOrigin> Origins) FinalizeExpiredRemovals(
+        DateTime now)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var origins = new List<ResearchCatalogChangeOrigin>();
+        if (_pendingRemovalsByPath.Count == 0)
+            return (ids, origins);
+
+        var expired = _pendingRemovalsByPath
+            .Where(pair => pair.Value.ExpiresAtUtc <= now)
+            .Select(pair => pair.Key)
+            .ToArray();
+        foreach (var path in expired)
+        {
+            var removal = _pendingRemovalsByPath[path];
+            _pendingRemovalsByPath.Remove(path);
+            _pagesByPath.Remove(path);
+            MarkReferenceMissing(_referencesByPath, path);
+            _diagnosticsByPath.Remove(path);
+            ids.Add(removal.Id);
+            origins.Add(removal.Origin);
+        }
+        return (ids, origins);
+    }
+
+    /// <summary>
+    /// Forces one more <see cref="ApplyPendingPaths"/> pass after
+    /// <paramref name="delay"/> so a tentative removal with no other watcher
+    /// activity still finalizes — a genuine delete must become visible after
+    /// a bounded wait, not hang indefinitely waiting for an event that will
+    /// never arrive.
+    /// </summary>
+    private void ScheduleRemovalSweep(TimeSpan delay)
+    {
+        _ = Task.Delay(delay).ContinueWith(_ =>
+        {
+            if (_disposed)
+                return;
+            Interlocked.Exchange(ref _removalSweepPending, 1);
+            try
+            {
+                _refreshDebouncer.Trigger();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Catalog disposed between the delay and this continuation.
+            }
+        }, TaskScheduler.Default);
     }
 
     private void RemovePath(string fullPath)
@@ -2585,17 +2737,22 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
     private static ResearchCatalogChangeOrigin ResolveOrigin(
         IReadOnlyCollection<KeyValuePair<string, ResearchCatalogChangeOrigin>> pending,
+        IReadOnlyCollection<ResearchCatalogChangeOrigin> additionalOrigins,
         bool isRecovery)
     {
         if (isRecovery)
             return ResearchCatalogChangeOrigin.Recovery;
         var origins = pending
             .Select(pair => pair.Value)
+            .Concat(additionalOrigins)
             .Distinct()
             .ToArray();
-        return origins.Length == 1
-            ? origins[0]
-            : ResearchCatalogChangeOrigin.Mixed;
+        return origins.Length switch
+        {
+            0 => ResearchCatalogChangeOrigin.External,
+            1 => origins[0],
+            _ => ResearchCatalogChangeOrigin.Mixed,
+        };
     }
 
     private static bool TryAddResearchMetadata(
@@ -3716,6 +3873,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         lock (_pendingGate)
             _pendingPaths.Clear();
         _selfWriteBursts.Clear();
+        _pendingRemovalsByPath.Clear();
     }
 
     [GeneratedRegex(@"\A---\s*\r?\n(.*?)\r?\n---\s*\r?\n?(.*)\z", RegexOptions.Singleline)]
@@ -3807,6 +3965,18 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     }
 
     private sealed record TextEncodingInfo(Encoding Encoding, byte[] Preamble);
+
+    /// <summary>
+    /// A path/identity held after its file vanished, in case a paired
+    /// Created event for a rename is still in flight in a later debounce
+    /// batch. Finalized (durably removed) by
+    /// <see cref="FinalizeExpiredRemovals"/> once <see cref="ExpiresAtUtc"/>
+    /// passes without a reunion, guaranteeing genuine deletes still surface.
+    /// </summary>
+    private readonly record struct PendingRemoval(
+        string Id,
+        ResearchCatalogChangeOrigin Origin,
+        DateTime ExpiresAtUtc);
 
     private sealed record WikiReferenceDescriptor(
         string VaultRelativePath,

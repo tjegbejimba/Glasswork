@@ -3975,8 +3975,76 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
-    public void RenameThenDelete_PreservesStableIdentityBeforeDurableRemoval()
+    public void RenameThenDelete_SplitAcrossDebounceBatches_PreservesStableIdentityBeforeDurableRemoval()
     {
+        // Forces the reconciliation path a real watcher would take when
+        // Linux inotify fails to pair a move into one Renamed event and
+        // instead delivers unpaired Deleted/Created events that land in
+        // separate debounce batches. SimulateExternalFileEvent schedules
+        // exactly what a real watcher event would, and ProcessPendingPathsForTest
+        // forces one reconciliation pass synchronously — so batch boundaries
+        // are fully controlled by the test instead of racing real debounce
+        // timing, while the grace-period expiry below still uses real wall
+        // time, since that bound is the actual behavior under test.
+        const string oldRelativePath = "wiki/concepts/before.md";
+        const string newRelativePath = "wiki/systems/after.md";
+        WriteOptedInPage(oldRelativePath, "stable-topic", "concept");
+        var quietPeriod = TimeSpan.FromMilliseconds(50);
+        using var catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: quietPeriod);
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        var events = new List<ResearchTopicsChangedEventArgs>();
+        catalog.TopicsChanged += (_, args) => events.Add(args);
+
+        var oldPath = FullPath(oldRelativePath);
+        var newPath = FullPath(newRelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+        File.Move(oldPath, newPath);
+
+        // Batch 1: only the Deleted half of the rename arrives.
+        catalog.SimulateExternalFileEvent(oldPath);
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(
+            events,
+            "A delete-only batch must not publish a phantom-empty snapshot while a paired rename may still be in flight.");
+
+        // Batch 2: the Created half arrives afterwards, in its own batch.
+        catalog.SimulateExternalFileEvent(newPath);
+        catalog.ProcessPendingPathsForTest();
+        Assert.HasCount(1, events);
+        var renamed = events[0];
+        CollectionAssert.AreEquivalent(new[] { "stable-topic" }, renamed.AffectedTopicIds.ToArray());
+        Assert.AreEqual(newRelativePath, renamed.Snapshot.Topics.Single().VaultRelativePath);
+        events.Clear();
+
+        // A genuine delete — no matching Created ever arrives — must still
+        // become durably visible once the bounded grace period elapses.
+        File.Delete(newPath);
+        catalog.SimulateExternalFileEvent(newPath);
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(
+            events,
+            "The tentative removal must still be held for the grace period, not published immediately.");
+
+        Thread.Sleep(quietPeriod + TimeSpan.FromMilliseconds(100));
+        catalog.ProcessPendingPathsForTest();
+        Assert.HasCount(1, events);
+        var removed = events[0];
+        CollectionAssert.AreEquivalent(new[] { "stable-topic" }, removed.AffectedTopicIds.ToArray());
+        Assert.IsEmpty(removed.Snapshot.Topics);
+    }
+
+    [TestMethod]
+    public void RenameThenDelete_ViaRealFileSystemWatcher_EventuallyConvergesWithoutPhantomEmptyState()
+    {
+        // Thin real-FileSystemWatcher integration test: asserts bounded
+        // eventual convergence by polling, rather than asserting on the
+        // cardinality/content of the first event the OS happens to deliver
+        // (that pairing behavior is inherently OS/runtime-nondeterministic;
+        // see RenameThenDelete_SplitAcrossDebounceBatches_... above for the
+        // deterministic reconciliation regression).
         const string oldRelativePath = "wiki/concepts/before.md";
         const string newRelativePath = "wiki/systems/after.md";
         WriteOptedInPage(oldRelativePath, "stable-topic", "concept");
@@ -3985,33 +4053,46 @@ public sealed class ResearchCatalogTests
             () => new DateOnly(2026, 8, 16),
             quietPeriod: TimeSpan.FromMilliseconds(50));
         _ = catalog.Capture(new DateOnly(2026, 8, 16));
-        using var signal = new AutoResetEvent(false);
-        ResearchTopicsChangedEventArgs? observed = null;
+        var observedEmptySnapshot = false;
         catalog.TopicsChanged += (_, args) =>
         {
-            observed = args;
-            signal.Set();
+            if (args.Snapshot.Topics.Count == 0)
+                observedEmptySnapshot = true;
         };
-        catalog.Start();
         var oldPath = FullPath(oldRelativePath);
         var newPath = FullPath(newRelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+        catalog.Start();
 
         File.Move(oldPath, newPath);
 
-        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
-        Assert.IsNotNull(observed);
-        CollectionAssert.AreEquivalent(new[] { "stable-topic" }, observed.AffectedTopicIds.ToArray());
-        Assert.AreEqual(
-            newRelativePath,
-            observed.Snapshot.Topics.Single().VaultRelativePath);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        ResearchCatalogSnapshot snapshot;
+        do
+        {
+            Thread.Sleep(25);
+            snapshot = catalog.Capture(new DateOnly(2026, 8, 16));
+        } while (DateTime.UtcNow < deadline
+            && (snapshot.Topics.Count != 1
+                || snapshot.Topics[0].VaultRelativePath != newRelativePath));
+
+        Assert.HasCount(1, snapshot.Topics);
+        Assert.AreEqual("stable-topic", snapshot.Topics[0].Id);
+        Assert.AreEqual(newRelativePath, snapshot.Topics[0].VaultRelativePath);
+        Assert.IsFalse(
+            observedEmptySnapshot,
+            "The topic must never be reported as gone while its rename is still converging.");
 
         File.Delete(newPath);
 
-        Assert.IsTrue(signal.WaitOne(TimeSpan.FromSeconds(5)));
-        Assert.IsNotNull(observed);
-        CollectionAssert.AreEquivalent(new[] { "stable-topic" }, observed.AffectedTopicIds.ToArray());
-        Assert.IsEmpty(observed.Snapshot.Topics);
+        deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        do
+        {
+            Thread.Sleep(25);
+            snapshot = catalog.Capture(new DateOnly(2026, 8, 16));
+        } while (DateTime.UtcNow < deadline && snapshot.Topics.Count != 0);
+
+        Assert.IsEmpty(snapshot.Topics);
     }
 
     [TestMethod]
