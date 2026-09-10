@@ -311,6 +311,7 @@ internal static partial class VisualVerificationRunner
             scenario.HoldStartup ? startupReleasePath : null,
             scenario.HoldSupplemental ? supplementalReleasePath : null,
             scenario.FailStartupAttempts,
+            scenario.UpdateInstallState,
             performanceTracePath,
             wayfinderFixturePath,
             canvasExtensionsRoot,
@@ -654,6 +655,7 @@ internal static partial class VisualVerificationRunner
         string? startupGatePath,
         string? supplementalGatePath,
         int failStartupAttempts,
+        string? updateInstallState,
         string? performanceTracePath,
         string wayfinderFixturePath,
         string? canvasExtensionsRoot,
@@ -686,6 +688,11 @@ internal static partial class VisualVerificationRunner
         {
             psi.Environment[VerificationLaunchOptions.FailStartupAttemptsVariable] =
                 failStartupAttempts.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        if (updateInstallState is not null)
+        {
+            psi.Environment[VerificationLaunchOptions.UpdateInstallStateVariable] =
+                updateInstallState;
         }
         if (performanceTracePath is not null)
         {

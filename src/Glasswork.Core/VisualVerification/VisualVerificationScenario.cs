@@ -28,6 +28,7 @@ public sealed partial class VisualVerificationScenario
     public bool HoldStartup { get; init; }
     public bool HoldSupplemental { get; init; }
     public int FailStartupAttempts { get; init; }
+    public string? UpdateInstallState { get; init; }
     public string Theme { get; init; } = "system";
     public int? WindowWidth { get; init; }
     public int? WindowHeight { get; init; }
@@ -63,6 +64,8 @@ public sealed partial class VisualVerificationScenario
             throw new FormatException("initialWaitMilliseconds must not be negative.");
         if (FailStartupAttempts < 0)
             throw new FormatException("failStartupAttempts must not be negative.");
+        if (UpdateInstallState is not null and not ("app" or "mcp"))
+            throw new FormatException("updateInstallState must be app or mcp.");
         if (Theme is not ("system" or "light" or "dark"))
             throw new FormatException("theme must be system, light, or dark.");
         if (StartPage is not null and not "planner")

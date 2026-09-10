@@ -89,4 +89,19 @@ public class VerificationLaunchOptionsTests
             options.SupplementalGatePath);
         Assert.AreEqual(1, options.FailStartupAttempts);
     }
+
+    [TestMethod]
+    public void FromEnvironment_WhenUpdateInstallStateIsSet_LoadsVisualState()
+    {
+        var options = VerificationLaunchOptions.FromEnvironment(
+            new Dictionary<string, string?>
+            {
+                [VerificationLaunchOptions.VaultPathVariable] = @"C:\tmp\glasswork-vault",
+                [VerificationLaunchOptions.UiStatePathVariable] = @"C:\tmp\glasswork-ui-state.json",
+                [VerificationLaunchOptions.InstanceKeyVariable] = "visual-update",
+                [VerificationLaunchOptions.UpdateInstallStateVariable] = "app",
+            });
+
+        Assert.AreEqual("app", options.UpdateInstallState);
+    }
 }

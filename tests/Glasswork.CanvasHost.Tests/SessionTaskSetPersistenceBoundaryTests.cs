@@ -152,6 +152,57 @@ public sealed class SessionTaskSetPersistenceBoundaryTests : CanvasHostTestBase
     }
 
     [TestMethod]
+    public async Task Load_RetriesTransientUiStateReplaceContention_InsteadOfReturningHttp500()
+    {
+        var vault = CreateVault();
+        var uiStatePath = NewUiStatePath();
+        var seed = new JsonFileUiStateService(uiStatePath);
+        seed.Set("seed", true);
+        seed.Save();
+
+        await using var host = await StartHost(
+            vault,
+            "session-replace-contention",
+            "credential-replace-contention",
+            uiStatePath);
+        using var client = AuthorizedClient("credential-replace-contention");
+        var blocker = new FileStream(
+            uiStatePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read);
+        try
+        {
+            var request = PostJsonAsync(
+                client,
+                $"{host.Url}/api/tasks/load",
+                new { taskIds = new[] { "demo" } });
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (!Directory.EnumerateFiles(
+                       Path.GetDirectoryName(uiStatePath)!,
+                       Path.GetFileName(uiStatePath) + ".*.tmp").Any())
+            {
+                if (DateTime.UtcNow >= deadline)
+                    Assert.Fail("The UI-state writer never reached its atomic replacement.");
+                await Task.Delay(10);
+            }
+            await Task.Delay(75);
+            blocker.Dispose();
+
+            using var response = await request;
+
+            Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+            Assert.AreEqual(
+                "demo",
+                response.Body.RootElement.GetProperty("members")[0].GetProperty("taskId").GetString());
+        }
+        finally
+        {
+            blocker.Dispose();
+        }
+    }
+
+    [TestMethod]
     public async Task Restore_FailsVisibly_WhenPersistedStateIsAnUnrecognizedVersion_AndClearSelfHeals()
     {
         var vault = CreateVault();

@@ -1,0 +1,21 @@
+{
+  "name": "Settings app update installing",
+  "updateInstallState": "app",
+  "actions": [
+    {
+      "type": "select",
+      "name": "Settings",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "AppUpdateProgressRing",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "settings-app-update-installing"
+    }
+  ]
+}

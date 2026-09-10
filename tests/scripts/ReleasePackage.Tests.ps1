@@ -13,6 +13,7 @@ Describe "New-ReleasePackage" {
         Set-Content -Path (Join-Path $publishDirectory "Glasswork.exe") -Value "release binary"
         Set-Content -Path (Join-Path $updaterDirectory "release-update.ps1") -Value "wrapper"
         Set-Content -Path (Join-Path $updaterDirectory "Invoke-ReleaseUpdate.ps1") -Value "updater"
+        Set-Content -Path (Join-Path $updaterDirectory "Show-UpdateProgress.ps1") -Value "progress"
         Set-Content -Path (Join-Path $updaterDirectory "Install-CanvasExtension.ps1") -Value "canvas installer"
         Set-Content -Path (Join-Path $mcpUpdaterDirectory "install-mcp.ps1") -Value "wrapper"
         Set-Content -Path (Join-Path $mcpUpdaterDirectory "Install-McpTool.ps1") -Value "installer"
@@ -35,6 +36,7 @@ Describe "New-ReleasePackage" {
             $entries | Should -Contain "Glasswork.exe"
             $entries | Should -Contain "Updater/release-update.ps1"
             $entries | Should -Contain "Updater/Invoke-ReleaseUpdate.ps1"
+            $entries | Should -Contain "Updater/Show-UpdateProgress.ps1"
             $entries | Should -Contain "Updater/Install-CanvasExtension.ps1"
             $entries | Should -Contain "McpUpdater/install-mcp.ps1"
             $entries | Should -Contain "McpUpdater/Install-McpTool.ps1"
@@ -64,6 +66,7 @@ Describe "New-ReleasePackage" {
         Set-Content -Path (Join-Path $publishDirectory "Glasswork.exe") -Value "release binary"
         Set-Content -Path (Join-Path $updaterDirectory "release-update.ps1") -Value "wrapper"
         Set-Content -Path (Join-Path $updaterDirectory "Invoke-ReleaseUpdate.ps1") -Value "updater"
+        Set-Content -Path (Join-Path $updaterDirectory "Show-UpdateProgress.ps1") -Value "progress"
         Set-Content -Path (Join-Path $updaterDirectory "Install-CanvasExtension.ps1") -Value "canvas installer"
 
         {

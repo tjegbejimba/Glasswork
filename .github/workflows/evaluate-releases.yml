@@ -109,6 +109,24 @@ jobs:
               -DryRun:$dryRun `
               -ForceEvaluate:($env:FORCE_EVALUATE -eq "true")
 
+      - name: Record App CI blocker
+        if: >-
+          steps.plan.outputs.reason == 'CiNotGreen' &&
+          steps.plan.outputs.dry_run == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          "Candidate CI is not green; release evaluation is blocked." |
+              Set-Content "$env:RUNNER_TEMP/release-error-app.txt"
+          pwsh -File scripts\Invoke-ReleaseEvaluation.ps1 `
+              -Mode RecordFailure `
+              -Stream App `
+              -Repository $env:GITHUB_REPOSITORY `
+              -BlockerStage Evaluation `
+              -FailurePath "$env:RUNNER_TEMP/release-error-app.txt" `
+              -SummaryPath $env:GITHUB_STEP_SUMMARY
+
       - name: Install Copilot CLI
         if: steps.plan.outputs.eligible == 'true'
         continue-on-error: true
@@ -152,7 +170,10 @@ jobs:
               -AppSlug $env:APP_SLUG
 
       - name: Close recovered App blocker
-        if: success() && steps.plan.outputs.dry_run == 'false'
+        if: >-
+          success() &&
+          steps.plan.outputs.dry_run == 'false' &&
+          steps.plan.outputs.ci_green == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -240,6 +261,24 @@ jobs:
               -DryRun:$dryRun `
               -ForceEvaluate:($env:FORCE_EVALUATE -eq "true")
 
+      - name: Record MCP CI blocker
+        if: >-
+          steps.plan.outputs.reason == 'CiNotGreen' &&
+          steps.plan.outputs.dry_run == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          "Candidate CI is not green; release evaluation is blocked." |
+              Set-Content "$env:RUNNER_TEMP/release-error-mcp.txt"
+          pwsh -File scripts\Invoke-ReleaseEvaluation.ps1 `
+              -Mode RecordFailure `
+              -Stream Mcp `
+              -Repository $env:GITHUB_REPOSITORY `
+              -BlockerStage Evaluation `
+              -FailurePath "$env:RUNNER_TEMP/release-error-mcp.txt" `
+              -SummaryPath $env:GITHUB_STEP_SUMMARY
+
       - name: Install Copilot CLI
         if: steps.plan.outputs.eligible == 'true'
         continue-on-error: true
@@ -283,7 +322,10 @@ jobs:
               -AppSlug $env:APP_SLUG
 
       - name: Close recovered MCP blocker
-        if: success() && steps.plan.outputs.dry_run == 'false'
+        if: >-
+          success() &&
+          steps.plan.outputs.dry_run == 'false' &&
+          steps.plan.outputs.ci_green == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

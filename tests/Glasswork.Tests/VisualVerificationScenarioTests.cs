@@ -35,6 +35,24 @@ public class VisualVerificationScenarioTests
     }
 
     [TestMethod]
+    public void FromJson_LoadsUpdateInstallationState()
+    {
+        const string json = """
+        {
+          "name": "update installation",
+          "updateInstallState": "mcp",
+          "captures": [
+            { "name": "update-installation" }
+          ]
+        }
+        """;
+
+        var scenario = VisualVerificationScenario.FromJson(json);
+
+        Assert.AreEqual("mcp", scenario.UpdateInstallState);
+    }
+
+    [TestMethod]
     public void FromJson_LoadsPlannerProfileHiddenStartAndRecoveryActions()
     {
         const string json = """

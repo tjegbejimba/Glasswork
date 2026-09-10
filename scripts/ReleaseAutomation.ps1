@@ -165,6 +165,7 @@ function Get-ReleasePathStreams {
     @(
         "scripts/release-update.ps1",
         "scripts/Invoke-ReleaseUpdate.ps1",
+        "scripts/Show-UpdateProgress.ps1",
         "scripts/New-ReleasePackage.ps1",
         "scripts/Install-CanvasExtension.ps1",
         "scripts/retry-canvas-extension.ps1"

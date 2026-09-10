@@ -112,6 +112,28 @@ Describe "Release evaluator workflow" {
         $workflow | Should -Match "steps\.plan\.outputs\.dry_run == 'false'"
     }
 
+    It "keeps CI failures visible until the current candidate is green" {
+        $workflow = Get-Content $script:WorkflowPath -Raw
+
+        ([regex]::Matches(
+                $workflow,
+                "steps\.plan\.outputs\.reason == 'CiNotGreen'")).Count |
+            Should -Be 2
+        ([regex]::Matches(
+                $workflow,
+                "steps\.plan\.outputs\.ci_green == 'true'")).Count |
+            Should -Be 2
+        ([regex]::Matches(
+                $workflow,
+                "Candidate CI is not green; release evaluation is blocked\.")).Count |
+            Should -Be 2
+        $evaluator = Get-Content (
+            Join-Path $script:RepoRoot "scripts\Invoke-ReleaseEvaluation.ps1") -Raw
+        $evaluator | Should -Match (
+            'Set-WorkflowOutput -Name "ci_green" -Value ' +
+            '\$ciGreen\.ToString\(\)\.ToLowerInvariant\(\)')
+    }
+
     It "serializes evaluator runs without cancelling recovery" {
         $workflow = Get-Content $script:WorkflowPath -Raw
 

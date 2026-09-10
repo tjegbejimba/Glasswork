@@ -46,6 +46,10 @@ function Invoke-ReleaseUpdate {
             Start-Process $uri
         },
 
+        [scriptblock]$ProgressReporter = {
+            param($message)
+        },
+
         [bool]$ShowProgress = $true
     )
 
@@ -65,6 +69,7 @@ function Invoke-ReleaseUpdate {
     $mutex = $null
     $mutexAcquired = $false
     $progressForm = $null
+    $progressLabel = $null
     $installMoved = $false
     $appExited = $false
     $stagingDirectory = "$installDirectory.update-staging"
@@ -105,18 +110,28 @@ function Invoke-ReleaseUpdate {
                 $progressForm = New-Object System.Windows.Forms.Form
                 $progressForm.Text = "Updating Glasswork..."
                 $progressForm.Width = 320
-                $progressForm.Height = 110
+                $progressForm.Height = 130
                 $progressForm.StartPosition = 'CenterScreen'
                 $progressForm.FormBorderStyle = 'FixedDialog'
                 $progressForm.MaximizeBox = $false
                 $progressForm.MinimizeBox = $false
+                $progressForm.TopMost = $true
 
-                $label = New-Object System.Windows.Forms.Label
-                $label.Text = "Downloading and installing Glasswork $Version..."
-                $label.AutoSize = $true
-                $label.Left = 12
-                $label.Top = 32
-                $progressForm.Controls.Add($label)
+                $progressLabel = New-Object System.Windows.Forms.Label
+                $progressLabel.Text = "Preparing Glasswork $Version..."
+                $progressLabel.AutoSize = $true
+                $progressLabel.Left = 12
+                $progressLabel.Top = 20
+                $progressForm.Controls.Add($progressLabel)
+
+                $progressBar = New-Object System.Windows.Forms.ProgressBar
+                $progressBar.Left = 12
+                $progressBar.Top = 52
+                $progressBar.Width = 280
+                $progressBar.Height = 18
+                $progressBar.Style = 'Marquee'
+                $progressBar.MarqueeAnimationSpeed = 30
+                $progressForm.Controls.Add($progressBar)
                 $progressForm.Show()
                 [System.Windows.Forms.Application]::DoEvents()
             }
@@ -129,9 +144,19 @@ function Invoke-ReleaseUpdate {
         $archivePath = Join-Path $WorkDirectory "Glasswork-win-x64.zip"
         $checksumPath = "$archivePath.sha256"
 
+        & $ProgressReporter "Downloading Glasswork $Version..."
+        if ($progressLabel) {
+            $progressLabel.Text = "Downloading Glasswork $Version..."
+            [System.Windows.Forms.Application]::DoEvents()
+        }
         & $Downloader $archiveUri $archivePath
         & $Downloader $checksumUri $checksumPath
 
+        & $ProgressReporter "Verifying download..."
+        if ($progressLabel) {
+            $progressLabel.Text = "Verifying download..."
+            [System.Windows.Forms.Application]::DoEvents()
+        }
         $expectedHash = ((Get-Content $checksumPath -Raw).Trim() -split '\s+')[0]
         if ($expectedHash -notmatch '^[A-Fa-f0-9]{64}$') {
             throw "The release checksum file is invalid."
@@ -143,6 +168,11 @@ function Invoke-ReleaseUpdate {
 
         if (Test-Path $stagingDirectory) {
             Remove-Item -Recurse -Force $stagingDirectory
+        }
+        & $ProgressReporter "Installing Glasswork $Version..."
+        if ($progressLabel) {
+            $progressLabel.Text = "Installing Glasswork $Version..."
+            [System.Windows.Forms.Application]::DoEvents()
         }
         Expand-Archive -Path $archivePath -DestinationPath $stagingDirectory
         if (!(Test-Path (Join-Path $stagingDirectory "Glasswork.exe"))) {
@@ -172,6 +202,11 @@ function Invoke-ReleaseUpdate {
             }
         }
 
+        & $ProgressReporter "Restarting Glasswork..."
+        if ($progressLabel) {
+            $progressLabel.Text = "Restarting Glasswork..."
+            [System.Windows.Forms.Application]::DoEvents()
+        }
         & $Relauncher $InstallExePath
         $installMoved = $false
         Remove-Item -Recurse -Force $backupDirectory -ErrorAction SilentlyContinue
