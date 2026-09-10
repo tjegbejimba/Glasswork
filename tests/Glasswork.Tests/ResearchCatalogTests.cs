@@ -1837,7 +1837,7 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
-    public void OptIn_InFlightWriterOnDisplacedPagePreventsSuccessAndPreservesBackup()
+    public void OptIn_BackupReadFailurePreventsSuccessAndPreservesBackup()
     {
         const string selectedPath = "wiki/concepts/in-flight-writer.md";
         WritePage(
@@ -1845,26 +1845,12 @@ public sealed class ResearchCatalogTests
             "---\nid: in-flight-writer\ntitle: Original concept\ntype: concept\n---\nOriginal body");
         var fullPath = FullPath(selectedPath);
         var original = File.ReadAllBytes(fullPath);
-        FileStream? writer = null;
         var catalog = new FileSystemResearchCatalog(_vaultRoot)
         {
-            AfterOptInFileReplaceHook = backupPath =>
-                writer = new FileStream(
-                    backupPath,
-                    FileMode.Open,
-                    FileAccess.ReadWrite,
-                    FileShare.ReadWrite | FileShare.Delete),
+            ReadOptInBackupHook = _ => throw new IOException("Injected backup read failure."),
         };
 
-        ResearchOptInResult result;
-        try
-        {
-            result = catalog.OptIn(selectedPath);
-        }
-        finally
-        {
-            writer?.Dispose();
-        }
+        var result = catalog.OptIn(selectedPath);
 
         Assert.IsFalse(result.Succeeded);
         Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
@@ -2020,29 +2006,16 @@ public sealed class ResearchCatalogTests
             "---\nid: replacement-failure\ntitle: Original concept\ntype: concept\n---\nOriginal body");
         var fullPath = FullPath(selectedPath);
         var original = File.ReadAllBytes(fullPath);
-        FileStream? destinationLock = null;
         var catalog = new FileSystemResearchCatalog(_vaultRoot)
         {
             AfterOptInReplacementHook = () => WritePage(
                 "wiki/sources/replacement-failure-duplicate.md",
                 "---\nid: REPLACEMENT-FAILURE\ntitle: Duplicate source\ntype: source\n---\nDuplicate"),
-            BeforeOptInRollbackReplaceHook = () =>
-                destinationLock = new FileStream(
-                    fullPath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.Read),
+            ReplaceOptInRollbackFileHook = (_, _, _) =>
+                throw new IOException("Injected rollback replacement failure."),
         };
 
-        ResearchOptInResult result;
-        try
-        {
-            result = catalog.OptIn(selectedPath);
-        }
-        finally
-        {
-            destinationLock?.Dispose();
-        }
+        var result = catalog.OptIn(selectedPath);
 
         Assert.IsFalse(result.Succeeded);
         Assert.AreEqual(ResearchOptInErrorCode.WriteFailed, result.ErrorCode);
@@ -2245,7 +2218,7 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
-    public void OptIn_WriteFailureReturnsPreciseFailureAndDoesNotReportSuccess()
+    public void OptIn_WriteGuardFailureReturnsPreciseFailureAndDoesNotReportSuccess()
     {
         const string relativePath = "wiki/concepts/locked.md";
         WritePage(
@@ -2255,12 +2228,11 @@ public sealed class ResearchCatalogTests
             _vaultRoot,
             relativePath.Replace('/', Path.DirectorySeparatorChar));
         var original = File.ReadAllBytes(fullPath);
-        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
-        using var lockStream = new FileStream(
-            fullPath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot)
+        {
+            BeforeOptInWriteGuardHook = () =>
+                throw new IOException("Injected write guard failure."),
+        };
 
         var result = catalog.OptIn(relativePath);
 

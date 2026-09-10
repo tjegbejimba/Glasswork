@@ -284,7 +284,7 @@ public static class ArtifactShareFormatter
 
     private static string GetSuggestedFileName(Artifact artifact)
     {
-        var fileName = Path.GetFileName(artifact.Path);
+        var fileName = Path.GetFileName(ArtifactPathSyntax.NormalizeSeparators(artifact.Path));
         return string.IsNullOrWhiteSpace(fileName) ? artifact.Title : fileName;
     }
 }

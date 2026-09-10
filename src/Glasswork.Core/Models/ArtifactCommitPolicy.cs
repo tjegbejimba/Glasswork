@@ -32,7 +32,8 @@ public static class ArtifactCommitPolicy
     /// <param name="filePath">Full or relative path to check.</param>
     public static bool IsCommitted(string filePath)
     {
-        var basename = Path.GetFileName(filePath);
+        var normalizedPath = ArtifactPathSyntax.NormalizeSeparators(filePath);
+        var basename = Path.GetFileName(normalizedPath);
 
         // Reject dotfiles (leading '.')
         if (!string.IsNullOrEmpty(basename) && basename[0] == '.')
@@ -53,7 +54,7 @@ public static class ArtifactCommitPolicy
         }
 
         // Reject transient extensions
-        var ext = Path.GetExtension(filePath);
+        var ext = Path.GetExtension(normalizedPath);
         if (!string.IsNullOrEmpty(ext) && TransientExtensions.Contains(ext))
         {
             return false;
