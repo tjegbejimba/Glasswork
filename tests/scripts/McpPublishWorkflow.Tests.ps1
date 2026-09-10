@@ -66,6 +66,8 @@ Describe "Publish MCP workflow" {
 
         $workflow | Should -Match '"release", "create", \$tag'
         $workflow | Should -Match '"--target", \$env:SOURCE_REVISION'
+        $workflow | Should -Match "Get-McpReleaseChangelogEntry"
+        $workflow | Should -Not -Match "See src/Glasswork\.Mcp/CHANGELOG\.md"
         $workflow | Should -Match '\$artifact\.PackagePath'
         $workflow | Should -Match '\$artifact\.ChecksumPath'
         $workflow | Should -Match 'mcp-v\$env:MCP_VERSION'
