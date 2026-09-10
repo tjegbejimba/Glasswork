@@ -1,0 +1,21 @@
+{
+  "name": "Settings update installing",
+  "updateInstallState": "mcp",
+  "actions": [
+    {
+      "type": "select",
+      "name": "Settings",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "McpUpdateProgressRing",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "settings-update-installing"
+    }
+  ]
+}

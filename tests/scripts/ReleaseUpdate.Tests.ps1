@@ -11,6 +11,7 @@ BeforeAll {
         New-Item -ItemType Directory -Path $updaterDirectory, $mcpUpdaterDirectory | Out-Null
         Set-Content -Path (Join-Path $updaterDirectory "release-update.ps1") -Value "wrapper"
         Set-Content -Path (Join-Path $updaterDirectory "Invoke-ReleaseUpdate.ps1") -Value "updater"
+        Set-Content -Path (Join-Path $updaterDirectory "Show-UpdateProgress.ps1") -Value "progress"
         Set-Content -Path (Join-Path $updaterDirectory "Install-CanvasExtension.ps1") -Value "canvas installer"
         Set-Content -Path (Join-Path $mcpUpdaterDirectory "install-mcp.ps1") -Value "wrapper"
         Set-Content -Path (Join-Path $mcpUpdaterDirectory "Install-McpTool.ps1") -Value "installer"
@@ -54,6 +55,10 @@ Describe "Invoke-ReleaseUpdate" {
             param($uri)
             $script:CallLog += "release-page-$uri"
         }
+        $progressReporter = {
+            param($message)
+            $script:CallLog += "progress-$message"
+        }
 
         Invoke-ReleaseUpdate `
             -AppProcessId 1234 `
@@ -65,6 +70,7 @@ Describe "Invoke-ReleaseUpdate" {
             -ProcessWaiter { return $true } `
             -Relauncher $relauncher `
             -ReleasePageOpener $releasePageOpener `
+            -ProgressReporter $progressReporter `
             -ShowProgress $false
 
         (Get-Content (Join-Path $installDirectory "Glasswork.exe") -Raw).Trim() |
@@ -73,6 +79,10 @@ Describe "Invoke-ReleaseUpdate" {
         $script:CallLog | Should -Contain "download-https://github.com/tjegbejimba/Glasswork/releases/download/v1.5.0/Glasswork-win-x64.zip.sha256"
         $script:CallLog | Should -Contain "release-page-https://github.com/tjegbejimba/Glasswork/releases/tag/v1.5.0"
         $script:CallLog | Should -Contain "relaunch-$(Join-Path $installDirectory "Glasswork.exe")"
+        $script:CallLog | Should -Contain "progress-Downloading Glasswork 1.5.0..."
+        $script:CallLog | Should -Contain "progress-Verifying download..."
+        $script:CallLog | Should -Contain "progress-Installing Glasswork 1.5.0..."
+        $script:CallLog | Should -Contain "progress-Restarting Glasswork..."
     }
 
     It "Keeps and relaunches the installed version when checksum verification fails" {
@@ -190,6 +200,7 @@ Describe "Invoke-ReleaseUpdate" {
         New-Item -ItemType Directory -Path $updaterDirectory | Out-Null
         Copy-Item (Join-Path $scriptRoot "scripts\release-update.ps1") $updaterDirectory
         Copy-Item (Join-Path $scriptRoot "scripts\Invoke-ReleaseUpdate.ps1") $updaterDirectory
+        Copy-Item (Join-Path $scriptRoot "scripts\Show-UpdateProgress.ps1") $updaterDirectory
         Copy-Item (Join-Path $scriptRoot "scripts\Install-CanvasExtension.ps1") $updaterDirectory
         $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 
@@ -200,9 +211,98 @@ Describe "Invoke-ReleaseUpdate" {
             -AppProcessId 1234 `
             -InstallExePath (Join-Path $TestDrive "missing\Glasswork.exe") `
             -Version "1.5.0" `
-            -CleanupDirectory $updaterDirectory
+            -CleanupDirectory $updaterDirectory `
+            -NoProgress
 
         $LASTEXITCODE | Should -Be 0
         Test-Path $updaterDirectory | Should -BeFalse
+    }
+
+    It "Reports progress successfully from the wrapper under Windows PowerShell" {
+        $updaterDirectory = Join-Path $TestDrive "progress-updater"
+        $capturedStatusPath = Join-Path $TestDrive "captured-status.txt"
+        New-Item -ItemType Directory -Path $updaterDirectory | Out-Null
+        Copy-Item (Join-Path $scriptRoot "scripts\release-update.ps1") $updaterDirectory
+        $escapedCapturePath = $capturedStatusPath.Replace("'", "''")
+        @"
+function Invoke-ReleaseUpdate {
+    param(
+        [int]`$AppProcessId,
+        [string]`$InstallExePath,
+        [string]`$Version,
+        [scriptblock]`$ProgressReporter,
+        [bool]`$ShowProgress
+    )
+    & `$ProgressReporter "Downloading Glasswork `$Version..."
+    [System.IO.File]::ReadAllText(
+        (Join-Path `$PSScriptRoot "update-status.txt")) |
+        Set-Content -Path '$escapedCapturePath'
+}
+"@ | Set-Content (Join-Path $updaterDirectory "Invoke-ReleaseUpdate.ps1")
+        $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+
+        & $powershell `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File (Join-Path $updaterDirectory "release-update.ps1") `
+            -AppProcessId 1234 `
+            -InstallExePath (Join-Path $TestDrive "install\Glasswork.exe") `
+            -Version "1.5.0" `
+            -CleanupDirectory $updaterDirectory `
+            -NoProgress
+
+        $LASTEXITCODE | Should -Be 0
+        (Get-Content $capturedStatusPath -Raw).Trim() |
+            Should -Be "Downloading Glasswork 1.5.0..."
+        Test-Path $updaterDirectory | Should -BeFalse
+    }
+
+    It "Launches the separate progress process under Windows PowerShell" {
+        $updaterDirectory = Join-Path $TestDrive "progress-process-updater"
+        $progressMarkerPath = Join-Path $TestDrive "progress-process.txt"
+        New-Item -ItemType Directory -Path $updaterDirectory | Out-Null
+        Copy-Item (Join-Path $scriptRoot "scripts\release-update.ps1") $updaterDirectory
+        @'
+function Invoke-ReleaseUpdate {
+    param(
+        [int]$AppProcessId,
+        [string]$InstallExePath,
+        [string]$Version,
+        [scriptblock]$ProgressReporter,
+        [bool]$ShowProgress
+    )
+}
+'@ | Set-Content (Join-Path $updaterDirectory "Invoke-ReleaseUpdate.ps1")
+        $escapedMarkerPath = $progressMarkerPath.Replace("'", "''")
+        @"
+param(
+    [string]`$StatusPath,
+    [int]`$ParentProcessId,
+    [string]`$Version
+)
+Set-Content -Path '$escapedMarkerPath' -Value (
+    "`$(`$PSVersionTable.PSVersion.Major):`$Version")
+"@ | Set-Content (Join-Path $updaterDirectory "Show-UpdateProgress.ps1")
+        $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+
+        & $powershell `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File (Join-Path $updaterDirectory "release-update.ps1") `
+            -AppProcessId 1234 `
+            -InstallExePath (Join-Path $TestDrive "install\Glasswork.exe") `
+            -Version "1.5.0" `
+            -CleanupDirectory $updaterDirectory
+
+        $LASTEXITCODE | Should -Be 0
+        (Get-Content $progressMarkerPath -Raw).Trim() | Should -Be "5:1.5.0"
+        Test-Path $updaterDirectory | Should -BeFalse
+    }
+
+    It "Keeps the progress-window script compatible with Windows PowerShell" {
+        $progressScript = Get-Content (
+            Join-Path $scriptRoot "scripts\Show-UpdateProgress.ps1") -Raw
+
+        $progressScript | Should -Not -Match '#Requires\s+-Version\s+7'
     }
 }

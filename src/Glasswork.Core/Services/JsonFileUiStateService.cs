@@ -22,6 +22,7 @@ namespace Glasswork.Core.Services;
 /// </summary>
 public sealed class JsonFileUiStateService : IUiStateService
 {
+    private const int AtomicWriteAttempts = 8;
     private static readonly ConcurrentDictionary<string, Mutex> FileMutexes = new(StringComparer.Ordinal);
 
     private readonly string _filePath;
@@ -90,6 +91,9 @@ public sealed class JsonFileUiStateService : IUiStateService
                 }
 
                 // Merge-on-save: re-read current disk state, apply our changes on top
+                if (!acquired)
+                    throw new IOException($"Timed out waiting to write UI state '{_filePath}'.");
+
                 var diskState = Load(_filePath);
 
                 // Apply this instance's dirty keys
@@ -118,8 +122,7 @@ public sealed class JsonFileUiStateService : IUiStateService
                 // "in use" (AV/indexing), which a shared ".tmp" name would hit.
                 var tmp = _filePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 File.WriteAllText(tmp, json);
-                if (File.Exists(_filePath)) File.Replace(tmp, _filePath, null);
-                else File.Move(tmp, _filePath);
+                ReplaceWithRetry(tmp, _filePath);
 
                 // Clear dirty tracking after successful save
                 _dirtyKeys.Clear();
@@ -128,6 +131,43 @@ public sealed class JsonFileUiStateService : IUiStateService
             finally
             {
                 if (acquired) mutex.ReleaseMutex();
+            }
+        }
+    }
+
+    private static void ReplaceWithRetry(string temporaryPath, string destinationPath)
+    {
+        try
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    if (File.Exists(destinationPath))
+                        File.Replace(temporaryPath, destinationPath, null);
+                    else
+                        File.Move(temporaryPath, destinationPath);
+                    return;
+                }
+                catch (IOException) when (
+                    attempt < AtomicWriteAttempts &&
+                    File.Exists(temporaryPath))
+                {
+                    Thread.Sleep(TimeSpan.FromMilliseconds(25 * attempt));
+                }
+            }
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Preserve the original write failure; a unique orphaned temp
+                // file cannot affect later saves.
             }
         }
     }

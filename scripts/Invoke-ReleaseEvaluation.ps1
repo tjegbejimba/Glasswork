@@ -719,6 +719,7 @@ function Invoke-PlanMode {
     Set-WorkflowOutput -Name "reason" -Value $plan.Reason
     Set-WorkflowOutput -Name "version" -Value ([string]$plan.NextVersion)
     Set-WorkflowOutput -Name "dry_run" -Value $DryRun.ToString().ToLowerInvariant()
+    Set-WorkflowOutput -Name "ci_green" -Value $ciGreen.ToString().ToLowerInvariant()
     Write-ReleaseSummary @"
 ## $Stream release evaluation
 

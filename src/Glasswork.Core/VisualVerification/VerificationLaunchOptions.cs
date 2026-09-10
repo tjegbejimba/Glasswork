@@ -13,7 +13,8 @@ public sealed record VerificationLaunchOptions(
     string? StartPage = null,
     string? StartupGatePath = null,
     string? SupplementalGatePath = null,
-    int FailStartupAttempts = 0)
+    int FailStartupAttempts = 0,
+    string? UpdateInstallState = null)
 {
     public const string VaultPathVariable = "GLASSWORK_VERIFY_VAULT_PATH";
     public const string UiStatePathVariable = "GLASSWORK_VERIFY_UI_STATE_PATH";
@@ -27,6 +28,7 @@ public sealed record VerificationLaunchOptions(
     public const string SupplementalGatePathVariable =
         "GLASSWORK_VERIFY_SUPPLEMENTAL_GATE_PATH";
     public const string FailStartupAttemptsVariable = "GLASSWORK_VERIFY_FAIL_STARTUP_ATTEMPTS";
+    public const string UpdateInstallStateVariable = "GLASSWORK_VERIFY_UPDATE_INSTALL_STATE";
 
     public bool IsVerificationRun =>
         !string.IsNullOrWhiteSpace(VaultPath) ||
@@ -37,7 +39,8 @@ public sealed record VerificationLaunchOptions(
         StartPage is not null ||
         StartupGatePath is not null ||
         SupplementalGatePath is not null ||
-        FailStartupAttempts > 0;
+        FailStartupAttempts > 0 ||
+        UpdateInstallState is not null;
 
     public static VerificationLaunchOptions FromProcessEnvironment() =>
         FromEnvironment(ToStringDictionary(Environment.GetEnvironmentVariables()));
@@ -53,6 +56,9 @@ public sealed record VerificationLaunchOptions(
         var failStartupAttempts = ReadNonNegativeInt(
             environment,
             FailStartupAttemptsVariable);
+        var updateInstallState = Read(environment, UpdateInstallStateVariable)?.ToLowerInvariant();
+        if (updateInstallState is not null and not ("app" or "mcp"))
+            throw new FormatException($"{UpdateInstallStateVariable} must be app or mcp.");
         if (startPage is not null && startPage != "planner")
             throw new FormatException($"Unsupported verification start page '{startPage}'.");
         if (startPage == "planner"
@@ -92,7 +98,8 @@ public sealed record VerificationLaunchOptions(
             startPage,
             startupGatePath,
             supplementalGatePath,
-            failStartupAttempts);
+            failStartupAttempts,
+            updateInstallState);
     }
 
     private static string? Read(IReadOnlyDictionary<string, string?> environment, string key)

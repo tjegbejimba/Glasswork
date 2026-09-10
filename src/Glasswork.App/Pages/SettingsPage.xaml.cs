@@ -17,6 +17,9 @@ namespace Glasswork.Pages;
 
 public sealed partial class SettingsPage : Page
 {
+    private bool _isAppUpdateInstalling;
+    private bool _isMcpUpdateInstalling;
+
     /// <summary>
     /// Navigation parameter that asks the page to surface the "Updates" section
     /// (bring it into view + focus the check button). Used by the announce
@@ -40,6 +43,7 @@ public sealed partial class SettingsPage : Page
         RefreshVaultInfo();
         RefreshUpdateInfo();
         RefreshCanvasExtensionInfo();
+        ApplyVerificationUpdateInstallState();
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -175,8 +179,10 @@ public sealed partial class SettingsPage : Page
     private void RefreshUpdateInfo()
     {
         InstalledVersionText.Text = $"Installed version: {App.Updater.InstalledVersion}";
-        UpdateStatusText.Text = UpdateStatusPresenter.Describe(App.Updater.LastResult);
-        RestartToUpdateButton.IsEnabled = App.Updater.LastResult?.IsUpdateAvailable == true;
+        if (!_isAppUpdateInstalling)
+        {
+            UpdateStatusText.Text = UpdateStatusPresenter.Describe(App.Updater.LastResult);
+        }
 
         var mcpResult = App.McpUpdater.LastResult;
         InstalledMcpVersionText.Text = mcpResult?.InstalledVersion is not null
@@ -184,8 +190,11 @@ public sealed partial class SettingsPage : Page
             : mcpResult?.IsInstalled == true
             ? "Installed version: Legacy build"
             : "Installed version: Not installed";
-        McpUpdateStatusText.Text = DescribeMcpUpdate(mcpResult);
-        UpdateMcpButton.IsEnabled = mcpResult?.IsUpdateAvailable == true;
+        if (!_isMcpUpdateInstalling)
+        {
+            McpUpdateStatusText.Text = DescribeMcpUpdate(mcpResult);
+        }
+        RefreshUpdateButtons();
     }
 
     private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
@@ -209,15 +218,15 @@ public sealed partial class SettingsPage : Page
         }
         finally
         {
-            CheckForUpdatesButton.IsEnabled = true;
+            RefreshUpdateButtons();
         }
     }
 
     private async void UpdateMcpButton_Click(object sender, RoutedEventArgs e)
     {
         string? updaterDirectory = null;
-        UpdateMcpButton.IsEnabled = false;
         McpUpdateStatusText.Text = "Installing verified MCP update…";
+        SetMcpUpdateInstalling(true);
 
         try
         {
@@ -298,13 +307,16 @@ public sealed partial class SettingsPage : Page
         {
             if (updaterDirectory is not null)
                 DeleteUpdaterDirectory(updaterDirectory);
-            UpdateMcpButton.IsEnabled = App.McpUpdater.LastResult?.IsUpdateAvailable == true;
+            SetMcpUpdateInstalling(false);
         }
     }
 
-    private void RestartToUpdateButton_Click(object sender, RoutedEventArgs e)
+    private async void RestartToUpdateButton_Click(object sender, RoutedEventArgs e)
     {
         string? updaterDirectory = null;
+        UpdateStatusText.Text = "Preparing the verified update. Glasswork will close and reopen…";
+        SetAppUpdateInstalling(true);
+        await Task.Delay(100);
 
         try
         {
@@ -315,7 +327,13 @@ public sealed partial class SettingsPage : Page
                 $"updater-{Guid.NewGuid():N}");
             Directory.CreateDirectory(updaterDirectory);
 
-            foreach (var fileName in new[] { "release-update.ps1", "Invoke-ReleaseUpdate.ps1" })
+            foreach (var fileName in new[]
+                     {
+                         "release-update.ps1",
+                         "Invoke-ReleaseUpdate.ps1",
+                         "Install-CanvasExtension.ps1",
+                         "Show-UpdateProgress.ps1",
+                     })
             {
                 File.Copy(
                     Path.Combine(bundledUpdaterDirectory, fileName),
@@ -338,6 +356,7 @@ public sealed partial class SettingsPage : Page
             {
                 DeleteUpdaterDirectory(updaterDirectory);
                 updaterDirectory = null;
+                SetAppUpdateInstalling(false);
                 OpenReleasePage(App.Updater.LastResult?.AvailableVersion?.ToString());
                 return;
             }
@@ -365,7 +384,53 @@ public sealed partial class SettingsPage : Page
             System.Diagnostics.Debug.WriteLine($"Self-update spawn failed: {ex.Message}");
             if (updaterDirectory is not null)
                 DeleteUpdaterDirectory(updaterDirectory);
+            SetAppUpdateInstalling(false);
             OpenReleasePage(App.Updater.LastResult?.AvailableVersion?.ToString());
+        }
+    }
+
+    private void SetAppUpdateInstalling(bool isInstalling)
+    {
+        _isAppUpdateInstalling = isInstalling;
+        AppUpdateProgressRing.IsActive = isInstalling;
+        AppUpdateProgressRing.Visibility = isInstalling
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        RefreshUpdateButtons();
+    }
+
+    private void SetMcpUpdateInstalling(bool isInstalling)
+    {
+        _isMcpUpdateInstalling = isInstalling;
+        McpUpdateProgressRing.IsActive = isInstalling;
+        McpUpdateProgressRing.Visibility = isInstalling
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        RefreshUpdateButtons();
+    }
+
+    private void RefreshUpdateButtons()
+    {
+        var installInProgress = _isAppUpdateInstalling || _isMcpUpdateInstalling;
+        CheckForUpdatesButton.IsEnabled = !installInProgress;
+        RestartToUpdateButton.IsEnabled =
+            !installInProgress && App.Updater.LastResult?.IsUpdateAvailable == true;
+        UpdateMcpButton.IsEnabled =
+            !installInProgress && App.McpUpdater.LastResult?.IsUpdateAvailable == true;
+    }
+
+    private void ApplyVerificationUpdateInstallState()
+    {
+        if (App.VerificationUpdateInstallState == "app")
+        {
+            UpdateStatusText.Text =
+                "Preparing the verified update. Glasswork will close and reopen…";
+            SetAppUpdateInstalling(true);
+        }
+        else if (App.VerificationUpdateInstallState == "mcp")
+        {
+            McpUpdateStatusText.Text = "Installing verified MCP update…";
+            SetMcpUpdateInstalling(true);
         }
     }
 

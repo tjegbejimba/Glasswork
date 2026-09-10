@@ -115,10 +115,20 @@
                     x:Name="InstalledVersionText"
                     Text="Installed version: …" />
 
-                <TextBlock
-                    x:Name="UpdateStatusText"
-                    TextWrapping="Wrap"
-                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                    <ProgressRing
+                        x:Name="AppUpdateProgressRing"
+                        AutomationProperties.AutomationId="AppUpdateProgressRing"
+                        Width="18"
+                        Height="18"
+                        IsActive="False"
+                        Visibility="Collapsed" />
+                    <TextBlock
+                        Grid.Column="1"
+                        x:Name="UpdateStatusText"
+                        TextWrapping="Wrap"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                </Grid>
 
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <Button
@@ -141,10 +151,20 @@
                 <TextBlock
                     x:Name="InstalledMcpVersionText"
                     Text="Installed version: …" />
-                <TextBlock
-                    x:Name="McpUpdateStatusText"
-                    TextWrapping="Wrap"
-                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                    <ProgressRing
+                        x:Name="McpUpdateProgressRing"
+                        AutomationProperties.AutomationId="McpUpdateProgressRing"
+                        Width="18"
+                        Height="18"
+                        IsActive="False"
+                        Visibility="Collapsed" />
+                    <TextBlock
+                        Grid.Column="1"
+                        x:Name="McpUpdateStatusText"
+                        TextWrapping="Wrap"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                </Grid>
                 <Button
                     x:Name="UpdateMcpButton"
                     AutomationProperties.AutomationId="UpdateMcpButton"

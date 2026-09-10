@@ -74,6 +74,7 @@ public partial class App : Application
     public static Glasswork.Core.AppUpdate.UpdateCheckService Updater { get; private set; } = null!;
     public static Glasswork.Core.AppUpdate.McpUpdateCheckService McpUpdater { get; private set; } = null!;
     public static IPerformanceTracer Performance { get; private set; } = PerformanceTracer.Disabled;
+    internal static string? VerificationUpdateInstallState { get; private set; }
 
     /// <summary>
     /// Single app-wide owner of the live HTML-preview WebView2 (#324).
@@ -234,6 +235,7 @@ public partial class App : Application
         var activationArgs = currentInstance.GetActivatedEventArgs();
         var launchOptions = VerificationLaunchOptions.FromProcessEnvironment();
         _launchOptions = launchOptions;
+        VerificationUpdateInstallState = launchOptions.UpdateInstallState;
 
         _mainAppInstance = AppInstance.FindOrRegisterForKey(launchOptions.InstanceKey);
         if (!_mainAppInstance.IsCurrent)
