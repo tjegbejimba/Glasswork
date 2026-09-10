@@ -92,6 +92,17 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     internal Action? PendingPathScheduledHook { get; set; }
     internal Action<CancellationToken>? BeforeApplyPendingHook { get; set; }
 
+    /// <summary>
+    /// Test-only seam: when set, prevents <see cref="Schedule"/> and
+    /// <see cref="ScheduleRemovalSweep"/> from arming the real background
+    /// <see cref="_refreshDebouncer"/> timer. Deterministic tests that force
+    /// batches via <c>ProcessPendingPathsForTest</c> must not also have a
+    /// real <see cref="Task.Delay"/> continuation land on a thread-pool
+    /// thread later and race the test's own synchronous assertions against
+    /// the unsynchronized event list.
+    /// </summary>
+    internal bool SuspendBackgroundDebounceForTest { get; set; }
+
     public FileSystemResearchCatalog(
         string vaultRoot,
         Func<DateOnly>? today = null,
@@ -1076,6 +1087,16 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         Schedule(fullPath, ClassifyOrigin(fullPath));
 
     /// <summary>
+    /// Test-only seam for injecting a specific origin directly, bypassing
+    /// <see cref="ClassifyOrigin"/> (which requires a real
+    /// <c>SelfWriteCoordinator</c> registration to ever classify a write as
+    /// <see cref="ResearchCatalogChangeOrigin.SelfWrite"/>). Used to
+    /// deterministically construct mixed-origin split-rename scenarios.
+    /// </summary>
+    internal void SimulateExternalFileEvent(string fullPath, ResearchCatalogChangeOrigin origin) =>
+        Schedule(fullPath, origin);
+
+    /// <summary>
     /// Forces exactly one reconciliation pass over whatever is currently
     /// pending (including expired grace-window removals), synchronously and
     /// independent of the real debounce timer. Lets tests control debounce
@@ -1110,7 +1131,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             }
         }
         PendingPathScheduledHook?.Invoke();
-        _refreshDebouncer.Trigger();
+        if (!SuspendBackgroundDebounceForTest)
+            _refreshDebouncer.Trigger();
     }
 
     private void ApplyPendingPaths()
@@ -1154,6 +1176,14 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     .Where(id => id is not null)
                     .Cast<string>()
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                // Origins that must feed ResolveOrigin even though they did
+                // not arrive as part of THIS batch's pending paths — e.g. a
+                // reunited split-rename's deferred delete-half origin, or a
+                // grace period finalizing a genuine delete. Without this a
+                // SelfWrite-origin delete reuniting with an External-origin
+                // create would silently report as plain External instead of
+                // Mixed, unlike the same-batch rename case.
+                var additionalOrigins = new List<ResearchCatalogChangeOrigin>();
 
                 if (isRecovery)
                 {
@@ -1178,6 +1208,23 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
                     foreach (var fullPath in pendingPaths.Where(File.Exists))
                     {
+                        var reappearedPath = ToRelativePath(fullPath);
+                        if (_pendingRemovalsByPath.Remove(reappearedPath))
+                        {
+                            // The exact path is alive again in this batch —
+                            // whether what now occupies it shares the Id the
+                            // pending removal was tracking (a genuine rename
+                            // reuniting, handled below) or is something
+                            // unrelated entirely (the path was reused for a
+                            // different page), the stale grace-window entry
+                            // for THIS path is moot either way. Cancel it
+                            // eagerly so FinalizeExpiredRemovals can never
+                            // later evict whatever legitimately occupies the
+                            // path now. See also its own belt-and-suspenders
+                            // Id check for the case where a reappearance is
+                            // observed on a still-later batch.
+                        }
+
                         if (!TryGetWikiRelativePath(fullPath, out var relativePath))
                         {
                             RemovePath(fullPath);
@@ -1235,6 +1282,14 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                                     .FirstOrDefault();
                                 if (reunitedFrom is not null)
                                 {
+                                    // Preserve the deferred delete-half's
+                                    // origin: it was never surfaced in its
+                                    // own (deferred, no-op) batch, so it must
+                                    // still feed ResolveOrigin here — a
+                                    // SelfWrite delete reuniting with an
+                                    // External create must resolve to Mixed,
+                                    // exactly like a same-batch rename does.
+                                    additionalOrigins.Add(_pendingRemovalsByPath[reunitedFrom].Origin);
                                     _pagesByPath.Remove(reunitedFrom);
                                     _diagnosticsByPath.Remove(reunitedFrom);
                                     MarkReferenceMissing(_referencesByPath, reunitedFrom);
@@ -1290,12 +1345,13 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     priorTopicIds.UnionWith(finalizedIds);
                     SetSnapshot(queryDate, BuildSnapshot(queryDate, before));
                 }
+                additionalOrigins.AddRange(finalizedOrigins);
 
                 if (!isRecovery && logTopicIds.Count > 0)
                     SetSnapshot(
                         queryDate,
                         RefreshChangeLogs(_snapshot, logTopicIds));
-                var origin = ResolveOrigin(pending, finalizedOrigins, isRecovery);
+                var origin = ResolveOrigin(pending, additionalOrigins, isRecovery);
                 change = CreateChange(before, _snapshot, priorTopicIds, origin);
                 changeLogChange = CreateChangeLogChange(
                     before,
@@ -1332,6 +1388,19 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         {
             var removal = _pendingRemovalsByPath[path];
             _pendingRemovalsByPath.Remove(path);
+            if (_pagesByPath.TryGetValue(path, out var currentPage)
+                && !string.Equals(currentPage.Id, removal.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                // The path was reused by an unrelated page after this
+                // removal was deferred, but before this sweep observed it
+                // (the eager same-batch cancellation in ApplyPendingPaths
+                // only catches reuse observed within that same batch). The
+                // identity this removal was tracking is already gone from
+                // this path; do not evict whatever legitimately occupies it
+                // now.
+                continue;
+            }
+
             _pagesByPath.Remove(path);
             MarkReferenceMissing(_referencesByPath, path);
             _diagnosticsByPath.Remove(path);
@@ -1350,6 +1419,15 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     /// </summary>
     private void ScheduleRemovalSweep(TimeSpan delay)
     {
+        if (SuspendBackgroundDebounceForTest)
+        {
+            // ProcessPendingPathsForTest already force-sets
+            // _removalSweepPending before each forced pass, so a background
+            // sweep timer is both redundant and, if armed, a race hazard for
+            // deterministic tests driving the catalog synchronously.
+            return;
+        }
+
         _ = Task.Delay(delay).ContinueWith(_ =>
         {
             if (_disposed)

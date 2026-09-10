@@ -3994,6 +3994,13 @@ public sealed class ResearchCatalogTests
             _vaultRoot,
             () => new DateOnly(2026, 8, 16),
             quietPeriod: quietPeriod);
+        // The real _refreshDebouncer must never fire in this test: every
+        // batch boundary is forced synchronously via
+        // ProcessPendingPathsForTest, so a stray background timer callback
+        // (which would run on a thread-pool thread) could otherwise race
+        // this test's own synchronous assertions against the plain,
+        // unsynchronized `events` list below.
+        catalog.SuspendBackgroundDebounceForTest = true;
         _ = catalog.Capture(new DateOnly(2026, 8, 16));
         var events = new List<ResearchTopicsChangedEventArgs>();
         catalog.TopicsChanged += (_, args) => events.Add(args);
@@ -4019,8 +4026,26 @@ public sealed class ResearchCatalogTests
         Assert.AreEqual(newRelativePath, renamed.Snapshot.Topics.Single().VaultRelativePath);
         events.Clear();
 
-        // A genuine delete — no matching Created ever arrives — must still
-        // become durably visible once the bounded grace period elapses.
+        // Prove the reunification actually CANCELLED the old path's pending
+        // removal, rather than merely racing ahead of it: keep the
+        // destination alive well past the OLD path's own grace period, force
+        // the sweep, and assert the topic is still present with no phantom
+        // event. Before this fix, the old pending-removal entry would have
+        // been left untouched by a same-Id reunion in some cross-batch
+        // orderings and could otherwise resurface here.
+        Thread.Sleep(quietPeriod + TimeSpan.FromMilliseconds(100));
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(
+            events,
+            "The reunified topic must remain stable past the old path's grace period — no resurfacing, no phantom-empty publication.");
+        var stillPresent = catalog.Capture(new DateOnly(2026, 8, 16));
+        Assert.HasCount(1, stillPresent.Topics);
+        Assert.AreEqual("stable-topic", stillPresent.Topics[0].Id);
+        Assert.AreEqual(newRelativePath, stillPresent.Topics[0].VaultRelativePath);
+
+        // Only now exercise a genuine delete — no matching Created ever
+        // arrives — which must still become durably visible once the
+        // bounded grace period elapses.
         File.Delete(newPath);
         catalog.SimulateExternalFileEvent(newPath);
         catalog.ProcessPendingPathsForTest();
@@ -4037,6 +4062,93 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void RenameThenDelete_ReusedPathWithDifferentId_CancelsPendingRemovalAndPreservesNewIdentity()
+    {
+        // Regression for a reused-path data-loss bug: a pending removal for
+        // page A at path P must not survive when P reappears occupied by an
+        // unrelated page B (not a rename of A — a genuinely different
+        // identity). Before the fix, only a same-Id reunion cancelled the
+        // pending removal, so FinalizeExpiredRemovals would later evict B
+        // once A's grace period elapsed, even though B has nothing to do
+        // with A's deletion.
+        const string relativePath = "wiki/concepts/reused.md";
+        WriteOptedInPage(relativePath, "topic-a", "concept");
+        var quietPeriod = TimeSpan.FromMilliseconds(50);
+        using var catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: quietPeriod);
+        catalog.SuspendBackgroundDebounceForTest = true;
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        var events = new List<ResearchTopicsChangedEventArgs>();
+        catalog.TopicsChanged += (_, args) => events.Add(args);
+
+        var path = FullPath(relativePath);
+
+        // Batch 1: A is deleted — its removal is deferred, not published.
+        File.Delete(path);
+        catalog.SimulateExternalFileEvent(path);
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(events, "A deferred removal must not publish immediately.");
+
+        // Before A's grace period elapses, an unrelated page B is written to
+        // the exact same path.
+        WriteOptedInPage(relativePath, "topic-b", "concept");
+        catalog.SimulateExternalFileEvent(path);
+        catalog.ProcessPendingPathsForTest();
+        events.Clear();
+
+        // Force a sweep well past A's original grace period. B must remain
+        // — A's stale pending removal must have been cancelled outright by
+        // B's path reappearing, not merely left to race B's own presence.
+        Thread.Sleep(quietPeriod + TimeSpan.FromMilliseconds(100));
+        catalog.ProcessPendingPathsForTest();
+        var snapshot = catalog.Capture(new DateOnly(2026, 8, 16));
+        Assert.HasCount(1, snapshot.Topics);
+        Assert.AreEqual("topic-b", snapshot.Topics[0].Id);
+        Assert.AreEqual(relativePath, snapshot.Topics[0].VaultRelativePath);
+    }
+
+    [TestMethod]
+    public void RenameThenDelete_ReunitedAcrossBatchesWithDifferentOrigins_ResolvesMixedOrigin()
+    {
+        // Regression: a split-rename's deferred delete-half origin must
+        // still feed ResolveOrigin when it reunites with the Created half in
+        // a later batch, exactly as it would if both halves had landed in
+        // the same batch. Uses the origin-injecting SimulateExternalFileEvent
+        // overload to construct a deterministic External+SelfWrite mix
+        // without needing a real SelfWriteCoordinator registration.
+        const string oldRelativePath = "wiki/concepts/before.md";
+        const string newRelativePath = "wiki/systems/after.md";
+        WriteOptedInPage(oldRelativePath, "stable-topic", "concept");
+        var quietPeriod = TimeSpan.FromMilliseconds(50);
+        using var catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: quietPeriod);
+        catalog.SuspendBackgroundDebounceForTest = true;
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        var events = new List<ResearchTopicsChangedEventArgs>();
+        catalog.TopicsChanged += (_, args) => events.Add(args);
+
+        var oldPath = FullPath(oldRelativePath);
+        var newPath = FullPath(newRelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+        File.Move(oldPath, newPath);
+
+        // Batch 1: the Deleted half arrives, classified as SelfWrite.
+        catalog.SimulateExternalFileEvent(oldPath, ResearchCatalogChangeOrigin.SelfWrite);
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(events);
+
+        // Batch 2: the Created half arrives as External, in its own batch.
+        catalog.SimulateExternalFileEvent(newPath, ResearchCatalogChangeOrigin.External);
+        catalog.ProcessPendingPathsForTest();
+        Assert.HasCount(1, events);
+        Assert.AreEqual(ResearchCatalogChangeOrigin.Mixed, events[0].Origin);
+    }
+
+    [TestMethod]
     public void RenameThenDelete_ViaRealFileSystemWatcher_EventuallyConvergesWithoutPhantomEmptyState()
     {
         // Thin real-FileSystemWatcher integration test: asserts bounded
@@ -4048,10 +4160,11 @@ public sealed class ResearchCatalogTests
         const string oldRelativePath = "wiki/concepts/before.md";
         const string newRelativePath = "wiki/systems/after.md";
         WriteOptedInPage(oldRelativePath, "stable-topic", "concept");
+        var quietPeriod = TimeSpan.FromMilliseconds(50);
         using IResearchCatalog catalog = new FileSystemResearchCatalog(
             _vaultRoot,
             () => new DateOnly(2026, 8, 16),
-            quietPeriod: TimeSpan.FromMilliseconds(50));
+            quietPeriod: quietPeriod);
         _ = catalog.Capture(new DateOnly(2026, 8, 16));
         var observedEmptySnapshot = false;
         catalog.TopicsChanged += (_, args) =>
@@ -4082,6 +4195,20 @@ public sealed class ResearchCatalogTests
         Assert.IsFalse(
             observedEmptySnapshot,
             "The topic must never be reported as gone while its rename is still converging.");
+
+        // Let any lingering pending-removal sweep for the OLD path run its
+        // course before deleting the new one — this is a real,
+        // non-forced wait (this test exercises the public IResearchCatalog
+        // surface end-to-end) that proves the reunification durably
+        // cancelled the old path's grace-period timer rather than merely
+        // outrunning it.
+        Thread.Sleep(quietPeriod + quietPeriod + quietPeriod);
+        snapshot = catalog.Capture(new DateOnly(2026, 8, 16));
+        Assert.HasCount(1, snapshot.Topics);
+        Assert.AreEqual(newRelativePath, snapshot.Topics[0].VaultRelativePath);
+        Assert.IsFalse(
+            observedEmptySnapshot,
+            "The topic must remain stable past the old path's grace period, with no phantom-empty publication.");
 
         File.Delete(newPath);
 
