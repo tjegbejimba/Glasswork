@@ -4101,9 +4101,19 @@ public sealed class ResearchCatalogTests
         // Force a sweep well past A's original grace period. B must remain
         // — A's stale pending removal must have been cancelled outright by
         // B's path reappearing, not merely left to race B's own presence.
+        // Read the state via TryCapturePublished (the value the last
+        // reconciliation pass actually settled on) rather than the public
+        // Capture(), which would rehydrate from disk here since Start()
+        // was never called — a rehydrate would silently re-read whatever
+        // is really on disk regardless of what the in-memory removal
+        // tracking did, masking a faulty eviction instead of failing on it.
         Thread.Sleep(quietPeriod + TimeSpan.FromMilliseconds(100));
         catalog.ProcessPendingPathsForTest();
-        var snapshot = catalog.Capture(new DateOnly(2026, 8, 16));
+        Assert.IsEmpty(
+            events,
+            "A superseded identity was already reported when B reappeared; the later sweep must not publish a phantom-empty event for A.");
+        Assert.IsTrue(
+            catalog.TryCapturePublished(new DateOnly(2026, 8, 16), out var snapshot));
         Assert.HasCount(1, snapshot.Topics);
         Assert.AreEqual("topic-b", snapshot.Topics[0].Id);
         Assert.AreEqual(relativePath, snapshot.Topics[0].VaultRelativePath);
@@ -4146,6 +4156,313 @@ public sealed class ResearchCatalogTests
         catalog.ProcessPendingPathsForTest();
         Assert.HasCount(1, events);
         Assert.AreEqual(ResearchCatalogChangeOrigin.Mixed, events[0].Origin);
+    }
+
+    [TestMethod]
+    public void RenameThenDelete_ReusedPathAcrossBatchesWithDifferentOrigins_AggregatesSupersededOrigin()
+    {
+        // Regression: a reused path is not a rename — it is a genuinely
+        // different identity (B) taking over an unrelated identity's (A)
+        // old path — but A's departure must still surface and still
+        // contribute its origin, exactly like a same-path rename would.
+        // Before the three-phase rework this path was reachable only via an
+        // eager, Id-blind path cancellation that discarded the pending
+        // removal's origin outright with no way to recover it.
+        const string relativePath = "wiki/concepts/reused-origin.md";
+        WriteOptedInPage(relativePath, "topic-a", "concept");
+        var quietPeriod = TimeSpan.FromMilliseconds(50);
+        using var catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: quietPeriod);
+        catalog.SuspendBackgroundDebounceForTest = true;
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        var events = new List<ResearchTopicsChangedEventArgs>();
+        catalog.TopicsChanged += (_, args) => events.Add(args);
+
+        var path = FullPath(relativePath);
+
+        // Batch 1: A is deleted with a SelfWrite origin — deferred, not
+        // published.
+        File.Delete(path);
+        catalog.SimulateExternalFileEvent(path, ResearchCatalogChangeOrigin.SelfWrite);
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(events);
+
+        // Batch 2, a later batch: an unrelated identity B is written to the
+        // exact same path with an External origin.
+        WriteOptedInPage(relativePath, "topic-b", "concept");
+        catalog.SimulateExternalFileEvent(path, ResearchCatalogChangeOrigin.External);
+        catalog.ProcessPendingPathsForTest();
+
+        Assert.HasCount(1, events);
+        var published = events[0];
+        Assert.AreEqual(
+            ResearchCatalogChangeOrigin.Mixed,
+            published.Origin,
+            "A's SelfWrite-origin departure and B's External-origin arrival at the same path must aggregate to Mixed.");
+        CollectionAssert.AreEquivalent(
+            new[] { "topic-a", "topic-b" },
+            published.AffectedTopicIds.ToArray(),
+            "Both the superseded identity and the identity that took over its path must be reported as affected.");
+        Assert.HasCount(1, published.Snapshot.Topics);
+        Assert.AreEqual("topic-b", published.Snapshot.Topics[0].Id);
+    }
+
+    [TestMethod]
+    public void RenameThenDelete_TwoIdentitiesSwapPathsInSameBatch_PreservesBothIdentitiesRegardlessOfOrder()
+    {
+        // Regression for the exact-path-cancellation ordering bug: when two
+        // identities swap paths and both Created halves land in the SAME
+        // batch, correlation must be decided from a full view of the batch,
+        // not path-by-path in iteration order — an eager, per-path
+        // cancellation of "the exact path reappeared" can otherwise delete
+        // one swap participant's bookkeeping before the other participant's
+        // reunion is even considered, permanently losing an identity.
+        const string pathA = "wiki/concepts/swap-a.md";
+        const string pathB = "wiki/concepts/swap-b.md";
+        WriteOptedInPage(pathA, "topic-a", "concept");
+        WriteOptedInPage(pathB, "topic-b", "concept");
+        var quietPeriod = TimeSpan.FromMilliseconds(50);
+        using var catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: quietPeriod);
+        catalog.SuspendBackgroundDebounceForTest = true;
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        var events = new List<ResearchTopicsChangedEventArgs>();
+        catalog.TopicsChanged += (_, args) => events.Add(args);
+
+        var fullPathA = FullPath(pathA);
+        var fullPathB = FullPath(pathB);
+
+        // Batch 1: both halves of the swap vanish — each identity's removal
+        // is deferred, not published.
+        File.Delete(fullPathA);
+        File.Delete(fullPathB);
+        catalog.SimulateExternalFileEvent(fullPathA);
+        catalog.SimulateExternalFileEvent(fullPathB);
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(events);
+
+        // Batch 2, in the SAME reconciliation pass: A's content reappears at
+        // B's old path and B's content reappears at A's old path — a full
+        // swap, with both Created halves landing together.
+        WriteOptedInPage(pathA, "topic-b", "concept");
+        WriteOptedInPage(pathB, "topic-a", "concept");
+        catalog.SimulateExternalFileEvent(fullPathA);
+        catalog.SimulateExternalFileEvent(fullPathB);
+        catalog.ProcessPendingPathsForTest();
+
+        Assert.HasCount(1, events);
+        var swapped = events[0];
+        CollectionAssert.AreEquivalent(
+            new[] { "topic-a", "topic-b" },
+            swapped.AffectedTopicIds.ToArray());
+        Assert.HasCount(2, swapped.Snapshot.Topics);
+        Assert.AreEqual(
+            "topic-b",
+            swapped.Snapshot.Topics.Single(topic => topic.VaultRelativePath == pathA).Id);
+        Assert.AreEqual(
+            "topic-a",
+            swapped.Snapshot.Topics.Single(topic => topic.VaultRelativePath == pathB).Id);
+
+        // Neither identity should resurface as a phantom removal once both
+        // old paths' grace periods elapse — they were genuinely reunited,
+        // not superseded.
+        events.Clear();
+        Thread.Sleep(quietPeriod + TimeSpan.FromMilliseconds(100));
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(events);
+        Assert.IsTrue(
+            catalog.TryCapturePublished(new DateOnly(2026, 8, 16), out var finalSnapshot));
+        Assert.HasCount(2, finalSnapshot.Topics);
+    }
+
+    [TestMethod]
+    public void RenameThenDelete_TwoIdentitiesSwapPathsAcrossSeparateBatches_PreservesIdentityAndOrigin()
+    {
+        // Regression for the same swap defect, but with the two Created
+        // halves landing in SEPARATE batches — the reviewer's exact
+        // counter-example: "A@P1 and B@P2 are both deferred; Created(P1
+        // containing B) arrives before Created(P2 containing A)". Between
+        // the two batches there is a real, observable instant where A is
+        // not present anywhere in the vault (B has taken over A's old path,
+        // and A has not yet reappeared at B's old path) — that gap is
+        // genuine, not a bug. The defect under test is that the OLD path's
+        // identity (A) must still be durably reported, with its origin
+        // captured, at the moment it is superseded — not silently dropped
+        // — and the swap must still converge correctly once A reappears.
+        const string pathA = "wiki/concepts/swap-separate-a.md";
+        const string pathB = "wiki/concepts/swap-separate-b.md";
+        WriteOptedInPage(pathA, "topic-a", "concept");
+        WriteOptedInPage(pathB, "topic-b", "concept");
+        var quietPeriod = TimeSpan.FromMilliseconds(50);
+        using var catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: quietPeriod);
+        catalog.SuspendBackgroundDebounceForTest = true;
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        var events = new List<ResearchTopicsChangedEventArgs>();
+        catalog.TopicsChanged += (_, args) => events.Add(args);
+
+        var fullPathA = FullPath(pathA);
+        var fullPathB = FullPath(pathB);
+
+        // Batch 1: both halves of the swap vanish — deferred, not
+        // published.
+        File.Delete(fullPathA);
+        File.Delete(fullPathB);
+        catalog.SimulateExternalFileEvent(fullPathA, ResearchCatalogChangeOrigin.SelfWrite);
+        catalog.SimulateExternalFileEvent(fullPathB, ResearchCatalogChangeOrigin.SelfWrite);
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(events);
+
+        // Batch 2: only B's Created half arrives — B now occupies A's old
+        // path (pathA). A has not reappeared anywhere yet.
+        WriteOptedInPage(pathA, "topic-b", "concept");
+        catalog.SimulateExternalFileEvent(fullPathA, ResearchCatalogChangeOrigin.External);
+        catalog.ProcessPendingPathsForTest();
+
+        Assert.HasCount(1, events);
+        var afterFirstHalf = events[0];
+        Assert.Contains(
+            "topic-a",
+            afterFirstHalf.AffectedTopicIds.ToArray(),
+            "A's departure must be durably reported the moment its old path is superseded, not silently dropped.");
+        Assert.AreEqual(
+            ResearchCatalogChangeOrigin.Mixed,
+            afterFirstHalf.Origin,
+            "A's original SelfWrite-origin delete must still feed the aggregate origin even though it is only now being finalized.");
+        Assert.HasCount(1, afterFirstHalf.Snapshot.Topics);
+        Assert.AreEqual("topic-b", afterFirstHalf.Snapshot.Topics[0].Id);
+        Assert.AreEqual(pathA, afterFirstHalf.Snapshot.Topics[0].VaultRelativePath);
+        events.Clear();
+
+        // Batch 3, a separate later batch: A's Created half arrives — A now
+        // occupies B's old path (pathB). This is a fresh appearance (the
+        // earlier removal already finalized), not a reunion, and that is
+        // correct: enough real batches passed that no correlation window
+        // remained.
+        WriteOptedInPage(pathB, "topic-a", "concept");
+        catalog.SimulateExternalFileEvent(fullPathB, ResearchCatalogChangeOrigin.External);
+        catalog.ProcessPendingPathsForTest();
+
+        Assert.HasCount(1, events);
+        var afterSecondHalf = events[0];
+        Assert.HasCount(2, afterSecondHalf.Snapshot.Topics);
+        Assert.AreEqual(
+            "topic-b",
+            afterSecondHalf.Snapshot.Topics.Single(topic => topic.VaultRelativePath == pathA).Id);
+        Assert.AreEqual(
+            "topic-a",
+            afterSecondHalf.Snapshot.Topics.Single(topic => topic.VaultRelativePath == pathB).Id);
+    }
+
+    [TestMethod]
+    public void Hydrate_ClearsStalePendingRemoval_WhenFullRescanConfirmsSameIdentity()
+    {
+        // Regression: FinalizeExpiredRemovals only guards against a path
+        // reused by a *different* Id — it cannot tell "stale timer, but a
+        // full authoritative rescan already re-confirmed this exact
+        // identity at this exact path" from "this removal is still valid",
+        // because the Id legitimately matches in both cases. A coherent
+        // full Hydrate() must therefore drop any pending removal outright:
+        // its fresh scan-vs-seenPaths diff already decided, for every path,
+        // whether the identity is genuinely present or genuinely gone,
+        // independent of whatever the pending-removal dictionary still
+        // tracks from before the rescan.
+        const string relativePath = "wiki/concepts/restored.md";
+        WriteOptedInPage(relativePath, "topic-a", "concept");
+        var quietPeriod = TimeSpan.FromMilliseconds(50);
+        using var catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: quietPeriod);
+        catalog.SuspendBackgroundDebounceForTest = true;
+        catalog.Initialize(CancellationToken.None);
+        var events = new List<ResearchTopicsChangedEventArgs>();
+        catalog.TopicsChanged += (_, args) => events.Add(args);
+
+        var path = FullPath(relativePath);
+
+        // A is deleted — its removal is deferred, not published.
+        File.Delete(path);
+        catalog.SimulateExternalFileEvent(path);
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(events);
+        Assert.AreEqual(1, catalog.PendingRemovalCountForTest);
+
+        // Before the grace period elapses, A is restored at the exact same
+        // path with the exact same identity — but no watcher event is
+        // dispatched for it. Only an independent full rescan (Capture()
+        // while not watching, exactly as production's Capture()/retry paths
+        // trigger one) will discover it.
+        WriteOptedInPage(relativePath, "topic-a", "concept");
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+        Assert.AreEqual(
+            0,
+            catalog.PendingRemovalCountForTest,
+            "A coherent full rescan that re-confirms this identity at this path must drop the now-stale pending removal.");
+
+        // Force a sweep well past the original grace period deadline. With
+        // the stale removal cleared, there is nothing left to wrongly
+        // finalize.
+        Thread.Sleep(quietPeriod + TimeSpan.FromMilliseconds(100));
+        catalog.ProcessPendingPathsForTest();
+        Assert.IsEmpty(
+            events,
+            "A stale pre-rescan removal must never evict an identity a full rescan already re-confirmed.");
+        Assert.IsTrue(
+            catalog.TryCapturePublished(new DateOnly(2026, 8, 16), out var snapshot));
+        Assert.HasCount(1, snapshot.Topics);
+        Assert.AreEqual("topic-a", snapshot.Topics[0].Id);
+    }
+
+    [TestMethod]
+    public void CompleteInitialHydration_WaitsForPendingRemovalToSettle_BeforeReturningReady()
+    {
+        // Regression: CompleteInitialHydration only drained _pendingPaths
+        // and _recoveryPending, so it could declare "Ready" while a
+        // deletion was still tentative (see PendingRemoval) — a caller
+        // could then observe stale content that a moment later silently
+        // disappears. SuspendBackgroundDebounceForTest disables the real
+        // background sweep timer entirely, so if CompleteInitialHydration's
+        // own bounded wait did not exist, nothing else in the system would
+        // ever finalize this removal and the assertions below would
+        // observe A still present.
+        const string relativePath = "wiki/concepts/ready.md";
+        WriteOptedInPage(relativePath, "topic-a", "concept");
+        var quietPeriod = TimeSpan.FromMilliseconds(50);
+        using var catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: quietPeriod);
+        catalog.SuspendBackgroundDebounceForTest = true;
+        catalog.Initialize(CancellationToken.None);
+        var events = new List<ResearchTopicsChangedEventArgs>();
+        catalog.TopicsChanged += (_, args) => events.Add(args);
+
+        var path = FullPath(relativePath);
+        File.Delete(path);
+        catalog.SimulateExternalFileEvent(path);
+
+        catalog.CompleteInitialHydration(CancellationToken.None);
+
+        Assert.AreEqual(
+            0,
+            catalog.PendingRemovalCountForTest,
+            "CompleteInitialHydration must not return while a removal is still tentative.");
+        Assert.IsTrue(
+            catalog.TryCapturePublished(new DateOnly(2026, 8, 16), out var snapshot));
+        Assert.IsEmpty(
+            snapshot.Topics,
+            "Ready must not be declared while stale content (an identity whose removal has already settled) is still published.");
+        Assert.HasCount(
+            1,
+            events,
+            "The settled removal must still surface as a real notification, not be silently absorbed into Ready.");
     }
 
     [TestMethod]
