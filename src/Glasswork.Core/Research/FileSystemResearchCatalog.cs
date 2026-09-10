@@ -73,6 +73,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
     internal Action? AfterOptInReplacementHook { get; set; }
     internal Action<string>? AfterOptInFileReplaceHook { get; set; }
+    internal Action? BeforeOptInWriteGuardHook { get; set; }
+    internal Func<string, byte[]>? ReadOptInBackupHook { get; set; }
     internal Action<string, string, string>? ReplaceOptInFileHook { get; set; }
     internal Action<string, string, string>? ReplaceOptInRollbackFileHook { get; set; }
     internal Action? BeforeOptInRollbackPreparationHook { get; set; }
@@ -265,6 +267,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 FileStream? writeGuard = null;
                 try
                 {
+                    BeforeOptInWriteGuardHook?.Invoke();
                     writeGuard = new FileStream(
                         fullPath,
                         FileMode.Open,
@@ -427,16 +430,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                             File.Replace(tempPath, fullPath, backupPath);
                         replacementApplied = true;
                         AfterOptInFileReplaceHook?.Invoke(backupPath);
-                        byte[] replacedBytes;
-                        using (var backup = new FileStream(
-                                   backupPath,
-                                   FileMode.Open,
-                                   FileAccess.Read,
-                                   FileShare.Read))
-                        {
-                            replacedBytes = new byte[backup.Length];
-                            backup.ReadExactly(replacedBytes);
-                        }
+                        var replacedBytes = ReadOptInBackup(backupPath);
                         if (!replacedBytes.AsSpan().SequenceEqual(originalBytes))
                         {
                             if (!TryRestoreOptInBackup(
@@ -3087,7 +3081,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         var preserveRaceRecovery = false;
         try
         {
-            var originalBytes = File.ReadAllBytes(backupPath);
+            var originalBytes = ReadOptInBackup(backupPath);
             BeforeOptInRollbackPreparationHook?.Invoke();
             using (var restore = new FileStream(
                        restorePath,
@@ -3158,6 +3152,21 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             if (!preserveRaceRecovery)
                 TryDeleteRecoveryFile(raceRecoveryPath);
         }
+    }
+
+    private byte[] ReadOptInBackup(string backupPath)
+    {
+        if (ReadOptInBackupHook is { } readBackup)
+            return readBackup(backupPath);
+
+        using var backup = new FileStream(
+            backupPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read);
+        var bytes = new byte[backup.Length];
+        backup.ReadExactly(bytes);
+        return bytes;
     }
 
     private bool TryHasDuplicateIdOnDisk(

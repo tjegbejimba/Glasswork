@@ -23,10 +23,12 @@ public static class ArtifactPathResolver
         taskId = null;
         if (string.IsNullOrWhiteSpace(fullPath)) return false;
 
-        // Reject transient/junk files via the commit policy
-        if (!ArtifactCommitPolicy.IsCommitted(fullPath)) return false;
+        var normalizedPath = ArtifactPathSyntax.NormalizeSeparators(fullPath);
 
-        var dir = Path.GetDirectoryName(fullPath);
+        // Reject transient/junk files via the commit policy
+        if (!ArtifactCommitPolicy.IsCommitted(normalizedPath)) return false;
+
+        var dir = Path.GetDirectoryName(normalizedPath);
         if (string.IsNullOrEmpty(dir)) return false;
 
         var folderName = Path.GetFileName(dir);

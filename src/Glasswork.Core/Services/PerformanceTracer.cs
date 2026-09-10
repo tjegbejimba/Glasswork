@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -103,7 +104,13 @@ public static class PerformanceTracer
 
     private sealed class JsonlPerformanceTracer : IPerformanceTracer
     {
+        private static readonly ConcurrentDictionary<string, byte> ActiveOutputPaths =
+            new(OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal);
+
         private readonly object _gate = new();
+        private readonly FileStream _lockStream;
         private readonly StreamWriter _writer;
         private readonly long _baselineTimestamp;
         private readonly string _sessionId = Guid.NewGuid().ToString("N");
@@ -115,11 +122,42 @@ public static class PerformanceTracer
             if (!string.IsNullOrEmpty(directory))
                 Directory.CreateDirectory(directory);
 
-            var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
-            _writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+            if (!ActiveOutputPaths.TryAdd(path, 0))
+                throw new IOException($"Performance trace path '{path}' already has an active writer.");
+
+            FileStream? lockStream = null;
+            FileStream? outputStream = null;
+            try
             {
-                AutoFlush = true,
-            };
+                lockStream = new FileStream(
+                    path + ".lock",
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.ReadWrite);
+                if (!OperatingSystem.IsMacOS())
+                    lockStream.Lock(0, 1);
+
+                outputStream = new FileStream(
+                    path,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.Read);
+                _writer = new StreamWriter(
+                    outputStream,
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+                {
+                    AutoFlush = true,
+                };
+                _lockStream = lockStream;
+            }
+            catch
+            {
+                outputStream?.Dispose();
+                lockStream?.Dispose();
+                ActiveOutputPaths.TryRemove(path, out _);
+                throw;
+            }
+
             _baselineTimestamp = baselineTimestamp;
             OutputPath = path;
             Debug.WriteLine($"Performance trace enabled: {path}");
@@ -239,7 +277,15 @@ public static class PerformanceTracer
                     return;
 
                 _disposed = true;
-                _writer.Dispose();
+                try
+                {
+                    _writer.Dispose();
+                }
+                finally
+                {
+                    _lockStream.Dispose();
+                    ActiveOutputPaths.TryRemove(OutputPath, out _);
+                }
             }
         }
 
