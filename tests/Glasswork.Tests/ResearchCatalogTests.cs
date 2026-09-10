@@ -4210,7 +4210,10 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
-    public void RenameThenDelete_TwoIdentitiesSwapPathsInSameBatch_PreservesBothIdentitiesRegardlessOfOrder()
+    [DataRow(false)]
+    [DataRow(true)]
+    public void RenameThenDelete_TwoIdentitiesSwapPathsInSameBatch_PreservesBothIdentitiesRegardlessOfOrder(
+        bool reverseCreateOrder)
     {
         // Regression for the exact-path-cancellation ordering bug: when two
         // identities swap paths and both Created halves land in the SAME
@@ -4219,6 +4222,17 @@ public sealed class ResearchCatalogTests
         // cancellation of "the exact path reappeared" can otherwise delete
         // one swap participant's bookkeeping before the other participant's
         // reunion is even considered, permanently losing an identity.
+        //
+        // The final path->Id mapping alone does NOT catch this bug: the old
+        // algorithm always writes whatever it reads, so the mapping ends up
+        // correct even when the eager cancellation silently discards a
+        // participant's own pending-removal origin. The only observable
+        // casualty is aggregated *origin* — and which identity's origin is
+        // lost depends on dictionary iteration order, so both insertion
+        // orders must be exercised with DISTINCT per-identity origins (a
+        // test using identical origins for both deletes cannot distinguish
+        // "lost, but masked by the other identity's identical origin" from
+        // "correctly aggregated").
         const string pathA = "wiki/concepts/swap-a.md";
         const string pathB = "wiki/concepts/swap-b.md";
         WriteOptedInPage(pathA, "topic-a", "concept");
@@ -4237,25 +4251,49 @@ public sealed class ResearchCatalogTests
         var fullPathB = FullPath(pathB);
 
         // Batch 1: both halves of the swap vanish — each identity's removal
-        // is deferred, not published.
+        // is deferred, not published. Distinct origins per identity so a
+        // lost origin is observable regardless of which one is dropped.
         File.Delete(fullPathA);
         File.Delete(fullPathB);
-        catalog.SimulateExternalFileEvent(fullPathA);
-        catalog.SimulateExternalFileEvent(fullPathB);
+        catalog.SimulateExternalFileEvent(fullPathA, ResearchCatalogChangeOrigin.SelfWrite);
+        catalog.SimulateExternalFileEvent(fullPathB, ResearchCatalogChangeOrigin.External);
         catalog.ProcessPendingPathsForTest();
         Assert.IsEmpty(events);
 
         // Batch 2, in the SAME reconciliation pass: A's content reappears at
         // B's old path and B's content reappears at A's old path — a full
-        // swap, with both Created halves landing together.
+        // swap, with both Created halves landing together. The scheduling
+        // order of the two Created halves is varied by `reverseCreateOrder`
+        // to cover both dictionary-iteration orders the correlation pass can
+        // see; the old, eager-cancellation algorithm loses a different
+        // identity's origin depending on this order, while the correct
+        // batch-wide correlation is order-independent.
         WriteOptedInPage(pathA, "topic-b", "concept");
         WriteOptedInPage(pathB, "topic-a", "concept");
-        catalog.SimulateExternalFileEvent(fullPathA);
-        catalog.SimulateExternalFileEvent(fullPathB);
+        if (reverseCreateOrder)
+        {
+            catalog.SimulateExternalFileEvent(fullPathB, ResearchCatalogChangeOrigin.External);
+            catalog.SimulateExternalFileEvent(fullPathA, ResearchCatalogChangeOrigin.External);
+        }
+        else
+        {
+            catalog.SimulateExternalFileEvent(fullPathA, ResearchCatalogChangeOrigin.External);
+            catalog.SimulateExternalFileEvent(fullPathB, ResearchCatalogChangeOrigin.External);
+        }
         catalog.ProcessPendingPathsForTest();
 
+        // Exactly one event for the whole swap batch: no phantom
+        // intermediate publication (e.g. a transient snapshot missing one
+        // or both identities) between the two Created halves landing in the
+        // same synchronous reconciliation pass.
         Assert.HasCount(1, events);
         var swapped = events[0];
+        Assert.AreEqual(
+            ResearchCatalogChangeOrigin.Mixed,
+            swapped.Origin,
+            "Both identities' original delete origins (SelfWrite and External) must survive the swap " +
+            "regardless of which Created half is processed first; losing either one changes the " +
+            "aggregate away from Mixed.");
         CollectionAssert.AreEquivalent(
             new[] { "topic-a", "topic-b" },
             swapped.AffectedTopicIds.ToArray());
@@ -4293,6 +4331,12 @@ public sealed class ResearchCatalogTests
         // identity (A) must still be durably reported, with its origin
         // captured, at the moment it is superseded — not silently dropped
         // — and the swap must still converge correctly once A reappears.
+        //
+        // A and B are given DISTINCT delete origins (SelfWrite vs External)
+        // so that losing A's origin is observable: with identical origins
+        // for both deletes, even the old eager-cancellation algorithm's
+        // aggregate happens to look like Mixed by coincidence (via B's own,
+        // never-lost origin), masking the bug entirely.
         const string pathA = "wiki/concepts/swap-separate-a.md";
         const string pathB = "wiki/concepts/swap-separate-b.md";
         WriteOptedInPage(pathA, "topic-a", "concept");
@@ -4315,7 +4359,7 @@ public sealed class ResearchCatalogTests
         File.Delete(fullPathA);
         File.Delete(fullPathB);
         catalog.SimulateExternalFileEvent(fullPathA, ResearchCatalogChangeOrigin.SelfWrite);
-        catalog.SimulateExternalFileEvent(fullPathB, ResearchCatalogChangeOrigin.SelfWrite);
+        catalog.SimulateExternalFileEvent(fullPathB, ResearchCatalogChangeOrigin.External);
         catalog.ProcessPendingPathsForTest();
         Assert.IsEmpty(events);
 
@@ -4463,6 +4507,97 @@ public sealed class ResearchCatalogTests
             1,
             events,
             "The settled removal must still surface as a real notification, not be silently absorbed into Ready.");
+    }
+
+    [TestMethod]
+    public void HandleWatcherError_PreservesPendingRemoval_WhenRecoveryHydrateIsIncoherent()
+    {
+        // Regression: the recovery batch (isRecovery == true, driven by
+        // HandleWatcherError) used to unconditionally clear
+        // _pendingRemovalsByPath right after calling Hydrate, regardless of
+        // whether that Hydrate call actually completed an authoritative
+        // scan. Hydrate can instead return early (directory enumeration
+        // failure while already initialized) or finish an INCOHERENT scan
+        // (a page came back PageReadKind.UnreadableUncached — no fallback
+        // cache, so Hydrate deliberately leaves the existing cache
+        // untouched rather than treating itself as authoritative). In
+        // either case the old unconditional clear would discard a still-
+        // tentative genuine removal, silently resurrecting a deleted Topic
+        // forever, because nothing would ever finalize its removal again.
+        //
+        // This forces the incoherent path deterministically (no OS-level
+        // ACL tricks, cross-platform): a brand-new, never-before-cached
+        // page is opened with FileShare.None, so Hydrate's own scan cannot
+        // read it and has no fallback to preserve it from — exactly
+        // PageReadKind.UnreadableUncached.
+        const string genuineRelativePath = "wiki/concepts/genuine.md";
+        const string lockedRelativePath = "wiki/sources/locked.md";
+        WriteOptedInPage(genuineRelativePath, "topic-genuine", "concept");
+        // Wider than this file's usual 50ms grace period: unlike the other
+        // grace-period tests, this one performs extra disk I/O (writing and
+        // opening a second file under FileShare.None) between deferring the
+        // removal and asserting it is still tentative, which can otherwise
+        // race past a tight window under load and finalize the removal
+        // before the recovery-preservation assertion runs — a test-harness
+        // timing margin, not a production behavior change.
+        var quietPeriod = TimeSpan.FromMilliseconds(400);
+        using var catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: quietPeriod);
+        catalog.SuspendBackgroundDebounceForTest = true;
+        _ = catalog.Capture(new DateOnly(2026, 8, 16));
+
+        var genuinePath = FullPath(genuineRelativePath);
+
+        // The genuine delete is deferred, not published.
+        File.Delete(genuinePath);
+        catalog.SimulateExternalFileEvent(genuinePath);
+        catalog.ProcessPendingPathsForTest();
+        Assert.AreEqual(
+            1,
+            catalog.PendingRemovalCountForTest,
+            "The genuine delete must be deferred, not finalized immediately.");
+
+        // While the genuine removal is still tentative, a watcher-error
+        // recovery batch runs and its own internal Hydrate call happens to
+        // be incoherent.
+        WriteOptedInPage(lockedRelativePath, "topic-locked", "source");
+        using (new FileStream(
+            FullPath(lockedRelativePath),
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.None))
+        {
+            catalog.HandleWatcherError(new IOException("simulated watcher failure"));
+            catalog.ProcessPendingPathsForTest();
+        }
+
+        Assert.AreEqual(
+            1,
+            catalog.PendingRemovalCountForTest,
+            "An incoherent recovery rescan must not discard a still-pending genuine removal.");
+        Assert.IsTrue(
+            catalog.TryCapturePublished(new DateOnly(2026, 8, 16), out var afterRecovery));
+        Assert.IsTrue(
+            afterRecovery.Topics.Any(topic => topic.Id == "topic-genuine"),
+            "The genuine identity must remain published while its removal is still within its grace period.");
+
+        // The fix must not turn "preserve tentative removals across an
+        // incoherent rescan" into "removals never expire": once the grace
+        // period genuinely elapses, the delete must still become durable.
+        Thread.Sleep(quietPeriod + TimeSpan.FromMilliseconds(100));
+        catalog.ProcessPendingPathsForTest();
+
+        Assert.AreEqual(
+            0,
+            catalog.PendingRemovalCountForTest,
+            "The genuine removal must still finalize once its grace period elapses.");
+        Assert.IsTrue(
+            catalog.TryCapturePublished(new DateOnly(2026, 8, 16), out var afterExpiry));
+        Assert.IsFalse(
+            afterExpiry.Topics.Any(topic => topic.Id == "topic-genuine"),
+            "The genuinely deleted Topic must be gone once its grace period has elapsed.");
     }
 
     [TestMethod]

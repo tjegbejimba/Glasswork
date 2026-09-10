@@ -1246,11 +1246,21 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 {
                     priorTopicIds.UnionWith(before.Topics.Select(topic => topic.Id));
                     logTopicIds.UnionWith(before.Topics.Select(topic => topic.Id));
+                    // Do NOT unconditionally clear pending removals here.
+                    // Hydrate can return early (directory enumeration
+                    // failure while already initialized) or complete an
+                    // incoherent scan (a page came back UnreadableUncached),
+                    // and in both cases it deliberately leaves the existing
+                    // cache untouched rather than treating itself as
+                    // authoritative — see Hydrate's own comments. Only a
+                    // scan Hydrate itself considers authoritative (the
+                    // wikiRoot-missing branch, or a coherent full rescan)
+                    // clears _pendingRemovalsByPath, from inside Hydrate.
+                    // Clearing it here regardless would let a
+                    // non-authoritative recovery attempt silently resurrect
+                    // a genuinely deleted Topic forever, since nothing
+                    // would ever finalize its removal again.
                     Hydrate(queryDate);
-                    // A full rehydrate is authoritative: drop any tentative
-                    // removals rather than let a stale grace-window entry
-                    // second-guess the fresh scan.
-                    _pendingRemovalsByPath.Clear();
                 }
                 else if (catalogPending.Length > 0)
                 {
