@@ -1837,7 +1837,7 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
-    public void OptIn_BackupReadFailurePreventsSuccessAndPreservesBackup()
+    public void OptIn_InFlightWriterOnDisplacedPagePreventsSuccessAndPreservesBackup()
     {
         const string selectedPath = "wiki/concepts/in-flight-writer.md";
         WritePage(
@@ -2218,7 +2218,7 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
-    public void OptIn_WriteGuardFailureReturnsPreciseFailureAndDoesNotReportSuccess()
+    public void OptIn_WriteFailureReturnsPreciseFailureAndDoesNotReportSuccess()
     {
         const string relativePath = "wiki/concepts/locked.md";
         WritePage(
