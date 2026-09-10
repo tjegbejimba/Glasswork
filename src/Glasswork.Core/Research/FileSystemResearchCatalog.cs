@@ -62,6 +62,13 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, WayfinderProjectionState> _wayfinderByReference =
         new(StringComparer.OrdinalIgnoreCase);
+    // Paths whose page vanished but whose identity is held for one more quiet
+    // period rather than published as removed immediately. This bridges a
+    // rename that a debounce batch observes only as a bare Deleted event
+    // (see PendingRemoval doc comment on the reconciliation race it fixes).
+    private readonly Dictionary<string, PendingRemoval> _pendingRemovalsByPath =
+        new(StringComparer.OrdinalIgnoreCase);
+    private int _removalSweepPending;
     private readonly Debouncer _refreshDebouncer;
     private readonly FileSystemWatcher _watcher;
     private ResearchCatalogSnapshot _snapshot = EmptySnapshot();
@@ -84,6 +91,33 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     internal Action<CancellationToken>? AfterHydrateScanBeforePublishHook { get; set; }
     internal Action? PendingPathScheduledHook { get; set; }
     internal Action<CancellationToken>? BeforeApplyPendingHook { get; set; }
+
+    /// <summary>
+    /// Test-only seam: when set, prevents <see cref="Schedule"/> and
+    /// <see cref="ScheduleRemovalSweep"/> from arming the real background
+    /// <see cref="_refreshDebouncer"/> timer. Deterministic tests that force
+    /// batches via <c>ProcessPendingPathsForTest</c> must not also have a
+    /// real <see cref="Task.Delay"/> continuation land on a thread-pool
+    /// thread later and race the test's own synchronous assertions against
+    /// the unsynchronized event list.
+    /// </summary>
+    internal bool SuspendBackgroundDebounceForTest { get; set; }
+
+    /// <summary>
+    /// Test-only visibility into how many identities are currently held in
+    /// their post-delete grace period. A page's absence from the published
+    /// snapshot does not by itself prove whether its removal has fully
+    /// settled or is still tentative; lifecycle regression tests assert on
+    /// this directly instead.
+    /// </summary>
+    internal int PendingRemovalCountForTest
+    {
+        get
+        {
+            lock (_gate)
+                return _pendingRemovalsByPath.Count;
+        }
+    }
 
     public FileSystemResearchCatalog(
         string vaultRoot,
@@ -200,12 +234,37 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             cancellationToken.ThrowIfCancellationRequested();
             lock (_pendingGate)
             {
-                if (_pendingPaths.Count == 0
-                    && Volatile.Read(ref _recoveryPending) == 0)
+                if (_pendingPaths.Count != 0
+                    || Volatile.Read(ref _recoveryPending) != 0)
                 {
-                    return;
+                    continue;
                 }
             }
+
+            // The incremental drain is quiet, but a deletion may still be
+            // tentative (see PendingRemoval): declaring Ready here would let
+            // a caller observe a page as present when its removal is
+            // already durable in every sense except the bounded grace
+            // period. Wait exactly the remaining window — not an arbitrary
+            // poll — then force one more pass so it settles either by
+            // FinalizeExpiredRemovals durably removing it, or by
+            // reconciling a reuniting Created event that arrived from the
+            // watcher while we waited.
+            TimeSpan? removalWait;
+            lock (_gate)
+            {
+                removalWait = _pendingRemovalsByPath.Count == 0
+                    ? null
+                    : _pendingRemovalsByPath.Values
+                        .Min(removal => removal.ExpiresAtUtc) - DateTime.UtcNow;
+            }
+            if (removalWait is null)
+                return;
+
+            if (removalWait.Value > TimeSpan.Zero)
+                cancellationToken.WaitHandle.WaitOne(removalWait.Value);
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Exchange(ref _removalSweepPending, 1);
         }
     }
 
@@ -946,6 +1005,12 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             _pagesByPath.Clear();
             _referencesByPath.Clear();
             _diagnosticsByPath.Clear();
+            // The wiki root itself is gone, so every identity — including
+            // any still held in a post-delete grace period — is genuinely
+            // gone too. Drop tentative removals rather than let a stale
+            // timer later "finalize" an identity against an empty cache
+            // that no longer has anything to check it against.
+            _pendingRemovalsByPath.Clear();
             SetSnapshot(queryDate, EmptySnapshot());
             _initialized = true;
             return;
@@ -1027,6 +1092,16 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             ReplaceContents(_pagesByPath, nextPages);
             ReplaceContents(_referencesByPath, nextReferences);
             ReplaceContents(_diagnosticsByPath, nextDiagnostics);
+            // A coherent full rescan is authoritative: seenPaths already
+            // decided, for every path, whether it is genuinely present or
+            // genuinely gone (see the seenPaths cleanup above), completely
+            // independent of anything _pendingRemovalsByPath was tracking.
+            // Any tentative removal still outstanding at this point is
+            // therefore stale bookkeeping from before this rescan — drop it
+            // so a later sweep can never re-litigate truth this scan just
+            // settled (e.g. wrongly evicting a page the rescan legitimately
+            // restored under the same identity).
+            _pendingRemovalsByPath.Clear();
         }
         else
         {
@@ -1055,6 +1130,41 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         HandleWatcherError(e.GetException());
     }
 
+    /// <summary>
+    /// Schedules the same reconciliation path a real watcher event would
+    /// (see <see cref="OnFileChanged"/>), without depending on the OS/runtime
+    /// watcher backend to deliver or pair events a particular way. Used by
+    /// tests to force a rename to reconcile across two independent debounce
+    /// batches deterministically — reproducing what Linux inotify does
+    /// nondeterministically when it fails to correlate a move's Deleted/
+    /// Created pair within its delivery window — without depending on real
+    /// OS timing.
+    /// </summary>
+    internal void SimulateExternalFileEvent(string fullPath) =>
+        Schedule(fullPath, ClassifyOrigin(fullPath));
+
+    /// <summary>
+    /// Test-only seam for injecting a specific origin directly, bypassing
+    /// <see cref="ClassifyOrigin"/> (which requires a real
+    /// <c>SelfWriteCoordinator</c> registration to ever classify a write as
+    /// <see cref="ResearchCatalogChangeOrigin.SelfWrite"/>). Used to
+    /// deterministically construct mixed-origin split-rename scenarios.
+    /// </summary>
+    internal void SimulateExternalFileEvent(string fullPath, ResearchCatalogChangeOrigin origin) =>
+        Schedule(fullPath, origin);
+
+    /// <summary>
+    /// Forces exactly one reconciliation pass over whatever is currently
+    /// pending (including expired grace-window removals), synchronously and
+    /// independent of the real debounce timer. Lets tests control debounce
+    /// batch boundaries deterministically instead of racing real time.
+    /// </summary>
+    internal void ProcessPendingPathsForTest()
+    {
+        Interlocked.Exchange(ref _removalSweepPending, 1);
+        ApplyPendingPaths();
+    }
+
     internal void HandleWatcherError(Exception? exception)
     {
         Interlocked.Exchange(ref _recoveryPending, 1);
@@ -1078,7 +1188,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             }
         }
         PendingPathScheduledHook?.Invoke();
-        _refreshDebouncer.Trigger();
+        if (!SuspendBackgroundDebounceForTest)
+            _refreshDebouncer.Trigger();
     }
 
     private void ApplyPendingPaths()
@@ -1096,7 +1207,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 _pendingPaths.Clear();
             }
             var isRecovery = Interlocked.Exchange(ref _recoveryPending, 0) == 1;
-            if (pending.Length == 0 && !isRecovery)
+            var isRemovalSweep = Interlocked.Exchange(ref _removalSweepPending, 0) == 1;
+            if (pending.Length == 0 && !isRecovery && !isRemovalSweep)
                 return;
 
             lock (_gate)
@@ -1121,20 +1233,55 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     .Where(id => id is not null)
                     .Cast<string>()
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                // Origins that must feed ResolveOrigin even though they did
+                // not arrive as part of THIS batch's pending paths — e.g. a
+                // reunited split-rename's deferred delete-half origin, or a
+                // grace period finalizing a genuine delete. Without this a
+                // SelfWrite-origin delete reuniting with an External-origin
+                // create would silently report as plain External instead of
+                // Mixed, unlike the same-batch rename case.
+                var additionalOrigins = new List<ResearchCatalogChangeOrigin>();
 
                 if (isRecovery)
                 {
                     priorTopicIds.UnionWith(before.Topics.Select(topic => topic.Id));
                     logTopicIds.UnionWith(before.Topics.Select(topic => topic.Id));
+                    // Do NOT unconditionally clear pending removals here.
+                    // Hydrate can return early (directory enumeration
+                    // failure while already initialized) or complete an
+                    // incoherent scan (a page came back UnreadableUncached),
+                    // and in both cases it deliberately leaves the existing
+                    // cache untouched rather than treating itself as
+                    // authoritative — see Hydrate's own comments. Only a
+                    // scan Hydrate itself considers authoritative (the
+                    // wikiRoot-missing branch, or a coherent full rescan)
+                    // clears _pendingRemovalsByPath, from inside Hydrate.
+                    // Clearing it here regardless would let a
+                    // non-authoritative recovery attempt silently resurrect
+                    // a genuinely deleted Topic forever, since nothing
+                    // would ever finalize its removal again.
                     Hydrate(queryDate);
                 }
                 else if (catalogPending.Length > 0)
                 {
-                    var missingPaths = pendingPaths
-                        .Where(path => !File.Exists(path))
-                        .Select(ToRelativePath)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var missingOrigins = new Dictionary<string, ResearchCatalogChangeOrigin>(
+                        StringComparer.OrdinalIgnoreCase);
+                    foreach (var pair in catalogPending)
+                    {
+                        if (!File.Exists(pair.Key))
+                            missingOrigins[ToRelativePath(pair.Key)] = pair.Value;
+                    }
+                    var missingPaths = missingOrigins.Keys;
 
+                    // Read every live path in this batch before touching any
+                    // removal-tracking state. A pending removal's Id
+                    // correlation must be decided from a full view of what
+                    // this batch actually contains, not path-by-path in
+                    // iteration order — otherwise a path-swap (A@P1/B@P2
+                    // becoming B@P1/A@P2) can have one half's eager,
+                    // Id-blind cancellation destroy the other half's
+                    // reunion before it is even considered.
+                    var liveReads = new List<(string RelativePath, PageReadResult Result)>();
                     foreach (var fullPath in pendingPaths.Where(File.Exists))
                     {
                         if (!TryGetWikiRelativePath(fullPath, out var relativePath))
@@ -1155,29 +1302,119 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                             continue;
                         }
 
+                        // Each path's own fallback lookup (for preserving
+                        // last-valid content on a transient read failure) is
+                        // keyed only by that same path, so reading every
+                        // live path up front against the still-unmutated
+                        // _pagesByPath is equivalent to the prior
+                        // interleaved read/mutate order for that concern.
                         var result = ReadPage(
                             fullPath,
                             relativePath,
                             queryDate,
                             _pagesByPath);
-                        if (result.Page is { } page)
+                        liveReads.Add((relativePath, result));
+                    }
+
+                    // Correlate every live path's Id against a frozen,
+                    // pre-batch view of the pending removals — never the
+                    // dictionary as it is being mutated — so a same-batch
+                    // swap resolves identically regardless of which live
+                    // path is visited first below.
+                    var pendingRemovalsAtBatchStart = new Dictionary<string, PendingRemoval>(
+                        _pendingRemovalsByPath,
+                        StringComparer.OrdinalIgnoreCase);
+                    var reunitedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (relativePath, result) in liveReads)
+                    {
+                        if (result.Page is not { } page)
+                            continue;
+
+                        var renamedFrom = _pagesByPath
+                            .Where(pair =>
+                                missingPaths.Contains(pair.Key)
+                                && string.Equals(
+                                    pair.Value.Id,
+                                    page.Id,
+                                    StringComparison.OrdinalIgnoreCase))
+                            .Select(pair => pair.Key)
+                            .FirstOrDefault();
+                        if (renamedFrom is not null)
                         {
-                            var renamedFrom = _pagesByPath
-                                .Where(pair =>
-                                    missingPaths.Contains(pair.Key)
-                                    && string.Equals(
-                                        pair.Value.Id,
-                                        page.Id,
-                                        StringComparison.OrdinalIgnoreCase))
-                                .Select(pair => pair.Key)
-                                .FirstOrDefault();
-                            if (renamedFrom is not null)
-                            {
-                                _pagesByPath.Remove(renamedFrom);
-                                _diagnosticsByPath.Remove(renamedFrom);
-                            }
+                            _pagesByPath.Remove(renamedFrom);
+                            _diagnosticsByPath.Remove(renamedFrom);
+                            _pendingRemovalsByPath.Remove(renamedFrom);
+                            reunitedKeys.Add(renamedFrom);
+                            continue;
                         }
 
+                        // The old path may already have vanished in an
+                        // earlier debounce batch — e.g. a Linux inotify move
+                        // that arrived as unpaired Deleted/Created events.
+                        // Reunite it with its held identity instead of
+                        // leaving a stale entry to finalize as an unrelated
+                        // removal.
+                        var reunitedFrom = pendingRemovalsAtBatchStart
+                            .Where(candidate => string.Equals(
+                                candidate.Value.Id,
+                                page.Id,
+                                StringComparison.OrdinalIgnoreCase))
+                            .Select(candidate => candidate.Key)
+                            .FirstOrDefault();
+                        if (reunitedFrom is null)
+                            continue;
+
+                        // Preserve the deferred delete-half's origin: it was
+                        // never surfaced in its own (deferred, no-op)
+                        // batch, so it must still feed ResolveOrigin here —
+                        // a SelfWrite delete reuniting with an External
+                        // create must resolve to Mixed, exactly like a
+                        // same-batch rename does.
+                        additionalOrigins.Add(pendingRemovalsAtBatchStart[reunitedFrom].Origin);
+                        _pendingRemovalsByPath.Remove(reunitedFrom);
+                        reunitedKeys.Add(reunitedFrom);
+                        if (!string.Equals(
+                                reunitedFrom,
+                                relativePath,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            _pagesByPath.Remove(reunitedFrom);
+                            _diagnosticsByPath.Remove(reunitedFrom);
+                            MarkReferenceMissing(_referencesByPath, reunitedFrom);
+                        }
+                    }
+
+                    // Any pending removal keyed at a path that is alive
+                    // again THIS batch, but whose identity was not claimed
+                    // by a reunion above, has been superseded: an unrelated
+                    // page now occupies that exact path. Finalize it
+                    // explicitly — capturing its Id and origin — rather
+                    // than silently discarding it, so the old identity's
+                    // departure still surfaces and still contributes to
+                    // origin aggregation, just like any other removal.
+                    var supersededIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (relativePath, _) in liveReads)
+                    {
+                        if (reunitedKeys.Contains(relativePath))
+                            continue;
+                        if (!pendingRemovalsAtBatchStart.TryGetValue(relativePath, out var superseded))
+                            continue;
+                        if (!_pendingRemovalsByPath.Remove(relativePath))
+                            continue;
+
+                        supersededIds.Add(superseded.Id);
+                        additionalOrigins.Add(superseded.Origin);
+                    }
+
+                    // Only now, once every removal/reunion decision for this
+                    // batch has been made, write each live path's freshly
+                    // read content. Deferring writes past every removal
+                    // decision guarantees a path that is simultaneously
+                    // another entry's "old" reunion key — as in a same-batch
+                    // swap — is never overwritten before its own reunion
+                    // bookkeeping runs, and vice versa.
+                    foreach (var (relativePath, result) in liveReads)
+                    {
                         ApplyReadResult(
                             result,
                             relativePath,
@@ -1185,21 +1422,57 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                             _diagnosticsByPath);
                     }
 
+                    var now = DateTime.UtcNow;
+                    var deferredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var missingPath in missingPaths)
                     {
+                        if (_pagesByPath.TryGetValue(missingPath, out var missingPage))
+                        {
+                            // Hold this identity for one more quiet period
+                            // instead of publishing it as gone immediately.
+                            // If a paired Created event for a rename is still
+                            // in flight it will reunite with this entry above;
+                            // otherwise FinalizeExpiredRemovals durably
+                            // removes it once the grace period elapses.
+                            _pendingRemovalsByPath[missingPath] = new PendingRemoval(
+                                missingPage.Id,
+                                missingOrigins[missingPath],
+                                now + _quietPeriod);
+                            ScheduleRemovalSweep(_quietPeriod);
+                            deferredIds.Add(missingPage.Id);
+                            continue;
+                        }
+
                         _pagesByPath.Remove(missingPath);
                         MarkReferenceMissing(_referencesByPath, missingPath);
                         _diagnosticsByPath.Remove(missingPath);
                     }
+                    // Nothing observable changed for a deferred identity yet
+                    // (it is deliberately still present), so this batch must
+                    // not force a notification for it — only a real change
+                    // (found again this batch, or finalized later) should.
+                    priorTopicIds.ExceptWith(deferredIds);
+                    // A superseded identity's departure is a real, observed
+                    // change in this same batch — unlike a deferred removal,
+                    // it must be reported now, not held for a later sweep.
+                    priorTopicIds.UnionWith(supersededIds);
 
                     SetSnapshot(queryDate, BuildSnapshot(queryDate, before));
                 }
+
+                var (finalizedIds, finalizedOrigins) = FinalizeExpiredRemovals(DateTime.UtcNow);
+                if (finalizedIds.Count > 0)
+                {
+                    priorTopicIds.UnionWith(finalizedIds);
+                    SetSnapshot(queryDate, BuildSnapshot(queryDate, before));
+                }
+                additionalOrigins.AddRange(finalizedOrigins);
 
                 if (!isRecovery && logTopicIds.Count > 0)
                     SetSnapshot(
                         queryDate,
                         RefreshChangeLogs(_snapshot, logTopicIds));
-                var origin = ResolveOrigin(pending, isRecovery);
+                var origin = ResolveOrigin(pending, additionalOrigins, isRecovery);
                 change = CreateChange(before, _snapshot, priorTopicIds, origin);
                 changeLogChange = CreateChangeLogChange(
                     before,
@@ -1212,6 +1485,84 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             if (changeLogChange is not null)
                 ChangeLogsChanged?.Invoke(this, changeLogChange);
         }
+    }
+
+    /// <summary>
+    /// Removes any tentatively-missing identities whose grace period has
+    /// elapsed without a paired Created event reuniting them (see
+    /// <see cref="PendingRemoval"/>). Must be called with <see cref="_gate"/>
+    /// held.
+    /// </summary>
+    private (HashSet<string> Ids, List<ResearchCatalogChangeOrigin> Origins) FinalizeExpiredRemovals(
+        DateTime now)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var origins = new List<ResearchCatalogChangeOrigin>();
+        if (_pendingRemovalsByPath.Count == 0)
+            return (ids, origins);
+
+        var expired = _pendingRemovalsByPath
+            .Where(pair => pair.Value.ExpiresAtUtc <= now)
+            .Select(pair => pair.Key)
+            .ToArray();
+        foreach (var path in expired)
+        {
+            var removal = _pendingRemovalsByPath[path];
+            _pendingRemovalsByPath.Remove(path);
+            if (_pagesByPath.TryGetValue(path, out var currentPage)
+                && !string.Equals(currentPage.Id, removal.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                // The path was reused by an unrelated page after this
+                // removal was deferred, but before this sweep observed it
+                // (the eager same-batch cancellation in ApplyPendingPaths
+                // only catches reuse observed within that same batch). The
+                // identity this removal was tracking is already gone from
+                // this path; do not evict whatever legitimately occupies it
+                // now.
+                continue;
+            }
+
+            _pagesByPath.Remove(path);
+            MarkReferenceMissing(_referencesByPath, path);
+            _diagnosticsByPath.Remove(path);
+            ids.Add(removal.Id);
+            origins.Add(removal.Origin);
+        }
+        return (ids, origins);
+    }
+
+    /// <summary>
+    /// Forces one more <see cref="ApplyPendingPaths"/> pass after
+    /// <paramref name="delay"/> so a tentative removal with no other watcher
+    /// activity still finalizes — a genuine delete must become visible after
+    /// a bounded wait, not hang indefinitely waiting for an event that will
+    /// never arrive.
+    /// </summary>
+    private void ScheduleRemovalSweep(TimeSpan delay)
+    {
+        if (SuspendBackgroundDebounceForTest)
+        {
+            // ProcessPendingPathsForTest already force-sets
+            // _removalSweepPending before each forced pass, so a background
+            // sweep timer is both redundant and, if armed, a race hazard for
+            // deterministic tests driving the catalog synchronously.
+            return;
+        }
+
+        _ = Task.Delay(delay).ContinueWith(_ =>
+        {
+            if (_disposed)
+                return;
+            Interlocked.Exchange(ref _removalSweepPending, 1);
+            try
+            {
+                _refreshDebouncer.Trigger();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Catalog disposed between the delay and this continuation.
+            }
+        }, TaskScheduler.Default);
     }
 
     private void RemovePath(string fullPath)
@@ -2585,17 +2936,22 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
     private static ResearchCatalogChangeOrigin ResolveOrigin(
         IReadOnlyCollection<KeyValuePair<string, ResearchCatalogChangeOrigin>> pending,
+        IReadOnlyCollection<ResearchCatalogChangeOrigin> additionalOrigins,
         bool isRecovery)
     {
         if (isRecovery)
             return ResearchCatalogChangeOrigin.Recovery;
         var origins = pending
             .Select(pair => pair.Value)
+            .Concat(additionalOrigins)
             .Distinct()
             .ToArray();
-        return origins.Length == 1
-            ? origins[0]
-            : ResearchCatalogChangeOrigin.Mixed;
+        return origins.Length switch
+        {
+            0 => ResearchCatalogChangeOrigin.External,
+            1 => origins[0],
+            _ => ResearchCatalogChangeOrigin.Mixed,
+        };
     }
 
     private static bool TryAddResearchMetadata(
@@ -3716,6 +4072,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         lock (_pendingGate)
             _pendingPaths.Clear();
         _selfWriteBursts.Clear();
+        _pendingRemovalsByPath.Clear();
     }
 
     [GeneratedRegex(@"\A---\s*\r?\n(.*?)\r?\n---\s*\r?\n?(.*)\z", RegexOptions.Singleline)]
@@ -3807,6 +4164,18 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     }
 
     private sealed record TextEncodingInfo(Encoding Encoding, byte[] Preamble);
+
+    /// <summary>
+    /// A path/identity held after its file vanished, in case a paired
+    /// Created event for a rename is still in flight in a later debounce
+    /// batch. Finalized (durably removed) by
+    /// <see cref="FinalizeExpiredRemovals"/> once <see cref="ExpiresAtUtc"/>
+    /// passes without a reunion, guaranteeing genuine deletes still surface.
+    /// </summary>
+    private readonly record struct PendingRemoval(
+        string Id,
+        ResearchCatalogChangeOrigin Origin,
+        DateTime ExpiresAtUtc);
 
     private sealed record WikiReferenceDescriptor(
         string VaultRelativePath,
