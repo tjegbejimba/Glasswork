@@ -43,6 +43,30 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## App v1.5.0 — 2026-09-11
+
+### Breaking
+
+- None.
+
+### Features
+
+- Make startup responsive before vault initialization ([#590](https://github.com/tjegbejimba/Glasswork/pull/590)) — @tjegbejimba
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Improve release evaluator recovery ([#586](https://github.com/tjegbejimba/Glasswork/pull/586)) — @tjegbejimba
+- Strengthen MCP update rate-limit handling ([#588](https://github.com/tjegbejimba/Glasswork/pull/588)) — @tjegbejimba
+- Make CI failures authoritative and improve test evidence ([#589](https://github.com/tjegbejimba/Glasswork/pull/589)) — @tjegbejimba
+- Improve release update reliability and progress feedback ([#591](https://github.com/tjegbejimba/Glasswork/pull/591)) — @tjegbejimba
+- Publish MCP changelog entries in release notes ([#592](https://github.com/tjegbejimba/Glasswork/pull/592)) — @tjegbejimba
+- Improve Linux Core test portability ([#593](https://github.com/tjegbejimba/Glasswork/pull/593)) — @tjegbejimba
+- Prevent transient empty topics during research renames ([#596](https://github.com/tjegbejimba/Glasswork/pull/596)) — @tjegbejimba
+
 ## Mcp v0.11.3 — 2026-09-11
 
 ### Breaking
