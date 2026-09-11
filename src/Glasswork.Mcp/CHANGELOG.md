@@ -5,6 +5,31 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.11.3] — 2026-09-11
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Improve MCP update rate-limit fallback ([#588](https://github.com/tjegbejimba/Glasswork/pull/588)) — @tjegbejimba
+- Strengthen CI authority and test evidence ([#589](https://github.com/tjegbejimba/Glasswork/pull/589)) — @tjegbejimba
+- Improve release update reliability and progress feedback ([#591](https://github.com/tjegbejimba/Glasswork/pull/591)) — @tjegbejimba
+- Publish MCP changelog in release notes ([#592](https://github.com/tjegbejimba/Glasswork/pull/592)) — @tjegbejimba
+- Improve Linux Core test portability ([#593](https://github.com/tjegbejimba/Glasswork/pull/593)) — @tjegbejimba
+- Prevent ResearchCatalog rename/delete race conditions ([#596](https://github.com/tjegbejimba/Glasswork/pull/596)) — @tjegbejimba
+
+---
+
 ## [0.11.2] — 2026-09-04
 
 ### Breaking
