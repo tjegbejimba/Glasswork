@@ -195,6 +195,34 @@ Describe "Invoke-ReleaseUpdate" {
         $script:Relaunched | Should -BeFalse
     }
 
+    It "Waits for an active updater and relaunches the installed version" {
+        $installDirectory = Join-Path $TestDrive "install-active-updater"
+        New-Item -ItemType Directory -Path $installDirectory | Out-Null
+        Set-Content -Path (Join-Path $installDirectory "Glasswork.exe") -Value "old version"
+        $script:MutexWaitCount = 0
+        $script:Relaunched = $false
+
+        Invoke-ReleaseUpdate `
+            -AppProcessId 1234 `
+            -InstallExePath (Join-Path $installDirectory "Glasswork.exe") `
+            -Version "1.5.0" `
+            -MutexName "Local\Glasswork.ReleaseUpdateTest.$([guid]::NewGuid())" `
+            -WorkDirectory (Join-Path $TestDrive "active-updater-work") `
+            -Downloader { throw "Should not download" } `
+            -ProcessWaiter { return $true } `
+            -MutexWaiter {
+                param($mutex, $timeoutMilliseconds)
+                $script:MutexWaitCount++
+                return $script:MutexWaitCount -gt 1
+            } `
+            -Relauncher { $script:Relaunched = $true } `
+            -ReleasePageOpener { } `
+            -ShowProgress $false
+
+        $script:MutexWaitCount | Should -Be 2
+        $script:Relaunched | Should -BeTrue
+    }
+
     It "Runs from and removes a temporary updater directory under Windows PowerShell" {
         $updaterDirectory = Join-Path $TestDrive "copied-updater"
         New-Item -ItemType Directory -Path $updaterDirectory | Out-Null

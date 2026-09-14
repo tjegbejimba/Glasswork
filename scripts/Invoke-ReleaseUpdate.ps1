@@ -34,6 +34,16 @@ function Invoke-ReleaseUpdate {
             }
         },
 
+        [scriptblock]$MutexWaiter = {
+            param($mutex, $timeoutMilliseconds)
+            try {
+                return $mutex.WaitOne($timeoutMilliseconds)
+            }
+            catch [System.Threading.AbandonedMutexException] {
+                return $true
+            }
+        },
+
         [scriptblock]$Relauncher = {
             param($exe)
             if (Test-Path $exe) {
@@ -72,21 +82,31 @@ function Invoke-ReleaseUpdate {
     $progressLabel = $null
     $installMoved = $false
     $appExited = $false
+    $relaunchOnFailure = $false
     $stagingDirectory = "$installDirectory.update-staging"
 
     try {
-        try {
-            $mutex = New-Object System.Threading.Mutex($false, $MutexName)
-            $mutexAcquired = $mutex.WaitOne(0)
-        }
-        catch [System.Threading.AbandonedMutexException] {
-            $mutexAcquired = $true
-        }
+        $mutex = New-Object System.Threading.Mutex($false, $MutexName)
+        $mutexAcquired = & $MutexWaiter $mutex 0
 
         if (!$mutexAcquired) {
-            Write-Verbose "Another Glasswork update is already running."
+            if (!(& $ProcessWaiter $AppProcessId 60)) {
+                throw "Glasswork did not exit within 60 seconds."
+            }
+            $appExited = $true
+
+            $mutexAcquired = & $MutexWaiter $mutex 300000
+            if (!$mutexAcquired) {
+                throw "Another Glasswork update did not finish within 5 minutes."
+            }
+
+            $relaunchOnFailure = $true
+            if (Test-Path $InstallExePath) {
+                & $Relauncher $InstallExePath
+            }
             return
         }
+        $relaunchOnFailure = $true
 
         if (!(Test-Path $InstallExePath)) {
             throw "Installed executable was not found: $InstallExePath"
@@ -222,7 +242,7 @@ function Invoke-ReleaseUpdate {
             $installMoved = $false
         }
 
-        if ($appExited -and (Test-Path $InstallExePath)) {
+        if ($appExited -and $relaunchOnFailure -and (Test-Path $InstallExePath)) {
             & $Relauncher $InstallExePath
         }
     }
