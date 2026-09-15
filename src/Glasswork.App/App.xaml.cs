@@ -102,9 +102,19 @@ public partial class App : Application
     public const string BacklogViewModeKey = "backlog.viewMode";
 
     /// <summary>
-    /// UI state key for the Work Log page's selected tab ("completed" | "cancelled").
+    /// UI state key for the Work Log page's selected tab ("agenda" | "completed" | "cancelled").
     /// </summary>
     public const string WorkLogSelectedTabKey = "worklog.selectedTab";
+
+    /// <summary>
+    /// UI state key for whether the optional Work Log Agenda tab is shown.
+    /// </summary>
+    public const string WorkLogAgendaEnabledKey = "worklog.agenda.enabled";
+
+    /// <summary>
+    /// UI state key for the stable Wiki Page ID rendered by the Work Log Agenda tab.
+    /// </summary>
+    public const string WorkLogAgendaPageIdKey = "worklog.agenda.pageId";
 
     /// <summary>
     /// Key prefix for per-parent-group collapse state on the Backlog page.

@@ -200,14 +200,19 @@ manually collapsed, sidebar pane width, last-selected page.
 
 - **Owns**: `IUiStateService`, JSON file in `%LocalAppData%\Glasswork\`,
   app-local **Saved Task views** (named filters over Tasks), and the confirmed,
-  versioned **Planner Profile**.
+  versioned **Planner Profile**, plus whether the Work Log's Agenda tab is shown
+  and which Wiki Page it presents.
 - **Speaks to**: Presentation (read/write key-value).
 - **Does not own**: anything in the vault, anything in the task model.
 - **Boundary rule**: if the data describes a *task*, it lives in the vault.
   If it describes the *user's view of tasks*, it lives here. A Wiki Page's
   explicit opt-in as a **Research Topic** describes that durable knowledge
   page, not one machine's view of it, so the opt-in lives in the vault. When
-  in doubt, vault wins.
+  in doubt, vault wins. Selecting which existing Wiki Page the Agenda tab
+  presents is one machine's view configuration, so that selection lives here
+  rather than in Wiki Page metadata. The selection stores the Wiki Page's
+  stable ID rather than its current path, so moving or renaming the page does
+  not change the selected subject.
 - **Lifecycle**: GC stale entries on app launch (drop entries whose taskId
   no longer exists in vault), except Session Task Set membership. A missing
   member remains visible as unavailable until the user explicitly removes it.
@@ -228,10 +233,38 @@ no domain logic — composes the other contexts into screens.
   list section; Task Detail owns the user-facing actions to mark blocked, edit
   blocker details, repair malformed blocked metadata, resume, override the
   resume target, or complete directly.
-- **Cancellation surfaces**: Work Log remains the top-level Page and separates
-  successful work from the archive with Completed and Cancelled tabs. Cancelled
-  is newest-first and restores Tasks to Backlog through the guarded lifecycle
-  seam. Task Detail exposes manual Cancellation only for active Tasks.
+- **Work Log surfaces**: Work Log remains the top-level Page for weekly review
+  and preparation. When Agenda is enabled, its tab appears first, followed by
+  Completed and Cancelled. Completed presents successful work, Cancelled
+  presents the archive, and Agenda renders one configured Wiki Page as read-only
+  recurring preparation content with an Open in Obsidian action. It renders the complete
+  Wiki Page through the shared Vault markdown renderer rather than interpreting
+  agenda-specific headings or blocks. A user-facing Settings preference shows
+  or hides Agenda and defaults to hidden. Enabling it reveals the tab without
+  navigating to Work Log or changing the current Work Log selection. When
+  shown, an empty state chooses the Wiki Page from a searchable list of all
+  schema-governed Wiki Pages and the tab provides a Change page action. Chooser
+  results identify pages by title, type, and relative path; search matches
+  title, aliases, stable ID, and path. Agenda holds exactly one configured Wiki
+  Page; Change page replaces that selection rather than adding another agenda.
+  Arbitrary Vault Markdown is not eligible. While visible, Agenda refreshes
+  when its selected Wiki Page changes outside Glasswork and preserves the
+  reader's position when practical. Entering or re-entering the Agenda tab
+  starts at the top rather than restoring an earlier reading position. A compact
+  context bar shows the current page title, its frontmatter `updated` date, Open
+  in Obsidian, and Change page. YAML frontmatter remains metadata and is not
+  rendered as page chrome or in the reading body; the body begins with the Wiki
+  Page's human-readable Markdown. If the selected ID cannot resolve to a valid
+  Wiki Page, Agenda retains the selection and shows an explicit repair state
+  with a Choose another page action. Work Log remembers its last selected
+  visible tab; if Agenda was selected and is later hidden, navigation falls
+  back to Completed without discarding the configured Wiki Page. Cancelled is
+  newest-first and restores
+  Tasks to Backlog through the guarded lifecycle seam. Links inside Agenda
+  follow the shared Vault markdown policy: Task links open Task Detail, while
+  Wiki Page links open in Obsidian rather than turning Agenda into an in-app
+  Wiki browser. Task Detail exposes manual Cancellation only for active Tasks.
+  See ADR 0027.
 - **Hard-deletion surface**: Task Detail owns a distinct danger zone for every
   Task type and lifecycle state. A preflight previews descendant, Artifact, and
   inbound-link impact; exact title entry and explicit cascade acknowledgement

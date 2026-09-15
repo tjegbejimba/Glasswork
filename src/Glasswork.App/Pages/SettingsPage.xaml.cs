@@ -19,6 +19,7 @@ public sealed partial class SettingsPage : Page
 {
     private bool _isAppUpdateInstalling;
     private bool _isMcpUpdateInstalling;
+    private bool _isInitialized;
 
     /// <summary>
     /// Navigation parameter that asks the page to surface the "Updates" section
@@ -39,11 +40,14 @@ public sealed partial class SettingsPage : Page
             "dark" => 2,
             _ => 0,
         };
+        AgendaToggle.IsOn =
+            App.UiState.Get<bool?>(App.WorkLogAgendaEnabledKey) ?? false;
 
         RefreshVaultInfo();
         RefreshUpdateInfo();
         RefreshCanvasExtensionInfo();
         ApplyVerificationUpdateInstallState();
+        _isInitialized = true;
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -155,6 +159,12 @@ public sealed partial class SettingsPage : Page
             App.UiState.Set(App.ThemeKey, value);
 
         if (App.MainWindow is not null) App.ApplyTheme(App.MainWindow);
+    }
+
+    private void AgendaToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_isInitialized) return;
+        App.UiState.Set(App.WorkLogAgendaEnabledKey, AgendaToggle.IsOn);
     }
 
     // ── Azure DevOps ─────────────────────────────────────────────────────────

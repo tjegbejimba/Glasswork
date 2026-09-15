@@ -1,0 +1,94 @@
+{
+  "name": "Work Log Agenda",
+  "theme": "light",
+  "windowWidth": 1100,
+  "windowHeight": 900,
+  "wikiPages": [
+    {
+      "relativePath": "projects/weekly-manager-one-on-one.md",
+      "id": "weekly-manager-one-on-one",
+      "title": "Weekly Manager One-on-One",
+      "type": "project",
+      "confidence": "high",
+      "updated": "2026-09-14",
+      "aliases": ["weekly 1:1"],
+      "markdown": "# Weekly Manager One-on-One\n\n## Wins\n\nPrepared the first agenda draft.\n\n## Discuss Live\n\nChoose the next high-leverage decision."
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "name": "Settings",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "SettingsAgendaToggle",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "focus",
+      "automationId": "SettingsAgendaToggle",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "press-key",
+      "value": "Space"
+    },
+    {
+      "type": "assert-checked",
+      "automationId": "SettingsAgendaToggle"
+    },
+    {
+      "type": "select",
+      "automationId": "NavWorkLog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "WorkLogAgendaTab",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "AgendaChoosePageButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "AgendaPickerSearchBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "set-value",
+      "automationId": "AgendaPickerSearchBox",
+      "value": "weekly-manager"
+    },
+    {
+      "type": "select",
+      "automationId": "AgendaEligiblePageRow",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Use selected page",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "worklog-agenda-configured"
+    },
+    {
+      "type": "replace-wiki-page-text",
+      "wikiPagePath": "projects/weekly-manager-one-on-one.md",
+      "oldValue": "Prepared the first agenda draft.",
+      "value": "Agenda refreshed from an external Vault edit."
+    }
+  ],
+  "captures": [
+    {
+      "name": "worklog-agenda-live-refresh",
+      "waitMilliseconds": 3000
+    }
+  ]
+}

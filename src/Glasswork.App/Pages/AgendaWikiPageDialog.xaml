@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="Glasswork.Pages.AgendaWikiPageDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Choose Agenda Wiki Page"
+    PrimaryButtonText="Use selected page"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary"
+    IsPrimaryButtonEnabled="False">
+
+    <Grid MinWidth="540" RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12">
+        <TextBlock
+            Text="Choose one schema-governed Wiki Page. Glasswork will render it read-only and keep the page in your Vault."
+            TextWrapping="Wrap" />
+
+        <TextBox
+            x:Name="PickerSearchBox"
+            Grid.Row="1"
+            AutomationProperties.AutomationId="AgendaPickerSearchBox"
+            AutomationProperties.Name="Search Wiki Pages"
+            PlaceholderText="Search title, ID, alias, or path"
+            TextChanged="PickerSearchBox_TextChanged" />
+
+        <ListView
+            x:Name="EligiblePageList"
+            Grid.Row="2"
+            AutomationProperties.AutomationId="AgendaEligiblePageList"
+            Height="320"
+            SelectionChanged="EligiblePageList_SelectionChanged"
+            SelectionMode="Single"
+            SingleSelectionFollowsFocus="True">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="AutomationProperties.AutomationId" Value="AgendaEligiblePageRow" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="10,8" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel Spacing="3">
+                            <TextBlock
+                                FontWeight="SemiBold"
+                                Text="{Binding Title}"
+                                TextTrimming="CharacterEllipsis"
+                                ToolTipService.ToolTip="{Binding Title}" />
+                            <TextBlock
+                                FontSize="12"
+                                Opacity="0.68"
+                                Text="{Binding MetadataLine}"
+                                TextTrimming="CharacterEllipsis"
+                                ToolTipService.ToolTip="{Binding MetadataLine}" />
+                        </StackPanel>
+                        <Border
+                            Grid.Column="1"
+                            Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                            CornerRadius="4"
+                            Padding="8,3"
+                            Visibility="{Binding DuplicateIdVisibility}">
+                            <TextBlock FontSize="11" Text="Duplicate ID" />
+                        </Border>
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+
+        <Grid Grid.Row="3" ColumnDefinitions="*,Auto">
+            <InfoBar
+                x:Name="PickerStatus"
+                AutomationProperties.AutomationId="AgendaPickerStatus"
+                IsOpen="False"
+                Severity="Error" />
+            <TextBlock
+                x:Name="PickerCount"
+                Grid.Column="1"
+                Margin="12,0,0,0"
+                Opacity="0.68"
+                VerticalAlignment="Center" />
+        </Grid>
+    </Grid>
+</ContentDialog>

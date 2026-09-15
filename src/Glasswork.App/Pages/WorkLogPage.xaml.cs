@@ -1,6 +1,10 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Linq;
+using Glasswork.Controls;
+using Glasswork.Core.Research;
 using Glasswork.Core.Services;
+using Glasswork.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
@@ -14,6 +18,7 @@ public sealed partial class WorkLogPage : Page
     private DateTime _currentWeekStart;
     private string _currentLog = "";
     private bool _isInitialized;
+    private WikiPageDocument? _agendaPage;
 
     public ObservableCollection<CancelledTaskRow> CancelledTasks { get; } = [];
 
@@ -21,12 +26,17 @@ public sealed partial class WorkLogPage : Page
     {
         _workLog = new WorkLogService(App.Vault, App.TaskQuery);
         InitializeComponent();
-        WorkLogTabs.SelectedIndex = string.Equals(
-            App.UiState.Get<string>(App.WorkLogSelectedTabKey),
-            "cancelled",
-            StringComparison.Ordinal)
-                ? 1
-                : 0;
+        AgendaMarkdown.WikiLinkResolver = VaultPageHelper.BuildWikiLinkResolver();
+        var agendaEnabled =
+            App.UiState.Get<bool?>(App.WorkLogAgendaEnabledKey) ?? false;
+        AgendaTab.Visibility = agendaEnabled ? Visibility.Visible : Visibility.Collapsed;
+        var selectedTab = App.UiState.Get<string>(App.WorkLogSelectedTabKey);
+        WorkLogTabs.SelectedItem = selectedTab switch
+        {
+            "agenda" when agendaEnabled => AgendaTab,
+            "cancelled" => CancelledTab,
+            _ => CompletedTab,
+        };
         _isInitialized = true;
     }
 
@@ -35,12 +45,16 @@ public sealed partial class WorkLogPage : Page
         base.OnNavigatedTo(e);
         _currentWeekStart = GetMondayOfWeek(DateTime.Today);
         App.Index.TasksChanged += OnTasksChanged;
+        App.Research.WikiPagesChanged += OnWikiPagesChanged;
+        App.SupplementalInitializationChanged += OnSupplementalInitializationChanged;
         RefreshSelectedTab();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         App.Index.TasksChanged -= OnTasksChanged;
+        App.Research.WikiPagesChanged -= OnWikiPagesChanged;
+        App.SupplementalInitializationChanged -= OnSupplementalInitializationChanged;
         base.OnNavigatedFrom(e);
     }
 
@@ -49,22 +63,128 @@ public sealed partial class WorkLogPage : Page
         DispatcherQueue.TryEnqueue(RefreshSelectedTab);
     }
 
+    private void OnWikiPagesChanged(
+        object? sender,
+        WikiPagesChangedEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var pageId = App.UiState.Get<string>(App.WorkLogAgendaPageIdKey);
+            if (ReferenceEquals(WorkLogTabs.SelectedItem, AgendaTab)
+                && pageId is not null
+                && e.AffectedPageIds.Contains(pageId, StringComparer.OrdinalIgnoreCase))
+            {
+                RefreshAgenda(preserveScroll: true);
+            }
+        });
+    }
+
+    private void OnSupplementalInitializationChanged(
+        object? sender,
+        SupplementalInitializationChangedEventArgs e)
+    {
+        if (e.Component == SupplementalComponent.Research
+            && e.Current.Status == SupplementalInitializationStatus.Ready
+            && ReferenceEquals(WorkLogTabs.SelectedItem, AgendaTab))
+        {
+            DispatcherQueue.TryEnqueue(() => RefreshAgenda(preserveScroll: true));
+        }
+    }
+
     private void WorkLogTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_isInitialized) return;
 
-        App.UiState.Set(
-            App.WorkLogSelectedTabKey,
-            WorkLogTabs.SelectedIndex == 1 ? "cancelled" : "completed");
+        App.UiState.Set(App.WorkLogSelectedTabKey, SelectedTabKey());
         RefreshSelectedTab();
     }
 
     private void RefreshSelectedTab()
     {
-        if (WorkLogTabs.SelectedIndex == 1)
+        if (ReferenceEquals(WorkLogTabs.SelectedItem, AgendaTab))
+            RefreshAgenda(preserveScroll: false);
+        else if (ReferenceEquals(WorkLogTabs.SelectedItem, CancelledTab))
             RefreshCancelledTasks();
         else
             RefreshLog();
+    }
+
+    private string SelectedTabKey() =>
+        ReferenceEquals(WorkLogTabs.SelectedItem, AgendaTab)
+            ? "agenda"
+            : ReferenceEquals(WorkLogTabs.SelectedItem, CancelledTab)
+                ? "cancelled"
+                : "completed";
+
+    private void RefreshAgenda(bool preserveScroll)
+    {
+        var verticalOffset = preserveScroll ? AgendaScrollViewer.VerticalOffset : 0;
+        var pageId = App.UiState.Get<string>(App.WorkLogAgendaPageIdKey);
+        if (string.IsNullOrWhiteSpace(pageId))
+        {
+            _agendaPage = null;
+            AgendaConfiguredView.Visibility = Visibility.Collapsed;
+            AgendaUnavailableState.Visibility = Visibility.Collapsed;
+            AgendaEmptyState.Visibility = Visibility.Visible;
+            return;
+        }
+
+        var result = App.Research.ReadWikiPage(pageId);
+        if (!result.Succeeded || result.Page is null)
+        {
+            _agendaPage = null;
+            AgendaConfiguredView.Visibility = Visibility.Collapsed;
+            AgendaEmptyState.Visibility = Visibility.Collapsed;
+            AgendaUnavailableInfo.Message = result.Message;
+            AgendaUnavailableState.Visibility = Visibility.Visible;
+            return;
+        }
+
+        _agendaPage = result.Page;
+        AgendaPageTitle.Text = result.Page.Title;
+        AgendaUpdatedText.Text = result.Page.Updated is { } updated
+            ? $"Updated {updated:MMM d, yyyy}"
+            : "Updated date unavailable";
+        AgendaMarkdown.Markdown = result.Page.Markdown;
+        AgendaEmptyState.Visibility = Visibility.Collapsed;
+        AgendaUnavailableState.Visibility = Visibility.Collapsed;
+        AgendaConfiguredView.Visibility = Visibility.Visible;
+        DispatcherQueue.TryEnqueue(() =>
+            AgendaScrollViewer.ChangeView(
+                horizontalOffset: null,
+                verticalOffset,
+                zoomFactor: null,
+                disableAnimation: true));
+    }
+
+    private async void AgendaChoosePageButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AgendaWikiPageDialog(App.Research)
+        {
+            XamlRoot = XamlRoot,
+        };
+        dialog.WithAppTheme(this);
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary
+            || dialog.SelectedPage is null)
+        {
+            return;
+        }
+
+        App.UiState.Set(App.WorkLogAgendaPageIdKey, dialog.SelectedPage.Id);
+        RefreshAgenda(preserveScroll: false);
+    }
+
+    private async void AgendaOpenInObsidianButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_agendaPage is not null)
+            await App.ObsidianLauncher.Open(_agendaPage.VaultRelativePath);
+    }
+
+    private async void AgendaMarkdown_LinkClicked(
+        object? sender,
+        LinkClickedEventArgs e)
+    {
+        await VaultPageHelper.RouteLinkClickAsync(Frame, e);
     }
 
     private void RefreshLog()
