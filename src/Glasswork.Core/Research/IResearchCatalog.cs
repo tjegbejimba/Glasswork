@@ -5,6 +5,7 @@ namespace Glasswork.Core.Research;
 public interface IResearchCatalog : IDisposable
 {
     event EventHandler<ResearchTopicsChangedEventArgs>? TopicsChanged;
+    event EventHandler<WikiPagesChangedEventArgs>? WikiPagesChanged;
     event EventHandler<ResearchChangeLogsChangedEventArgs>? ChangeLogsChanged;
 
     bool IsWatching { get; }
@@ -14,6 +15,7 @@ public interface IResearchCatalog : IDisposable
     ResearchCatalogSnapshot Capture();
     ResearchCatalogSnapshot Capture(DateOnly queryDate);
     ResearchCatalogSearchResult Search(ResearchCatalogQuery query);
+    WikiPageLookupResult ReadWikiPage(string pageId);
     ResearchOptInResult OptIn(string vaultRelativePath);
     ResearchRemovalResult Remove(string topicId);
     ResearchSessionContextResult PrepareSessionContext(
@@ -338,6 +340,36 @@ public sealed record ResearchCatalogSearchResult(
     IReadOnlyList<ResearchCatalogDiagnostic> Diagnostics,
     int TotalTopicCount);
 
+public sealed record WikiPageDocument(
+    string Id,
+    string Title,
+    IReadOnlyList<string> Aliases,
+    string WikiType,
+    DateOnly? Updated,
+    string VaultRelativePath,
+    string Markdown);
+
+public sealed record WikiPageLookupResult(
+    bool Succeeded,
+    WikiPageDocument? Page,
+    WikiPageLookupErrorCode? ErrorCode,
+    string Message)
+{
+    public static WikiPageLookupResult Success(WikiPageDocument page) =>
+        new(true, page, null, string.Empty);
+
+    public static WikiPageLookupResult Failure(
+        WikiPageLookupErrorCode errorCode,
+        string message) =>
+        new(false, null, errorCode, message);
+}
+
+public enum WikiPageLookupErrorCode
+{
+    PageNotFound,
+    DuplicateStableId,
+}
+
 public sealed record ResearchOptInResult(
     bool Succeeded,
     ResearchTopic? Topic,
@@ -529,6 +561,20 @@ public sealed class ResearchTopicsChangedEventArgs : EventArgs
 
     public IReadOnlyCollection<string> AffectedTopicIds { get; }
     public ResearchCatalogSnapshot Snapshot { get; }
+    public ResearchCatalogChangeOrigin Origin { get; }
+}
+
+public sealed class WikiPagesChangedEventArgs : EventArgs
+{
+    public WikiPagesChangedEventArgs(
+        IReadOnlyCollection<string> affectedPageIds,
+        ResearchCatalogChangeOrigin origin)
+    {
+        AffectedPageIds = affectedPageIds;
+        Origin = origin;
+    }
+
+    public IReadOnlyCollection<string> AffectedPageIds { get; }
     public ResearchCatalogChangeOrigin Origin { get; }
 }
 

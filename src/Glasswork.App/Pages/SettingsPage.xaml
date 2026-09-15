@@ -74,6 +74,24 @@
                 </ComboBox>
             </StackPanel>
 
+            <!-- Work Log -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="Work Log"
+                    Style="{ThemeResource SubtitleTextBlockStyle}" />
+                <TextBlock
+                    Text="Show a read-only Agenda tab for one Wiki Page you choose inside Work Log."
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <ToggleSwitch
+                    x:Name="AgendaToggle"
+                    AutomationProperties.AutomationId="SettingsAgendaToggle"
+                    Header="Show Agenda tab"
+                    OffContent="Off"
+                    OnContent="On"
+                    Toggled="AgendaToggle_Toggled" />
+            </StackPanel>
+
             <!-- Azure DevOps -->
             <StackPanel Spacing="8">
                 <TextBlock

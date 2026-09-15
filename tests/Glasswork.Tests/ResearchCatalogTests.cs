@@ -419,6 +419,81 @@ public sealed class ResearchCatalogTests
     }
 
     [TestMethod]
+    public void ReadWikiPage_ReturnsNonOptedInPageByStableIdWithoutFrontmatter()
+    {
+        WritePage(
+            "wiki/projects/weekly-manager-one-on-one.md",
+            """
+            ---
+            id: weekly-manager-one-on-one
+            title: Weekly Manager One-on-One
+            type: project
+            updated: 2026-09-14
+            aliases: [weekly 1:1]
+            ---
+
+            # Weekly Manager One-on-One
+
+            ## Wins
+
+            Evidence-backed outcomes.
+            """);
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.ReadWikiPage("WEEKLY-MANAGER-ONE-ON-ONE");
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.IsNotNull(result.Page);
+        Assert.AreEqual("weekly-manager-one-on-one", result.Page.Id);
+        Assert.AreEqual("Weekly Manager One-on-One", result.Page.Title);
+        Assert.AreEqual("project", result.Page.WikiType);
+        Assert.AreEqual(new DateOnly(2026, 9, 14), result.Page.Updated);
+        Assert.AreEqual(
+            "wiki/projects/weekly-manager-one-on-one.md",
+            result.Page.VaultRelativePath);
+        CollectionAssert.AreEqual(
+            new[] { "weekly 1:1" },
+            result.Page.Aliases.ToArray());
+        StringAssert.StartsWith(result.Page.Markdown, "# Weekly Manager One-on-One");
+        Assert.DoesNotContain("---", result.Page.Markdown);
+    }
+
+    [TestMethod]
+    public void Search_EligiblePageProjectionMatchesRelativePath()
+    {
+        WritePage(
+            "wiki/projects/weekly-manager-one-on-one.md",
+            "---\nid: manager-agenda\ntitle: Manager Agenda\ntype: project\n---\nBody");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var result = catalog.Search(new ResearchCatalogQuery(Text: "projects/weekly-manager"));
+
+        Assert.HasCount(1, result.EligiblePages);
+        Assert.AreEqual("manager-agenda", result.EligiblePages[0].Id);
+    }
+
+    [TestMethod]
+    public void ReadWikiPage_ReturnsExplicitMissingAndDuplicateFailures()
+    {
+        WritePage(
+            "wiki/projects/first.md",
+            "---\nid: duplicate-agenda\ntitle: First\ntype: project\n---\nFirst.");
+        WritePage(
+            "wiki/concepts/second.md",
+            "---\nid: DUPLICATE-AGENDA\ntitle: Second\ntype: concept\n---\nSecond.");
+        IResearchCatalog catalog = new FileSystemResearchCatalog(_vaultRoot);
+
+        var missing = catalog.ReadWikiPage("missing-agenda");
+        var duplicate = catalog.ReadWikiPage("duplicate-agenda");
+
+        Assert.IsFalse(missing.Succeeded);
+        Assert.AreEqual(WikiPageLookupErrorCode.PageNotFound, missing.ErrorCode);
+        Assert.IsFalse(duplicate.Succeeded);
+        Assert.AreEqual(WikiPageLookupErrorCode.DuplicateStableId, duplicate.ErrorCode);
+        Assert.IsNull(duplicate.Page);
+    }
+
+    [TestMethod]
     public void Search_NoMatchesRetainsUnfilteredTopicCount()
     {
         WriteOptedInPage("wiki/concepts/alpha.md", "alpha", "concept");
@@ -3812,6 +3887,42 @@ public sealed class ResearchCatalogTests
         Assert.AreSame(
             untouched,
             observed.Snapshot.Topics.Single(topic => topic.Id == "untouched"));
+    }
+
+    [TestMethod]
+    public void ExternalBodyEdit_EmitsWikiPageDeltaForNonOptedInPage()
+    {
+        const string pagePath = "wiki/projects/weekly-manager-one-on-one.md";
+        WritePage(
+            pagePath,
+            "---\nid: weekly-manager-one-on-one\ntitle: Weekly Manager One-on-One\ntype: project\n---\nBefore.");
+        using IResearchCatalog catalog = new FileSystemResearchCatalog(
+            _vaultRoot,
+            () => new DateOnly(2026, 8, 16),
+            quietPeriod: TimeSpan.FromMilliseconds(50));
+        _ = catalog.Capture();
+        using var signal = new ManualResetEventSlim(false);
+        WikiPagesChangedEventArgs? observed = null;
+        catalog.WikiPagesChanged += (_, args) =>
+        {
+            observed = args;
+            signal.Set();
+        };
+        catalog.Start();
+
+        WritePage(
+            pagePath,
+            "---\nid: weekly-manager-one-on-one\ntitle: Weekly Manager One-on-One\ntype: project\n---\nAfter.");
+
+        Assert.IsTrue(signal.Wait(TimeSpan.FromSeconds(5)), "Wiki Page delta should arrive.");
+        Assert.IsNotNull(observed);
+        CollectionAssert.AreEquivalent(
+            new[] { "weekly-manager-one-on-one" },
+            observed.AffectedPageIds.ToArray());
+        Assert.AreEqual(ResearchCatalogChangeOrigin.External, observed.Origin);
+        Assert.AreEqual(
+            "After.",
+            catalog.ReadWikiPage("weekly-manager-one-on-one").Page?.Markdown);
     }
 
     [TestMethod]

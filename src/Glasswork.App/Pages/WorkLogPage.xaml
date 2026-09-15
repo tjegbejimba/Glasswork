@@ -27,6 +27,122 @@
             IsAddTabButtonVisible="False"
             SelectionChanged="WorkLogTabs_SelectionChanged">
             <TabViewItem
+                x:Name="AgendaTab"
+                AutomationProperties.AutomationId="WorkLogAgendaTab"
+                Header="Agenda"
+                IsClosable="False">
+                <Grid Margin="0,8,0,0">
+                    <Grid
+                        x:Name="AgendaConfiguredView"
+                        RowDefinitions="Auto,*"
+                        Visibility="Collapsed">
+                        <Border
+                            Padding="16,12"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                                <StackPanel Spacing="3">
+                                    <TextBlock
+                                        x:Name="AgendaPageTitle"
+                                        AutomationProperties.AutomationId="AgendaPageTitle"
+                                        FontSize="18"
+                                        FontWeight="SemiBold"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        x:Name="AgendaUpdatedText"
+                                        AutomationProperties.AutomationId="AgendaUpdatedText"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <StackPanel
+                                    Grid.Column="1"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    VerticalAlignment="Center">
+                                    <Button
+                                        AutomationProperties.AutomationId="AgendaOpenInObsidianButton"
+                                        Click="AgendaOpenInObsidianButton_Click"
+                                        Content="Open in Obsidian" />
+                                    <Button
+                                        AutomationProperties.AutomationId="AgendaChangePageButton"
+                                        Click="AgendaChoosePageButton_Click"
+                                        Content="Change page" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <ScrollViewer
+                            x:Name="AgendaScrollViewer"
+                            Grid.Row="1"
+                            Margin="0,16,0,0"
+                            AutomationProperties.AutomationId="AgendaScrollViewer"
+                            HorizontalScrollBarVisibility="Disabled"
+                            HorizontalScrollMode="Disabled"
+                            VerticalScrollBarVisibility="Auto">
+                            <controls:VaultMarkdownView
+                                x:Name="AgendaMarkdown"
+                                AutomationProperties.AutomationId="AgendaMarkdown"
+                                HorizontalAlignment="Left"
+                                MaxWidth="840"
+                                LinkClicked="AgendaMarkdown_LinkClicked" />
+                        </ScrollViewer>
+                    </Grid>
+
+                    <StackPanel
+                        x:Name="AgendaEmptyState"
+                        HorizontalAlignment="Center"
+                        MaxWidth="440"
+                        Spacing="12"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed">
+                        <FontIcon
+                            FontSize="42"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Glyph="&#xE70F;" />
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            Style="{ThemeResource SubtitleTextBlockStyle}"
+                            Text="Choose an Agenda Wiki Page" />
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            Text="Select one schema-governed Wiki Page to read here. The page remains owned by your Vault."
+                            TextAlignment="Center"
+                            TextWrapping="Wrap"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <Button
+                            x:Name="AgendaChoosePageButton"
+                            AutomationProperties.AutomationId="AgendaChoosePageButton"
+                            HorizontalAlignment="Center"
+                            Click="AgendaChoosePageButton_Click"
+                            Content="Choose Wiki Page" />
+                    </StackPanel>
+
+                    <StackPanel
+                        x:Name="AgendaUnavailableState"
+                        HorizontalAlignment="Center"
+                        MaxWidth="520"
+                        Spacing="12"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed">
+                        <InfoBar
+                            x:Name="AgendaUnavailableInfo"
+                            AutomationProperties.AutomationId="AgendaUnavailableInfo"
+                            IsClosable="False"
+                            IsOpen="True"
+                            Message="The configured Wiki Page is unavailable."
+                            Severity="Warning"
+                            Title="Agenda page unavailable" />
+                        <Button
+                            AutomationProperties.AutomationId="AgendaChooseAnotherPageButton"
+                            HorizontalAlignment="Center"
+                            Click="AgendaChoosePageButton_Click"
+                            Content="Choose another page" />
+                    </StackPanel>
+                </Grid>
+            </TabViewItem>
+
+            <TabViewItem
                 x:Name="CompletedTab"
                 AutomationProperties.AutomationId="WorkLogCompletedTab"
                 Header="Completed"

@@ -170,6 +170,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
     }
 
     public event EventHandler<ResearchTopicsChangedEventArgs>? TopicsChanged;
+    public event EventHandler<WikiPagesChangedEventArgs>? WikiPagesChanged;
     public event EventHandler<ResearchChangeLogsChangedEventArgs>? ChangeLogsChanged;
 
     public bool IsWatching => _watcher.EnableRaisingEvents;
@@ -281,6 +282,50 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     snapshot.Topics.Count);
             }
         }
+
+    public WikiPageLookupResult ReadWikiPage(string pageId)
+    {
+        if (string.IsNullOrWhiteSpace(pageId))
+        {
+            return WikiPageLookupResult.Failure(
+                WikiPageLookupErrorCode.PageNotFound,
+                "Select an existing Wiki Page.");
+        }
+
+        lock (_gate)
+        {
+            _ = Capture(_today());
+            var matches = _pagesByPath.Values
+                .Where(page => string.Equals(
+                    page.Id,
+                    pageId.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (matches.Length == 0)
+            {
+                return WikiPageLookupResult.Failure(
+                    WikiPageLookupErrorCode.PageNotFound,
+                    $"Wiki Page '{pageId.Trim()}' was not found.");
+            }
+
+            if (matches.Length > 1)
+            {
+                return WikiPageLookupResult.Failure(
+                    WikiPageLookupErrorCode.DuplicateStableId,
+                    $"Stable Wiki Page id '{pageId.Trim()}' is duplicated.");
+            }
+
+            var page = matches[0];
+            return WikiPageLookupResult.Success(new WikiPageDocument(
+                page.Id,
+                page.Title,
+                page.Aliases,
+                page.WikiType,
+                page.Updated,
+                page.VaultRelativePath,
+                page.Markdown));
+        }
+    }
 
     public ResearchOptInResult OptIn(string vaultRelativePath)
         {
@@ -1198,6 +1243,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         {
             BeforeApplyPendingHook?.Invoke(CancellationToken.None);
             ResearchTopicsChangedEventArgs? change;
+            WikiPagesChangedEventArgs? wikiPageChange;
             ResearchChangeLogsChangedEventArgs? changeLogChange;
             var queryDate = _today();
             KeyValuePair<string, ResearchCatalogChangeOrigin>[] pending;
@@ -1217,6 +1263,9 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                     Hydrate(queryDate);
 
                 var before = _snapshot;
+                var beforePages = new Dictionary<string, WikiPageCandidate>(
+                    _pagesByPath,
+                    StringComparer.OrdinalIgnoreCase);
                 var logTopicIds = pending
                     .Select(pair => TryGetResearchLogTopicId(pair.Key, out var topicId)
                         ? topicId
@@ -1474,6 +1523,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                         RefreshChangeLogs(_snapshot, logTopicIds));
                 var origin = ResolveOrigin(pending, additionalOrigins, isRecovery);
                 change = CreateChange(before, _snapshot, priorTopicIds, origin);
+                wikiPageChange = CreateWikiPageChange(beforePages, _pagesByPath, origin);
                 changeLogChange = CreateChangeLogChange(
                     before,
                     _snapshot,
@@ -1482,6 +1532,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             }
 
             RaiseChange(change);
+            if (wikiPageChange is not null)
+                WikiPagesChanged?.Invoke(this, wikiPageChange);
             if (changeLogChange is not null)
                 ChangeLogsChanged?.Invoke(this, changeLogChange);
         }
@@ -2844,6 +2896,62 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
                 origin);
     }
 
+    private static WikiPagesChangedEventArgs? CreateWikiPageChange(
+        IReadOnlyDictionary<string, WikiPageCandidate> before,
+        IReadOnlyDictionary<string, WikiPageCandidate> after,
+        ResearchCatalogChangeOrigin origin)
+    {
+        var affected = before.Keys
+            .Concat(after.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(path =>
+                !before.TryGetValue(path, out var oldPage)
+                || !after.TryGetValue(path, out var newPage)
+                || !WikiPagesEquivalent(oldPage, newPage))
+            .SelectMany(path =>
+            {
+                var ids = new List<string>(2);
+                if (before.TryGetValue(path, out var oldPage))
+                    ids.Add(oldPage.Id);
+                if (after.TryGetValue(path, out var newPage))
+                    ids.Add(newPage.Id);
+                return ids;
+            })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return affected.Length == 0
+            ? null
+            : new WikiPagesChangedEventArgs(Array.AsReadOnly(affected), origin);
+    }
+
+    private static bool WikiPagesEquivalent(
+        WikiPageCandidate left,
+        WikiPageCandidate right) =>
+        left.Id == right.Id
+        && left.IsOptedIn == right.IsOptedIn
+        && left.Title == right.Title
+        && left.Summary == right.Summary
+        && left.Aliases.SequenceEqual(right.Aliases, StringComparer.Ordinal)
+        && left.WikiType == right.WikiType
+        && left.Tags.SequenceEqual(right.Tags, StringComparer.Ordinal)
+        && left.Confidence == right.Confidence
+        && left.Updated == right.Updated
+        && left.Expires == right.Expires
+        && left.Sources.SequenceEqual(right.Sources, StringComparer.Ordinal)
+        && left.SourcePaths.SequenceEqual(right.SourcePaths, StringComparer.Ordinal)
+        && left.IncludeIds.SequenceEqual(right.IncludeIds, StringComparer.Ordinal)
+        && left.ExcludeIds.SequenceEqual(right.ExcludeIds, StringComparer.Ordinal)
+        && left.MetadataWarnings.SequenceEqual(right.MetadataWarnings)
+        && left.RelatedTaskIds.SequenceEqual(right.RelatedTaskIds, StringComparer.Ordinal)
+        && left.RelatedWayfinderReferences.SequenceEqual(
+            right.RelatedWayfinderReferences,
+            StringComparer.Ordinal)
+        && left.RelatedWorkWarnings.SequenceEqual(right.RelatedWorkWarnings)
+        && left.VaultRelativePath == right.VaultRelativePath
+        && left.Markdown == right.Markdown
+        && left.LastValidOn == right.LastValidOn;
+
     private ResearchCatalogSnapshot RefreshChangeLogs(
         ResearchCatalogSnapshot snapshot,
         IReadOnlySet<string> topicIds)
@@ -3786,11 +3894,11 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
 
     private static bool Matches(ResearchTopic topic, ResearchCatalogQuery query) =>
         Matches(topic.Id, topic.Title, topic.Aliases, topic.WikiType, topic.Tags,
-            topic.Confidence, topic.Freshness, query);
+            topic.Confidence, topic.Freshness, topic.VaultRelativePath, query);
 
     private static bool Matches(ResearchPageCandidate page, ResearchCatalogQuery query) =>
         Matches(page.Id, page.Title, page.Aliases, page.WikiType, page.Tags,
-            page.Confidence, page.Freshness, query);
+            page.Confidence, page.Freshness, page.VaultRelativePath, query);
 
     private static bool Matches(
         string id,
@@ -3800,6 +3908,7 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
         IReadOnlyList<string> tags,
         string? confidence,
         ResearchFreshness freshness,
+        string vaultRelativePath,
         ResearchCatalogQuery query)
     {
         if (!string.IsNullOrWhiteSpace(query.WikiType)
@@ -3817,7 +3926,8 @@ public sealed partial class FileSystemResearchCatalog : IResearchCatalog
             || Contains(wikiType, text)
             || tags.Any(tag => Contains(tag, text))
             || Contains(confidence, text)
-            || Contains(FreshnessLabel(freshness), text);
+            || Contains(FreshnessLabel(freshness), text)
+            || Contains(vaultRelativePath, text);
     }
 
     private static bool Contains(string? value, string text) =>
