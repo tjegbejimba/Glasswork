@@ -43,6 +43,26 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## Mcp v0.11.4 — 2026-09-16
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Ensure restart-to-update reopens the app after an active updater finishes. ([#599](https://github.com/tjegbejimba/Glasswork/pull/599)) — @tjegbejimba
+- Release Glasswork v1.5.1. ([#600](https://github.com/tjegbejimba/Glasswork/pull/600)) — @tjegbejimba
+- Add an optional Wiki Page agenda to Work Log. ([#601](https://github.com/tjegbejimba/Glasswork/pull/601)) — @tjegbejimba
+
 ## App v1.5.0 — 2026-09-11
 
 ### Breaking
