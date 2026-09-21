@@ -63,6 +63,90 @@ public class UiStateServiceTests
     }
 
     [TestMethod]
+    public void Save_WithoutPendingChanges_DoesNotRewriteState()
+    {
+        var dir = NewTempDir();
+        try
+        {
+            var path = Path.Combine(dir, "ui-state.json");
+            var svc = new JsonFileUiStateService(path);
+            for (var i = 0; i < 2000; i++)
+                svc.Set($"collapsed.task-{i}", true);
+            svc.Save();
+
+            var savedAt = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            File.SetLastWriteTimeUtc(path, savedAt);
+            var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            for (var i = 0; i < 30; i++)
+                svc.Save();
+            timer.Stop();
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+            Console.WriteLine($"30 clean saves: {timer.Elapsed.TotalMilliseconds:F2} ms, {allocated} allocated bytes.");
+
+            Assert.AreEqual(savedAt, File.GetLastWriteTimeUtc(path),
+                "A clean flush must not serialize and atomically replace the entire UI state.");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void Save_WithoutPendingChanges_DoesNotCreateStateFile()
+    {
+        var dir = NewTempDir();
+        try
+        {
+            var path = Path.Combine(dir, "ui-state.json");
+            var svc = new JsonFileUiStateService(path);
+
+            svc.Save();
+
+            Assert.IsFalse(File.Exists(path));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void Save_CleanFlushPreservesForeignChanges_ThenMergesNewLocalChanges()
+    {
+        var dir = NewTempDir();
+        try
+        {
+            var path = Path.Combine(dir, "ui-state.json");
+            var local = new JsonFileUiStateService(path);
+            local.Set("shared", "original");
+            local.Save();
+
+            var foreign = new JsonFileUiStateService(path);
+            foreign.Set("shared", "foreign");
+            foreign.Set("foreign-only", true);
+            foreign.Save();
+            var savedAt = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            File.SetLastWriteTimeUtc(path, savedAt);
+
+            local.Save();
+            Assert.AreEqual(savedAt, File.GetLastWriteTimeUtc(path));
+
+            local.Set("local-only", true);
+            local.Save();
+            var actual = new JsonFileUiStateService(path);
+            Assert.AreEqual("foreign", actual.Get<string>("shared"));
+            Assert.IsTrue(actual.Get<bool>("foreign-only"));
+            Assert.IsTrue(actual.Get<bool>("local-only"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void Save_OverwritesExistingFile()
     {
         var dir = NewTempDir();

@@ -1,0 +1,53 @@
+{
+  "name": "Backlog incremental refresh",
+  "startUri": "glasswork://backlog",
+  "windowWidth": 1600,
+  "windowHeight": 850,
+  "tasks": [
+    {
+      "id": "refresh-target",
+      "title": "Refresh target",
+      "description": "This task stays visible through repeated matching search updates.",
+      "status": "todo",
+      "priority": "high",
+      "subtasks": [
+        { "text": "Keep unchanged rows alive", "status": "in_progress" }
+      ]
+    },
+    {
+      "id": "refresh-companion",
+      "title": "Refresh companion",
+      "description": "Filtering removes and restores this row without resetting the list.",
+      "status": "in-progress",
+      "priority": "medium"
+    },
+    {
+      "id": "unrelated-task",
+      "title": "Unrelated task",
+      "status": "todo",
+      "priority": "low"
+    }
+  ],
+  "actions": [
+    { "type": "select", "automationId": "NavBacklog", "timeoutMilliseconds": 10000 },
+    { "type": "wait-for", "automationId": "BacklogHeader" },
+    { "type": "wait-for", "name": "Refresh target" },
+    { "type": "set-value", "automationId": "BacklogSearchBox", "value": "Refresh" },
+    { "type": "wait-for", "name": "Refresh companion" },
+    { "type": "set-value", "automationId": "BacklogSearchBox", "value": "Refresh target" },
+    { "type": "wait-for", "name": "Refresh target" },
+    { "type": "set-value", "automationId": "BacklogSearchBox", "value": "" },
+    { "type": "wait-for", "name": "Unrelated task" },
+    { "type": "capture", "name": "backlog-list-after-incremental-refresh", "waitMilliseconds": 300 },
+    { "type": "focus", "automationId": "BacklogBoardViewToggle" },
+    { "type": "press-key", "value": "Space" },
+    { "type": "wait-for", "automationId": "BacklogBoardView" },
+    { "type": "set-value", "automationId": "BacklogSearchBox", "value": "Refresh" },
+    { "type": "wait-for", "name": "Refresh target" },
+    { "type": "set-value", "automationId": "BacklogSearchBox", "value": "" },
+    { "type": "wait-for", "name": "Unrelated task" }
+  ],
+  "captures": [
+    { "name": "backlog-board-after-incremental-refresh", "waitMilliseconds": 300 }
+  ]
+}

@@ -77,6 +77,9 @@ public sealed class JsonFileUiStateService : IUiStateService
     {
         lock (_lock)
         {
+            if (_dirtyKeys.Count == 0 && _deletedKeys.Count == 0)
+                return;
+
             var mutex = GetFileMutex(_filePath);
             var acquired = false;
             try

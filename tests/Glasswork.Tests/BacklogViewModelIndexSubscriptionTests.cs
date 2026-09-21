@@ -64,6 +64,141 @@ public class BacklogViewModelIndexSubscriptionTests
     }
 
     [TestMethod]
+    [DataRow("list", false)]
+    [DataRow("list", true)]
+    [DataRow("board", true)]
+    public void Refresh_UnchangedBacklog_DoesNotRebuildBoundCollections(string mode, bool grouped)
+    {
+        for (var i = 0; i < 10; i++)
+        {
+            var task = _taskService.CreateTask($"Task {i}");
+            task.Parent = "parent";
+            _vault.Save(task);
+        }
+        using var vm = new BacklogViewModel(_vault, _taskService, _index)
+        {
+            ViewMode = mode,
+            IsGrouped = grouped,
+        };
+        vm.Refresh();
+        var tasks = vm.Tasks.ToArray();
+        var rows = vm.Rows.ToArray();
+        var columns = vm.BoardColumns.ToArray();
+        var changes = 0;
+        vm.Tasks.CollectionChanged += (_, _) => changes++;
+        vm.Rows.CollectionChanged += (_, _) => changes++;
+        vm.BoardColumns.CollectionChanged += (_, _) => changes++;
+
+        for (var i = 0; i < 10; i++)
+            vm.Refresh();
+
+        Console.WriteLine($"10 unchanged {mode} refreshes (grouped={grouped}): {changes} collection notifications.");
+        Assert.AreEqual(0, changes, "Unchanged rows must not be torn down and rebuilt.");
+        CollectionAssert.AreEqual(tasks, vm.Tasks.ToArray());
+        CollectionAssert.AreEqual(rows, vm.Rows.ToArray());
+        CollectionAssert.AreEqual(columns, vm.BoardColumns.ToArray());
+    }
+
+    [TestMethod]
+    [DataRow("list", false)]
+    [DataRow("list", true)]
+    [DataRow("board", true)]
+    public void Refresh_ChangedTask_ReplacesOnlyAffectedRows(string mode, bool grouped)
+    {
+        var first = _taskService.CreateTask("First");
+        var second = _taskService.CreateTask("Second");
+        using var vm = new BacklogViewModel(_vault, _taskService, _index)
+        {
+            ViewMode = mode,
+            IsGrouped = grouped,
+        };
+        vm.Refresh();
+        var unchanged = vm.Tasks.Single(task => task.Id == second.Id);
+        var changed = vm.Tasks.Single(task => task.Id == first.Id);
+        var changes = new List<System.Collections.Specialized.NotifyCollectionChangedAction>();
+        vm.Tasks.CollectionChanged += (_, args) => changes.Add(args.Action);
+
+        var updated = _vault.Load(first.Id)!;
+        updated.Title = "Updated title";
+        updated.Notes = "Updated Notes";
+        updated.Subtasks.Add(new SubTask { Text = "New step" });
+        _vault.Save(updated);
+        vm.Refresh();
+
+        var refreshedTask = vm.Tasks.Single(task => task.Id == first.Id);
+        Assert.AreNotSame(changed, refreshedTask);
+        Assert.AreSame(unchanged, vm.Tasks.Single(task => task.Id == second.Id));
+        Assert.AreEqual("Updated title", refreshedTask.Title);
+        Assert.AreEqual("Updated Notes", refreshedTask.Notes);
+        Assert.AreEqual("New step", refreshedTask.Subtasks.Single().Text);
+        Assert.AreEqual(_vault.Load(first.Id)!.ResourceRevision, refreshedTask.ResourceRevision);
+        CollectionAssert.AreEqual(
+            new[] { System.Collections.Specialized.NotifyCollectionChangedAction.Replace },
+            changes);
+        var rendered = mode == "board"
+            ? vm.BoardColumns.SelectMany(column => column.Tasks)
+            : vm.Rows.OfType<GlassworkTask>();
+        Assert.AreSame(refreshedTask, rendered.Single(task => task.Id == first.Id));
+    }
+
+    [TestMethod]
+    public void Refresh_GroupChanges_UpdateHeadersAndMembershipWithoutReset()
+    {
+        var child = _taskService.CreateTask("Child");
+        child.Parent = "parent";
+        _vault.Save(child);
+        var collapsed = false;
+        using var vm = new BacklogViewModel(_vault, _taskService, _index)
+        {
+            GroupCollapseStateProvider = () => new Dictionary<string, bool> { ["parent"] = collapsed },
+        };
+        vm.Refresh();
+        var header = vm.Rows.OfType<BacklogParentGroupHeader>().Single();
+        var resetCount = 0;
+        vm.Rows.CollectionChanged += (_, args) =>
+        {
+            if (args.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
+                resetCount++;
+        };
+
+        collapsed = true;
+        vm.Refresh();
+        Assert.HasCount(1, vm.Rows);
+        Assert.IsTrue(((BacklogParentGroupHeader)vm.Rows[0]).IsCollapsed);
+        Assert.AreNotSame(header, vm.Rows[0]);
+
+        collapsed = false;
+        var another = _taskService.CreateTask("Another child");
+        another.Parent = "parent";
+        _vault.Save(another);
+        vm.Refresh();
+        Assert.AreEqual(2, vm.Rows.OfType<BacklogParentGroupHeader>().Single().TotalCount);
+        Assert.AreEqual(2, vm.Rows.OfType<GlassworkTask>().Count());
+
+        vm.SearchText = "Another";
+        Assert.AreEqual(1, vm.Rows.OfType<BacklogParentGroupHeader>().Single().TotalCount);
+        Assert.AreEqual(another.Id, vm.Rows.OfType<GlassworkTask>().Single().Id);
+        Assert.AreEqual(0, resetCount);
+    }
+
+    [TestMethod]
+    public void Refresh_BoardStatusChange_PreservesUnaffectedColumns()
+    {
+        var task = _taskService.CreateTask("Move between columns");
+        using var vm = new BacklogViewModel(_vault, _taskService, _index) { ViewMode = "board" };
+        var columns = vm.BoardColumns.ToArray();
+
+        _taskService.SetStatus(task, GlassworkTask.Statuses.InProgress);
+        vm.Refresh();
+
+        Assert.AreEqual(1, vm.BoardColumns.Sum(column => column.Tasks.Count));
+        Assert.AreEqual(GlassworkTask.Statuses.InProgress,
+            vm.BoardColumns.SelectMany(column => column.Tasks).Single().Status);
+        Assert.AreEqual(1, columns.Count(column => vm.BoardColumns.Contains(column)),
+            "Only the old and new status columns need replacement.");
+    }
+
+    [TestMethod]
     public void SearchText_FiltersListModeBacklogTasks()
     {
         _taskService.CreateTask("Improve backlog search");
