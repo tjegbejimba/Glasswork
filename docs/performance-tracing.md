@@ -84,3 +84,32 @@ Vault initialization events also appear after an in-app Vault switch. My Day and
 Use the same seeded Vault and launch path for both runs. Compare event medians over several cold launches rather than treating one duration as definitive. The trace intentionally records measurements without enforcing machine-dependent performance thresholds.
 
 Completed records are written and flushed synchronously for reliability. Use the default temporary path or another local path; a slow or network-backed override can add diagnostic overhead to the UI thread and to enclosing measurements.
+
+## UI-state flushes
+
+`JsonFileUiStateService.Save()` skips the cross-process mutex, disk read,
+serialization, and atomic replacement when no local keys are pending. This
+matters on the Backlog refresh path: parent-title cache compaction calls `Save`
+even when it removes nothing. Dirty saves still merge against the latest disk
+state under the mutex; a clean flush is not a refresh of the in-memory state.
+
+`UiStateServiceTests.Save_WithoutPendingChanges_DoesNotRewriteState` exercises
+30 clean flushes of a 2,000-key state file. It reports elapsed time and allocated
+bytes, but asserts unchanged file modification time rather than a
+machine-dependent timing threshold.
+
+## Backlog collection refreshes
+
+Backlog still queries the current Index on every refresh, but reconciles bound
+collections instead of clearing and repopulating them. Within the same local
+day, Tasks with unchanged non-null Resource Revisions retain their row objects.
+Changed Tasks are replaced so all bindings receive the new durable state.
+Unchanged group headers and board columns are also retained; changed columns
+are replaced because their nested task lists are not observable collections.
+The local-day boundary invalidates row reuse for date-derived bindings.
+
+`BacklogViewModelIndexSubscriptionTests` checks that unchanged refreshes emit
+zero collection notifications in flat-list, grouped-list, and board modes, and
+that edits, filters, group collapse, and status moves still update the rows.
+`scripts\visual-verification\backlog-incremental-refresh.json` exercises search
+removal/restoration and the transition from list to board in the native app.

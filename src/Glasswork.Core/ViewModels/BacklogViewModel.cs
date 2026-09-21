@@ -76,6 +76,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string? SelectedSavedViewId { get; set; }
 
     private readonly IndexService _index;
+    private DateOnly? _lastRefreshDate;
 
     public BacklogViewModel(VaultService vault, TaskService taskService, IUiStateService? uiState = null)
         : this(vault, taskService, EnsureSeededIndex(vault), uiState) { }
@@ -137,39 +138,35 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
 
     private void RefreshData(IPerformanceTraceScope trace)
     {
-        Tasks.Clear();
-        Rows.Clear();
-        BoardColumns.Clear();
         var queryTime = DateTimeOffset.Now;
+        var today = DateOnly.FromDateTime(queryTime.Date);
         var filtered = FilterTasks(ViewMode == "board" ? "all" : FilterStatus, queryTime);
+        var existingTasks = Tasks.ToDictionary(task => task.Id, StringComparer.Ordinal);
+        var ordered = filtered.Tasks.Select(task =>
+            _lastRefreshDate == today
+            && task.ResourceRevision is not null
+            && existingTasks.TryGetValue(task.Id, out var existing)
+            && existing.ResourceRevision == task.ResourceRevision
+                ? existing
+                : task).ToList();
+        IReadOnlyList<GlassworkTask> targetTasks = ordered;
+        IReadOnlyList<object> targetRows = [];
+        IReadOnlyList<BoardColumn> targetColumns = [];
 
         if (ViewMode == "board")
         {
             // Board mode: use BacklogBoardGrouper, ignore FilterStatus and IsGrouped.
-            var searched = filtered.Tasks;
-            var columns = BacklogBoardGrouper.GroupByStatus(searched);
-            foreach (var col in columns)
-            {
-                BoardColumns.Add(col);
-            }
-            // Populate flat Tasks collection for count exposure
-            foreach (var col in columns)
-            {
-                foreach (var task in col.Tasks)
-                {
-                    Tasks.Add(task);
-                }
-            }
+            var columns = BacklogBoardGrouper.GroupByStatus(ordered);
+            var existingColumns = BoardColumns.ToDictionary(column => column.ColumnName);
+            targetColumns = columns.Select(column =>
+                existingColumns.TryGetValue(column.ColumnName, out var existing)
+                && existing.Tasks.SequenceEqual(column.Tasks)
+                    ? existing
+                    : column).ToList();
+            targetTasks = targetColumns.SelectMany(column => column.Tasks).ToList();
         }
         else
         {
-            var ordered = filtered.Tasks;
-
-            foreach (var task in ordered)
-            {
-                Tasks.Add(task);
-            }
-
             if (IsGrouped)
             {
                 // Hydrate cache from persisted store before grouping so headers render
@@ -182,10 +179,14 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
                 var collapseState = GroupCollapseStateProvider?.Invoke()
                                     ?? new Dictionary<string, bool>();
                 var baseUrl = AdoBaseUrlProvider?.Invoke();
-                foreach (var row in BacklogGrouper.Group(ordered, collapseState, baseUrl, ResolveParentTitleFromCache))
-                {
-                    Rows.Add(row);
-                }
+                var existingHeaders = Rows.OfType<BacklogParentGroupHeader>()
+                    .ToDictionary(header => (header.Key, header.RawParent));
+                targetRows = BacklogGrouper.Group(ordered, collapseState, baseUrl, ResolveParentTitleFromCache)
+                    .Select(row => row is BacklogParentGroupHeader header
+                        && existingHeaders.TryGetValue((header.Key, header.RawParent), out var existing)
+                        && HeadersEqual(existing, header)
+                            ? existing
+                            : row).ToList();
 
                 // GC stale entries no longer referenced by any task in the current set.
                 CompactParentTitleStore(liveBacklogTasks);
@@ -195,18 +196,68 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
             }
             else
             {
-                foreach (var task in ordered)
-                {
-                    Rows.Add(task);
-                }
+                targetRows = ordered;
             }
         }
+
+        Reconcile(Tasks, targetTasks, task => task.Id);
+        Reconcile(Rows, targetRows, row => row switch
+        {
+            GlassworkTask task => (Kind: "task", Key: task.Id, Parent: (string?)null),
+            BacklogParentGroupHeader header => (Kind: "header", Key: header.Key, Parent: header.RawParent),
+            _ => throw new InvalidOperationException("Unknown Backlog row type."),
+        });
+        Reconcile(BoardColumns, targetColumns, column => column.ColumnName);
+        _lastRefreshDate = today;
 
         trace.SetTag("view_mode", ViewMode);
         trace.SetTag("is_grouped", IsGrouped);
         trace.SetCount("task_count", Tasks.Count);
         trace.SetCount("row_count", Rows.Count);
         trace.SetCount("board_column_count", BoardColumns.Count);
+    }
+
+    private static bool HeadersEqual(BacklogParentGroupHeader left, BacklogParentGroupHeader right) =>
+        left.DisplayHeader == right.DisplayHeader
+        && left.TotalCount == right.TotalCount
+        && left.IsCollapsed == right.IsCollapsed
+        && left.AdoUrl == right.AdoUrl
+        && left.RawParent == right.RawParent;
+
+    private static void Reconcile<T, TKey>(
+        ObservableCollection<T> collection,
+        IReadOnlyList<T> target,
+        Func<T, TKey> keyFor) where T : class where TKey : notnull
+    {
+        var liveKeys = target.Select(keyFor).ToHashSet();
+        for (var i = collection.Count - 1; i >= 0; i--)
+        {
+            if (!liveKeys.Contains(keyFor(collection[i])))
+                collection.RemoveAt(i);
+        }
+
+        for (var i = 0; i < target.Count; i++)
+        {
+            var desired = target[i];
+            if (i < collection.Count && ReferenceEquals(collection[i], desired))
+                continue;
+
+            var key = keyFor(desired);
+            var existingIndex = i;
+            while (existingIndex < collection.Count
+                && !EqualityComparer<TKey>.Default.Equals(keyFor(collection[existingIndex]), key))
+                existingIndex++;
+
+            if (existingIndex == collection.Count)
+                collection.Insert(i, desired);
+            else
+            {
+                if (existingIndex != i)
+                    collection.Move(existingIndex, i);
+                if (!ReferenceEquals(collection[i], desired))
+                    collection[i] = desired;
+            }
+        }
     }
 
     private BacklogQueryData FilterTasks(
@@ -462,7 +513,7 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Raised synchronously at the very top of <see cref="Refresh"/>, BEFORE
     /// any of <see cref="Tasks"/>, <see cref="Rows"/>, or <see cref="BoardColumns"/>
-    /// are cleared. Subscribers can read the pre-refresh state of those collections
+    /// are reconciled. Subscribers can read the pre-refresh state of those collections
     /// (e.g. to snapshot UI state that depends on them, like <c>ScrollViewer.VerticalOffset</c>
     /// of a bound <c>ListView</c> or <c>ItemsControl</c>).
     ///
@@ -484,10 +535,9 @@ public partial class BacklogViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Raised exactly once at the end of <see cref="Refresh"/> after all collections
     /// (<see cref="Tasks"/>, <see cref="Rows"/>, <see cref="BoardColumns"/>) have been
-    /// fully populated. Page hosts subscribe to this instead of individual
+    /// reconciled. Page hosts subscribe to this instead of individual
     /// <c>CollectionChanged</c> events so empty-state UI is computed against the final
-    /// state, not the transient empty state that exists between the internal
-    /// <c>Clear()</c> and <c>Add()</c> calls.
+    /// state, including when an unchanged refresh emits no collection notifications.
     ///
     /// Contract:
     /// <list type="bullet">
