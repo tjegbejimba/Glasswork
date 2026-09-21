@@ -43,6 +43,25 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## App v1.5.2 — 2026-09-21
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Add an optional Wiki Page agenda to the Work Log ([#601](https://github.com/tjegbejimba/Glasswork/pull/601)) — @tjegbejimba
+- Reduce redundant UI-state writes and Backlog row rebuilds ([#606](https://github.com/tjegbejimba/Glasswork/pull/606)) — @tjegbejimba
+
 ## Mcp v0.11.4 — 2026-09-16
 
 ### Breaking
