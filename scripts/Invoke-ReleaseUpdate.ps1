@@ -57,7 +57,7 @@ function Invoke-ReleaseUpdate {
         },
 
         [scriptblock]$ProgressReporter = {
-            param($message)
+            param($message, $percentage)
         },
 
         [bool]$ShowProgress = $true
@@ -80,6 +80,7 @@ function Invoke-ReleaseUpdate {
     $mutexAcquired = $false
     $progressForm = $null
     $progressLabel = $null
+    $progressBar = $null
     $installMoved = $false
     $appExited = $false
     $relaunchOnFailure = $false
@@ -149,8 +150,10 @@ function Invoke-ReleaseUpdate {
                 $progressBar.Top = 52
                 $progressBar.Width = 280
                 $progressBar.Height = 18
-                $progressBar.Style = 'Marquee'
-                $progressBar.MarqueeAnimationSpeed = 30
+                $progressBar.Minimum = 0
+                $progressBar.Maximum = 100
+                $progressBar.Value = 0
+                $progressBar.Style = 'Continuous'
                 $progressForm.Controls.Add($progressBar)
                 $progressForm.Show()
                 [System.Windows.Forms.Application]::DoEvents()
@@ -164,17 +167,19 @@ function Invoke-ReleaseUpdate {
         $archivePath = Join-Path $WorkDirectory "Glasswork-win-x64.zip"
         $checksumPath = "$archivePath.sha256"
 
-        & $ProgressReporter "Downloading Glasswork $Version..."
-        if ($progressLabel) {
+        & $ProgressReporter "Downloading Glasswork $Version..." 25
+        if ($progressLabel -and $progressBar) {
             $progressLabel.Text = "Downloading Glasswork $Version..."
+            $progressBar.Value = 25
             [System.Windows.Forms.Application]::DoEvents()
         }
         & $Downloader $archiveUri $archivePath
         & $Downloader $checksumUri $checksumPath
 
-        & $ProgressReporter "Verifying download..."
-        if ($progressLabel) {
+        & $ProgressReporter "Verifying download..." 50
+        if ($progressLabel -and $progressBar) {
             $progressLabel.Text = "Verifying download..."
+            $progressBar.Value = 50
             [System.Windows.Forms.Application]::DoEvents()
         }
         $expectedHash = ((Get-Content $checksumPath -Raw).Trim() -split '\s+')[0]
@@ -189,9 +194,10 @@ function Invoke-ReleaseUpdate {
         if (Test-Path $stagingDirectory) {
             Remove-Item -Recurse -Force $stagingDirectory
         }
-        & $ProgressReporter "Installing Glasswork $Version..."
-        if ($progressLabel) {
+        & $ProgressReporter "Installing Glasswork $Version..." 75
+        if ($progressLabel -and $progressBar) {
             $progressLabel.Text = "Installing Glasswork $Version..."
+            $progressBar.Value = 75
             [System.Windows.Forms.Application]::DoEvents()
         }
         Expand-Archive -Path $archivePath -DestinationPath $stagingDirectory
@@ -222,9 +228,10 @@ function Invoke-ReleaseUpdate {
             }
         }
 
-        & $ProgressReporter "Restarting Glasswork..."
-        if ($progressLabel) {
+        & $ProgressReporter "Restarting Glasswork..." 100
+        if ($progressLabel -and $progressBar) {
             $progressLabel.Text = "Restarting Glasswork..."
+            $progressBar.Value = 100
             [System.Windows.Forms.Application]::DoEvents()
         }
         & $Relauncher $InstallExePath

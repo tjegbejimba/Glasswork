@@ -11,6 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Application]::EnableVisualStyles()
 
 $form = [System.Windows.Forms.Form]::new()
 $form.Text = "Updating Glasswork"
@@ -35,8 +36,10 @@ $progress.Left = 16
 $progress.Top = 58
 $progress.Width = 312
 $progress.Height = 18
-$progress.Style = "Marquee"
-$progress.MarqueeAnimationSpeed = 30
+$progress.Minimum = 0
+$progress.Maximum = 100
+$progress.Value = 0
+$progress.Style = "Continuous"
 $form.Controls.Add($progress)
 
 $timer = [System.Windows.Forms.Timer]::new()
@@ -49,7 +52,14 @@ $timer.Add_Tick({
                 $form.Close()
                 return
             }
-            if (-not [string]::IsNullOrWhiteSpace($status)) {
+            if ($status -match '^(?<percentage>\d{1,3})\|(?<message>.+)$') {
+                $percentage = [Math]::Min(
+                    100,
+                    [Math]::Max(0, [int]$matches["percentage"]))
+                $label.Text = $matches["message"]
+                $progress.Value = $percentage
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($status)) {
                 $label.Text = $status
             }
         }

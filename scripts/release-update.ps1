@@ -20,8 +20,9 @@ $statusPath = Join-Path $CleanupDirectory "update-status.txt"
 $statusEncoding = [System.Text.UTF8Encoding]::new($false)
 $progressProcess = $null
 $progressReporter = {
-    param($message)
-    [System.IO.File]::WriteAllText($statusPath, [string]$message, $statusEncoding)
+    param($message, $percentage)
+    $status = "$percentage|$message"
+    [System.IO.File]::WriteAllText($statusPath, $status, $statusEncoding)
 }
 $invokeParameters = @{
     AppProcessId = $AppProcessId
@@ -36,7 +37,7 @@ try {
         $progressScript = Join-Path $PSScriptRoot "Show-UpdateProgress.ps1"
         if (Test-Path $progressScript) {
             try {
-                & $progressReporter "Preparing Glasswork $Version..."
+                & $progressReporter "Preparing Glasswork $Version..." 0
                 $hostPath = (Get-Process -Id $PID).Path
                 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
                 $startInfo.FileName = $hostPath

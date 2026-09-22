@@ -56,8 +56,8 @@ Describe "Invoke-ReleaseUpdate" {
             $script:CallLog += "release-page-$uri"
         }
         $progressReporter = {
-            param($message)
-            $script:CallLog += "progress-$message"
+            param($message, $percentage)
+            $script:CallLog += "progress-$percentage-$message"
         }
 
         Invoke-ReleaseUpdate `
@@ -79,10 +79,10 @@ Describe "Invoke-ReleaseUpdate" {
         $script:CallLog | Should -Contain "download-https://github.com/tjegbejimba/Glasswork/releases/download/v1.5.0/Glasswork-win-x64.zip.sha256"
         $script:CallLog | Should -Contain "release-page-https://github.com/tjegbejimba/Glasswork/releases/tag/v1.5.0"
         $script:CallLog | Should -Contain "relaunch-$(Join-Path $installDirectory "Glasswork.exe")"
-        $script:CallLog | Should -Contain "progress-Downloading Glasswork 1.5.0..."
-        $script:CallLog | Should -Contain "progress-Verifying download..."
-        $script:CallLog | Should -Contain "progress-Installing Glasswork 1.5.0..."
-        $script:CallLog | Should -Contain "progress-Restarting Glasswork..."
+        $script:CallLog | Should -Contain "progress-25-Downloading Glasswork 1.5.0..."
+        $script:CallLog | Should -Contain "progress-50-Verifying download..."
+        $script:CallLog | Should -Contain "progress-75-Installing Glasswork 1.5.0..."
+        $script:CallLog | Should -Contain "progress-100-Restarting Glasswork..."
     }
 
     It "Keeps and relaunches the installed version when checksum verification fails" {
@@ -261,7 +261,7 @@ function Invoke-ReleaseUpdate {
         [scriptblock]`$ProgressReporter,
         [bool]`$ShowProgress
     )
-    & `$ProgressReporter "Downloading Glasswork `$Version..."
+    & `$ProgressReporter "Downloading Glasswork `$Version..." 25
     [System.IO.File]::ReadAllText(
         (Join-Path `$PSScriptRoot "update-status.txt")) |
         Set-Content -Path '$escapedCapturePath'
@@ -281,7 +281,7 @@ function Invoke-ReleaseUpdate {
 
         $LASTEXITCODE | Should -Be 0
         (Get-Content $capturedStatusPath -Raw).Trim() |
-            Should -Be "Downloading Glasswork 1.5.0..."
+            Should -Be "25|Downloading Glasswork 1.5.0..."
         Test-Path $updaterDirectory | Should -BeFalse
     }
 
@@ -332,5 +332,28 @@ Set-Content -Path '$escapedMarkerPath' -Value (
             Join-Path $scriptRoot "scripts\Show-UpdateProgress.ps1") -Raw
 
         $progressScript | Should -Not -Match '#Requires\s+-Version\s+7'
+    }
+
+    It "Enables visual styles before creating the progress bar" {
+        $progressScript = Get-Content (
+            Join-Path $scriptRoot "scripts\Show-UpdateProgress.ps1") -Raw
+
+        $enableVisualStylesIndex = $progressScript.IndexOf(
+            '[System.Windows.Forms.Application]::EnableVisualStyles()')
+        $progressBarIndex = $progressScript.IndexOf(
+            '$progress = [System.Windows.Forms.ProgressBar]::new()')
+
+        $enableVisualStylesIndex | Should -BeGreaterOrEqual 0
+        $enableVisualStylesIndex | Should -BeLessThan $progressBarIndex
+    }
+
+    It "Renders reported milestones as a determinate 0 to 100 progress bar" {
+        $progressScript = Get-Content (
+            Join-Path $scriptRoot "scripts\Show-UpdateProgress.ps1") -Raw
+
+        $progressScript | Should -Match '\$progress\.Minimum\s*=\s*0'
+        $progressScript | Should -Match '\$progress\.Maximum\s*=\s*100'
+        $progressScript | Should -Match '\$progress\.Style\s*=\s*"Continuous"'
+        $progressScript | Should -Match '\$progress\.Value\s*=\s*\$percentage'
     }
 }
