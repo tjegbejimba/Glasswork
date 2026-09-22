@@ -43,6 +43,24 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## App v1.5.3 — 2026-09-22
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Show determinate progress during restart updates ([#608](https://github.com/tjegbejimba/Glasswork/pull/608)) — @tjegbejimba
+
 ## App v1.5.2 — 2026-09-21
 
 ### Breaking
