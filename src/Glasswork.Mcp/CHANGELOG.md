@@ -5,6 +5,27 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.11.5] — 2026-09-23
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Reduce redundant UI-state writes and Backlog row rebuilds ([#606](https://github.com/tjegbejimba/Glasswork/pull/606)) — @tjegbejimba
+- Show determinate progress during restart updates ([#608](https://github.com/tjegbejimba/Glasswork/pull/608)) — @tjegbejimba
+
+---
+
 ## [0.11.4] — 2026-09-16
 
 ### Breaking
