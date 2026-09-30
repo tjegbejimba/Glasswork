@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using static Glasswork.CanvasHost.Tests.CanvasHostTestSupport;
 
 namespace Glasswork.CanvasHost.Tests;
@@ -18,6 +19,39 @@ namespace Glasswork.CanvasHost.Tests;
 [TestClass]
 public sealed class CanvasAccessibilityAndMotionTests : CanvasHostTestBase
 {
+    [TestMethod]
+    public async Task Canvas_ButtonPaletteHonorsHostThemeBeforeBrowserFallbacks()
+    {
+        var vault = CreateVault();
+        await using var host = await StartHost(vault, "session-canvas-contrast", "credential-canvas-contrast");
+        using var client = AuthorizedClient("credential-canvas-contrast");
+
+        var response = await client.GetAsync($"{host.Url}/canvas?task_id=demo");
+        var html = await response.Content.ReadAsStringAsync();
+
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        var buttonRule = Regex.Match(html, @"(?m)^button\{(?<style>[^}]+)\}");
+        Assert.IsTrue(buttonRule.Success, "the default button palette must be present");
+        StringAssert.Contains(buttonRule.Groups["style"].Value, "color:inherit",
+            "button labels must inherit the host-themed Task text color");
+        StringAssert.Contains(buttonRule.Groups["style"].Value, "background:var(--background-color-subtle,var(--background-color-default,",
+            "button backgrounds must use a host surface, even when the optional subtle token is absent");
+
+        var darkRules = Regex.Match(html, @"@media\(prefers-color-scheme:dark\)\{(?<rules>[^\r\n]+)\}");
+        Assert.IsTrue(darkRules.Success, "standalone dark-mode fallbacks must remain available");
+        var rules = darkRules.Groups["rules"].Value;
+        StringAssert.Contains(rules, "body{background:var(--background-color-default,",
+            "browser dark mode must not override a supplied host background");
+        StringAssert.Contains(rules, "color:var(--text-color-default,",
+            "browser dark mode must not override supplied host text color");
+        StringAssert.Contains(rules, "button{background:var(--background-color-subtle,var(--background-color-default,",
+            "browser dark mode must not override host surfaces, including a host without the optional subtle token");
+        StringAssert.Contains(rules, "border-color:var(--border-color-default,",
+            "button outlines must stay paired with the host surface");
+        StringAssert.Contains(rules, "pre,.reason,blockquote,.callout{background:var(--background-color-muted,var(--background-color-subtle,var(--background-color-default,",
+            "markdown surfaces must stay readable alongside the host text color");
+    }
+
     [TestMethod]
     public async Task Canvas_RailSupportsArrowKeyNavigationAmongOptions()
     {
