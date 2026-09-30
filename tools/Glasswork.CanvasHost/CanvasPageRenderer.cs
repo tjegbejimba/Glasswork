@@ -50,12 +50,12 @@ details:not([open]) .rail-header,details:not([open]) .rail-list{display:none}
 .card,details{border:1px solid var(--border-color-default,#d0d7de);border-radius:12px;padding:16px;margin-top:16px;background:var(--background-color-subtle,transparent)}
 h1{margin:0 0 8px;font-size:26px}h2{margin:0 0 8px;font-size:18px}.muted{color:var(--text-color-muted,#656d76)}.error{border-color:var(--true-color-red,#cf222e)}
 summary{cursor:pointer;font-weight:600}.artifact-meta{font-size:12px;font-weight:400;margin-left:8px}.artifact-body{margin-top:12px}.artifact-actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
-button{font:inherit;color:inherit;background:var(--button-default-background,#f6f8fa);border:1px solid var(--border-color-default,#d0d7de);border-radius:6px;padding:5px 10px;cursor:pointer}
+button{font:inherit;color:inherit;background:var(--background-color-subtle,var(--background-color-default,#f6f8fa));border:1px solid var(--border-color-default,#d0d7de);border-radius:6px;padding:5px 10px;cursor:pointer}
 .inline-link{border:0;padding:0;background:none;color:var(--link-color,#0969da);text-decoration:underline}.blocked-link,.unresolved-link{color:var(--text-color-muted,#656d76)}
-pre{white-space:pre-wrap;overflow:auto;max-height:480px;background:var(--background-color-muted,#f6f8fa);padding:12px;border-radius:8px;font-family:var(--font-mono,Consolas,monospace)}
+pre{white-space:pre-wrap;overflow:auto;max-height:480px;background:var(--background-color-muted,var(--background-color-subtle,var(--background-color-default,#f6f8fa)));padding:12px;border-radius:8px;font-family:var(--font-mono,Consolas,monospace)}
 img{display:block;max-width:100%;max-height:540px;object-fit:contain}iframe{display:block;width:100%;height:480px;border:1px solid var(--border-color-default,#d0d7de);border-radius:8px;background:white}
-blockquote,.callout{margin:8px 0;padding:8px 12px;border-left:4px solid var(--border-color-accent,#0969da);background:var(--background-color-muted,#f6f8fa)}
-.table-scroll{overflow-x:auto}table{border-collapse:collapse}th,td{border:1px solid var(--border-color-default,#d0d7de);padding:6px 8px}.reason{padding:10px;border-radius:6px;background:var(--background-color-muted,#f6f8fa)}
+blockquote,.callout{margin:8px 0;padding:8px 12px;border-left:4px solid var(--border-color-accent,#0969da);background:var(--background-color-muted,var(--background-color-subtle,var(--background-color-default,#f6f8fa)))}
+.table-scroll{overflow-x:auto}table{border-collapse:collapse}th,td{border:1px solid var(--border-color-default,#d0d7de);padding:6px 8px}.reason{padding:10px;border-radius:6px;background:var(--background-color-muted,var(--background-color-subtle,var(--background-color-default,#f6f8fa)))}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .title-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .type-chip{border:1px solid var(--border-color-default,#d0d7de);border-radius:999px;padding:0 8px;font-size:12px;text-transform:uppercase;color:var(--text-color-muted,#656d76)}
@@ -92,7 +92,7 @@ blockquote,.callout{margin:8px 0;padding:8px 12px;border-left:4px solid var(--bo
   .rail-header,.rail-list{display:flex!important}
 }
 @media(max-width:560px){.detail{padding:12px}.card,details{padding:12px}h1{font-size:22px}iframe{height:360px}}
-@media(prefers-color-scheme:dark){body{background:#0d1117;color:#e6edf3}pre,.reason,blockquote,.callout{background:#161b22}button{background:#21262d;border-color:#30363d}.card,details,iframe,.rail-row{border-color:#30363d}}
+@media(prefers-color-scheme:dark){body{background:var(--background-color-default,#0d1117);color:var(--text-color-default,#e6edf3)}pre,.reason,blockquote,.callout{background:var(--background-color-muted,var(--background-color-subtle,var(--background-color-default,#161b22)))}button{background:var(--background-color-subtle,var(--background-color-default,#21262d));border-color:var(--border-color-default,#30363d)}.card,details,iframe,.rail-row{border-color:var(--border-color-default,#30363d)}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 @media(forced-colors:active){.rail-row.selected{outline:2px solid Highlight}.rail-select:focus-visible,.remove-btn:focus-visible,.retry-btn:focus-visible,button:focus-visible{outline:2px solid Highlight}}
 </style></head><body><main id="app"></main>

@@ -84,3 +84,21 @@ collection only; it never changes pass/fail semantics.
 Any future retry requires a linked issue, named owner, expiry, and exact
 signature allowlist. It may rerun an exact failed test once for diagnostics,
 but the first failure remains authoritative and the job stays red.
+
+## Theme verification
+
+The canvas uses the host's `--text-color-default` and
+`--background-color-subtle` tokens for button labels and surfaces.
+If the optional subtle surface token is absent, buttons fall back to the
+host's `--background-color-default` before using a standalone palette.
+`prefers-color-scheme` supplies standalone fallbacks only; it must not override
+supplied host text, background, or border tokens. The host theme can differ
+from the browser preference.
+
+`Canvas_ButtonPaletteHonorsHostThemeBeforeBrowserFallbacks` guards this
+served-stylesheet contract. For rendered verification, check all five Task
+action labels and the rail's Clear all button in light/dark host themes with
+both matching and opposite browser preferences, plus both standalone fallback
+palettes and host palettes without optional surface tokens. Measure at least
+4.5:1 label/background contrast in the real browser
+and inspect a captured PNG; an HTML assertion alone is not visual evidence.
