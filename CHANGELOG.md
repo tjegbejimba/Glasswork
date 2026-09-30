@@ -43,6 +43,24 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## App v1.5.4 — 2026-09-30
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Improve button contrast and theme handling in the Tasks canvas ([#610](https://github.com/tjegbejimba/Glasswork/pull/610)) — @tjegbejimba
+
 ## Mcp v0.11.5 — 2026-09-23
 
 ### Breaking
