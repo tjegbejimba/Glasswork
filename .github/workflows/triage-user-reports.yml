@@ -34,7 +34,7 @@ jobs:
           This was filed from the Glasswork in-app feedback dialog. To triage:
           run the local `triage` skill in your Copilot CLI session pointed at
           this issue. It will read the canonical references (`.github/copilot-instructions.md`,
-          `CONTEXT.md`, `UBIQUITOUS_LANGUAGE.md`, relevant ADRs), trace the
+          `ARCHITECTURE.md`, `GLOSSARY.md`, relevant ADRs), trace the
           affected code path, and append a `<!-- triage:begin -->` block to
           the issue body with classification, root-cause analysis, and a TDD
           fix plan.

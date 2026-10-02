@@ -100,7 +100,7 @@ Task under its parent PBI as a container card.
 - `MyDayPage` card template gains a children section and a PBI-container variant
   (suppressed leaf-complete). **Windows-only XAML → requires local visual verification
   per hard rule 7.**
-- `UBIQUITOUS_LANGUAGE.md` adds **PBI container** and **Today's children**, and the
+- `GLOSSARY.md` adds **PBI container** and **Today's children**, and the
   **In My Day today** entry notes that grouping is presentation-only and a container-only
   PBI is a host, not independently "in My Day."
 - The three promotion gates and `get_my_day` are deliberately untouched.

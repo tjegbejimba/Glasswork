@@ -10,9 +10,9 @@ Read these sources before proposing or implementing changes:
 
 1. **`.github/copilot-instructions.md`** for repository-wide engineering rules,
    build constraints, and investigation workflow.
-2. **`CONTEXT.md`** for the bounded contexts, ownership boundaries, and
+2. **`ARCHITECTURE.md`** for the bounded contexts, ownership boundaries, and
    cross-context communication.
-3. **`UBIQUITOUS_LANGUAGE.md`** for canonical terms and aliases to avoid.
+3. **`GLOSSARY.md`** for canonical terms and aliases to avoid.
 4. Relevant records under **`docs/adr/`** before changing behavior or a settled
    design.
 
@@ -26,8 +26,8 @@ resolved.
 ```text
 /
 |-- .github/copilot-instructions.md
-|-- CONTEXT.md
-|-- UBIQUITOUS_LANGUAGE.md
+|-- ARCHITECTURE.md
+|-- GLOSSARY.md
 |-- docs/
 |   `-- adr/
 |-- src/
@@ -37,12 +37,12 @@ resolved.
 `-- tests/
 ```
 
-There is no `CONTEXT-MAP.md` or context-scoped `src/*/docs/adr/` hierarchy.
+There is no `GLOSSARY-MAP.md` or context-scoped `src/*/docs/adr/` hierarchy.
 System-wide decisions remain in `docs/adr/`.
 
 ## Use canonical vocabulary
 
-Use the exact terms from `UBIQUITOUS_LANGUAGE.md` in issue titles, proposals,
+Use the exact terms from `GLOSSARY.md` in issue titles, proposals,
 hypotheses, test names, code, and UI copy. Do not substitute an alias that the
 glossary rejects. For example:
 

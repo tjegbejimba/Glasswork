@@ -15,7 +15,7 @@ Per ADR 0002 and the PRD, **artifact bodies are read-only in the app**. The vaul
 
 Two non-negotiable properties shape the renderer choice:
 
-1. **Artifact content is untrusted.** Agents wrote it, possibly autonomously, and Glasswork is "agentic by design" (CONTEXT.md). The renderer must enforce a strict link allowlist, must not auto-load remote images, and must degrade gracefully on malformed input — never crash.
+1. **Artifact content is untrusted.** Agents wrote it, possibly autonomously, and Glasswork is "agentic by design" (ARCHITECTURE.md). The renderer must enforce a strict link allowlist, must not auto-load remote images, and must degrade gracefully on malformed input — never crash.
 2. **Glasswork has dark mode** (added in a prior slice). Artifact rendering must theme correctly without per-element hand-tuning.
 
 The PRD's slice-3 acceptance criteria require: headings, paragraphs, lists, code blocks, inline code, links, blockquotes; intercepted `LinkClicked`; remote images blocked or behind opt-in; safety policy under test.

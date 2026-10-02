@@ -1,8 +1,8 @@
-# Glasswork Context
+# Glasswork Architecture
 
 > Domain map for Glasswork — a Windows-native (WinUI 3) todo + work-tracking
 > app backed by an Obsidian vault. This file describes the bounded contexts,
-> what each owns, and how they communicate. Pair with `UBIQUITOUS_LANGUAGE.md`
+> what each owns, and how they communicate. Pair with `GLOSSARY.md`
 > for term definitions.
 
 ## High-level

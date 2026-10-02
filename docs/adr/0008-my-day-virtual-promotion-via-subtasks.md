@@ -79,6 +79,6 @@ backing `SubtaskGroups` / `SubtaskAnchor` types are removed.
   are deleted; tests that assert on them need updating.
 - No vault schema change. No migration. Existing `my_day` metadata on
   subtasks is honored as-is.
-- The "Flagged subtask" term is added to `UBIQUITOUS_LANGUAGE.md` as a
+- The "Flagged subtask" term is added to `GLOSSARY.md` as a
   user-facing label; the code surface remains `IsMyDay` / `my_day` for
   task/subtask symmetry.

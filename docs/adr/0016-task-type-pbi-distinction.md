@@ -88,7 +88,7 @@ new imports from re-polluting My Day at the source.
 ## Consequences
 
 - New frontmatter key `type` (optional; absent ⇒ `task`). Documented in
-  `UBIQUITOUS_LANGUAGE.md` (**Task type**, **PBI**, **Bug**); the "In My Day
+  `GLOSSARY.md` (**Task type**, **PBI**, **Bug**); the "In My Day
   today" entry notes PBIs don't self-promote on their own due.
 - `GlassworkTask` gains an observable `Type` (default `"task"`) and a `Types`
   static class (`Task` / `Pbi` / `Bug`) with `Normalize`. `Clone()` and

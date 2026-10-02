@@ -29,8 +29,8 @@ Concrete code changes:
 1. **Rename the model property `GlassworkTask.Body` → `GlassworkTask.Description`** (mechanical rename across parser, serializer, XAML bindings, tests, view-model derivations like `Blurb`).
 2. **Add a real `GlassworkTask.Notes` property** (string, default empty). Parser extracts content between `## Notes` and the next `##` heading. Serializer emits the `## Notes` heading followed by the property value (preserves the existing always-emit-the-heading convention so app-written and agent-written files look identical).
 3. **Fix the XAML**: the existing `NotesBox` textbox is relabeled to `Header="Description"` and stays bound to `Task.Description`. A second `TextBox` (`NotesEditor`) is added beneath it, labeled `Header="Notes"`, bound to `Task.Notes`.
-4. **Update `UBIQUITOUS_LANGUAGE.md`**: add `Description`, task-level `Notes`, and `Artifact` rows; update the `Blurb` row to source explicitly from `Description`.
-5. **Update `CONTEXT.md`**: document the three-tier model under the Task Model bounded context.
+4. **Update `GLOSSARY.md`**: add `Description`, task-level `Notes`, and `Artifact` rows; update the `Blurb` row to source explicitly from `Description`.
+5. **Update `ARCHITECTURE.md`**: document the three-tier model under the Task Model bounded context.
 
 `Blurb` continues to derive from `Description` — never from Notes, never from Artifacts. Notes is volatile scratch and has no place in a card preview; Artifacts are deliverables, not summaries.
 

@@ -25,7 +25,7 @@ public sealed record SessionTaskSetLoadResult(bool Ok, string? ErrorCode, string
 /// Persists the Session Task Set (ordered Task IDs and last-known titles) for
 /// one Copilot session, keyed by the stable Copilot session ID, through the
 /// existing cross-process-safe <see cref="IUiStateService"/>. See ADR 0001,
-/// ADR 0026, and UBIQUITOUS_LANGUAGE.md "Session Task Set".
+/// ADR 0026, and GLOSSARY.md "Session Task Set".
 ///
 /// Persists only Task ID and last-known title per member — never Description,
 /// Notes, operational metadata, Artifacts, or relationship content. Selection

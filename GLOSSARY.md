@@ -1,4 +1,4 @@
-# Ubiquitous Language
+# Glossary
 
 > Canonical terms used across Glasswork code, UI, docs, and conversations
 > with agents. Use these terms exactly. Aliases listed are explicitly

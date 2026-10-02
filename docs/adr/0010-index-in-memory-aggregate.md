@@ -16,7 +16,7 @@ one managed Task scan through `IndexService.CreateHydratedForStartupAsync`.
 
 Before this slice, `IndexService.Refresh()` was a pass-through: it called
 `VaultService.LoadAll()` and wrote two agent-facing markdown surfaces
-(`_index.md`, `_today.md`). The deep behaviour CONTEXT.md §3 already claimed —
+(`_index.md`, `_today.md`). The deep behaviour ARCHITECTURE.md §3 already claimed —
 "here is the current set of tasks, plus deltas when they change" — was nowhere.
 
 The cost showed up in two ways:

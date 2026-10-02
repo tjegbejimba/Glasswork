@@ -78,7 +78,7 @@ Concrete impl `JsonFileUiStateService` lives in `Glasswork.Core.Services` (uses 
 ### Bad / accepted trade-offs
 - Collapse state does **not** sync between machines. If you collapse a card on your laptop, it stays expanded on your desktop. Acceptable — different displays may genuinely want different defaults, and the user can re-collapse in 2 clicks.
 - Reinstalling Glasswork loses UI state. Acceptable — the collapse state is recoverable from glance.
-- Risk of misuse: someone could store *task data* in UI state, hiding it from the vault. Mitigation: name the service `IUiStateService` (not `IPreferencesService` or `IAppSettingsService`), document the boundary in `CONTEXT.md` ("if it describes the task, vault wins"), and code-review against the rule.
+- Risk of misuse: someone could store *task data* in UI state, hiding it from the vault. Mitigation: name the service `IUiStateService` (not `IPreferencesService` or `IAppSettingsService`), document the boundary in `ARCHITECTURE.md` ("if it describes the task, vault wins"), and code-review against the rule.
 
 ### Reversible?
 Partially. The storage location and file format are easy to migrate (read old, write new). The decision to keep UI state out of the vault is the durable one — switching to "frontmatter for everything" later would re-pollute the vault. We expect to keep the boundary indefinitely.

@@ -81,7 +81,7 @@ flowchart LR
     Mcp --> Vault
 ```
 
-The domain model is documented in [`CONTEXT.md`](CONTEXT.md), canonical terms live in [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and durable design decisions are tracked in [`docs/adr/`](docs/adr/).
+The domain model is documented in [`ARCHITECTURE.md`](ARCHITECTURE.md), canonical terms live in [`GLOSSARY.md`](GLOSSARY.md), and durable design decisions are tracked in [`docs/adr/`](docs/adr/).
 
 ## Feature status
 
@@ -146,7 +146,7 @@ Azure DevOps is good at team-level work tracking, but it is not a personal execu
 
 ## Contributing and feedback
 
-This is a personal project built for private daily use, but issues, questions, and design feedback are welcome. Start with the architecture docs before proposing changes: [`CONTEXT.md`](CONTEXT.md), [`UBIQUITOUS_LANGUAGE.md`](UBIQUITOUS_LANGUAGE.md), and [`docs/adr/`](docs/adr/).
+This is a personal project built for private daily use, but issues, questions, and design feedback are welcome. Start with the architecture docs before proposing changes: [`ARCHITECTURE.md`](ARCHITECTURE.md), [`GLOSSARY.md`](GLOSSARY.md), and [`docs/adr/`](docs/adr/).
 
 ## Security and privacy
 

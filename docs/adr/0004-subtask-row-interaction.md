@@ -70,6 +70,6 @@ One row template, rely on visual de-emphasis (strikethrough + opacity) to mark c
 
 ## Related
 
-- `UBIQUITOUS_LANGUAGE.md` — `Subtask`, `Active subtask`, `Completed subtask`
+- `GLOSSARY.md` — `Subtask`, `Active subtask`, `Completed subtask`
 - `src/Glasswork.App/Pages/TaskDetailPage.xaml` — row templates (active list, completed list)
 - `src/Glasswork.App/Pages/SubtaskDetailDialog.xaml` — the detail surface this ADR makes accessible

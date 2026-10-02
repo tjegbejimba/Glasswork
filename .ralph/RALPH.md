@@ -22,7 +22,7 @@ You are running headless inside an automation loop with **no human at the keyboa
 2. Run `git status --porcelain`. If non-empty, abort: workers require a clean tree and must not hide, discard, or overwrite local changes.
 3. Run `git fetch origin`. Do not check out the local `main` branch; worker worktrees base new work directly on `origin/main`.
 4. Read `.ralph/config.json`. `allowAgentLaunch` must be `true`; never bypass this gate.
-5. Read PRD #505, the assigned child issue, `CONTEXT.md`, `UBIQUITOUS_LANGUAGE.md`, `docs/agents/issue-tracker.md`, every relevant ADR, and established implementation/test patterns before planning. Use canonical domain terms.
+5. Read PRD #505, the assigned child issue, `ARCHITECTURE.md`, `GLOSSARY.md`, `docs/agents/issue-tracker.md`, every relevant ADR, and established implementation/test patterns before planning. Use canonical domain terms.
 6. Confirm every `## Blocked by` dependency is closed through a linked PR whose `mergedAt` is non-null. A merely closed dependency is not satisfied.
 7. Confirm `main` has repository protections or a ruleset. Missing policy is a hard stop; never weaken or bypass policy.
 8. Check whether an open PR already references this issue:
@@ -39,7 +39,7 @@ You are running headless inside an automation loop with **no human at the keyboa
 
 Repository notes for this repo:
 - Source lives under `src/Glasswork.Core/` (domain logic) and `src/Glasswork.App/` (WinUI app).
-- Tests live under `tests/Glasswork.Tests/` and depend on `CONTEXT.md` / `UBIQUITOUS_LANGUAGE.md` for task prose and terminology.
+- Tests live under `tests/Glasswork.Tests/` and depend on `ARCHITECTURE.md` / `GLOSSARY.md` for task prose and terminology.
 - Use the repo validation commands from `.ralph/config.json`: restore/build the core project, then restore/test the MSTest suite with Windows targeting enabled on non-Windows runners.
 
 You MUST use the `tdd` skill (red-green-refactor). Invoke it explicitly via the skill tool before writing any code.

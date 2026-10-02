@@ -84,7 +84,7 @@ policy and must not mutate Task dates during startup.
 - Startup performs no `my_day` migration. Past pins expire naturally and no
   process-local migration flag can affect Task dates.
 - Future-dated `my_day` becomes a *scheduled* pin (promotes on its day). This is a
-  new, intentional capability; document it in `UBIQUITOUS_LANGUAGE.md` alongside
+  new, intentional capability; document it in `GLOSSARY.md` alongside
   the refined definition of "pin."
 - "Remove from My Day" on a direct pin is now fully durable (clears the date) and
   cannot recur next day. Virtual promotions (due/subtask) still rely on

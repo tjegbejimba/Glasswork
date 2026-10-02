@@ -14,9 +14,9 @@ this content, it does not own it.
 
 ## Canonical references — read these before proposing changes
 
-- **[`CONTEXT.md`](../CONTEXT.md)** — bounded contexts, three-tier task prose
+- **[`ARCHITECTURE.md`](../ARCHITECTURE.md)** — bounded contexts, three-tier task prose
   model, cross-cutting rules (service locator, debouncer, self-write tracking).
-- **[`UBIQUITOUS_LANGUAGE.md`](../UBIQUITOUS_LANGUAGE.md)** — glossary. When
+- **[`GLOSSARY.md`](../GLOSSARY.md)** — glossary. When
   discussing a domain concept, use the term exactly as defined here. If you
   need a term that isn't defined, flag it and propose a definition.
 - **[`docs/adr/`](../docs/adr/)** — decisions already made. Always read the
@@ -229,7 +229,7 @@ When assigned a user-reported issue (label `user-report`):
    `gh issue create`. The first line marks the category (`**Bug**`,
    `**Feature Request**`, or `**General Feedback**`).
 2. **Locate the subsystem.** Map the user's description to a bounded context
-   using `CONTEXT.md`. Then find the concrete file(s) — e.g. feedback dialog
+   using `ARCHITECTURE.md`. Then find the concrete file(s) — e.g. feedback dialog
    → `src/Glasswork.App/Pages/FeedbackDialog.xaml.cs` +
    `src/Glasswork.App/Services/GhCliIssueFiler.cs`.
 3. **Check related ADRs.** If the issue touches a decision already made, note
@@ -247,7 +247,7 @@ When assigned a user-reported issue (label `user-report`):
 
 ## Style — what to avoid
 
-- **Don't rename existing terms** without updating `UBIQUITOUS_LANGUAGE.md`
+- **Don't rename existing terms** without updating `GLOSSARY.md`
   in the same change.
 - **Don't add comments** on obvious code. Comment only on non-obvious choices,
   trade-offs, or policy boundaries.

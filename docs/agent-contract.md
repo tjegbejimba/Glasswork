@@ -104,7 +104,7 @@ Glasswork's watcher refreshes the section automatically.
 
 ## See also
 
-- `UBIQUITOUS_LANGUAGE.md` — definitions for **Artifact** and
+- `GLOSSARY.md` — definitions for **Artifact** and
   **Artifacts section**.
 - `docs/adr/0003-artifact-markdown-rendering.md` — how rendering works
   and what the link policy allows.

@@ -6,7 +6,7 @@ namespace Glasswork.CanvasHost;
 /// One member of a <see cref="SessionTaskSetService"/>. Members are either a
 /// live compact summary of the loadable Task, or an unavailable placeholder
 /// that retains the last-known title and the exact error that made it
-/// unavailable. See ADR 0026 and UBIQUITOUS_LANGUAGE.md "Session Task Set".
+/// unavailable. See ADR 0026 and GLOSSARY.md "Session Task Set".
 /// </summary>
 internal sealed record SessionTaskMember(
     string TaskId,
