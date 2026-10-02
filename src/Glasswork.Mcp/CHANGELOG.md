@@ -5,6 +5,27 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.11.6] — 2026-10-02
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Improve contrast for canvas buttons ([#610](https://github.com/tjegbejimba/Glasswork/pull/610)) — @tjegbejimba
+- Adopt the GLOSSARY.md convention ([commit de0246a](https://github.com/tjegbejimba/Glasswork/commit/de0246a2e8a4310dbefcfdd189dda7dfe8010a1b)) — TJ Egbejimba
+
+---
+
 ## [0.11.5] — 2026-09-23
 
 ### Breaking

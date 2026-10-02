@@ -43,6 +43,25 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## Mcp v0.11.6 — 2026-10-02
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Improve contrast for canvas buttons ([#610](https://github.com/tjegbejimba/Glasswork/pull/610)) — @tjegbejimba
+- Adopt the GLOSSARY.md convention ([commit de0246a](https://github.com/tjegbejimba/Glasswork/commit/de0246a2e8a4310dbefcfdd189dda7dfe8010a1b)) — TJ Egbejimba
+
 ## App v1.5.4 — 2026-09-30
 
 ### Breaking
