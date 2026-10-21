@@ -430,6 +430,27 @@ public partial class MyDayViewModel : ObservableObject
         FinishMutation(failures);
     }
 
+    /// <summary>
+    /// Durably clears the Task's own due date. Unlike <see cref="RemoveFromMyDay"/> — which
+    /// only dismisses a due-surfaced row for today — this removes the signal that virtually
+    /// promotes the Task (ADR 0008), so a Task parked back on the ADO backlog stops
+    /// re-surfacing as Overdue. A pin is a separate fact and is left alone, and nested
+    /// children keep their own due dates.
+    /// </summary>
+    [RelayCommand]
+    public void ClearDueDate(GlassworkTask? task)
+    {
+        if (task is null) return;
+
+        var failures = new List<string>();
+        ApplyFields(
+            task,
+            "Clear due date",
+            failures,
+            new Dictionary<string, object?> { ["due_date"] = null });
+        FinishMutation(failures);
+    }
+
     [RelayCommand]
     public void SetStatus(string newStatus)
     {

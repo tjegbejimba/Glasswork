@@ -172,7 +172,15 @@
                            FontWeight="SemiBold" />
 
                 <!-- Dates -->
-                <CalendarDatePicker x:Name="DueDatePicker" Header="Due date" DateChanged="DueDate_Changed" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <CalendarDatePicker x:Name="DueDatePicker" Header="Due date" DateChanged="DueDate_Changed" />
+                    <Button x:Name="ClearDueDateButton" Content="Clear"
+                            VerticalAlignment="Bottom" IsEnabled="False"
+                            AutomationProperties.AutomationId="ClearDueDateButton"
+                            AutomationProperties.Name="Clear due date"
+                            ToolTipService.ToolTip="Clear the due date"
+                            Click="ClearDueDate_Click" />
+                </StackPanel>
 
                 <!-- ADO link -->
                 <StackPanel x:Name="AdoPanel" Orientation="Horizontal" Spacing="8">
