@@ -412,7 +412,10 @@ sessions already using an older build. See ADR 0024.
   `task.MyDay` being set. Sources: task due-date, flagged subtask, or
   subtask due-date. Computed by `MyDayViewModel`; the vault is never
   written to reflect the promotion. Dismiss-for-today is the only
-  per-day override and lives in `IUiStateService`. See ADR 0008.
+  per-day override and lives in `IUiStateService`. Ending a due-date
+  promotion durably (e.g. a task parked back on the ADO backlog) is an
+  explicit edit: clear the task's `due` via My Day's **Clear due date**
+  (`MyDayViewModel.ClearDueDate`) or Task Detail's **Clear** button. See ADR 0008.
 - **Task Detail Projection parity** — `TaskDetailProjection`
   (`Glasswork.Core.Models`) is the single presentation-neutral read model
   shared by native Task Detail (Presentation) and the per-Copilot-session

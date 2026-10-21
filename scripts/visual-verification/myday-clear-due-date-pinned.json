@@ -1,0 +1,79 @@
+{
+  "name": "My Day clear due date keeps pinned task",
+  "tasks": [
+    {
+      "id": "vv-pinned-stale-due",
+      "title": "Pinned task with stale due date",
+      "description": "Directly pinned to My Day and also carrying an old due date. Clearing the due date drops the Overdue chip, but the pin keeps the task in My Day.",
+      "status": "todo",
+      "priority": "medium",
+      "myDay": "today",
+      "due": "yesterday"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Pinned task with stale due date",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Overdue",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "MyDayMoreActions",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "MyDayClearDueDate",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "MyDayClearDueDate",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 800
+    },
+    {
+      "type": "wait-for",
+      "name": "Pinned task with stale due date",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-not-present",
+      "name": "Overdue"
+    },
+    {
+      "type": "invoke",
+      "automationId": "MyDayMoreActions",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Copy 'Start work' command",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-not-present",
+      "automationId": "MyDayClearDueDate"
+    }
+  ],
+  "captures": [
+    {
+      "name": "myday-clear-due-date-pinned-menu",
+      "waitMilliseconds": 500
+    }
+  ]
+}

@@ -361,6 +361,14 @@ public sealed partial class MyDayPage : Page
         }
     }
 
+    private void ClearDueDate_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: GlassworkTask task })
+        {
+            ViewModel.ClearDueDateCommand.Execute(task);
+        }
+    }
+
     // Quick-copy agent-command lines from a My Day card without round-tripping through
     // TaskDetail. The strings come from TaskInvocationFormatter (the canonical source);
     // this is purely a UX shortcut.
@@ -403,18 +411,29 @@ public sealed partial class MyDayPage : Page
         ViewModel.CarryAllCommand.Execute(null);
     }
 
-    private async void TaskRow_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs e)
+    private void TaskRow_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs e)
     {
         if (sender is not FrameworkElement fe || fe.DataContext is not GlassworkTask task) return;
 
+        var menu = new MenuFlyout();
+
         var absolutePath = Path.Combine(App.Vault.VaultPath, $"{task.Id}.md");
         var vaultRelative = VaultPageHelper.ToVaultRelativePath(absolutePath);
-        if (vaultRelative is null) return;
+        if (vaultRelative is not null)
+        {
+            var openItem = new MenuFlyoutItem { Text = "Open in Obsidian" };
+            openItem.Click += async (_, __) => await App.ObsidianLauncher.Open(vaultRelative);
+            menu.Items.Add(openItem);
+        }
 
-        var menu = new MenuFlyout();
-        var openItem = new MenuFlyoutItem { Text = "Open in Obsidian" };
-        openItem.Click += async (_, __) => await App.ObsidianLauncher.Open(vaultRelative);
-        menu.Items.Add(openItem);
+        if (task.HasDue)
+        {
+            var clearDueItem = new MenuFlyoutItem { Text = "Clear due date" };
+            clearDueItem.Click += (_, __) => ViewModel.ClearDueDateCommand.Execute(task);
+            menu.Items.Add(clearDueItem);
+        }
+
+        if (menu.Items.Count == 0) return;
 
         menu.ShowAt(fe);
         e.Handled = true;

@@ -142,6 +142,7 @@ public sealed partial class TaskDetailPage : Page
         DueDatePicker.Date = DetailProjection.Due.HasValue
             ? new DateTimeOffset(DetailProjection.Due.Value)
             : (DateTimeOffset?)null;
+        UpdateClearDueDateButton();
 
         BindSubtasks(DetailProjection.ActiveSubtasks, DetailProjection.CompletedSubtasks);
         ArtifactsSection.Visibility = Visibility.Collapsed;
@@ -1036,7 +1037,22 @@ public sealed partial class TaskDetailPage : Page
     {
         if (_isLoading) return;
         Task.Due = args.NewDate?.DateTime;
+        UpdateClearDueDateButton();
         await SaveAsync();
+    }
+
+    private void ClearDueDate_Click(object sender, RoutedEventArgs e)
+    {
+        DueDatePicker.Date = null;
+        // Clear disables itself once the date is gone; hand focus to the picker rather than
+        // letting it fall through to an unrelated control.
+        DueDatePicker.Focus(FocusState.Programmatic);
+    }
+
+    private void UpdateClearDueDateButton()
+    {
+        if (ClearDueDateButton is null) return;
+        ClearDueDateButton.IsEnabled = DueDatePicker.IsEnabled && DueDatePicker.Date.HasValue;
     }
 
     private void Subtask_Click(object sender, RoutedEventArgs e)

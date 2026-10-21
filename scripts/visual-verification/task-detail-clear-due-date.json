@@ -1,0 +1,110 @@
+{
+  "name": "Task Detail clear due date",
+  "theme": "dark",
+  "tasks": [
+    {
+      "id": "vv-detail-stale-due",
+      "title": "Parked detail item",
+      "description": "Moved back to the ADO backlog. Clearing the due date from Task Detail must persist and stop the Overdue promotion into My Day.",
+      "status": "todo",
+      "priority": "medium",
+      "due": "yesterday"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Parked detail item",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Overdue",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "select",
+      "automationId": "NavBacklog",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "BacklogHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Parked detail item",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "name": "Parked detail item",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "TaskTitleBox",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "ClearDueDateButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 600
+    },
+    {
+      "type": "assert-enabled",
+      "automationId": "ClearDueDateButton"
+    },
+    {
+      "type": "capture",
+      "name": "task-detail-clear-due-date-available"
+    },
+    {
+      "type": "invoke",
+      "automationId": "ClearDueDateButton",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 800
+    },
+    {
+      "type": "assert-disabled",
+      "automationId": "ClearDueDateButton"
+    },
+    {
+      "type": "capture",
+      "name": "task-detail-clear-due-date-cleared"
+    },
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Today is open.",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "assert-not-present",
+      "name": "Parked detail item"
+    }
+  ],
+  "captures": [
+    {
+      "name": "task-detail-clear-due-date-myday",
+      "waitMilliseconds": 500
+    }
+  ]
+}

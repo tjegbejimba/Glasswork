@@ -160,6 +160,7 @@
                             <!-- More menu: copy agent-command lines without leaving My Day -->
                             <Button Grid.Column="5" Background="Transparent" BorderThickness="0"
                                     Padding="6,2" VerticalAlignment="Center"
+                                    AutomationProperties.AutomationId="MyDayMoreActions"
                                     ToolTipService.ToolTip="More actions">
                                 <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="13" />
                                 <Button.Flyout>
@@ -177,6 +178,14 @@
                                         <MenuFlyoutItem Text="Copy 'Wrap up' command" Click="CopyWrapUp_Click">
                                             <MenuFlyoutItem.Icon>
                                                 <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE73E;" />
+                                            </MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutSeparator Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}" />
+                                        <MenuFlyoutItem Text="Clear due date" Click="ClearDueDate_Click"
+                                                        AutomationProperties.AutomationId="MyDayClearDueDate"
+                                                        Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
+                                            <MenuFlyoutItem.Icon>
+                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" />
                                             </MenuFlyoutItem.Icon>
                                         </MenuFlyoutItem>
                                     </MenuFlyout>

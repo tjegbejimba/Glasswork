@@ -1,0 +1,72 @@
+{
+  "name": "My Day clear due date",
+  "tasks": [
+    {
+      "id": "vv-stale-due",
+      "title": "Parked backlog item",
+      "description": "Moved back to the ADO backlog. Its leftover sprint-end due date keeps promoting it into My Day as Overdue until the due date is cleared.",
+      "status": "todo",
+      "priority": "medium",
+      "due": "yesterday"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Parked backlog item",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Overdue",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "invoke",
+      "automationId": "MyDayMoreActions",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "MyDayClearDueDate",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "capture",
+      "name": "myday-clear-due-date-menu"
+    },
+    {
+      "type": "invoke",
+      "automationId": "MyDayClearDueDate",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "delay",
+      "timeoutMilliseconds": 1000
+    },
+    {
+      "type": "capture",
+      "name": "myday-clear-due-date-after-click"
+    },
+    {
+      "type": "assert-not-present",
+      "name": "Parked backlog item"
+    },
+    {
+      "type": "wait-for",
+      "name": "Today is open.",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "myday-clear-due-date-cleared",
+      "waitMilliseconds": 500
+    }
+  ]
+}
