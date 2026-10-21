@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Glasswork.Core.AppUpdate;
 using Glasswork.Core.Models;
@@ -17,13 +18,19 @@ public sealed partial class MyDayPage : Page
 {
     public MyDayViewModel ViewModel { get; }
     public string TodayDate => DateTime.Today.ToString("dddd, MMMM d");
+    public string TodayMonthLabel => DateTime.Today.ToString("MMM").ToUpperInvariant();
+    public string TodayDayNumber => DateTime.Today.Day.ToString(System.Globalization.CultureInfo.CurrentCulture);
 
-    // Pending scroll-restore snapshot for TodayList. Captured in ViewModel.Refreshing
+    // Above this many Tasks the day meter switches from one segment per Task to a bar.
+    private const int MaxDayProgressSegments = 16;
+    private const double MaxContentWidth = 920;
+    private const double PageSidePadding = 32;
+
+    // Pending scroll-restore snapshot for the page's single scroll surface (PageScroll). Captured in ViewModel.Refreshing
     // before MyDayViewModel.Refresh reconciles the bound collection, applied with
     // bounded retry after ViewModel.Refreshed once layout has caught up. Null when no restore is queued.
-    // Mirrors the Backlog fix (issue #182). TodayList is the primary (and tallest,
-    // MinHeight 320) scroll surface and the user-reported pain; the short secondary
-    // lists (recently-completed / suggestions, MaxHeight 140-400) are left as-is.
+    // Mirrors the Backlog fix (issue #182). Today, Recently completed, and Suggestions
+    // all flow inside PageScroll; their ListViews have inner scrolling disabled.
     private ScrollSnapshot? _pendingRestore;
     private bool _initialRenderMeasured;
     private IPerformanceTraceScope? _initialRenderTrace;
@@ -47,7 +54,15 @@ public sealed partial class MyDayPage : Page
             App.Performance);
         InitializeComponent();
 
-        // Snapshot TodayList's scroll position before VM.Refresh() destroys it, then
+        // Cap the reading column on wide windows by growing the side padding.
+        PageScroll.SizeChanged += (_, e) =>
+        {
+            var side = Math.Max(PageSidePadding, (e.NewSize.Width - MaxContentWidth) / 2 + PageSidePadding);
+            var p = PageContent.Padding;
+            PageContent.Padding = new Thickness(side, p.Top, side, p.Bottom);
+        };
+
+        // Snapshot the page's scroll position before VM.Refresh() destroys it, then
         // restore it after Refreshed once layout has caught up. Subscribed AFTER
         // InitializeComponent so the handlers never dereference XAML controls during
         // the parse pass (copilot-instructions hard rule 6).
@@ -286,10 +301,25 @@ public sealed partial class MyDayPage : Page
         // Suggestions: slim by default, rich when My Day is empty.
         SuggestionsList.Visibility = hasToday ? Visibility.Visible : Visibility.Collapsed;
         RichSuggestionsList.Visibility = hasToday ? Visibility.Collapsed : Visibility.Visible;
+        SuggestionsTray.Visibility = ViewModel.Suggestions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         // Recently completed: hidden when none.
         var hasCompleted = ViewModel.RecentlyCompletedTasks.Count > 0;
         RecentlyCompletedHeader.Visibility = hasCompleted ? Visibility.Visible : Visibility.Collapsed;
         RecentlyCompletedList.Visibility = hasCompleted ? Visibility.Visible : Visibility.Collapsed;
+        UpdateDayProgress();
+    }
+
+    private void UpdateDayProgress()
+    {
+        var total = ViewModel.DayProgressTotal;
+        var done = ViewModel.DayProgressDone;
+        var useSegments = total <= MaxDayProgressSegments;
+        DayProgressSegments.ItemsSource = useSegments
+            ? Enumerable.Range(0, total).Select(i => i < done).ToList()
+            : null;
+        DayProgressSegments.Visibility = useSegments ? Visibility.Visible : Visibility.Collapsed;
+        DayProgressBar.Visibility = useSegments ? Visibility.Collapsed : Visibility.Visible;
+        DayProgressBar.Value = total > 0 ? (double)done / total : 0;
     }
 
     private void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -461,10 +491,7 @@ public sealed partial class MyDayPage : Page
 
     private ScrollSnapshot CaptureScrollState()
     {
-        double listOffset = 0;
-        var sv = FindDescendantScrollViewer(TodayList);
-        if (sv is not null) listOffset = sv.VerticalOffset;
-        return new ScrollSnapshot(listOffset);
+        return new ScrollSnapshot(PageScroll.VerticalOffset);
     }
 
     private void TryRestoreWithRetry(ScrollSnapshot snapshot, int attempts)
@@ -494,8 +521,7 @@ public sealed partial class MyDayPage : Page
 
     private bool ApplySnapshot(ScrollSnapshot s)
     {
-        var sv = FindDescendantScrollViewer(TodayList);
-        if (sv is null) return false;
+        var sv = PageScroll;
         // If we want a non-zero offset but the extent hasn't been measured yet, the
         // request would silently land at 0. Defer and retry.
         if (s.ListOffset > 0 && sv.ScrollableHeight <= 0) return false;
@@ -507,24 +533,6 @@ public sealed partial class MyDayPage : Page
         return true;
     }
 
-    /// <summary>
-    /// VisualTreeHelper DFS to find the first <see cref="ScrollViewer"/> descendant of
-    /// <paramref name="root"/>. Returns null if none exists or <paramref name="root"/>
-    /// is null. Used to dig the implicit ScrollViewer out of TodayList's template.
-    /// </summary>
-    private static ScrollViewer? FindDescendantScrollViewer(DependencyObject? root)
-    {
-        if (root is null) return null;
-        if (root is ScrollViewer sv) return sv;
-        var count = VisualTreeHelper.GetChildrenCount(root);
-        for (var i = 0; i < count; i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            var found = FindDescendantScrollViewer(child);
-            if (found is not null) return found;
-        }
-        return null;
-    }
 }
 
 /// <summary>

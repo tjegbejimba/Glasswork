@@ -21,6 +21,7 @@ public partial class GlassworkTask : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsDone))]
     [NotifyPropertyChangedFor(nameof(IsCancelled))]
     [NotifyPropertyChangedFor(nameof(IsTerminal))]
+    [NotifyPropertyChangedFor(nameof(IsInProgress))]
     public partial string Status { get; set; } = "todo";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasPriorityChip))]
@@ -182,6 +183,7 @@ public partial class GlassworkTask : ObservableObject
     public bool IsCancelled => Status == Statuses.Cancelled;
     public bool IsTerminal => IsDone || IsCancelled;
     public bool IsBlocked => Status == Statuses.Blocked;
+    public bool IsInProgress => Status == Statuses.InProgress;
     public bool NeedsBlockerDetails => IsBlocked && BlockedMetadataState == BlockedMetadataState.NeedsDetails;
 
     // ===== Adaptive task row helpers (visual polish slice 3) =====

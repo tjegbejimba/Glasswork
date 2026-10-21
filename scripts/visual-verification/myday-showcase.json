@@ -5,7 +5,7 @@
       "id": "vv-active",
       "title": "Ship the release automation evaluator",
       "description": "Replace the manual release checklist with the evaluator so app releases can be cut from a single PR.",
-      "status": "in_progress",
+      "status": "in-progress",
       "priority": "high",
       "due": "today",
       "myDay": "today",

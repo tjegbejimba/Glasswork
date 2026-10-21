@@ -1,0 +1,38 @@
+{
+  "name": "My Day empty state",
+  "tasks": [
+    {
+      "id": "vv-carry",
+      "title": "Write the onboarding empty-state copy",
+      "description": "Short, warm copy for the first-run empty states.",
+      "status": "todo",
+      "priority": "high",
+      "due": "tomorrow",
+      "myDay": "yesterday"
+    },
+    {
+      "id": "vv-carry-2",
+      "title": "Follow up on the signing certificate rotation",
+      "status": "todo",
+      "priority": "medium",
+      "myDay": "yesterday"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Today is open.",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "myday-empty"
+    }
+  ]
+}

@@ -33,6 +33,26 @@ public partial class MyDayViewModel : ObservableObject
 
     [ObservableProperty] public partial bool ShowSuggestions { get; set; }
 
+    /// <summary>Tasks completed today that were on My Day (mirrors <see cref="RecentlyCompletedTasks"/>).</summary>
+    [ObservableProperty] public partial int DayProgressDone { get; private set; }
+
+    /// <summary>
+    /// Everything on today's plan: open actionable rows (a PBI container counts its open
+    /// nested children, not itself) plus <see cref="DayProgressDone"/>.
+    /// </summary>
+    [ObservableProperty] public partial int DayProgressTotal { get; private set; }
+
+    public string DayProgressLabel => $"{DayProgressDone} of {DayProgressTotal} done";
+    public bool HasDayProgress => DayProgressTotal > 0;
+
+    partial void OnDayProgressDoneChanged(int value) => OnPropertyChanged(nameof(DayProgressLabel));
+
+    partial void OnDayProgressTotalChanged(int value)
+    {
+        OnPropertyChanged(nameof(DayProgressLabel));
+        OnPropertyChanged(nameof(HasDayProgress));
+    }
+
     /// <summary>
     /// Non-null when the last My Day mutation could not be applied — a Resource Revision
     /// conflict, a missing Task, a malformed Task file, or a read-only (cancelled/blocked)
@@ -194,6 +214,16 @@ public partial class MyDayViewModel : ObservableObject
             .Take(10)
             .ToList();
         ReconcileTaskCollection(Suggestions, suggestions);
+
+        var openToday = 0;
+        foreach (var row in TodayTasks)
+        {
+            openToday += row.IsMyDayContainer && row.TodaysChildren is not null
+                ? row.TodaysChildren.Count(child => !child.IsTerminal)
+                : row.IsTerminal ? 0 : 1;
+        }
+        DayProgressDone = RecentlyCompletedTasks.Count;
+        DayProgressTotal = openToday + RecentlyCompletedTasks.Count;
 
         trace.SetCount("today_count", TodayTasks.Count);
         trace.SetCount("recently_completed_count", RecentlyCompletedTasks.Count);
