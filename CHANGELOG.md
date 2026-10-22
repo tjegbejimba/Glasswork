@@ -43,6 +43,25 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## App v1.5.5 — 2026-10-22
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Add a way to clear due dates from overdue tasks ([#616](https://github.com/tjegbejimba/Glasswork/pull/616)) — @tjegbejimba
+- Adopt the GLOSSARY.md convention ([commit de0246a](https://github.com/tjegbejimba/Glasswork/commit/de0246a2e8a4310dbefcfdd189dda7dfe8010a1b)) — TJ Egbejimba
+
 ## Mcp v0.11.6 — 2026-10-02
 
 ### Breaking
