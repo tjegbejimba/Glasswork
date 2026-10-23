@@ -43,6 +43,24 @@ Each component is versioned independently. Entries below note the component when
   verifies those assets and the release tag commit before replacing the global
   tool.
 
+## Mcp v0.11.7 — 2026-10-23
+
+### Breaking
+
+- None.
+
+### Features
+
+- None.
+
+### Fixes
+
+- None.
+
+### Maintenance
+
+- Add a way to clear due dates from My Day and task details. ([#616](https://github.com/tjegbejimba/Glasswork/pull/616)) — @tjegbejimba
+
 ## App v1.5.5 — 2026-10-22
 
 ### Breaking
