@@ -27,38 +27,199 @@
             <Setter Property="AutomationProperties.AutomationId" Value="MyDayErrorClose" />
             <Setter Property="AutomationProperties.Name" Value="Dismiss My Day error" />
         </Style>
+
+        <!-- Task titles open the Task but read as primary text, not web links: a chromeless
+             Button whose text warms to the accent color on hover and keeps system focus visuals. -->
+        <Style x:Key="MyDayTitleButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="UseSystemFocusVisuals" Value="True" />
+            <Setter Property="FocusVisualMargin" Value="-4,-2" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <ContentPresenter x:Name="ContentPresenter"
+                                          Background="{TemplateBinding Background}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          ContentTransitions="{TemplateBinding ContentTransitions}"
+                                          Padding="{TemplateBinding Padding}"
+                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          AutomationProperties.AccessibilityView="Raw">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="PointerOver">
+                                        <VisualState.Setters>
+                                            <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <VisualState.Setters>
+                                            <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource AccentTextFillColorTertiaryBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Disabled">
+                                        <VisualState.Setters>
+                                            <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </ContentPresenter>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Row actions (remove, more) recede until pointed at: the stock Button template
+             restores full-strength foreground and a hover fill on PointerOver. -->
+        <Style x:Key="MyDayRowActionButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- "Add to My Day" is drawn as an open circle with a plus, so it sits in the same
+             column — and reads as the same family — as the completion circles above it. -->
+        <Style x:Key="MyDayAddCircleButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{ThemeResource TextFillColorTertiaryBrush}" />
+            <Setter Property="BorderThickness" Value="1.5" />
+            <Setter Property="Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+            <Setter Property="CornerRadius" Value="11" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Width" Value="22" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="MyDaySectionHeaderStyle" TargetType="TextBlock" BasedOn="{StaticResource SubtitleTextBlockStyle}">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="MyDayCardItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+
+        <Style x:Key="MyDayFlatItemStyle" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+        </Style>
     </Page.Resources>
 
-    <Grid Padding="32" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto">
+    <!-- One scroll surface for the whole page: Today, Recently completed, and Suggestions
+         flow top-to-bottom instead of the secondary sections being pinned to the window floor. -->
+    <ScrollViewer x:Name="PageScroll"
+                  HorizontalScrollMode="Disabled"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+        <StackPanel x:Name="PageContent" Padding="32,28,32,48">
 
-        <!-- Header (with update-available announce InfoBar above it) -->
-        <StackPanel Grid.Row="0">
             <!-- Update-available announce: dismissible Informational bar routing to Settings (issue #241) -->
             <InfoBar x:Name="UpdateHint"
                      IsOpen="False"
                      IsClosable="True"
                      Severity="Informational"
                      Title="Update available"
-                     Margin="0,0,0,12"
+                     Margin="0,0,0,16"
                      CloseButtonClick="UpdateHint_CloseButtonClick">
                 <InfoBar.ActionButton>
                     <Button Content="Go to Settings" Click="UpdateHintGoToSettings_Click" />
                 </InfoBar.ActionButton>
             </InfoBar>
 
-            <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Grid.Column="0">
-                    <TextBlock Style="{StaticResource TitleTextBlockStyle}" Text="My Day" />
-                    <TextBlock Text="{x:Bind TodayDate}" Opacity="0.6" Margin="0,4,0,0" />
+            <!-- Hero: a calendar tile anchors the day, the title and full date sit beside it. -->
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="20">
+                <Border Grid.Column="0"
+                        Width="76" Height="80"
+                        CornerRadius="12"
+                        Background="{ThemeResource AccentFillColorDefaultBrush}"
+                        AutomationProperties.AccessibilityView="Raw">
+                    <StackPanel VerticalAlignment="Center" Spacing="0">
+                        <TextBlock Text="{x:Bind TodayMonthLabel}"
+                                   HorizontalAlignment="Center"
+                                   FontSize="12" FontWeight="SemiBold" CharacterSpacing="120"
+                                   Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                        <TextBlock Text="{x:Bind TodayDayNumber}"
+                                   HorizontalAlignment="Center"
+                                   FontSize="36" FontWeight="SemiBold" LineHeight="40"
+                                   TextLineBounds="Tight" Margin="0,4,0,0"
+                                   Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                    </StackPanel>
+                </Border>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                    <TextBlock Style="{StaticResource TitleLargeTextBlockStyle}" Text="My Day" />
+                    <TextBlock Text="{x:Bind TodayDate}"
+                               FontSize="16"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </StackPanel>
-                <Button Grid.Column="1" Click="RefreshButton_Click"
-                        VerticalAlignment="Top" Margin="0,4,0,0"
+
+                <Button Grid.Column="2" Click="RefreshButton_Click"
+                        VerticalAlignment="Top" Margin="0,6,0,0"
                         ToolTipService.ToolTip="Refresh from vault">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE72C;" FontSize="14" />
                         <TextBlock Text="Refresh" />
                     </StackPanel>
                 </Button>
+            </Grid>
+
+            <!-- Day meter: today's plan as one segment per Task, echoing the subtask bars below. -->
+            <Grid x:Name="DayProgressPanel"
+                  Margin="0,24,0,0"
+                  ColumnDefinitions="Auto,*" ColumnSpacing="16"
+                  Visibility="{x:Bind ViewModel.HasDayProgress, Mode=OneWay}">
+                <TextBlock Grid.Column="0"
+                           x:Name="DayProgressLabel"
+                           Text="{x:Bind ViewModel.DayProgressLabel, Mode=OneWay}"
+                           Style="{StaticResource BodyStrongTextBlockStyle}"
+                           VerticalAlignment="Center" />
+                <ItemsControl Grid.Column="1"
+                              x:Name="DayProgressSegments"
+                              VerticalAlignment="Center"
+                              IsTabStop="False"
+                              AutomationProperties.AccessibilityView="Raw">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="4" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Width="36" Height="8">
+                                <Border CornerRadius="4" Background="{ThemeResource ControlStrongFillColorDisabledBrush}" />
+                                <Border CornerRadius="4" Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                        Visibility="{Binding Converter={StaticResource BoolVis}}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <ProgressBar Grid.Column="1"
+                             x:Name="DayProgressBar"
+                             Minimum="0" Maximum="1"
+                             VerticalAlignment="Center"
+                             Visibility="Collapsed" />
             </Grid>
 
             <!-- Mutation failures (revision conflict / missing / read-only), mirroring PlannerPage -->
@@ -70,229 +231,405 @@
                      CloseButtonClick="ErrorBar_CloseButtonClick"
                      Severity="Error"
                      Title="Could not update My Day"
-                     Margin="0,12,0,0" />
-        </StackPanel>
+                     Margin="0,16,0,0" />
 
-        <!-- Today's tasks header -->
-        <TextBlock x:Name="TodayHeader" Grid.Row="1" Text="Today's tasks"
-                   AutomationProperties.AutomationId="MyDayTodayHeader"
-                   Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,16,0,8" />
+            <!-- Today's tasks header (+ clipboard hint: brief feedback when an agent-command line is copied) -->
+            <Grid Margin="0,32,0,12" ColumnDefinitions="*,Auto">
+                <TextBlock x:Name="TodayHeader" Grid.Column="0" Text="Today's tasks"
+                           AutomationProperties.AutomationId="MyDayTodayHeader"
+                           Style="{StaticResource MyDaySectionHeaderStyle}" />
+                <InfoBar x:Name="ClipboardHint"
+                         Grid.Column="1"
+                         IsOpen="False"
+                         IsClosable="True"
+                         Severity="Success"
+                         VerticalAlignment="Center" />
+            </Grid>
 
-        <!-- Clipboard hint: brief feedback when an agent-command line is copied -->
-        <InfoBar x:Name="ClipboardHint"
-                 Grid.Row="1"
-                 IsOpen="False"
-                 IsClosable="True"
-                 Severity="Success"
-                 HorizontalAlignment="Right"
-                 VerticalAlignment="Top"
-                 Margin="0,0,0,8" />
+            <ListView
+                x:Name="TodayList"
+                AutomationProperties.AutomationId="MyDayTaskList"
+                ItemsSource="{x:Bind ViewModel.TodayTasks}"
+                SelectionMode="Single"
+                IsItemClickEnabled="False"
+                ItemContainerStyle="{StaticResource MyDayCardItemStyle}"
+                ScrollViewer.VerticalScrollMode="Disabled"
+                ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                <ListView.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="O" Modifiers="Control,Shift" Invoked="OpenInObsidian_Accelerator" />
+                </ListView.KeyboardAccelerators>
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid DoubleTapped="TaskRow_DoubleTapped"
+                              ContextRequested="TaskRow_ContextRequested">
+                            <!-- Card surface; the Task in progress gets an accent wash + stroke. -->
+                            <Border CornerRadius="8"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1" />
+                            <Border CornerRadius="8" Opacity="0.08"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    Visibility="{Binding IsInProgress, Converter={StaticResource BoolVis}}" />
+                            <Border CornerRadius="8"
+                                    BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
+                                    BorderThickness="1.5"
+                                    Visibility="{Binding IsInProgress, Converter={StaticResource BoolVis}}" />
 
-        <ListView
-            Grid.Row="2"
-            x:Name="TodayList"
-            AutomationProperties.AutomationId="MyDayTaskList"
-            ItemsSource="{x:Bind ViewModel.TodayTasks}"
-            SelectionMode="Single"
-            IsItemClickEnabled="False"
-            MinHeight="320"
-            Margin="0,16,0,0">
-            <ListView.KeyboardAccelerators>
-                <KeyboardAccelerator Key="O" Modifiers="Control,Shift" Invoked="OpenInObsidian_Accelerator" />
-            </ListView.KeyboardAccelerators>
-            <ListView.ItemContainerStyle>
-                <Style TargetType="ListViewItem">
-                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                    <Setter Property="Padding" Value="0" />
-                    <Setter Property="Margin" Value="0,2" />
-                </Style>
-            </ListView.ItemContainerStyle>
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Grid Padding="10,8" RowDefinitions="Auto,Auto,Auto,Auto"
-                          DoubleTapped="TaskRow_DoubleTapped"
-                          ContextRequested="TaskRow_ContextRequested"
-                          Background="Transparent">
-                        <!-- Title row -->
-                        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto">
-                            <Grid Grid.Column="0" Width="22" Height="22" VerticalAlignment="Center" Margin="0,0,8,0">
-                                <!-- Leaf complete affordance — hidden for PBI containers (you complete
-                                     the children, not the container itself; ADR 0016/0017). -->
+                            <Grid Padding="14,10,8,12" RowDefinitions="Auto,Auto,Auto,Auto">
+                                <!-- Title row -->
+                                <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto">
+                                    <Grid Grid.Column="0" Width="22" Height="22" VerticalAlignment="Center" Margin="0,0,10,0">
+                                        <!-- Leaf complete affordance — hidden for PBI containers (you complete
+                                             the children, not the container itself; ADR 0016/0017). -->
+                                        <CheckBox VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                  IsChecked="{Binding IsDone, Mode=OneWay}"
+                                                  Style="{StaticResource CircleCheckBoxStyle}"
+                                                  Visibility="{Binding ShowLeafCompleteAffordance, Converter={StaticResource BoolVis}}"
+                                                  IsHitTestVisible="False" IsTabStop="False" />
+                                        <Button Background="Transparent" BorderThickness="0" Padding="0"
+                                                HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                                Visibility="{Binding ShowLeafCompleteAffordance, Converter={StaticResource BoolVis}}"
+                                                Click="CompleteTask_Click" />
+                                        <!-- Container marker for a PBI hosting cross-file children (ADR 0017). -->
+                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8B7;" FontSize="16"
+                                                  VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                  Visibility="{Binding IsMyDayContainer, Converter={StaticResource BoolVis}}" />
+                                    </Grid>
+                                    <Button Grid.Column="1"
+                                            Style="{StaticResource MyDayTitleButtonStyle}"
+                                            Click="OpenTask_Click"
+                                            AutomationProperties.Name="{Binding Title}">
+                                        <TextBlock Text="{Binding Title}"
+                                                   FontSize="15" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </Button>
+                                    <!-- In-progress pill -->
+                                    <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}"
+                                            BorderThickness="0"
+                                            Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                            Visibility="{Binding IsInProgress, Converter={StaticResource BoolVis}}">
+                                        <TextBlock Text="In progress" Style="{StaticResource ChipTextStyle}"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                                    </Border>
+                                    <!-- Priority chip (high/urgent only) -->
+                                    <Border Grid.Column="3" Style="{StaticResource ChipBorderStyle}"
+                                            Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                            Visibility="{Binding HasPriorityChip, Converter={StaticResource BoolVis}}">
+                                        <TextBlock Text="{Binding Priority}" Style="{StaticResource ChipTextStyle}" />
+                                    </Border>
+                                    <!-- Due chip -->
+                                    <Border Grid.Column="4" Style="{StaticResource ChipBorderStyle}"
+                                            Background="{Binding DueUrgency, Converter={StaticResource DueBg}}"
+                                            Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
+                                        <TextBlock Text="{Binding DueChipText}" Style="{StaticResource ChipTextStyle}"
+                                                   Foreground="{Binding DueUrgency, Converter={StaticResource DueFg}}" />
+                                    </Border>
+                                    <Button Grid.Column="5" Click="RemoveFromDay_Click"
+                                            Style="{StaticResource MyDayRowActionButtonStyle}"
+                                            Margin="8,0,0,0"
+                                            AutomationProperties.Name="{Binding RemoveFromMyDayLabel}"
+                                            ToolTipService.ToolTip="Remove from My Day">
+                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="12" />
+                                    </Button>
+                                    <!-- More menu: copy agent-command lines without leaving My Day -->
+                                    <Button Grid.Column="6"
+                                            Style="{StaticResource MyDayRowActionButtonStyle}"
+                                            AutomationProperties.AutomationId="MyDayMoreActions"
+                                            ToolTipService.ToolTip="More actions">
+                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="14" />
+                                        <Button.Flyout>
+                                            <MenuFlyout>
+                                                <MenuFlyoutItem Text="Copy 'Start work' command" Click="CopyStartWork_Click">
+                                                    <MenuFlyoutItem.Icon>
+                                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE768;" />
+                                                    </MenuFlyoutItem.Icon>
+                                                </MenuFlyoutItem>
+                                                <MenuFlyoutItem Text="Copy 'Resume' command" Click="CopyResume_Click">
+                                                    <MenuFlyoutItem.Icon>
+                                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE72C;" />
+                                                    </MenuFlyoutItem.Icon>
+                                                </MenuFlyoutItem>
+                                                <MenuFlyoutItem Text="Copy 'Wrap up' command" Click="CopyWrapUp_Click">
+                                                    <MenuFlyoutItem.Icon>
+                                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE73E;" />
+                                                    </MenuFlyoutItem.Icon>
+                                                </MenuFlyoutItem>
+                                                <MenuFlyoutSeparator Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}" />
+                                                <MenuFlyoutItem Text="Clear due date" Click="ClearDueDate_Click"
+                                                                AutomationProperties.AutomationId="MyDayClearDueDate"
+                                                                Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
+                                                    <MenuFlyoutItem.Icon>
+                                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" />
+                                                    </MenuFlyoutItem.Icon>
+                                                </MenuFlyoutItem>
+                                            </MenuFlyout>
+                                        </Button.Flyout>
+                                    </Button>
+                                </Grid>
+
+                                <!-- Card details (active + not collapsed), indented to the title column -->
+                                <StackPanel Grid.Row="1" Spacing="8" Margin="32,8,40,0"
+                                            Visibility="{Binding ShowCardDetails, Converter={StaticResource BoolVis}}">
+                                    <!-- Segmented progress bar (≤12 subtasks) -->
+                                    <ItemsControl ItemsSource="{Binding Subtasks}"
+                                                  Visibility="{Binding UseSegmentedBar, Converter={StaticResource BoolVis}}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Orientation="Horizontal" Spacing="3" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Width="24" Height="5" CornerRadius="2.5"
+                                                        Background="{Binding Converter={StaticResource SegBrush}}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <!-- Continuous progress bar (≥13 subtasks) -->
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"
+                                          Visibility="{Binding UseContinuousBar, Converter={StaticResource BoolVis}}">
+                                        <ProgressBar Grid.Column="0" Minimum="0" Maximum="1"
+                                                     Value="{Binding ProgressFraction}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ProgressLabel}"
+                                                   FontSize="11" VerticalAlignment="Center"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Grid>
+                                    <!-- Current step -->
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6"
+                                          Visibility="{Binding HasCurrentStep, Converter={StaticResource BoolVis}}">
+                                        <FontIcon Grid.Column="0" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;" FontSize="11"
+                                                  VerticalAlignment="Center"
+                                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding CurrentStepText}" FontSize="13" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <!-- Blocker -->
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6"
+                                          Visibility="{Binding HasBlocker, Converter={StaticResource BoolVis}}">
+                                        <FontIcon Grid.Column="0" FontFamily="Segoe Fluent Icons" Glyph="&#xE7BA;" FontSize="12"
+                                                  VerticalAlignment="Center"
+                                                  Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding FirstBlockerText}" FontSize="13"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                    <!-- Blurb -->
+                                    <TextBlock Text="{Binding BlurbPreview}"
+                                               AutomationProperties.Name="{Binding BlurbPreview}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="NoWrap"
+                                               TextTrimming="CharacterEllipsis"
+                                               Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
+                                </StackPanel>
+
+                                <!-- Today's subtasks (ADR 0008): flagged or due-today subtasks rendered
+                                     inline beneath the parent. Visible whenever any qualify, even when
+                                     the parent's card details are collapsed, since these subtasks are
+                                     the reason this parent appears in My Day. Placed in its own row so
+                                     it stacks below card details rather than overlapping them. -->
+                                <ItemsControl Grid.Row="2" ItemsSource="{Binding TodaysSubtasks}"
+                                              Visibility="{Binding HasTodaysSubtasks, Converter={StaticResource BoolVis}}"
+                                              Margin="32,6,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Padding="0,2" ColumnDefinitions="Auto,*">
+                                                <FontIcon Grid.Column="0" FontFamily="Segoe Fluent Icons"
+                                                          Glyph="&#xE73E;" FontSize="11"
+                                                          Margin="0,0,8,0" VerticalAlignment="Center"
+                                                          Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Text}"
+                                                           FontSize="13"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- Today's children (ADR 0017): in-My-Day cross-file child Tasks rendered
+                                     nested beneath a PBI container. Each child is a full Task — complete via
+                                     the circle, open via the title. Hidden when the container is collapsed. -->
+                                <ItemsControl Grid.Row="3" ItemsSource="{Binding TodaysChildren}"
+                                              Visibility="{Binding ShowTodaysChildren, Converter={StaticResource BoolVis}}"
+                                              Margin="32,6,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Padding="0,4" ColumnDefinitions="Auto,*,Auto,Auto" Background="Transparent">
+                                                <Grid Grid.Column="0" Width="20" Height="20" VerticalAlignment="Center" Margin="0,0,10,0">
+                                                    <CheckBox VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                              IsChecked="{Binding IsDone, Mode=OneWay}"
+                                                              Style="{StaticResource CircleCheckBoxStyle}"
+                                                              IsHitTestVisible="False" IsTabStop="False" />
+                                                    <Button Background="Transparent" BorderThickness="0" Padding="0"
+                                                            HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                                            Click="CompleteTask_Click" />
+                                                </Grid>
+                                                <Button Grid.Column="1"
+                                                        Style="{StaticResource MyDayTitleButtonStyle}"
+                                                        Click="OpenTask_Click"
+                                                        AutomationProperties.Name="{Binding Title}">
+                                                    <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                                </Button>
+                                                <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}"
+                                                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                                        Visibility="{Binding HasPriorityChip, Converter={StaticResource BoolVis}}">
+                                                    <TextBlock Text="{Binding Priority}" Style="{StaticResource ChipTextStyle}" />
+                                                </Border>
+                                                <Border Grid.Column="3" Style="{StaticResource ChipBorderStyle}"
+                                                        Background="{Binding DueUrgency, Converter={StaticResource DueBg}}"
+                                                        Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
+                                                    <TextBlock Text="{Binding DueChipText}" Style="{StaticResource ChipTextStyle}"
+                                                               Foreground="{Binding DueUrgency, Converter={StaticResource DueFg}}" />
+                                                </Border>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Grid>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <!-- Empty state: shown when My Day has no tasks. -->
+            <controls:EmptyState
+                x:Name="EmptyStateView"
+                AutomationProperties.AutomationId="MyDayEmptyState"
+                Margin="0,8,0,8"
+                Glyph="&#xE706;"
+                Headline="Today is open."
+                Body="Nothing's been pulled into your day yet. Carry over yesterday's unfinished work, or pick something from the Backlog."
+                CtaText="Open Backlog"
+                CtaClicked="EmptyState_OpenBacklog"
+                Visibility="Collapsed" />
+
+            <!-- ADR 0008: separate "Flagged subtasks" section removed; parents are now virtually
+                 promoted into Today's tasks above with qualifying subtasks rendered inline. -->
+
+            <!-- Recently Completed (today, was on My Day) -->
+            <StackPanel x:Name="RecentlyCompletedHeader" Orientation="Horizontal" Spacing="10" Margin="0,24,0,6" Visibility="Collapsed">
+                <TextBlock Text="Recently completed" Style="{StaticResource MyDaySectionHeaderStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="{x:Bind ViewModel.RecentlyCompletedTasks.Count, Mode=OneWay}"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                           FontSize="16" VerticalAlignment="Center" />
+            </StackPanel>
+
+            <ListView x:Name="RecentlyCompletedList" Visibility="Collapsed"
+                      ItemsSource="{x:Bind ViewModel.RecentlyCompletedTasks}" SelectionMode="None"
+                      ItemContainerStyle="{StaticResource MyDayFlatItemStyle}"
+                      ScrollViewer.VerticalScrollMode="Disabled"
+                      ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="15,7,8,7" ColumnDefinitions="Auto,*,Auto,Auto" Background="Transparent">
+                            <Grid Grid.Column="0" Width="22" Height="22" VerticalAlignment="Center" Margin="0,0,10,0">
                                 <CheckBox VerticalAlignment="Center" HorizontalAlignment="Center"
                                           IsChecked="{Binding IsDone, Mode=OneWay}"
                                           Style="{StaticResource CircleCheckBoxStyle}"
-                                          Visibility="{Binding ShowLeafCompleteAffordance, Converter={StaticResource BoolVis}}"
                                           IsHitTestVisible="False" IsTabStop="False" />
                                 <Button Background="Transparent" BorderThickness="0" Padding="0"
                                         HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                                        Visibility="{Binding ShowLeafCompleteAffordance, Converter={StaticResource BoolVis}}"
-                                        Click="CompleteTask_Click" />
-                                <!-- Container marker for a PBI hosting cross-file children (ADR 0017). -->
-                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8B7;" FontSize="14"
-                                          VerticalAlignment="Center" HorizontalAlignment="Center" Opacity="0.7"
-                                          Visibility="{Binding IsMyDayContainer, Converter={StaticResource BoolVis}}" />
+                                        Click="UncompleteTask_Click"
+                                        ToolTipService.ToolTip="Move back to To-do" />
                             </Grid>
-                            <HyperlinkButton Grid.Column="1" Content="{Binding Title}"
-                                             Click="OpenTask_Click"
-                                             Padding="0" VerticalAlignment="Center"
-                                             HorizontalAlignment="Stretch"
-                                             HorizontalContentAlignment="Left" />
-                            <!-- Priority chip (high/urgent only) -->
-                            <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}"
+                            <Button Grid.Column="1"
+                                    Style="{StaticResource MyDayTitleButtonStyle}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Click="OpenTask_Click"
+                                    AutomationProperties.Name="{Binding Title}">
+                                <TextBlock Text="{Binding Title}"
+                                           TextDecorations="Strikethrough"
+                                           TextTrimming="CharacterEllipsis" />
+                            </Button>
+                            <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}" Opacity="0.7"
                                     Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
                                     Visibility="{Binding HasPriorityChip, Converter={StaticResource BoolVis}}">
                                 <TextBlock Text="{Binding Priority}" Style="{StaticResource ChipTextStyle}" />
                             </Border>
-                            <!-- Due chip -->
-                            <Border Grid.Column="3" Style="{StaticResource ChipBorderStyle}"
+                            <Border Grid.Column="3" Style="{StaticResource ChipBorderStyle}" Opacity="0.7"
                                     Background="{Binding DueUrgency, Converter={StaticResource DueBg}}"
                                     Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
                                 <TextBlock Text="{Binding DueChipText}" Style="{StaticResource ChipTextStyle}"
                                            Foreground="{Binding DueUrgency, Converter={StaticResource DueFg}}" />
                             </Border>
-                            <Button Grid.Column="4" Click="RemoveFromDay_Click"
-                                    Background="Transparent" BorderThickness="0"
-                                    Padding="6,2" VerticalAlignment="Center" Margin="6,0,0,0"
-                                    AutomationProperties.Name="{Binding RemoveFromMyDayLabel}"
-                                    ToolTipService.ToolTip="Remove from My Day">
-                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="13" />
-                            </Button>
-                            <!-- More menu: copy agent-command lines without leaving My Day -->
-                            <Button Grid.Column="5" Background="Transparent" BorderThickness="0"
-                                    Padding="6,2" VerticalAlignment="Center"
-                                    AutomationProperties.AutomationId="MyDayMoreActions"
-                                    ToolTipService.ToolTip="More actions">
-                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE712;" FontSize="13" />
-                                <Button.Flyout>
-                                    <MenuFlyout>
-                                        <MenuFlyoutItem Text="Copy 'Start work' command" Click="CopyStartWork_Click">
-                                            <MenuFlyoutItem.Icon>
-                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE768;" />
-                                            </MenuFlyoutItem.Icon>
-                                        </MenuFlyoutItem>
-                                        <MenuFlyoutItem Text="Copy 'Resume' command" Click="CopyResume_Click">
-                                            <MenuFlyoutItem.Icon>
-                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE72C;" />
-                                            </MenuFlyoutItem.Icon>
-                                        </MenuFlyoutItem>
-                                        <MenuFlyoutItem Text="Copy 'Wrap up' command" Click="CopyWrapUp_Click">
-                                            <MenuFlyoutItem.Icon>
-                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE73E;" />
-                                            </MenuFlyoutItem.Icon>
-                                        </MenuFlyoutItem>
-                                        <MenuFlyoutSeparator Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}" />
-                                        <MenuFlyoutItem Text="Clear due date" Click="ClearDueDate_Click"
-                                                        AutomationProperties.AutomationId="MyDayClearDueDate"
-                                                        Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
-                                            <MenuFlyoutItem.Icon>
-                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" />
-                                            </MenuFlyoutItem.Icon>
-                                        </MenuFlyoutItem>
-                                    </MenuFlyout>
-                                </Button.Flyout>
-                            </Button>
                         </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
 
-                        <!-- Card details (active + not collapsed) -->
-                        <StackPanel Grid.Row="1" Spacing="6" Margin="32,6,0,2"
-                                    Visibility="{Binding ShowCardDetails, Converter={StaticResource BoolVis}}">
-                            <!-- Segmented progress bar (≤12 subtasks) -->
-                            <ItemsControl ItemsSource="{Binding Subtasks}"
-                                          Visibility="{Binding UseSegmentedBar, Converter={StaticResource BoolVis}}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <StackPanel Orientation="Horizontal" Spacing="3" />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Width="22" Height="6" CornerRadius="2"
-                                                Background="{Binding Converter={StaticResource SegBrush}}"
-                                                BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
-                                                BorderThickness="0,0,0,0" />
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <!-- Continuous progress bar (≥13 subtasks) -->
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"
-                                  Visibility="{Binding UseContinuousBar, Converter={StaticResource BoolVis}}">
-                                <ProgressBar Grid.Column="0" Minimum="0" Maximum="1"
-                                             Value="{Binding ProgressFraction}" />
-                                <TextBlock Grid.Column="1" Text="{Binding ProgressLabel}"
-                                           FontSize="11" Opacity="0.65" VerticalAlignment="Center" />
-                            </Grid>
-                            <!-- Current step -->
-                            <Grid ColumnDefinitions="Auto,*"
-                                  Visibility="{Binding HasCurrentStep, Converter={StaticResource BoolVis}}">
-                                <Border Grid.Column="0" Width="3" Background="{ThemeResource AccentFillColorDefaultBrush}"
-                                        CornerRadius="1.5" Margin="0,1,8,1" />
-                                <TextBlock Grid.Column="1" Text="{Binding CurrentStepText}" FontSize="13" FontWeight="SemiBold"
-                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                            </Grid>
-                            <!-- Blocker -->
-                            <StackPanel Orientation="Horizontal" Spacing="6"
-                                        Visibility="{Binding HasBlocker, Converter={StaticResource BoolVis}}">
-                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE7BA;" FontSize="11"
-                                          Foreground="#C50F1F" />
-                                <TextBlock Text="{Binding FirstBlockerText}" FontSize="12"
-                                           Foreground="#C50F1F" TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                            <!-- Blurb -->
-                            <TextBlock Text="{Binding BlurbPreview}"
-                                       AutomationProperties.Name="{Binding BlurbPreview}"
-                                       Opacity="0.8"
-                                       TextWrapping="NoWrap"
-                                       TextTrimming="CharacterEllipsis"
-                                       Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
-                        </StackPanel>
+            <!-- Suggestions tray: a recessed surface, distinct from the raised Today cards,
+                 whose add-circles line up with the completion circles above. -->
+            <Border x:Name="SuggestionsTray"
+                    Margin="0,32,0,0"
+                    CornerRadius="10"
+                    Padding="0,14,0,10"
+                    Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                <StackPanel>
+                    <Grid Padding="15,0,12,8" ColumnDefinitions="Auto,*,Auto">
+                        <FontIcon Grid.Column="0" Width="22" Margin="0,0,10,0"
+                                  FontFamily="Segoe Fluent Icons" Glyph="&#xE82F;" FontSize="16"
+                                  VerticalAlignment="Center"
+                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                        <TextBlock Grid.Column="1" Text="Suggestions" Style="{StaticResource MyDaySectionHeaderStyle}" />
+                        <Button Grid.Column="2" Content="Carry all" Click="CarryAll_Click" VerticalAlignment="Center" />
+                    </Grid>
 
-                        <!-- Today's subtasks (ADR 0008): flagged or due-today subtasks rendered
-                             inline beneath the parent. Visible whenever any qualify, even when
-                             the parent's card details are collapsed, since these subtasks are
-                             the reason this parent appears in My Day. Placed in its own row so
-                             it stacks below card details rather than overlapping them. -->
-                        <ItemsControl Grid.Row="2" ItemsSource="{Binding TodaysSubtasks}"
-                                      Visibility="{Binding HasTodaysSubtasks, Converter={StaticResource BoolVis}}"
-                                      Margin="32,4,0,0">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Padding="0,2" ColumnDefinitions="Auto,*">
-                                        <FontIcon Grid.Column="0" FontFamily="Segoe Fluent Icons"
-                                                  Glyph="&#xE73E;" FontSize="11"
-                                                  Margin="0,0,8,0" VerticalAlignment="Center"
-                                                  Opacity="0.55" />
-                                        <TextBlock Grid.Column="1" Text="{Binding Text}"
-                                                   FontSize="12" Opacity="0.75"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center" />
+                    <!-- Suggestions list (slim — default) -->
+                    <ListView x:Name="SuggestionsList" ItemsSource="{x:Bind ViewModel.Suggestions}" SelectionMode="None"
+                              ItemContainerStyle="{StaticResource MyDayFlatItemStyle}"
+                              ScrollViewer.VerticalScrollMode="Disabled"
+                              ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="15,7,12,7" ColumnDefinitions="Auto,*">
+                                    <Grid Grid.Column="0" Width="22" Margin="0,0,10,0">
+                                        <Button Click="AddToDay_Click"
+                                                Style="{StaticResource MyDayAddCircleButtonStyle}"
+                                                AutomationProperties.Name="{Binding AddToMyDayLabel}"
+                                                ToolTipService.ToolTip="Add to My Day">
+                                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE710;" FontSize="10" />
+                                        </Button>
                                     </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                                    <Button Grid.Column="1"
+                                            Style="{StaticResource MyDayTitleButtonStyle}"
+                                            Click="OpenTask_Click"
+                                            AutomationProperties.Name="{Binding Title}">
+                                        <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                    </Button>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
 
-                        <!-- Today's children (ADR 0017): in-My-Day cross-file child Tasks rendered
-                             nested beneath a PBI container. Each child is a full Task — complete via
-                             the circle, open via the title. Hidden when the container is collapsed. -->
-                        <ItemsControl Grid.Row="3" ItemsSource="{Binding TodaysChildren}"
-                                      Visibility="{Binding ShowTodaysChildren, Converter={StaticResource BoolVis}}"
-                                      Margin="32,4,0,0">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Padding="0,3" ColumnDefinitions="Auto,*,Auto,Auto" Background="Transparent">
-                                        <Grid Grid.Column="0" Width="20" Height="20" VerticalAlignment="Center" Margin="0,0,8,0">
-                                            <CheckBox VerticalAlignment="Center" HorizontalAlignment="Center"
-                                                      IsChecked="{Binding IsDone, Mode=OneWay}"
-                                                      Style="{StaticResource CircleCheckBoxStyle}"
-                                                      IsHitTestVisible="False" IsTabStop="False" />
-                                            <Button Background="Transparent" BorderThickness="0" Padding="0"
-                                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                                                    Click="CompleteTask_Click" />
+                    <!-- Suggestions list (rich — empty state only) -->
+                    <ListView x:Name="RichSuggestionsList" Visibility="Collapsed"
+                              ItemsSource="{x:Bind ViewModel.Suggestions}" SelectionMode="None"
+                              ItemContainerStyle="{StaticResource MyDayFlatItemStyle}"
+                              ScrollViewer.VerticalScrollMode="Disabled"
+                              ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="15,8,12,8" RowDefinitions="Auto,Auto" Background="Transparent">
+                                    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto">
+                                        <Grid Grid.Column="0" Width="22" Margin="0,0,10,0">
+                                            <Button Click="AddToDay_Click"
+                                                    Style="{StaticResource MyDayAddCircleButtonStyle}"
+                                                    AutomationProperties.Name="{Binding AddToMyDayLabel}"
+                                                    ToolTipService.ToolTip="Add to My Day">
+                                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE710;" FontSize="10" />
+                                            </Button>
                                         </Grid>
-                                        <HyperlinkButton Grid.Column="1" Content="{Binding Title}"
-                                                         Click="OpenTask_Click"
-                                                         Padding="0" VerticalAlignment="Center"
-                                                         HorizontalAlignment="Stretch"
-                                                         HorizontalContentAlignment="Left" />
+                                        <Button Grid.Column="1"
+                                                Style="{StaticResource MyDayTitleButtonStyle}"
+                                                Click="OpenTask_Click"
+                                                AutomationProperties.Name="{Binding Title}">
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        </Button>
                                         <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}"
                                                 Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
                                                 Visibility="{Binding HasPriorityChip, Converter={StaticResource BoolVis}}">
@@ -305,198 +642,50 @@
                                                        Foreground="{Binding DueUrgency, Converter={StaticResource DueFg}}" />
                                         </Border>
                                     </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
-
-        <!-- Empty state: shown when My Day has no tasks. -->
-        <controls:EmptyState
-            x:Name="EmptyStateView"
-            AutomationProperties.AutomationId="MyDayEmptyState"
-            Grid.Row="2"
-            Margin="0,16,0,0"
-            Glyph="&#xE706;"
-            Headline="Today is open."
-            Body="Nothing's been pulled into your day yet. Carry over yesterday's unfinished work, or pick something from the Backlog."
-            CtaText="Open Backlog"
-            CtaClicked="EmptyState_OpenBacklog"
-            Visibility="Collapsed" />
-
-        <!-- ADR 0008: separate "Flagged subtasks" section removed; parents are now virtually
-             promoted into Today's tasks above with qualifying subtasks rendered inline. -->
-
-        <!-- Recently Completed (today, was on My Day) -->
-        <StackPanel x:Name="RecentlyCompletedHeader" Grid.Row="4" Orientation="Horizontal" Spacing="8" Margin="0,24,0,8" Visibility="Collapsed">
-            <TextBlock Text="Recently completed" Style="{StaticResource SubtitleTextBlockStyle}" Opacity="0.75" />
-            <TextBlock Text="{x:Bind ViewModel.RecentlyCompletedTasks.Count, Mode=OneWay}" Opacity="0.5" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Row="1" Spacing="8" Margin="32,8,0,2"
+                                                Visibility="{Binding IsActive, Converter={StaticResource BoolVis}}">
+                                        <ItemsControl ItemsSource="{Binding Subtasks}"
+                                                      Visibility="{Binding UseSegmentedBar, Converter={StaticResource BoolVis}}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal" Spacing="3" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Width="24" Height="5" CornerRadius="2.5"
+                                                            Background="{Binding Converter={StaticResource SegBrush}}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"
+                                              Visibility="{Binding UseContinuousBar, Converter={StaticResource BoolVis}}">
+                                            <ProgressBar Grid.Column="0" Minimum="0" Maximum="1" Value="{Binding ProgressFraction}" />
+                                            <TextBlock Grid.Column="1" Text="{Binding ProgressLabel}"
+                                                       FontSize="11" VerticalAlignment="Center"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </Grid>
+                                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6"
+                                              Visibility="{Binding HasCurrentStep, Converter={StaticResource BoolVis}}">
+                                            <FontIcon Grid.Column="0" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;" FontSize="11"
+                                                      VerticalAlignment="Center"
+                                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                            <TextBlock Grid.Column="1" Text="{Binding CurrentStepText}" FontSize="13" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding BlurbPreview}"
+                                                   AutomationProperties.Name="{Binding BlurbPreview}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextWrapping="NoWrap"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </Border>
         </StackPanel>
-
-        <ListView x:Name="RecentlyCompletedList" Grid.Row="5" Visibility="Collapsed"
-                  ItemsSource="{x:Bind ViewModel.RecentlyCompletedTasks}" SelectionMode="None" MaxHeight="140">
-            <ListView.ItemContainerStyle>
-                <Style TargetType="ListViewItem">
-                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                    <Setter Property="Padding" Value="0" />
-                    <Setter Property="Margin" Value="0,1" />
-                </Style>
-            </ListView.ItemContainerStyle>
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Grid Padding="10,6" ColumnDefinitions="Auto,*,Auto,Auto" Background="Transparent" Opacity="0.7">
-                        <Grid Grid.Column="0" Width="22" Height="22" VerticalAlignment="Center" Margin="0,0,8,0">
-                            <CheckBox VerticalAlignment="Center" HorizontalAlignment="Center"
-                                      IsChecked="{Binding IsDone, Mode=OneWay}"
-                                      Style="{StaticResource CircleCheckBoxStyle}"
-                                      IsHitTestVisible="False" IsTabStop="False" />
-                            <Button Background="Transparent" BorderThickness="0" Padding="0"
-                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                                    Click="UncompleteTask_Click"
-                                    ToolTipService.ToolTip="Move back to To-do" />
-                        </Grid>
-                        <HyperlinkButton Grid.Column="1" Content="{Binding Title}"
-                                         Click="OpenTask_Click"
-                                         Padding="0" VerticalAlignment="Center"
-                                         HorizontalAlignment="Stretch"
-                                         HorizontalContentAlignment="Left">
-                            <HyperlinkButton.Resources>
-                                <ResourceDictionary>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="TextDecorations" Value="Strikethrough" />
-                                    </Style>
-                                </ResourceDictionary>
-                            </HyperlinkButton.Resources>
-                        </HyperlinkButton>
-                        <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}"
-                                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                                Visibility="{Binding HasPriorityChip, Converter={StaticResource BoolVis}}">
-                            <TextBlock Text="{Binding Priority}" Style="{StaticResource ChipTextStyle}" />
-                        </Border>
-                        <Border Grid.Column="3" Style="{StaticResource ChipBorderStyle}"
-                                Background="{Binding DueUrgency, Converter={StaticResource DueBg}}"
-                                Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
-                            <TextBlock Text="{Binding DueChipText}" Style="{StaticResource ChipTextStyle}"
-                                       Foreground="{Binding DueUrgency, Converter={StaticResource DueFg}}" />
-                        </Border>
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
-
-        <!-- Suggestions header -->
-        <StackPanel Grid.Row="6" Orientation="Horizontal" Spacing="12" Margin="0,24,0,8">
-            <TextBlock Text="Suggestions" Style="{StaticResource SubtitleTextBlockStyle}" />
-            <Button Content="Carry all" Click="CarryAll_Click" />
-        </StackPanel>
-
-        <!-- Suggestions list (slim — default) -->
-        <ListView x:Name="SuggestionsList" Grid.Row="7" ItemsSource="{x:Bind ViewModel.Suggestions}" SelectionMode="None" MaxHeight="140">
-            <ListView.ItemContainerStyle>
-                <Style TargetType="ListViewItem">
-                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                    <Setter Property="Padding" Value="0" />
-                </Style>
-            </ListView.ItemContainerStyle>
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Grid Padding="8,4" ColumnDefinitions="*,Auto">
-                        <HyperlinkButton Grid.Column="0" Content="{Binding Title}"
-                                         Click="OpenTask_Click"
-                                         Padding="0" VerticalAlignment="Center"
-                                         HorizontalAlignment="Stretch"
-                                         HorizontalContentAlignment="Left" />
-                        <Button Grid.Column="1" Click="AddToDay_Click"
-                                Background="Transparent" BorderThickness="0"
-                                Padding="6" VerticalAlignment="Center"
-                                AutomationProperties.Name="{Binding AddToMyDayLabel}"
-                                ToolTipService.ToolTip="Add to My Day">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE710;" FontSize="14" />
-                        </Button>
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
-
-        <!-- Suggestions list (rich — empty state only) -->
-        <ListView x:Name="RichSuggestionsList" Grid.Row="7" Visibility="Collapsed"
-                  ItemsSource="{x:Bind ViewModel.Suggestions}" SelectionMode="None" MaxHeight="400">
-            <ListView.ItemContainerStyle>
-                <Style TargetType="ListViewItem">
-                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                    <Setter Property="Padding" Value="0" />
-                    <Setter Property="Margin" Value="0,2" />
-                </Style>
-            </ListView.ItemContainerStyle>
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <Grid Padding="10,8" RowDefinitions="Auto,Auto" Background="Transparent">
-                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto">
-                            <HyperlinkButton Grid.Column="0" Content="{Binding Title}"
-                                             Click="OpenTask_Click"
-                                             Padding="0" VerticalAlignment="Center"
-                                             HorizontalAlignment="Stretch"
-                                             HorizontalContentAlignment="Left" />
-                            <Border Grid.Column="1" Style="{StaticResource ChipBorderStyle}"
-                                    Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                                    Visibility="{Binding HasPriorityChip, Converter={StaticResource BoolVis}}">
-                                <TextBlock Text="{Binding Priority}" Style="{StaticResource ChipTextStyle}" />
-                            </Border>
-                            <Border Grid.Column="2" Style="{StaticResource ChipBorderStyle}"
-                                    Background="{Binding DueUrgency, Converter={StaticResource DueBg}}"
-                                    Visibility="{Binding HasDue, Converter={StaticResource BoolVis}}">
-                                <TextBlock Text="{Binding DueChipText}" Style="{StaticResource ChipTextStyle}"
-                                           Foreground="{Binding DueUrgency, Converter={StaticResource DueFg}}" />
-                            </Border>
-                            <Button Grid.Column="3" Click="AddToDay_Click"
-                                    Background="Transparent" BorderThickness="0"
-                                    Padding="6,2" VerticalAlignment="Center" Margin="6,0,0,0"
-                                    AutomationProperties.Name="{Binding AddToMyDayLabel}"
-                                    ToolTipService.ToolTip="Add to My Day">
-                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE710;" FontSize="13" />
-                            </Button>
-                        </Grid>
-                        <StackPanel Grid.Row="1" Spacing="6" Margin="0,6,0,2"
-                                    Visibility="{Binding IsActive, Converter={StaticResource BoolVis}}">
-                            <ItemsControl ItemsSource="{Binding Subtasks}"
-                                          Visibility="{Binding UseSegmentedBar, Converter={StaticResource BoolVis}}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <StackPanel Orientation="Horizontal" Spacing="3" />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Width="22" Height="6" CornerRadius="2"
-                                                Background="{Binding Converter={StaticResource SegBrush}}" />
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"
-                                  Visibility="{Binding UseContinuousBar, Converter={StaticResource BoolVis}}">
-                                <ProgressBar Grid.Column="0" Minimum="0" Maximum="1" Value="{Binding ProgressFraction}" />
-                                <TextBlock Grid.Column="1" Text="{Binding ProgressLabel}"
-                                           FontSize="11" Opacity="0.65" VerticalAlignment="Center" />
-                            </Grid>
-                            <Grid ColumnDefinitions="Auto,*"
-                                  Visibility="{Binding HasCurrentStep, Converter={StaticResource BoolVis}}">
-                                <Border Grid.Column="0" Width="3" Background="{ThemeResource AccentFillColorDefaultBrush}"
-                                        CornerRadius="1.5" Margin="0,1,8,1" />
-                                <TextBlock Grid.Column="1" Text="{Binding CurrentStepText}" FontSize="13" FontWeight="SemiBold"
-                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                            </Grid>
-                            <TextBlock Text="{Binding BlurbPreview}"
-                                       AutomationProperties.Name="{Binding BlurbPreview}"
-                                       Opacity="0.8"
-                                       TextWrapping="NoWrap"
-                                       TextTrimming="CharacterEllipsis"
-                                       Visibility="{Binding HasBlurb, Converter={StaticResource BoolVis}}" />
-                        </StackPanel>
-                    </Grid>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
-    </Grid>
+    </ScrollViewer>
 </Page>

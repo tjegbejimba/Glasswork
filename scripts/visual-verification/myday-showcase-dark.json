@@ -1,0 +1,100 @@
+{
+  "name": "My Day showcase (dark)",
+  "theme": "dark",
+  "tasks": [
+    {
+      "id": "vv-active",
+      "title": "Ship the release automation evaluator",
+      "description": "Replace the manual release checklist with the evaluator so app releases can be cut from a single PR.",
+      "status": "in-progress",
+      "priority": "high",
+      "due": "today",
+      "myDay": "today",
+      "subtasks": [
+        { "text": "Draft the evaluator contract", "isCompleted": true },
+        { "text": "Wire ownership checks for the GitHub App", "isCompleted": true },
+        { "text": "Handle empty native diffs as no-change inputs", "status": "in_progress" },
+        { "text": "Add release notes generation" },
+        { "text": "Dry-run against the last three tags" }
+      ]
+    },
+    {
+      "id": "vv-blocked",
+      "title": "Migrate vault index to the new watcher",
+      "description": "The index still listens to the legacy event; move it onto the typed TaskFileChange stream.",
+      "status": "todo",
+      "priority": "medium",
+      "due": "yesterday",
+      "myDay": "today",
+      "subtasks": [
+        { "text": "Audit SelfWriteCoordinator call sites", "isCompleted": true },
+        { "text": "Switch IndexService subscription", "status": "blocked", "metadata": { "blocker": "Waiting on ADR 0010 review from Sam" } },
+        { "text": "Remove the legacy event" }
+      ]
+    },
+    {
+      "id": "vv-quiet",
+      "title": "Reply to the design review thread",
+      "status": "todo",
+      "priority": "low",
+      "myDay": "today"
+    },
+    {
+      "id": "vv-soon",
+      "title": "Prep notes for Thursday planning",
+      "description": "Collect open questions from the backlog grooming session.",
+      "status": "todo",
+      "priority": "medium",
+      "due": "tomorrow",
+      "myDay": "today"
+    },
+    {
+      "id": "vv-done",
+      "title": "Triage overnight user reports",
+      "status": "done",
+      "priority": "medium",
+      "myDay": "today",
+      "completedAt": "today"
+    },
+    {
+      "id": "vv-carry",
+      "title": "Write the onboarding empty-state copy",
+      "status": "todo",
+      "priority": "medium",
+      "myDay": "yesterday"
+    },
+    {
+      "id": "vv-urgent",
+      "title": "Rotate the expiring signing certificate",
+      "status": "todo",
+      "priority": "urgent"
+    }
+  ],
+  "actions": [
+    {
+      "type": "select",
+      "automationId": "NavMyDay",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "automationId": "MyDayTodayHeader",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Ship the release automation evaluator",
+      "timeoutMilliseconds": 10000
+    },
+    {
+      "type": "wait-for",
+      "name": "Rotate the expiring signing certificate",
+      "timeoutMilliseconds": 10000
+    }
+  ],
+  "captures": [
+    {
+      "name": "myday-showcase-dark"
+    }
+  ]
+}

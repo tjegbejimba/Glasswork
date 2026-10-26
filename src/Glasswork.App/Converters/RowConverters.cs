@@ -80,20 +80,25 @@ public sealed class DueUrgencyBrushConverter : IValueConverter
 }
 
 /// <summary>
-/// Maps <see cref="DueUrgency"/> to the chip foreground brush.
+/// Maps <see cref="DueUrgency"/> to the chip foreground brush. Picks a dark-theme variant
+/// from the main window's actual theme (the user theme is applied to the window root, so
+/// Application-level theme resources don't reflect it); light colors are unchanged.
 /// </summary>
 public sealed class DueUrgencyForegroundBrushConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, string language)
     {
         if (value is not DueUrgency u) return new SolidColorBrush(Colors.Gray);
+        var dark = (App.MainWindow?.Content as FrameworkElement)?.ActualTheme == ElementTheme.Dark;
         return u switch
         {
-            DueUrgency.Overdue => new SolidColorBrush(Color.FromArgb(0xFF, 0xC5, 0x0F, 0x1F)),
-            DueUrgency.Today => new SolidColorBrush(Color.FromArgb(0xFF, 0xCA, 0x5C, 0x00)),
-            _ => new SolidColorBrush(Color.FromArgb(0xCC, 0x60, 0x60, 0x60)),
+            DueUrgency.Overdue => dark ? Brush(0xFF, 0xFF, 0x99, 0xA4) : Brush(0xFF, 0xC5, 0x0F, 0x1F),
+            DueUrgency.Today => dark ? Brush(0xFF, 0xF7, 0xA2, 0x4A) : Brush(0xFF, 0xCA, 0x5C, 0x00),
+            _ => dark ? Brush(0xDD, 0xC8, 0xC8, 0xC8) : Brush(0xCC, 0x60, 0x60, 0x60),
         };
     }
+
+    private static SolidColorBrush Brush(byte a, byte r, byte g, byte b) => new(Color.FromArgb(a, r, g, b));
 
     public object ConvertBack(object value, Type targetType, object parameter, string language)
         => throw new NotImplementedException();

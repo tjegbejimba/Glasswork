@@ -5,6 +5,28 @@ namespace Glasswork.Tests;
 [TestClass]
 public class GlassworkTaskAdaptiveRowTests
 {
+    // ---------- IsInProgress ----------
+
+    [TestMethod]
+    public void IsInProgress_OnlyForCanonicalInProgressStatus()
+    {
+        Assert.IsTrue(new GlassworkTask { Status = GlassworkTask.Statuses.InProgress }.IsInProgress);
+        Assert.IsFalse(new GlassworkTask { Status = GlassworkTask.Statuses.Todo }.IsInProgress);
+        Assert.IsFalse(new GlassworkTask { Status = GlassworkTask.Statuses.Blocked }.IsInProgress);
+    }
+
+    [TestMethod]
+    public void Status_Change_RaisesIsInProgress()
+    {
+        var t = new GlassworkTask();
+        var changed = new List<string>();
+        t.PropertyChanged += (_, e) => changed.Add(e.PropertyName ?? string.Empty);
+
+        t.Status = GlassworkTask.Statuses.InProgress;
+
+        CollectionAssert.Contains(changed, nameof(GlassworkTask.IsInProgress));
+    }
+
     // ---------- IsActive vs IsQuiet ----------
 
     [TestMethod]
